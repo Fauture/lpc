@@ -1,0 +1,10 @@
+﻿{
+    "addr":  "0x8095ed0",
+    "code":  "void __cdecl vm_finalizeCodeSegment(_DWORD *ptr)\n{\n  if ( ptr )\n  {\n    if ( ptr[1] )\n      vm_scratchFinalize(ptr);\n    if ( ptr[3] )\n      vm_scratchFinalize(ptr);\n    if ( ptr[4] )\n      vm_scratchFinalize(ptr);\n    if ( ptr[6] )\n      vm_scratchFinalize(ptr);\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8089b00",
+                     "name":  "vm_scratchFinalize"
+                 }
+             ]
+}

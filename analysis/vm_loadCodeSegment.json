@@ -1,0 +1,135 @@
+﻿{
+    "addr":  "0x8096128",
+    "code":  "int __cdecl vm_loadCodeSegment(Vm_Binary_Buffer_T *pInput, Vm_Fun_T *pFun, Vm_Binary_Buffer_T *a3)\n{\n  unsigned __int8 *v4; // esi\n  Vm_Symbol_T *v5; // edi\n  int v6; // eax\n  bool v7; // cc\n  int result; // eax\n  int len; // eax\n  int fd; // edx\n  char *p; // esi\n  bool v12; // cc\n  Vm_Action_Info_T *ActionInfo; // eax\n  int v14; // edx\n  char v15; // al\n  __int16 *v16; // ecx\n  int v17; // eax\n  int v18; // eax\n  int metaAddress; // [esp+10h] [ebp-30h]\n  int i; // [esp+14h] [ebp-2Ch]\n  int ia; // [esp+14h] [ebp-2Ch]\n  int ib; // [esp+14h] [ebp-2Ch]\n  Vm_Symbol_T *pAllSymbols; // [esp+18h] [ebp-28h]\n  int runtimeMiscCount; // [esp+1Ch] [ebp-24h]\n  int unused; // [esp+20h] [ebp-20h] BYREF\n  int nowLine; // [esp+24h] [ebp-1Ch]\n  char *fileName; // [esp+28h] [ebp-18h]\n  Vm_Symbol_Flag_T symbolFlag; // [esp+2Fh] [ebp-11h]\n  int symbolsCount; // [esp+30h] [ebp-10h]\n\n  v4 = 0;\n  memset(a3, 0, 0x20u);\n  v5 = (Vm_Symbol_T *)\u0026a3-\u003edata[20];\n  if ( !vm_loadNumber32(a3, 0) || symbolsCount \u003c 0 )\n  {\n    vm_errprintf(\"Load actions failed: read symbol table error.\\n\");\n    return 0;\n  }\n  if ( symbolsCount )\n  {\n    pAllSymbols = (Vm_Symbol_T *)vm_scratchLargeAlloc(0);\n    memset(pAllSymbols, 0, 4 * ((unsigned int)(8 * symbolsCount) \u003e\u003e 2));\n    v6 = symbolsCount;\n    v4 = 0;\n    v5 = pAllSymbols;\n    v7 = symbolsCount \u003e 0;\n    nowLine = 0;\n    for ( i = 0; ; v7 = i \u003c v6 )\n    {\n      if ( !v7 )\n      {\n        *(_DWORD *)\u0026a3-\u003edata[8] = v6;\n        *(_DWORD *)\u0026a3-\u003edata[12] = pAllSymbols;\n        goto LABEL_12;\n      }\n      if ( !vm_loadNumber8(a3, v4) )\n      {\n        vm_errprintf(\"Load actions failed: read symbol flag error.\\n\");\n        return 0;\n      }\n      if ( (symbolFlag \u0026 1) == 0 )\n        break;\n      if ( !vm_loadTempString((Vm_Binary_Buffer_T *)v4, (char **)pInput) )\n      {\n        vm_errprintf(\"Load actions failed: read new-file-name error.\\n\");\n        return 0;\n      }\n      v4 = (unsigned __int8 *)vm_addFileName((const char *)a3, (Vm_String_T **)fileName);\n      vm_scratchFree(a3);\n      if ( !v4 )\n      {\n        vm_errprintf(\"Load actions failed: add new-file-name error.\\n\");\n        return 0;\n      }\n      if ( (symbolFlag \u0026 2) != 0 )\n        goto LABEL_24;\nLABEL_8:\n      if ( !v4 )\n      {\n        vm_errprintf(\"Load actions failed: not got file-name.\\n\");\n        return 0;\n      }\n      v5-\u003eline = nowLine;\n      ++i;\n      v6 = symbolsCount;\n      v5-\u003efile = (const char *)v4;\n      ++v5;\n    }\n    if ( (symbolFlag \u0026 2) == 0 )\n      goto LABEL_8;\nLABEL_24:\n    if ( !vm_loadNumber32(a3, (int *)v4) )\n    {\n      vm_errprintf(\"Load actions failed: read new-line-no error.\\n\");\n      return 0;\n    }\n    goto LABEL_8;\n  }\nLABEL_12:\n  if ( !vm_loadNumber32ToIntR(a3, (int *)v4) || a3-\u003efd \u003c 0 )\n  {\n    vm_errprintf(\"Load actions failed: read nodes count error.\\n\");\n    return 0;\n  }\n  if ( a3-\u003efd )\n  {\n    if ( !vm_loadBuffer((Vm_Binary_Buffer_T *)v4, pInput, (int)v5) )\n    {\n      vm_errprintf(\"Load actions failed: read nodes error.\\n\");\n      return 0;\n    }\n    if ( !vm_loadNumber32ToIntR(a3, (int *)v4) || (len = a3-\u003elen, len \u003c 0) )\n    {\n      vm_errprintf(\"Load actions: read meta data length (%d) error.\\n\", \u0026a3-\u003elen);\n      return 0;\n    }\n    if ( len \u003e 0 \u0026\u0026 !vm_loadBuffer((Vm_Binary_Buffer_T *)v4, pInput, (int)v5) )\n    {\n      vm_errprintf(\"Load actions: read meta data error.\\n\");\n      return 0;\n    }\n    if ( !vm_loadNumber32(a3, (int *)v4) )\n    {\nLABEL_36:\n      vm_errprintf(\"Load actions: read runtime miscellaneous count error.\\n\");\n      return 0;\n    }\n    if ( runtimeMiscCount )\n    {\n      fd = a3-\u003efd;\n      if ( a3-\u003efd != runtimeMiscCount )\n        goto LABEL_36;\n      if ( !fd )\n        goto LABEL_44;\n      if ( !vm_loadBuffer((Vm_Binary_Buffer_T *)v4, pInput, (int)v5) )\n      {\n        vm_errprintf(\"Load actions: read runtime information error.\\n\");\n        return 0;\n      }\n    }\n    fd = a3-\u003efd;\nLABEL_44:\n    p = a3-\u003ep;\n    v12 = fd \u003c= 0;\n    ia = 0;\n    while ( !v12 )\n    {\n      ActionInfo = vm_getActionInfo((unsigned __int8)p[3]);\n      v14 = (int)ActionInfo;\n      if ( !ActionInfo )\n      {\n        vm_errprintf(\"Load actions failed: got bad actionNo.\\n\");\n        return 0;\n      }\n      if ( (ActionInfo-\u003eattrib \u0026 0x80000000) != 0 )\n      {\n        metaAddress = *(__int16 *)p | (p[2] \u003c\u003c 16);\n        v14 = metaAddress;\n        if ( metaAddress + 4 * ActionInfo-\u003eparameters \u003e a3-\u003elen )\n        {\n          vm_errprintf(\"Load actions failed: got bad meta data address.\");\n          return 0;\n        }\n      }\n      v15 = p[3];\n      if ( v15 == 64 )\n      {\n        v17 = vm_mapStrNoTo(v14);\n        if ( v17 \u003c 0 )\n          return 0;\n        *(_WORD *)p = v17;\n      }\n      else if ( v15 == 11 )\n      {\n        v18 = vm_mapStrNoTo(v14);\n        if ( v18 \u003c 0 )\n          return 0;\n        *(_DWORD *)(*(_DWORD *)a3-\u003edata + metaAddress + 4) = (__int16)v18;\n      }\n      ++ia;\n      fd = a3-\u003efd;\n      p += 4;\n      v12 = a3-\u003efd \u003c= ia;\n    }\n    if ( !*(_DWORD *)\u0026a3-\u003edata[4] )\n      return 1;\n    if ( !*(_DWORD *)\u0026a3-\u003edata[12] )\n      return 1;\n    ib = 0;\n    v16 = *(__int16 **)\u0026a3-\u003edata[4];\n    if ( fd \u003c= 0 )\n      return 1;\n    while ( *v16 \u003c *(_DWORD *)\u0026a3-\u003edata[8] )\n    {\n      ++ib;\n      v16 += 2;\n      if ( fd \u003c= ib )\n        return 1;\n    }\n    vm_errprintf(\"Load actions failed: got bad symbolNo.\\n\");\n    return 0;\n  }\n  if ( !vm_loadNumber32((Vm_Binary_Buffer_T *)\u0026unused, (int *)v4) || unused )\n  {\n    vm_errprintf(\"Load actions failed: non-empty meta data when actions is empty.\\n\");\n    return 0;\n  }\n  if ( !vm_loadNumber32((Vm_Binary_Buffer_T *)\u0026unused, 0) || (result = 1, unused) )\n  {\n    vm_errprintf(\"Load actions failed: non-empty runtime miscellaneous information when actions is empty.\\n\");\n    return 0;\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82aebf4",
+                     "name":  "aLoadActionsFai_0",
+                     "string":  "Load actions failed: read symbol table error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8bf4",
+                     "name":  "vm_loadNumber32"
+                 },
+                 {
+                     "addr":  "0x8089630",
+                     "name":  "vm_scratchLargeAlloc"
+                 },
+                 {
+                     "addr":  "0x82aed74",
+                     "name":  "aLoadActionsFai_5",
+                     "string":  "Load actions failed: read symbol flag error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8f9c",
+                     "name":  "vm_loadNumber8"
+                 },
+                 {
+                     "addr":  "0x82aee28",
+                     "name":  "aLoadActionsFai_8",
+                     "string":  "Load actions failed: read new-file-name error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8c4c",
+                     "name":  "vm_loadTempString"
+                 },
+                 {
+                     "addr":  "0x807f5b4",
+                     "name":  "vm_addFileName"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x82aee58",
+                     "name":  "aLoadActionsFai_9",
+                     "string":  "Load actions failed: add new-file-name error.\n"
+                 },
+                 {
+                     "addr":  "0x82aeda4",
+                     "name":  "aLoadActionsFai_6",
+                     "string":  "Load actions failed: not got file-name.\n"
+                 },
+                 {
+                     "addr":  "0x82aec24",
+                     "name":  "aLoadActionsFai_1",
+                     "string":  "Load actions failed: read new-line-no error.\n"
+                 },
+                 {
+                     "addr":  "0x82aec7c",
+                     "name":  "aLoadActionsFai_3",
+                     "string":  "Load actions failed: read nodes count error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8b9c",
+                     "name":  "vm_loadNumber32ToIntR"
+                 },
+                 {
+                     "addr":  "0x82aec54",
+                     "name":  "aLoadActionsFai_2",
+                     "string":  "Load actions failed: read nodes error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8a70",
+                     "name":  "vm_loadBuffer"
+                 },
+                 {
+                     "addr":  "0x82aece4",
+                     "name":  "aLoadActionsRea_0",
+                     "string":  "Load actions: read meta data length (%d) error.\n"
+                 },
+                 {
+                     "addr":  "0x82aee00",
+                     "name":  "aLoadActionsRea_1",
+                     "string":  "Load actions: read meta data error.\n"
+                 },
+                 {
+                     "addr":  "0x82aecac",
+                     "name":  "aLoadActionsRea",
+                     "string":  "Load actions: read runtime miscellaneous count error.\n"
+                 },
+                 {
+                     "addr":  "0x82aee88",
+                     "name":  "aLoadActionsRea_2",
+                     "string":  "Load actions: read runtime information error.\n"
+                 },
+                 {
+                     "addr":  "0x80a369c",
+                     "name":  "vm_getActionInfo"
+                 },
+                 {
+                     "addr":  "0x82aeeb8",
+                     "name":  "aLoadActionsFai_10",
+                     "string":  "Load actions failed: got bad actionNo.\n"
+                 },
+                 {
+                     "addr":  "0x82aedd0",
+                     "name":  "aLoadActionsFai_7",
+                     "string":  "Load actions failed: got bad meta data address."
+                 },
+                 {
+                     "addr":  "0x80b8fec",
+                     "name":  "vm_mapStrNoTo"
+                 },
+                 {
+                     "addr":  "0x82aeee0",
+                     "name":  "aLoadActionsFai_11",
+                     "string":  "Load actions failed: got bad symbolNo.\n"
+                 },
+                 {
+                     "addr":  "0x82aebb0",
+                     "name":  "aLoadActionsFai",
+                     "string":  "Load actions failed: non-empty meta data when actions is empty.\n"
+                 },
+                 {
+                     "addr":  "0x82aed18",
+                     "name":  "aLoadActionsFai_4",
+                     "string":  "Load actions failed: non-empty runtime miscellaneous information when actions is empty.\n"
+                 }
+             ]
+}

@@ -1,0 +1,61 @@
+﻿{
+    "addr":  "0x8096950",
+    "code":  "void __usercall vm_transformXActions(\n        Vm_Action_Info_T *ActionInfo@\u003cebx\u003e,\n        Vm_Code_Segment_T_0 *pToCodeSegment,\n        const char **toBeFinalized,\n        int toBeFinalizeda)\n{\n  int v5; // esi\n  char *(__cdecl *v6)(unsigned int); // eax\n  const char **v7; // edi\n  const char *v8; // edx\n  int v9; // eax\n  bool v10; // zf\n  Vm_Symbol_T *v11; // eax\n  int v12; // eax\n  int v13; // edi\n  char v14; // al\n  bool v15; // zf\n  int v16; // edi\n  unsigned __int8 *v17; // eax\n  int v18; // edi\n  int v19; // eax\n  Vm_Symbol_T *symbols; // eax\n  int v21; // ecx\n  _DWORD *v22; // edx\n  Vm_Program_T *v23; // eax\n  const char *v24; // [esp-Ch] [ebp-44h]\n  int n; // [esp+8h] [ebp-30h]\n  int na; // [esp+8h] [ebp-30h]\n  int i; // [esp+Ch] [ebp-2Ch]\n  int metaOffset; // [esp+10h] [ebp-28h]\n  int metaOffseta; // [esp+10h] [ebp-28h]\n  unsigned __int8 *metaPtr; // [esp+14h] [ebp-24h]\n  int nowLine; // [esp+18h] [ebp-20h]\n  int nowLinea; // [esp+18h] [ebp-20h]\n  const char *nowFile; // [esp+1Ch] [ebp-1Ch]\n  const char *nowFilea; // [esp+1Ch] [ebp-1Ch]\n  Vm_Runtime_Misc_T *pRuntime; // [esp+20h] [ebp-18h]\n  Vm_Node_T *pThis; // [esp+24h] [ebp-14h]\n  void *(*allocFunc)(unsigned int); // [esp+28h] [ebp-10h]\n\n  v5 = (int)toBeFinalized;\n  memset(pToCodeSegment, 0, sizeof(Vm_Code_Segment_T_0));\n  v6 = vm_scratchAlloc;\n  if ( toBeFinalizeda )\n    v6 = (char *(__cdecl *)(unsigned int))vm_scratchLargeAlloc;\n  allocFunc = (void *(*)(unsigned int))v6;\n  if ( (int)toBeFinalized[6] \u003e 0x7FFF )\n  {\n    yyerrors(\"Too many instruction (%d) in a function (\u003e %d).\\n\", toBeFinalized[6], 0x7FFF);\n    yystop(-2);\n  }\n  v7 = toBeFinalized;\n  nowFile = 0;\n  nowLine = 0;\n  n = 0;\n  if ( toBeFinalized )\n  {\n    do\n    {\n      v8 = *v7;\n      if ( *v7 == nowFile )\n      {\n        v9 = (int)v7[1];\n        if ( v9 == nowLine )\n        {\n          v7 = (const char **)v7[8];\n          v10 = v7 == 0;\n          continue;\n        }\n      }\n      else\n      {\n        v9 = (int)v7[1];\n      }\n      v7 = (const char **)v7[8];\n      ++n;\n      nowFile = v8;\n      nowLine = v9;\n      v10 = v7 == 0;\n    }\n    while ( !v10 );\n  }\n  v11 = (Vm_Symbol_T *)allocFunc(8 * n);\n  pToCodeSegment-\u003esymbolsCount = n;\n  pToCodeSegment-\u003esymbols = v11;\n  pToCodeSegment-\u003enodes = (Vm_Node_T *)allocFunc(4 * (_DWORD)toBeFinalized[6]);\n  v12 = (int)toBeFinalized[6];\n  pToCodeSegment-\u003enodesCount = v12;\n  pToCodeSegment-\u003eruntimeMisc = (Vm_Runtime_Misc_T *)allocFunc(4 * v12);\n  v13 = (int)toBeFinalized;\n  if ( toBeFinalized )\n  {\n    do\n    {\n      v14 = *(_BYTE *)(v13 + 16);\n      if ( v14 == -12 )\n      {\n        v24 = *(const char **)(v13 + 8);\n        v23 = (Vm_Program_T *)vm_compilingProgram();\n        ActionInfo = (Vm_Action_Info_T *)vm_findOrAddProgramString(v23, v24);\n        if ( (int)ActionInfo \u003c 0 )\n          yyerror(\"Failed to allocate memory to copy string.\\n\");\n        *(_BYTE *)(v13 + 16) = 64;\n        *(_DWORD *)(v13 + 8) = (unsigned __int16)ActionInfo;\n        v13 = *(_DWORD *)(v13 + 32);\n        v15 = v13 == 0;\n      }\n      else if ( v14 == 60 \u0026\u0026 (unsigned int)(*(_DWORD *)(v13 + 8) + 0x8000) \u003c= 0xFFFF )\n      {\n        *(_BYTE *)(v13 + 16) = 59;\n        v13 = *(_DWORD *)(v13 + 32);\n        v15 = v13 == 0;\n      }\n      else\n      {\n        v13 = *(_DWORD *)(v13 + 32);\n        v15 = v13 == 0;\n      }\n    }\n    while ( !v15 );\n  }\n  metaOffset = 0;\n  v16 = (int)toBeFinalized;\n  if ( toBeFinalized )\n  {\n    do\n    {\n      ActionInfo = vm_getActionInfo(*(unsigned __int8 *)(v16 + 16));\n      v16 = *(_DWORD *)(v16 + 32);\n      if ( (ActionInfo-\u003eattrib \u0026 0x80000000) != 0 )\n        metaOffset += ActionInfo-\u003eparameters;\n    }\n    while ( v16 );\n  }\n  metaOffseta = 4 * metaOffset;\n  v17 = (unsigned __int8 *)allocFunc(metaOffseta);\n  pToCodeSegment-\u003emetaData = v17;\n  metaPtr = v17;\n  pToCodeSegment-\u003emetaDataLen = metaOffseta;\n  pThis = pToCodeSegment-\u003enodes;\n  pRuntime = pToCodeSegment-\u003eruntimeMisc;\n  nowFilea = 0;\n  nowLinea = 0;\n  na = 0;\n  i = 0;\n  if ( pToCodeSegment-\u003enodesCount \u003e 0 )\n  {\n    while ( 1 )\n    {\n      v18 = *(_DWORD *)(v5 + 32);\n      if ( *(const char **)v5 == nowFilea )\n      {\n        v19 = *(_DWORD *)(v5 + 4);\n        if ( v19 == nowLinea )\n          goto LABEL_25;\n      }\n      else\n      {\n        v19 = *(_DWORD *)(v5 + 4);\n      }\n      nowFilea = *(const char **)v5;\n      nowLinea = v19;\n      symbols = pToCodeSegment-\u003esymbols;\n      symbols[na].file = *(const char **)v5;\n      symbols[na++].line = nowLinea;\nLABEL_25:\n      pThis-\u003eactionNo = *(_BYTE *)(v5 + 16);\n      pRuntime-\u003eflags = *(_BYTE *)(v5 + 17);\n      pRuntime-\u003esymbolNo = na - 1;\n      pRuntime-\u003eunused = 85;\n      ActionInfo = vm_getActionInfo(*(unsigned __int8 *)(v5 + 16));\n      if ( (ActionInfo-\u003eattrib \u0026 0x80000000) == 0 )\n      {\n        pThis-\u003epar16 = *(_DWORD *)(v5 + 8);\n        pThis-\u003epar8 = *(_DWORD *)(v5 + 12);\nLABEL_21:\n        vm_scratchFree(ActionInfo);\n        ++i;\n        ++pRuntime;\n        ++pThis;\n        v5 = v18;\n        if ( pToCodeSegment-\u003enodesCount \u003c= i )\n          break;\n      }\n      else\n      {\n        v21 = metaPtr - pToCodeSegment-\u003emetaData;\n        if ( v21 + 4 * (unsigned int)ActionInfo-\u003eparameters \u003e 0xFFFFFF )\n        {\n          yyerrors(\"Bad meta offset (0xx%08X), too large (\u003e 0x%08x).\\n\", v21, 0x1000000);\n          yystop(-2);\n        }\n        pThis-\u003epar8 = BYTE2(v21);\n        pThis-\u003epar16 = v21;\n        *(_DWORD *)metaPtr = *(_DWORD *)(v5 + 8);\n        v22 = metaPtr + 4;\n        metaPtr += 4;\n        if ( ActionInfo-\u003eparameters != 2 )\n          goto LABEL_21;\n        *v22 = *(_DWORD *)(v5 + 12);\n        metaPtr = (unsigned __int8 *)(v22 + 1);\n        vm_scratchFree(ActionInfo);\n        ++i;\n        ++pRuntime;\n        ++pThis;\n        v5 = v18;\n        if ( pToCodeSegment-\u003enodesCount \u003c= i )\n          break;\n      }\n    }\n  }\n  if ( !vm_isKeepSymbol() )\n  {\n    vm_scratchFree(ActionInfo);\n    pToCodeSegment-\u003eruntimeMisc = 0;\n    vm_scratchFree(ActionInfo);\n    pToCodeSegment-\u003esymbols = 0;\n    pToCodeSegment-\u003esymbolsCount = 0;\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8089390",
+                     "name":  "vm_scratchAlloc"
+                 },
+                 {
+                     "addr":  "0x8089630",
+                     "name":  "vm_scratchLargeAlloc"
+                 },
+                 {
+                     "addr":  "0x80ff97c",
+                     "name":  "yyerrors"
+                 },
+                 {
+                     "addr":  "0x82aef68",
+                     "name":  "aTooManyInstruc",
+                     "string":  "Too many instruction (%d) in a function (\u003e %d).\n"
+                 },
+                 {
+                     "addr":  "0x80ff758",
+                     "name":  "yystop"
+                 },
+                 {
+                     "addr":  "0x807ecfc",
+                     "name":  "vm_compilingProgram"
+                 },
+                 {
+                     "addr":  "0x80b1258",
+                     "name":  "vm_findOrAddProgramString"
+                 },
+                 {
+                     "addr":  "0x80ff80c",
+                     "name":  "yyerror"
+                 },
+                 {
+                     "addr":  "0x82aef3c",
+                     "name":  "aFailedToAlloca_3",
+                     "string":  "Failed to allocate memory to copy string.\n"
+                 },
+                 {
+                     "addr":  "0x80a369c",
+                     "name":  "vm_getActionInfo"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x82aef9c",
+                     "name":  "aBadMetaOffset0",
+                     "string":  "Bad meta offset (0xx%08X), too large (\u003e 0x%08x).\n"
+                 },
+                 {
+                     "addr":  "0x80b5bd0",
+                     "name":  "vm_isKeepSymbol"
+                 }
+             ]
+}

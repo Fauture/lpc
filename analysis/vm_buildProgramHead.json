@@ -1,0 +1,36 @@
+﻿{
+    "addr":  "0x808651c",
+    "code":  "Vm_FunCall_Context::Vm_Program_Consititution::Vm_Program *__cdecl vm_buildProgramHead(const char *pProgramName)\n{\n  __int16 *Memory; // ebx\n  Vm_FunCall_Context::Vm_Program_Consititution::Vm_Program *result; // eax\n  void *v3; // eax\n  void *v4; // edi\n\n  Memory = (__int16 *)pdb_allocateMemory(0x64u, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x158Du);\n  result = 0;\n  if ( Memory )\n  {\n    memset(Memory, 0, 0x64u);\n    if ( !vm_addFileName((Vm_String_T **)pProgramName, (Vm_String_T **)Memory + 1) )\n    {\n      vm_destructProgramHead((Vm_Program_T *)Memory);\n      return 0;\n    }\n    v3 = pdb_allocateMemory(0x2000u, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x15A5u);\n    *((_DWORD *)Memory + 21) = v3;\n    if ( v3 )\n    {\n      memset(v3, 0, 0x2000u);\n      *((_DWORD *)Memory + 22) = *((_DWORD *)Memory + 21) + 4096;\n      Memory[9] = 4;\n      *((_DWORD *)Memory + 6) = pdb_allocateMemory(\n                                  12 * Memory[9],\n                                  \"VM\",\n                                  \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\",\n                                  0x15B2u);\n      v3 = pdb_allocateMemory(2 * Memory[9], \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x15B4u);\n      v4 = (void *)*((_DWORD *)Memory + 6);\n      *((_DWORD *)Memory + 7) = v3;\n      if ( v4 \u0026\u0026 v3 )\n      {\n        Memory[10] = 1;\n        memset(v4, 0, 0xCu);\n        **((_DWORD **)Memory + 6) = Memory;\n        return (Vm_FunCall_Context::Vm_Program_Consititution::Vm_Program *)Memory;\n      }\n      if ( *((_DWORD *)Memory + 21) )\n        pdb_freeMemory(Memory, (const char *)v3, *((const char **)Memory + 21), (unsigned int)\"VM\");\n    }\n    pdb_freeMemory(Memory, (const char *)v3, (const char *)Memory, (unsigned int)\"VM\");\n    return 0;\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82ab14c",
+                     "name":  "aHomeCcXxxxGame",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_lex.c"
+                 },
+                 {
+                     "addr":  "0x804ba54",
+                     "name":  ".memset"
+                 },
+                 {
+                     "addr":  "0x80862a8",
+                     "name":  "vm_destructProgramHead"
+                 },
+                 {
+                     "addr":  "0x807f5b4",
+                     "name":  "vm_addFileName"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 }
+             ]
+}

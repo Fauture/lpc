@@ -1,0 +1,84 @@
+﻿{
+    "addr":  "0x80b1e90",
+    "code":  "Vm_Object_T *__cdecl vm_loadObject(const char *pInFileName, const unsigned __int8 *content, int contentLen)\n{\n  Vm_String_T *v3; // esi\n  int v4; // eax\n  Vm_Object_T *Object; // edx\n  const char *Program; // edi\n  unsigned int v7; // kr04_4\n  Vm_String_T *SharedString; // eax\n  int *p_nodesCount; // esi\n  Vm_Code_Segment_T_0 *v11; // eax\n  Vm_Program_T *v12; // ebx\n  Vm_Code_Segment_T_0 *v13; // eax\n  Vm_Program_T *v14; // [esp+0h] [ebp-328h]\n  int fd; // [esp+4h] [ebp-324h]\n  const char *builtInFileName; // [esp+8h] [ebp-320h]\n  char *programFileName; // [esp+Ch] [ebp-31Ch]\n  char size[256]; // [esp+10h] [ebp-318h] BYREF\n  char tempName[256]; // [esp+110h] [ebp-218h] BYREF\n  char regularName[280]; // [esp+210h] [ebp-118h] BYREF\n\n  builtInFileName = 0;\n  v4 = vm_deriveFileName(pInFileName, \".c\", regularName, 256);\n  Object = 0;\n  if ( !v4 )\n    return Object;\n  v7 = strlen(regularName) + 1;\n  Program = \u0026regularName[v7];\n  SharedString = vm_findSharedString(regularName, v7 - 1);\n  Object = vm_lookupObject(v3, (unsigned int)SharedString);\n  if ( Object )\n    return Object;\n  programFileName = regularName;\n  if ( content )\n  {\n    strcpy(tempName, \"/v/::_load_object_::content\");\n    Program = \u0026tempName[28];\n    programFileName = tempName;\n    builtInFileName = \u0026tempName[3];\n    vm_unlinkBuiltInFile(\u0026tempName[28]);\n    vm_registerNewBuiltInFile(\u0026tempName[3], (const char *)content, contentLen, 0);\n  }\n  p_nodesCount = (int *)size;\n  if ( !vm_generateBinFileName(regularName, programFileName, (int)size)\n    || vm_compareFileTime(programFileName, size) \u003e= 0\n    || (v13 = (Vm_Code_Segment_T_0 *)vm_openLocalFile(size, 1), fd = (int)v13, (int)v13 \u003c= 0)\n    || (Program = (const char *)vm_createProgram(regularName, v13, size), vm_close(fd), !Program) )\n  {\n    v11 = (Vm_Code_Segment_T_0 *)vm_openLocalFile(programFileName, 1);\n    p_nodesCount = \u0026v11-\u003enodesCount;\n    if ( (int)v11 \u003c 0 )\n    {\n      vm_errprintf(\"Can not open script file \\\"%s\\\" to execute.\\n\", programFileName);\n      v12 = 0;\n      goto LABEL_10;\n    }\n    Program = (const char *)vm_createProgram(regularName, v11, programFileName);\n    vm_close((int)p_nodesCount);\n  }\n  v12 = (Vm_Program_T *)Program;\nLABEL_10:\n  if ( builtInFileName )\n    vm_unlinkBuiltInFile(Program);\n  Object = 0;\n  if ( v12 )\n  {\n    Object = vm_allocateObject(v14, (unsigned int)p_nodesCount);\n    if ( !Object )\n    {\n      vm_freeCodeSegment(v12, (Vm_Code_Segment_T_0 *)v12);\n      if ( vm_gatheringCallStackInfo )\n        vm_enterPPWholeCriticalSection();\n      vm_destructProgramHead(v12);\n      if ( vm_gatheringCallStackInfo )\n        vm_leavePPWholeCriticalSection();\n      return 0;\n    }\n  }\n  return Object;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80bda64",
+                     "name":  "vm_deriveFileName"
+                 },
+                 {
+                     "addr":  "0x82a3487",
+                     "name":  "aVAuth1980C",
+                     "string":  "/v/auth_1980.c"
+                 },
+                 {
+                     "addr":  "0x80bd2b0",
+                     "name":  "vm_findSharedString"
+                 },
+                 {
+                     "addr":  "0x80b0f2c",
+                     "name":  "vm_lookupObject"
+                 },
+                 {
+                     "addr":  "0x80b0648",
+                     "name":  "vm_unlinkBuiltInFile"
+                 },
+                 {
+                     "addr":  "0x80b0590",
+                     "name":  "vm_registerNewBuiltInFile"
+                 },
+                 {
+                     "addr":  "0x8097d58",
+                     "name":  "vm_openLocalFile"
+                 },
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82b0fd4",
+                     "name":  "aCanNotOpenScri",
+                     "string":  "Can not open script file \"%s\" to execute.\n"
+                 },
+                 {
+                     "addr":  "0x80b13f4",
+                     "name":  "vm_createProgram"
+                 },
+                 {
+                     "addr":  "0x80a0504",
+                     "name":  "vm_close"
+                 },
+                 {
+                     "addr":  "0x80bdc10",
+                     "name":  "vm_generateBinFileName"
+                 },
+                 {
+                     "addr":  "0x80b880c",
+                     "name":  "vm_compareFileTime"
+                 },
+                 {
+                     "addr":  "0x80b1d08",
+                     "name":  "vm_allocateObject"
+                 },
+                 {
+                     "addr":  "0x80965a4",
+                     "name":  "vm_freeCodeSegment"
+                 },
+                 {
+                     "addr":  "0x80bb0ac",
+                     "name":  "vm_enterPPWholeCriticalSection"
+                 },
+                 {
+                     "addr":  "0x860ae64",
+                     "name":  "vm_gatheringCallStackInfo"
+                 },
+                 {
+                     "addr":  "0x80862a8",
+                     "name":  "vm_destructProgramHead"
+                 },
+                 {
+                     "addr":  "0x80bb0c0",
+                     "name":  "vm_leavePPWholeCriticalSection"
+                 }
+             ]
+}

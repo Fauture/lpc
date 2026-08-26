@@ -1,0 +1,139 @@
+﻿{
+    "addr":  "0x80b3b58",
+    "code":  "void __usercall vm_rpcListenSocketCallback(Vm_Program_T *a1@\u003cebx\u003e, sockaddr *rdwr, int pInfo)\n{\n  int v4; // esi\n  Vm_Rpc_Cmd_T *v5; // edx\n  Vm_Rpc_Cmd_T *v6; // ebx\n  int v7; // eax\n  unsigned int v8; // eax\n  bool v9; // zf\n  int v10; // eax\n  int v11; // eax\n  unsigned int v12; // kr10_4\n  unsigned int v13; // eax\n  int v14; // eax\n  __pid_t v15; // eax\n  __pid_t v16; // edi\n  int v17; // esi\n  int v18; // ecx\n  Vm_Rpc_Cmd_T *v19; // eax\n  int v20; // ebx\n  int cfd; // [esp+4h] [ebp-134h]\n  unsigned int length; // [esp+Ch] [ebp-12Ch] BYREF\n  sockaddr_in addr; // [esp+10h] [ebp-128h] BYREF\n  unsigned __int8 callBuf[256]; // [esp+20h] [ebp-118h] BYREF\n\n  if ( rdwr != (sockaddr *)rpcFd )\n  {\n    vm_removeSocketFromScan((int)rdwr);\n    return;\n  }\n  if ( (pInfo \u0026 1) != 0 )\n  {\n    vm_stdprintf(\"RPC client try to connect.\\n\");\n    v4 = 1;\n    if ( rpcClientNum \u003e= 1 )\n    {\n      v5 = rpcCmd + 1;\n      do\n      {\n        if ( v4 \u003c= 0 )\n          break;\n        if ( v4 \u003e rpcClientNum )\n          break;\n        if ( v5 == (Vm_Rpc_Cmd_T *)32796 )\n          break;\n        if ( v5[-1].clientFd == -1 )\n          break;\n        ++v4;\n        ++v5;\n      }\n      while ( v4 \u003c= rpcClientNum );\n    }\n    length = 16;\n    cfd = vm_acceptSocket(rdwr, (sockaddr *)\u0026addr, (int *)\u0026length);\n    if ( cfd \u003c 0 )\n    {\n      vm_stdprintf(\"Accept RPC client is failed.\\n\");\n      return;\n    }\n    if ( !vm_confForkRpc || rpcIsChildProcess )\n      goto LABEL_15;\n    v15 = fork();\n    v16 = v15;\n    if ( v15 == -1 )\n      exit(0);\n    if ( !v15 )\n    {\n      rpcIsChildProcess = 1;\n      vm_listenForTelnet(0, v4, (int *)0x15B3);\n      vm_closeAllTelnetClients();\n      if ( rpcFd != -1 )\n      {\n        vm_removeSocketFromScan(rpcFd);\n        vm_closeSocket(rpcFd);\n        rpcFd = -1;\n      }\n      rpcPort = 0;\n      vm_apply(a1, 0, 0, 0, 0, \"rpc_fork\", 0);\nLABEL_15:\n      if ( v4 \u003e rpcClientNum )\n      {\n        vm_stdprintf(\"Too many rpc clients (%d) is connected.\\n\", rpcClientNum);\n        vm_closeSocket(cfd);\n      }\n      else\n      {\n        v6 = \u0026rpcCmd[v4 - 1];\n        v6-\u003eclientFd = cfd;\n        v6-\u003erelayFd = -1;\n        v6-\u003eoperFailed = 0;\n        v6-\u003ecmdState = 18;\n        HIWORD(v7) = HIWORD(addr.sin_addr.s_addr);\n        LOWORD(v7) = __ROR2__(addr.sin_addr.s_addr, 8);\n        v8 = __ROR4__(v7, 16);\n        LOWORD(v8) = __ROR2__(v8, 8);\n        v6-\u003eremoteAddr = v8;\n        v9 = vm_confRpcNeedAuth == 0;\n        v6-\u003eattrib = 0;\n        v6-\u003elastCmd = 0;\n        if ( !v9 )\n          v6-\u003eattrib = 1;\n        strcpy((char *)callBuf, \"3333\");\n        callBuf[5] = 0;\n        *(_WORD *)\u0026callBuf[6] = 0;\n        *(_WORD *)\u0026callBuf[8] = 0;\n        *(_WORD *)\u0026callBuf[10] = 768;\n        callBuf[16] = 1;\n        callBuf[17] = 0;\n        *(_WORD *)\u0026callBuf[18] = 1024;\n        *(_DWORD *)\u0026callBuf[20] = 0x20000;\n        callBuf[24] = 1;\n        callBuf[25] = 0;\n        *(_WORD *)\u0026callBuf[26] = 1024;\n        callBuf[32] = 2;\n        callBuf[33] = 0;\n        HIWORD(v10) = HIWORD(v4);\n        LOWORD(v10) = __ROR2__(v4, 8);\n        v11 = __ROR4__(v10, 16);\n        LOWORD(v11) = __ROR2__(v11, 8);\n        *(_DWORD *)\u0026callBuf[28] = v11;\n        *(_WORD *)\u0026callBuf[34] = __ROR2__(strlen(\"RPC server 2.0\") + 1, 8);\n        if ( (int)(220 - (strlen(\"RPC server 2.0\") + 1)) \u003c 0 )\n          vm_error(\"Arguments is too large to do RPC call.\\n\");\n        memcpy(\u0026callBuf[36], \"RPC server 2.0\", strlen(\"RPC server 2.0\") + 1);\n        v12 = strlen(\"RPC server 2.0\") + 1;\n        vm_addSocketToScan(\n          0,\n          (Socket_Scanner_T *)v6,\n          cfd,\n          1u,\n          (Scanner_Callback_T)v6,\n          (Scanner_Callback_T)vm_rpcSocketCallback);\n        length = \u0026callBuf[v12 + 36] - callBuf;\n        v13 = length - 16;\n        LOWORD(v13) = __ROR2__(length - 16, 8);\n        v14 = __ROR4__(v13, 16);\n        LOWORD(v14) = __ROR2__(v14, 8);\n        *(_DWORD *)\u0026callBuf[12] = v14;\n        if ( vm_writeDataToSocket(cfd, callBuf, (int *)\u0026length, 0) == 128 )\n        {\n          vm_stdprintf(\"Failed to send rpc_init_client, close client %d.\\n\", v4);\n          vm_closeRpcClient(v4 + 1);\n        }\n      }\n      return;\n    }\n    v17 = 0;\n    v18 = rpcClientNum;\n    if ( rpcClientNum \u003e 0 )\n    {\n      v19 = rpcCmd;\n      v20 = 0;\n      do\n      {\n        if ( v19[v20].clientFd != -1 )\n        {\n          vm_stdprintf(\"RPC connection %d is closed.\\n\", v17);\n          vm_removeSocketFromScan(rpcCmd[v20].clientFd);\n          vm_closeSocket(rpcCmd[v20].clientFd);\n          v19 = rpcCmd;\n          rpcCmd[v20].clientFd = -1;\n          v18 = rpcClientNum;\n        }\n        ++v17;\n        ++v20;\n      }\n      while ( v17 \u003c v18 );\n    }\n    vm_stdprintf(\"Child process(%d) is created for incoming RPC.\\n\", v16);\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80ae7d4",
+                     "name":  "vm_removeSocketFromScan"
+                 },
+                 {
+                     "addr":  "0x83cf748",
+                     "name":  "_rpcFd"
+                 },
+                 {
+                     "addr":  "0x8097e34",
+                     "name":  "vm_stdprintf"
+                 },
+                 {
+                     "addr":  "0x82b10bf",
+                     "name":  "aRpcClientTryTo",
+                     "string":  "RPC client try to connect.\n"
+                 },
+                 {
+                     "addr":  "0x8609ac0",
+                     "name":  "_rpcCmd"
+                 },
+                 {
+                     "addr":  "0x8609ac4",
+                     "name":  "_rpcClientNum"
+                 },
+                 {
+                     "addr":  "0x80aea50",
+                     "name":  "vm_acceptSocket"
+                 },
+                 {
+                     "addr":  "0x82b10ea",
+                     "name":  "aAcceptRpcClien",
+                     "string":  "Accept RPC client is failed.\n"
+                 },
+                 {
+                     "addr":  "0x8609ad4",
+                     "name":  "vm_confForkRpc"
+                 },
+                 {
+                     "addr":  "0x8609ad0",
+                     "name":  "_rpcIsChildProcess"
+                 },
+                 {
+                     "addr":  "0x804b0c4",
+                     "name":  ".fork"
+                 },
+                 {
+                     "addr":  "0x804b9c4",
+                     "name":  ".exit"
+                 },
+                 {
+                     "addr":  "0x80a4830",
+                     "name":  "vm_listenForTelnet"
+                 },
+                 {
+                     "addr":  "0x80a4edc",
+                     "name":  "vm_closeAllTelnetClients"
+                 },
+                 {
+                     "addr":  "0x80ae6c0",
+                     "name":  "vm_closeSocket"
+                 },
+                 {
+                     "addr":  "0x8609acc",
+                     "name":  "_rpcPort"
+                 },
+                 {
+                     "addr":  "0x809a328",
+                     "name":  "vm_apply"
+                 },
+                 {
+                     "addr":  "0x82b1108",
+                     "name":  "aRpcFork",
+                     "string":  "rpc_fork"
+                 },
+                 {
+                     "addr":  "0x82b12b8",
+                     "name":  "aTooManyRpcClie",
+                     "string":  "Too many rpc clients (%d) is connected.\n"
+                 },
+                 {
+                     "addr":  "0x83cf74c",
+                     "name":  "vm_confRpcNeedAuth"
+                 },
+                 {
+                     "addr":  "0x82b10db",
+                     "name":  "aRpcServer20",
+                     "string":  "RPC server 2.0"
+                 },
+                 {
+                     "addr":  "0x8097b24",
+                     "name":  "vm_error"
+                 },
+                 {
+                     "addr":  "0x82b12e4",
+                     "name":  "aArgumentsIsToo",
+                     "string":  "Arguments is too large to do RPC call.\n"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x80ae8d8",
+                     "name":  "vm_addSocketToScan"
+                 },
+                 {
+                     "addr":  "0x80b3ef8",
+                     "name":  "vm_rpcSocketCallback"
+                 },
+                 {
+                     "addr":  "0x82b1254",
+                     "name":  "aFailedToSendRp_0",
+                     "string":  "Failed to send rpc_init_client, close client %d.\n"
+                 },
+                 {
+                     "addr":  "0x80b2f54",
+                     "name":  "vm_closeRpcClient"
+                 },
+                 {
+                     "addr":  "0x80aed98",
+                     "name":  "vm_writeDataToSocket"
+                 },
+                 {
+                     "addr":  "0x82b107e",
+                     "name":  "aRpcConnectionD",
+                     "string":  "RPC connection %d is closed.\n"
+                 },
+                 {
+                     "addr":  "0x82b1288",
+                     "name":  "aChildProcessDI",
+                     "string":  "Child process(%d) is created for incoming RPC.\n"
+                 }
+             ]
+}

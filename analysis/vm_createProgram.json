@@ -1,0 +1,73 @@
+﻿{
+    "addr":  "0x80b13f4",
+    "code":  "Vm_Program_T *__usercall vm_createProgram@\u003ceax\u003e(\n        const char *pProgramName@\u003ceax\u003e,\n        Vm_Code_Segment_T_0 *a2@\u003cedx\u003e,\n        char *a3)\n{\n  Vm_Program_T *nodes; // edi\n  Vm_Program_T *v7; // esi\n  int v8; // eax\n  Vm_Fun *ProgramFunctionByCStr; // eax\n  Vm_Fun *v11; // ebx\n  __int16 v12; // ax\n  Vm_Fun *v13; // eax\n  Vm_Fun *v14; // ebx\n  int v15; // [esp+0h] [ebp-24h]\n  Vm_Scratchpad_Info_T *pScratchpad; // [esp+14h] [ebp-10h] BYREF\n\n  nodes = (Vm_Program_T *)a3;\n  pScratchpad = 0;\n  v7 = (Vm_Program_T *)vm_buildProgramHead(pProgramName);\n  if ( v7 )\n  {\n    v8 = vm_compile(a2, a3, v7, \u0026pScratchpad);\n    if ( v8 )\n    {\n      vm_errprintf(\"Failed to compile \\\"%s\\\", errCode = %d.\\n\", a3, v8);\nLABEL_4:\n      vm_destructProgramHead(v7);\n      goto LABEL_5;\n    }\n    ProgramFunctionByCStr = vm_findProgramFunctionByCStr(v7, (const char *)a2, (int)v7, (Vm_Index_T *)\"create\");\n    v11 = ProgramFunctionByCStr;\n    if ( ProgramFunctionByCStr )\n    {\n      v12 = ProgramFunctionByCStr-\u003eattrib | 1;\n      v11-\u003eattrib = v12;\n      if ( (v12 \u0026 4) == 0 )\n      {\n        vm_stdprintf(\"Warning: Construction function \\\"create\\\" must be a private function.\\n\");\n        v11-\u003eattrib |= 4u;\n      }\n      nodes = (Vm_Program_T *)v11-\u003ecodeSegment.nodes;\n      if ( !nodes )\n      {\n        vm_errprintf(\"Error: Construction function is not implemented.\\n\", v15, 1, \u0026v7-\u003ecreateFunOffset);\n        goto LABEL_4;\n      }\n    }\n    else\n    {\n      v7-\u003ecreateFunOffset = -1;\n    }\n    v13 = vm_findProgramFunctionByCStr(v7, (const char *)v11, (int)v7, (Vm_Index_T *)\"destruct\");\n    v14 = v13;\n    if ( v13 )\n    {\n      if ( (v13-\u003eattrib \u0026 4) == 0 )\n      {\n        vm_stdprintf(\"Warning: destruction function \\\"destruct\\\" must be a private function.\\n\");\n        v14-\u003eattrib |= 4u;\n      }\n      if ( !v14-\u003ecodeSegment.nodes )\n      {\n        vm_errprintf(\"Error: Destruction function is not implemented.\\n\");\n        goto LABEL_4;\n      }\n    }\n    else\n    {\n      v7-\u003edestructFunOffset = -1;\n    }\n    v7-\u003eref = 0;\n    vm_applyBreakpointsOnProgram(nodes);\n    if ( !pScratchpad )\n      return v7;\n    goto LABEL_16;\n  }\nLABEL_5:\n  v7 = 0;\n  if ( !pScratchpad )\n    return v7;\nLABEL_16:\n  vm_destructScratch((Vm_Scratchpad_Info_T *)v7);\n  return v7;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x808651c",
+                     "name":  "vm_buildProgramHead"
+                 },
+                 {
+                     "addr":  "0x80985e0",
+                     "name":  "vm_compile"
+                 },
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82b0e7c",
+                     "name":  "aFailedToCompil",
+                     "string":  "Failed to compile \"%s\", errCode = %d.\n"
+                 },
+                 {
+                     "addr":  "0x80862a8",
+                     "name":  "vm_destructProgramHead"
+                 },
+                 {
+                     "addr":  "0x8086d68",
+                     "name":  "vm_findProgramFunctionByCStr"
+                 },
+                 {
+                     "addr":  "0x82d0dd6",
+                     "name":  "aDbCreate",
+                     "string":  "db_create"
+                 },
+                 {
+                     "addr":  "0x8097e34",
+                     "name":  "vm_stdprintf"
+                 },
+                 {
+                     "addr":  "0x82b0ea4",
+                     "name":  "aWarningConstru",
+                     "string":  "Warning: Construction function \"create\" must be a private function.\n"
+                 },
+                 {
+                     "addr":  "0x82b0eec",
+                     "name":  "aErrorConstruct",
+                     "string":  "Error: Construction function is not implemented.\n"
+                 },
+                 {
+                     "addr":  "0x82b0fff",
+                     "name":  "aDestruct",
+                     "string":  "destruct"
+                 },
+                 {
+                     "addr":  "0x82b0f20",
+                     "name":  "aWarningDestruc",
+                     "string":  "Warning: destruction function \"destruct\" must be a private function.\n"
+                 },
+                 {
+                     "addr":  "0x82b0f68",
+                     "name":  "aErrorDestructi",
+                     "string":  "Error: Destruction function is not implemented.\n"
+                 },
+                 {
+                     "addr":  "0x80c3f1c",
+                     "name":  "vm_applyBreakpointsOnProgram"
+                 },
+                 {
+                     "addr":  "0x8089094",
+                     "name":  "vm_destructScratch"
+                 }
+             ]
+}

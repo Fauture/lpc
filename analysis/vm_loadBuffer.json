@@ -1,0 +1,26 @@
+﻿{
+    "addr":  "0x80b8a70",
+    "code":  "int __usercall vm_loadBuffer@\u003ceax\u003e(void *a1@\u003cebx\u003e, Vm_Binary_Buffer_T *ppBuf, _DWORD *ppBufa, signed int n)\n{\n  char *v6; // eax\n  int len; // eax\n  char *buf; // [esp+14h] [ebp-10h]\n\n  v6 = (char *)vm_scratchLargeAlloc((unsigned int)ppBuf);\n  buf = v6;\n  if ( (unsigned int)n \u003e 0xFA0 )\n  {\n    memcpy(v6, ppBuf-\u003ep, ppBuf-\u003elen);\n    len = ppBuf-\u003elen;\n    a1 = (void *)(n - len);\n    ppBuf-\u003ep = ppBuf-\u003edata;\n    ppBuf-\u003elen = 0;\n    if ( (void *)vm_read(\u0026buf[len], (unsigned int)a1, (int)a1) == a1 )\n      goto LABEL_4;\nLABEL_10:\n    vm_scratchFree(a1);\n    return 0;\n  }\n  if ( ppBuf-\u003elen \u003c n )\n  {\n    vm_fetchBinaryBufferData(ppBuf);\n    if ( ppBuf-\u003elen \u003c n )\n      goto LABEL_10;\n  }\n  memcpy(buf, ppBuf-\u003ep, n);\n  ppBuf-\u003ep += n;\n  ppBuf-\u003elen -= n;\nLABEL_4:\n  if ( ppBufa )\n    *ppBufa = buf;\n  else\n    vm_scratchFree(a1);\n  return 1;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8089630",
+                     "name":  "vm_scratchLargeAlloc"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x80a110c",
+                     "name":  "vm_read"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x80b88a0",
+                     "name":  "vm_fetchBinaryBufferData"
+                 }
+             ]
+}

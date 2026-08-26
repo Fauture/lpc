@@ -1,0 +1,109 @@
+﻿{
+    "addr":  "0x808729c",
+    "code":  "int __cdecl vm_loadInheritPrograms(Vm_Binary_Buffer_T *pInput)\n{\n  Vm_Program_T *v1; // ebx\n  int v2; // edx\n  __int16 v4; // dx\n  Vm_Program_Consititution_T *v5; // eax\n  int maxConsititutionNo; // ecx\n  Vm_Index_T *v7; // eax\n  int v8; // esi\n  Vm_Binary_Buffer_T *v9; // edi\n  __int16 v10; // dx\n  int v11; // esi\n  Vm_Program_Consititution_T *pConsititutions; // eax\n  int v13; // ecx\n  int Comment; // eax\n  int v15; // [esp-Ch] [ebp-24h]\n  int v16; // [esp-Ch] [ebp-24h]\n  int v17; // [esp-Ch] [ebp-24h]\n  Vm_String_T **p_strName; // [esp-Ch] [ebp-24h]\n  int v19; // [esp-Ch] [ebp-24h]\n  Vm_String_T *strName; // [esp+0h] [ebp-18h] BYREF\n  char *name; // [esp+4h] [ebp-14h] BYREF\n  int count; // [esp+8h] [ebp-10h] BYREF\n\n  if ( vm_pCurrentProgram )\n    v1 = vm_pCurrentProgram;\n  else\n    v1 = vm_pGlobalProgram;\n  v2 = 1;\n  if ( v1 != vm_pGlobalProgram )\n  {\n    if ( vm_loadComment(pInput, \"INHERITS\") )\n    {\n      if ( vm_loadVmIndex((int)pInput, (Vm_Binary_Buffer_T *)\u0026v1-\u003emaxConsititutionNo)\n        \u0026\u0026 (v4 = v1-\u003emaxConsititutionNo, v4 \u003e 0) )\n      {\n        v5 = (Vm_Program_Consititution_T *)pdb_reallocateMemory(\n                                             v1,\n                                             (unsigned int)v1-\u003epConsititutions,\n                                             (const char *)(12 * v4),\n                                             \"VM\",\n                                             (unsigned int)\"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\");\n        if ( v5 )\n        {\n          maxConsititutionNo = v1-\u003emaxConsititutionNo;\n          v1-\u003econsititutionBufferSize = maxConsititutionNo;\n          v1-\u003epConsititutions = v5;\n          memset(\u0026v5[1], 0, 4 * ((unsigned int)(12 * maxConsititutionNo - 12) \u003e\u003e 2));\n          v7 = (Vm_Index_T *)pdb_reallocateMemory(\n                               v1,\n                               (unsigned int)v1-\u003einitOrderList,\n                               (const char *)(2 * v1-\u003emaxConsititutionNo),\n                               \"VM\",\n                               (unsigned int)\"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\");\n          if ( v7 )\n          {\n            v1-\u003einitOrderList = v7;\n            memset(v7 + 1, 0, 2 * v1-\u003emaxConsititutionNo - 2);\n          }\n        }\n        if ( vm_loadNumber32((int)pInput, (Vm_Binary_Buffer_T *)\u0026count) \u0026\u0026 count \u003e= 0 )\n        {\n          v8 = 0;\n          if ( count \u003c= 0 )\n          {\nLABEL_21:\n            v10 = v1-\u003emaxConsititutionNo;\n            v11 = 0;\n            if ( v10 \u003c= 0 )\n            {\nLABEL_25:\n              Comment = vm_loadComment(pInput, \"CONSTUCTION\");\n              v2 = 1;\n              if ( Comment )\n                return v2;\n              vm_errprintf(\"Load program failed: comment \\\"CONSTUCTION\\\" mismatched.\\n\", v19);\n            }\n            else\n            {\n              pConsititutions = v1-\u003epConsititutions;\n              v13 = 0;\n              while ( pConsititutions-\u003epProgram )\n              {\n                ++v11;\n                ++v13;\n                ++pConsititutions;\n                if ( v10 \u003c= (__int16)v11 )\n                  goto LABEL_25;\n              }\n              vm_errprintf(\"Load program failed: got empty entry (%d) of consititution table.\\n\", v13);\n            }\n          }\n          else\n          {\n            while ( 1 )\n            {\n              if ( !vm_loadTempString(pInput, \u0026name)\n                || (p_strName = \u0026strName,\n                    v9 = (Vm_Binary_Buffer_T *)vm_addFileName((const char *)v1, (Vm_String_T **)name),\n                    vm_scratchFree(v1),\n                    !v9) )\n              {\n                vm_errprintf(\"Load program failed: read inherit program\u0027s name error.\\n\", p_strName);\n                return 0;\n              }\n              if ( !vm_loadBinaryInherit(v9, (const char *)v1) )\n                break;\n              if ( (__int16)++v8 \u003e= count )\n                goto LABEL_21;\n            }\n            vm_errprintf(\"Load program failed: inherit program error.\\n\", v9);\n          }\n        }\n        else\n        {\n          vm_errprintf(\"Load program failed: read count of inherits error.\\n\", v17);\n        }\n      }\n      else\n      {\n        vm_errprintf(\"Load program failed: read count of consititution no error.\\n\", v16);\n      }\n    }\n    else\n    {\n      vm_errprintf(\"Load program failed: comment \\\"INHERITS\\\" mismatched.\\n\", v15);\n    }\n    return 0;\n  }\n  return v2;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x847aac0",
+                     "name":  "vm_pCurrentProgram"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x80cf588",
+                     "name":  "pdb_reallocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82ab14c",
+                     "name":  "aHomeCcXxxxGame",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_lex.c"
+                 },
+                 {
+                     "addr":  "0x804ba54",
+                     "name":  ".memset"
+                 },
+                 {
+                     "addr":  "0x80b8800",
+                     "name":  "vm_loadComment"
+                 },
+                 {
+                     "addr":  "0x82ab0c3",
+                     "name":  "aConstuction",
+                     "string":  "CONSTUCTION"
+                 },
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82ab8f0",
+                     "name":  "aLoadProgramFai_0",
+                     "string":  "Load program failed: comment \"CONSTUCTION\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab998",
+                     "name":  "aLoadProgramFai_3",
+                     "string":  "Load program failed: got empty entry (%d) of consititution table.\n"
+                 },
+                 {
+                     "addr":  "0x82ab9dc",
+                     "name":  "aLoadProgramFai_4",
+                     "string":  "Load program failed: read inherit program\u0027s name error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8c4c",
+                     "name":  "vm_loadTempString"
+                 },
+                 {
+                     "addr":  "0x807f5b4",
+                     "name":  "vm_addFileName"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x80a2b58",
+                     "name":  "vm_loadBinaryInherit"
+                 },
+                 {
+                     "addr":  "0x82aba18",
+                     "name":  "aLoadProgramFai_5",
+                     "string":  "Load program failed: inherit program error.\n"
+                 },
+                 {
+                     "addr":  "0x82ab964",
+                     "name":  "aLoadProgramFai_2",
+                     "string":  "Load program failed: read count of inherits error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8bf4",
+                     "name":  "vm_loadNumber32"
+                 },
+                 {
+                     "addr":  "0x82ab928",
+                     "name":  "aLoadProgramFai_1",
+                     "string":  "Load program failed: read count of consititution no error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8b44",
+                     "name":  "vm_loadVmIndex"
+                 },
+                 {
+                     "addr":  "0x82ab8b8",
+                     "name":  "aLoadProgramFai",
+                     "string":  "Load program failed: comment \"INHERITS\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab0ba",
+                     "name":  "comment",
+                     "string":  "INHERITS"
+                 }
+             ]
+}

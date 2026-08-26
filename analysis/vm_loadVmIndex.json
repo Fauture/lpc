@@ -1,0 +1,10 @@
+﻿{
+    "addr":  "0x80b8c10",
+    "code":  "int __cdecl vm_loadNumber32(int a1, Vm_Binary_Buffer_T *a2)\n{\n  unsigned int v4; // edx\n  int *v5; // eax\n  int v6; // ecx\n  int result; // eax\n\n  v4 = *(_DWORD *)(a1 + 8);\n  if ( v4 \u003e 3 || (vm_fetchBinaryBufferData(a1), v4 = *(_DWORD *)(a1 + 8), result = 0, v4 \u003e 3) )\n  {\n    v5 = *(int **)(a1 + 4);\n    v6 = *v5;\n    *(_DWORD *)(a1 + 4) = v5 + 1;\n    *(_DWORD *)(a1 + 8) = v4 - 4;\n    if ( a2 )\n      a2-\u003efd = v6;\n    return 1;\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80b88a0",
+                     "name":  "vm_fetchBinaryBufferData"
+                 }
+             ]
+}

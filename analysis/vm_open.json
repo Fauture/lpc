@@ -1,0 +1,123 @@
+﻿{
+    "addr":  "0x80a1530",
+    "code":  "int __cdecl vm_open(const char *name, pthread_mutex_t *mutexId)\n{\n  __int16 v3; // bx\n  int Mutex; // eax\n  int v5; // edx\n  int v6; // edx\n  int v7; // eax\n  char v8; // cc\n  bool v10; // zf\n  const char *v11; // edi\n  int v12; // ecx\n  const char *v13; // esi\n  int v14; // eax\n  const char *v15; // edi\n  char *v16; // esi\n  char *v17; // eax\n  size_t v18; // esi\n  const char *v19; // eax\n  int v20; // ebx\n  FILE *v21; // eax\n  Vm_Io_T *v22; // ebx\n  const char *logFileName; // eax\n  void (__cdecl *destructTransFunc)(Vm_Io_T *, void *); // eax\n  Vm_Io_T *pIo; // [esp+14h] [ebp-A0h]\n  int fd; // [esp+18h] [ebp-9Ch]\n  char fsFile[152]; // [esp+1Ch] [ebp-98h] BYREF\n\n  v3 = (__int16)mutexId;\n  Mutex = vm_getMutex(mutexId);\n  v5 = -9;\n  if ( Mutex )\n  {\n    v6 = 1;\n    v7 = 140526464;\n    while ( *(_WORD *)(v7 + 4) )\n    {\n      ++v6;\n      v7 += 96;\n      if ( v6 \u003e 128 )\n        goto LABEL_6;\n    }\n    *(_DWORD *)v7 = v6;\n    fd = v6;\n    v8 = (v6 - 128 \u003c 0) ^ __OFADD__(-128, v6) | (v6 == 128);\n    v6 -= 128;\n    pIo = (Vm_Io_T *)v7;\n    if ( !v8 )\n    {\nLABEL_6:\n      fd = -2;\n      goto LABEL_7;\n    }\n    if ( !strcmp(name, \"#stdin\") )\n    {\n      if ( (unsigned int)mutexId \u003c= 1 )\n      {\n        v6 = (int)stdin;\n        *(_WORD *)(v7 + 4) = 2;\n        *(_WORD *)(v7 + 6) = 1;\n        *(_DWORD *)(v7 + 12) = 1;\n        *(_DWORD *)(v7 + 24) = v6;\n      }\n      else\n      {\n        fd = -5;\n      }\n      goto LABEL_7;\n    }\n    if ( strcmp(name, \"#console\") )\n    {\n      if ( !strcmp(name, \"#stdout\") )\n      {\n        if ( mutexId \u0026\u0026 ((unsigned __int8)mutexId \u0026 1) != 0 )\n        {\n          fd = -4;\n        }\n        else\n        {\n          v6 = (int)stdout;\n          *(_WORD *)(v7 + 4) = 3;\n          *(_WORD *)(v7 + 6) = (_WORD)mutexId;\n          *(_DWORD *)(v7 + 12) = 1;\n          *(_DWORD *)(v7 + 24) = v6;\n        }\n        goto LABEL_7;\n      }\n      v10 = mutexId == 0;\n      v11 = \"/v/\";\n      v12 = 3;\n      v13 = name;\n      if ( !mutexId )\n        v3 = 7;\n      do\n      {\n        if ( !v12 )\n          break;\n        v10 = *v13++ == *v11++;\n        --v12;\n      }\n      while ( v10 );\n      if ( v10 )\n      {\n        v14 = vm_builtInFileOpen(v11);\n      }\n      else if ( strstr(name, \".pak/\") )\n      {\n        v14 = vm_packedFsFileOpen(name);\n      }\n      else\n      {\n        if ( !strstr(name, \".dbfs/\") )\n        {\n          v10 = strcmp(name, \"#user\") == 0;\n          LOBYTE(v6) = !v10;\n          if ( v10 )\n          {\n            pIo-\u003etype = 15;\n            pIo-\u003eattrib = v3;\n            pIo-\u003eopened = 1;\n            memset(\u0026pIo-\u003ed, 0, sizeof(pIo-\u003ed));\n          }\n          else\n          {\n            if ( (v3 \u0026 8) != 0 )\n            {\n              v15 = \"ab\";\n              LOBYTE(v3) = v3 | 2;\n            }\n            else\n            {\n              v15 = (const char *)\u0026pCatalog;\n              if ( (v3 \u0026 3) != 3 )\n              {\n                v15 = (const char *)\u0026stru_82A92B4;\n                if ( (v3 \u0026 1) == 0 )\n                  v15 = \u0026stru_82A92B4.name[6];\n              }\n            }\n            v16 = strchr(name, 33);\n            if ( v16 )\n            {\n              while ( 1 )\n              {\n                v17 = strchr(v16 + 1, 33);\n                if ( !v17 )\n                  break;\n                v16 = v17;\n              }\n              v18 = v16 - name;\n              if ( v18 \u003c= 0x7F )\n              {\n                memcpy(fsFile, name, v18);\n                fsFile[v18] = 0;\n                v19 = (const char *)vm_open(fsFile, v3 \u0026 2 | 1);\n                v20 = (int)v19;\n                if ( (int)v19 \u003c= 0 )\n                {\n                  fd = (int)v19;\n                }\n                else\n                {\n                  fd = vm_openUFile(v18, v19);\n                  if ( fd \u003c= 0 )\n                    vm_close(v20);\n                }\n              }\n              else\n              {\n                fd = -7;\n              }\n              goto LABEL_7;\n            }\n            v21 = fopen(name, v15);\n            pIo-\u003ed.uio.seekFunc = (Vm_Io_Seek_Instance_T)v21;\n            if ( v21 )\n            {\n              v22 = pIo;\n            }\n            else\n            {\n              if ( (v3 \u0026 3) == 3 )\n                pIo-\u003ed.uio.seekFunc = (Vm_Io_Seek_Instance_T)fopen(name, \u0026stru_82A92B4.name[6]);\n              v22 = pIo;\n              if ( !pIo-\u003ed.uio.seekFunc )\n              {\n                if ( !pIo-\u003ehold )\n                {\n                  logFileName = pIo-\u003elogFileName;\n                  if ( logFileName )\n                  {\n                    pdb_freeMemory(pIo, logFileName, pIo-\u003elogFileName, (unsigned int)\"VM\");\n                    pIo-\u003elogFileName = 0;\n                  }\n                  destructTransFunc = pIo-\u003eh.hooks.destructTransFunc;\n                  if ( destructTransFunc )\n                  {\n                    destructTransFunc(pIo, pIo-\u003eh.hooks.pCookie);\n                    memset(\u0026pIo-\u003eh, 0, sizeof(pIo-\u003eh));\n                  }\n                  memset(pIo, 0, sizeof(Vm_Io_T));\n                  pIo-\u003etype = 0;\n                }\n                fd = -1;\n                goto LABEL_7;\n              }\n            }\n            v22-\u003etype = 1;\n            v22-\u003eattrib = 7;\n            v22-\u003eopened = 1;\n          }\nLABEL_7:\n          vm_releaseMutex((Vm_Mutex_Id_T)v6);\n          return fd;\n        }\n        v14 = vm_dbfsFileOpen(v13, (int)name);\n      }\n      fd = v14;\n      goto LABEL_7;\n    }\n    *(_WORD *)(v7 + 4) = 4;\n    *(_WORD *)(v7 + 6) = (_WORD)mutexId;\n    *(_DWORD *)(v7 + 12) = 1;\n    *(_DWORD *)(v7 + 24) = 0;\n    goto LABEL_7;\n  }\n  return v5;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80a3b2c",
+                     "name":  "_vm_getMutex"
+                 },
+                 {
+                     "addr":  "0x83f8ce4",
+                     "name":  "stdin@@GLIBC_2.0"
+                 },
+                 {
+                     "addr":  "0x82af6aa",
+                     "name":  "aStdin_0",
+                     "string":  "#stdin"
+                 },
+                 {
+                     "addr":  "0x83f8c80",
+                     "name":  "stdout@@GLIBC_2.0"
+                 },
+                 {
+                     "addr":  "0x82af6b1",
+                     "name":  "aStdout_0",
+                     "string":  "#stdout"
+                 },
+                 {
+                     "addr":  "0x82ab146",
+                     "name":  "pFileName",
+                     "string":  "/v/"
+                 },
+                 {
+                     "addr":  "0x80b0764",
+                     "name":  "vm_builtInFileOpen"
+                 },
+                 {
+                     "addr":  "0x80b41a0",
+                     "name":  "vm_packedFsFileOpen"
+                 },
+                 {
+                     "addr":  "0x82af0e7",
+                     "name":  "aUser",
+                     "string":  "#user"
+                 },
+                 {
+                     "addr":  "0x82af6b9",
+                     "name":  "aAb",
+                     "string":  "ab"
+                 },
+                 {
+                     "addr":  "0x82af6bc",
+                     "name":  "pCatalog"
+                 },
+                 {
+                     "addr":  "0x82a92b4",
+                     "name":  "stru_82A92B4"
+                 },
+                 {
+                     "addr":  "0x804af44",
+                     "name":  ".strchr"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x80a1530",
+                     "name":  "vm_open"
+                 },
+                 {
+                     "addr":  "0x80b249c",
+                     "name":  "vm_openUFile"
+                 },
+                 {
+                     "addr":  "0x80a0504",
+                     "name":  "vm_close"
+                 },
+                 {
+                     "addr":  "0x804baa4",
+                     "name":  ".fopen"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x804ba54",
+                     "name":  ".memset"
+                 },
+                 {
+                     "addr":  "0x80a3c0c",
+                     "name":  "_vm_releaseMutex"
+                 },
+                 {
+                     "addr":  "0x804b554",
+                     "name":  ".strstr"
+                 },
+                 {
+                     "addr":  "0x82af6a0",
+                     "name":  "aDbfs",
+                     "string":  ".dbfs/"
+                 },
+                 {
+                     "addr":  "0x80c03f0",
+                     "name":  "vm_dbfsFileOpen"
+                 },
+                 {
+                     "addr":  "0x82af69a",
+                     "name":  "aPak",
+                     "string":  ".pak/"
+                 },
+                 {
+                     "addr":  "0x82af0de",
+                     "name":  "aConsole",
+                     "string":  "#console"
+                 }
+             ]
+}

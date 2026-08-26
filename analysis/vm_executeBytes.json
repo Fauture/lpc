@@ -1,0 +1,32 @@
+﻿{
+    "addr":  "0x80991c8",
+    "code":  "int __usercall vm_executeBytes@\u003ceax\u003e(\n        const char *a1@\u003cedi\u003e,\n        void *len,\n        int priority,\n        pthread_mutex_t *a4,\n        void (*prioritya)(Vm_PCB *, int, void *))\n{\n  int errCode[4]; // [esp+8h] [ebp-10h] BYREF\n\n  if ( vm_runningInScheduler() \u0026\u0026 a4 )\n  {\n    if ( (int)vm_outputFd \u003e 0 )\n      vm_write(\n        a4,\n        \"Can not execute VM script in main loop.\\n\",\n        strlen(\"Can not execute VM script in main loop.\\n\"),\n        (int)vm_outputFd);\n    return -106;\n  }\n  else\n  {\n    vm_executeData(\n      a1,\n      (int *)\"buffer\",\n      len,\n      (unsigned int)errCode,\n      (int)len,\n      priority,\n      0,\n      0,\n      prioritya,\n      (void *)0xFFFFFFFF);\n    return 0;\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 },
+                 {
+                     "addr":  "0x82af204",
+                     "name":  "aCanNotExecuteV",
+                     "string":  "Can not execute VM script in main loop.\n"
+                 },
+                 {
+                     "addr":  "0x860412c",
+                     "name":  "vm_outputFd"
+                 },
+                 {
+                     "addr":  "0x8098f40",
+                     "name":  "vm_executeData"
+                 },
+                 {
+                     "addr":  "0x82b13d7",
+                     "name":  "aIOBuffer",
+                     "string":  "I/O buffer"
+                 },
+                 {
+                     "addr":  "0x80a8f94",
+                     "name":  "vm_runningInScheduler"
+                 }
+             ]
+}

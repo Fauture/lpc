@@ -1,0 +1,58 @@
+﻿{
+    "addr":  "0x809924c",
+    "code":  "Vm_Status __usercall vm_executeString@\u003ceax\u003e(pthread_mutex_t *a1@\u003cebx\u003e, const char *str, void *priority, int prioritya)\n{\n  unsigned int v5; // edi\n  pthread_mutex_t *Memory; // ebx\n  Vm_Status result; // eax\n  void (*v8)(Vm_PCB *, int, void *); // eax\n  const char *v9; // eax\n  int errCode[4]; // [esp+8h] [ebp-10h] BYREF\n\n  if ( vm_runningInScheduler() \u0026\u0026 priority )\n  {\n    if ( (int)vm_outputFd \u003e 0 )\n      vm_write(\n        a1,\n        \"Can not execute VM script in main loop.\\n\",\n        strlen(\"Can not execute VM script in main loop.\\n\"),\n        (int)vm_outputFd);\n    return Vm_Status::VM_RUNNING_IN_MAIN_LOOP;\n  }\n  else\n  {\n    v5 = strlen(str);\n    Memory = (pthread_mutex_t *)pdb_allocateMemory(v5, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_shell.c\", 0x27Au);\n    result = Vm_Status::VM_NOT_ENOUGH_MEMORY;\n    if ( Memory )\n    {\n      memcpy(Memory, str, v5);\n      v8 = 0;\n      if ( !priority )\n        v8 = vm_endOfExecuteString;\n      v9 = (const char *)vm_executeData(Memory, \"string\", errCode, Memory, v5, 0, 0, prioritya, -1, v8, Memory);\n      if ( priority || v9 )\n        pdb_freeMemory(Memory, v9, (const char *)Memory, (unsigned int)\"VM\");\n      return Vm_Status::VM_OK;\n    }\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 },
+                 {
+                     "addr":  "0x82af204",
+                     "name":  "aCanNotExecuteV",
+                     "string":  "Can not execute VM script in main loop.\n"
+                 },
+                 {
+                     "addr":  "0x860412c",
+                     "name":  "vm_outputFd"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82af188",
+                     "name":  "aHomeCcXxxxGame_4",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_shell.c"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x8099650",
+                     "name":  "vm_endOfExecuteString"
+                 },
+                 {
+                     "addr":  "0x8098f40",
+                     "name":  "vm_executeData"
+                 },
+                 {
+                     "addr":  "0x82aae89",
+                     "name":  "aEndOfFileInStr",
+                     "string":  "End of file in string"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x80a8f94",
+                     "name":  "vm_runningInScheduler"
+                 }
+             ]
+}

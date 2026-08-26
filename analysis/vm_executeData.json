@@ -1,0 +1,44 @@
+﻿{
+    "addr":  "0x8098f40",
+    "code":  "Vm_Status __usercall vm_executeData@\u003ceax\u003e(\n        pthread_mutex_t *a1@\u003cebx\u003e,\n        const char *pErrCode,\n        int *len,\n        _BYTE *inFd,\n        unsigned int outFd,\n        int priority,\n        int rpcClient,\n        int endHook,\n        int pCookie,\n        void (*endHooka)(Vm_PCB *, int, void *),\n        void *pCookiea)\n{\n  const char *v13; // edi\n  int v14; // edx\n  unsigned int v15; // ebx\n  Vm_Status result; // eax\n  int v17; // ebx\n  Vm_Status v18; // esi\n  int errCode[4]; // [esp+8h] [ebp-10h] BYREF\n\n  v13 = pErrCode;\n  if ( vm_runningInScheduler() \u0026\u0026 !endHooka )\n  {\n    if ( (int)vm_outputFd \u003e 0 )\n      vm_write(\n        a1,\n        \"Can not execute VM script in main loop.\\n\",\n        strlen(\"Can not execute VM script in main loop.\\n\"),\n        (int)vm_outputFd);\n    return Vm_Status::VM_RUNNING_IN_MAIN_LOOP;\n  }\n  else\n  {\n    v15 = (unsigned int)inFd;\n    if ( *inFd )\n    {\n      while ( vm_isspace(v14) )\n      {\n        if ( !*(_BYTE *)++v15 )\n          goto LABEL_6;\n      }\n      if ( !pErrCode )\n        v13 = \"/Unknown file\";\n      v17 = vm_acquireTextFromData(inFd, v15);\n      result = Vm_Status::VM_CAN_NOT_OPEN_INPUT;\n      if ( v17 )\n      {\n        v18 = vm_run(v17, priority, rpcClient, endHook, pCookie, v13, errCode, 0, endHooka, pCookiea);\n        if ( len )\n          *len = errCode[0];\n        vm_close(v17);\n        return v18;\n      }\n    }\n    else\n    {\nLABEL_6:\n      if ( endHooka )\n        ((void (__cdecl *)(_DWORD, int, void *, unsigned int))endHooka)(0, 1, pCookiea, v15);\n      return Vm_Status::VM_OK;\n    }\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 },
+                 {
+                     "addr":  "0x82af204",
+                     "name":  "aCanNotExecuteV",
+                     "string":  "Can not execute VM script in main loop.\n"
+                 },
+                 {
+                     "addr":  "0x860412c",
+                     "name":  "vm_outputFd"
+                 },
+                 {
+                     "addr":  "0x80bd79c",
+                     "name":  "vm_isspace"
+                 },
+                 {
+                     "addr":  "0x82af152",
+                     "name":  "pInFileName",
+                     "string":  "/Unknown file"
+                 },
+                 {
+                     "addr":  "0x80981e0",
+                     "name":  "vm_acquireTextFromData"
+                 },
+                 {
+                     "addr":  "0x8098b20",
+                     "name":  "vm_run"
+                 },
+                 {
+                     "addr":  "0x80a0504",
+                     "name":  "vm_close"
+                 },
+                 {
+                     "addr":  "0x80a8f94",
+                     "name":  "vm_runningInScheduler"
+                 }
+             ]
+}

@@ -1,0 +1,76 @@
+﻿{
+    "addr":  "0x80b9264",
+    "code":  "_BOOL4 __usercall vm_loadBinary@\u003ceax\u003e(\n        Vm_Binary_Buffer_T *a1@\u003cesi\u003e,\n        Vm_Code_Segment_T_0 *pCodeSegment,\n        Vm_Binary_Buffer_T *pCodeSegmenta)\n{\n  int v3; // eax\n  int v4; // ecx\n  int v5; // edx\n  int len; // edx\n  int v8; // edx\n  int v9; // ecx\n  int v10; // eax\n  Vm_FunCall_Context::Vm_Program_Consititution::Vm_Program *v11; // eax\n  int v12; // edx\n  int v13; // ecx\n  int v14; // edx\n  bool v15; // zf\n  const char *v16; // eax\n  Vm_String **Memory; // eax\n  bool i; // cc\n  char *v19; // eax\n  int v20; // ebx\n  int v21; // edx\n  size_t v22; // ecx\n  int v23; // ebx\n  char *v24; // edx\n  unsigned int v25; // esi\n  int *v26; // eax\n  char *dest; // [esp+18h] [ebp-FECh]\n  int v28; // [esp+1Ch] [ebp-FE8h]\n  Vm_Program_T *pProgram; // [esp+20h] [ebp-FE4h]\n  int ret; // [esp+24h] [ebp-FE0h]\n  char *v31; // [esp+28h] [ebp-FDCh] BYREF\n  size_t n; // [esp+2Ch] [ebp-FD8h] BYREF\n  char *str; // [esp+30h] [ebp-FD4h] BYREF\n  int ptr; // [esp+34h] [ebp-FD0h] BYREF\n  int num; // [esp+38h] [ebp-FCCh] BYREF\n  Vm_Binary_Buffer_T buf; // [esp+3Ch] [ebp-FC8h] BYREF\n\n  memset(pCodeSegmenta, 0, 0x20u);\n  buf.fd = (int)pCodeSegment;\n  buf.len = 0;\n  buf.p = buf.data;\n  LOBYTE(v3) = vm_fetchBinaryBufferData((int)\u0026buf);\n  v4 = 0;\n  if ( v3 )\n  {\n    ret = 0;\n    if ( buf.len \u003c= 3u )\n    {\n      vm_fetchBinaryBufferData((int)\u0026buf);\n      if ( buf.len \u003c= 3u )\n        return 0;\n    }\n    v5 = *(_DWORD *)buf.p;\n    buf.len -= 4;\n    buf.p += 4;\n    if ( \u0026num )\n      num = v5;\n    if ( num != 65537 )\n      return 0;\n    len = buf.len;\n    if ( buf.len \u003e 3u || (vm_fetchBinaryBufferData((int)\u0026buf), len = buf.len, v4 = 0, buf.len \u003e 3u) )\n    {\n      buf.p += 4;\n      i = (unsigned int)(len - 4) \u003c= 3;\n      buf.len = len - 4;\n      v8 = len - 4;\n      if ( i )\n      {\n        vm_fetchBinaryBufferData((int)\u0026buf);\n        v8 = buf.len;\n        if ( buf.len \u003c= 3u )\n          return 0;\n      }\n      v9 = *(_DWORD *)buf.p;\n      buf.p += 4;\n      buf.len = v8 - 4;\n      if ( \u0026num )\n        num = v9;\n      if ( vm_functionBC != num )\n        return 0;\n      v10 = vm_loadDefines(\u0026a1-\u003efd, \u0026buf);\n      v4 = 0;\n      if ( !v10 )\n        return v4;\n      v11 = vm_compilingProgram();\n      v12 = buf.len;\n      pProgram = (Vm_Program_T *)v11;\n      if ( buf.len \u003e 3u || (vm_fetchBinaryBufferData((int)\u0026buf), v12 = buf.len, buf.len \u003e 3u) )\n      {\n        v13 = *(_DWORD *)buf.p;\n        buf.p += 4;\n        buf.len = v12 - 4;\n        if ( \u0026ptr )\n          ptr = v13;\n        v14 = ptr;\n        if ( ptr \u003e= 0 )\n        {\n          v15 = pProgram-\u003emaxStringNo == 0;\n          binaryStrPoolSize = ptr;\n          if ( v15 )\n          {\n            pStrOffsetMapping = 0;\n          }\n          else\n          {\n            v26 = (int *)vm_scratchAlloc(4 * ptr);\n            v14 = ptr;\n            pStrOffsetMapping = v26;\n          }\n          if ( pProgram-\u003estringBufSize \u003e= v14 )\n          {\nLABEL_27:\n            v28 = 0;\n            for ( i = v14 \u003e 0; i; i = v28 \u003c ptr )\n            {\n              v21 = buf.len;\n              if ( buf.len \u003c= 3u )\n              {\n                vm_fetchBinaryBufferData((int)\u0026buf);\n                v21 = buf.len;\n                if ( buf.len \u003c= 3u )\n                  return ret;\n              }\n              v22 = *(_DWORD *)buf.p;\n              buf.p += 4;\n              buf.len = v21 - 4;\n              if ( \u0026n )\n                n = v22;\n              v23 = n;\n              if ( (int)n \u003e 0 )\n              {\n                v19 = vm_scratchAlloc(n);\n                dest = v19;\n                if ( (unsigned int)v23 \u003e 0xFA0 )\n                {\n                  memcpy(v19, buf.p, buf.len);\n                  v24 = \u0026dest[buf.len];\n                  v25 = v23 - buf.len;\n                  buf.p = buf.data;\n                  buf.len = 0;\n                  if ( vm_read(v24, v25, v23) != v25 )\n                    goto LABEL_53;\n                }\n                else\n                {\n                  if ( buf.len \u003c v23 )\n                  {\n                    vm_fetchBinaryBufferData((int)\u0026buf);\n                    if ( buf.len \u003c v23 )\n                    {\nLABEL_53:\n                      vm_scratchFree((void *)v23);\n                      return ret;\n                    }\n                  }\n                  memcpy(dest, buf.p, v23);\n                  buf.p += v23;\n                  buf.len -= v23;\n                }\n                if ( \u0026v31 )\n                  v31 = dest;\n                else\n                  vm_scratchFree((void *)v23);\n                v31[n - 1] = 0;\n                if ( \u0026str )\n                  str = v31;\n                else\n                  vm_scratchFree((void *)v23);\n              }\n              else\n              {\n                str = 0;\n              }\n              if ( !str )\n                return ret;\n              v20 = vm_findOrAddProgramString(pProgram, str);\n              vm_scratchFree((void *)v20);\n              if ( pStrOffsetMapping )\n                pStrOffsetMapping[v28] = v20;\n              ++v28;\n            }\n            if ( vm_loadIdentifiers((int)\u0026buf, \u0026buf) \u0026\u0026 vm_loadCodeSegment(\u0026buf, 0, pCodeSegmenta) )\n              return pCodeSegmenta-\u003ep[4 * pCodeSegmenta-\u003efd - 1] == 29;\n            return ret;\n          }\n          v16 = (const char *)(4 * v14);\n          if ( pProgram-\u003eppStrings )\n            Memory = (Vm_String **)pdb_reallocateMemory(\n                                     \u0026ptr,\n                                     (unsigned int)pProgram-\u003eppStrings,\n                                     v16,\n                                     \"VM\",\n                                     (unsigned int)\"/home/cc/xxxx/gameshell/src/vm/vm_binary.c\");\n          else\n            Memory = (Vm_String **)pdb_allocateMemory(\n                                     (unsigned int)v16,\n                                     \"VM\",\n                                     \"/home/cc/xxxx/gameshell/src/vm/vm_binary.c\",\n                                     0x2F1u);\n          if ( Memory )\n          {\n            pProgram-\u003eppStrings = Memory;\n            v14 = ptr;\n            pProgram-\u003estringBufSize = ptr;\n            goto LABEL_27;\n          }\n        }\n      }\n      return ret;\n    }\n  }\n  return v4;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80b88a0",
+                     "name":  "vm_fetchBinaryBufferData"
+                 },
+                 {
+                     "addr":  "0x8660900",
+                     "name":  "vm_functionBC"
+                 },
+                 {
+                     "addr":  "0x8087080",
+                     "name":  "vm_loadDefines"
+                 },
+                 {
+                     "addr":  "0x807ecfc",
+                     "name":  "vm_compilingProgram"
+                 },
+                 {
+                     "addr":  "0x8609d20",
+                     "name":  "binaryStrPoolSize"
+                 },
+                 {
+                     "addr":  "0x8609ca0",
+                     "name":  "pStrOffsetMapping"
+                 },
+                 {
+                     "addr":  "0x8089390",
+                     "name":  "vm_scratchAlloc"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x80a110c",
+                     "name":  "vm_read"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x80b1258",
+                     "name":  "vm_findOrAddProgramString"
+                 },
+                 {
+                     "addr":  "0x8087fb8",
+                     "name":  "vm_loadIdentifiers"
+                 },
+                 {
+                     "addr":  "0x8096128",
+                     "name":  "vm_loadCodeSegment"
+                 },
+                 {
+                     "addr":  "0x80cf588",
+                     "name":  "pdb_reallocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82b16e4",
+                     "name":  "aHomeCcXxxxGame_22",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_binary.c"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 }
+             ]
+}

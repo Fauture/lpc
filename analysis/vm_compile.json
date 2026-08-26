@@ -1,0 +1,87 @@
+﻿{
+    "addr":  "0x80985e0",
+    "code":  "int __cdecl vm_compile(\n        Vm_Code_Segment_T_0 *fileFd,\n        const char *pInFileName,\n        Vm_Program_T *pProgram,\n        Vm_Scratchpad_Info_T **a4)\n{\n  int v5; // ebx\n  int v7; // esi\n  int started; // eax\n  Vm_XNode_T *v9; // ecx\n  Vm_XNode_T *v10; // ecx\n  Vm_Scratchpad_Info_T *pScratchpad; // [esp+8h] [ebp-10h] BYREF\n\n  v5 = -101;\n  if ( fileFd )\n  {\n    LOBYTE(v5) = -104;\n    if ( vm_getVmMutex() )\n    {\n      if ( vm_buildScratch(\u0026pScratchpad) )\n      {\n        *a4 = pScratchpad;\n        currentFile = (Vm_String_T **)pInFileName;\n        v7 = _setjmp(vm_shellEnv);\n        if ( !v7 )\n        {\n          started = vm_startNewFile(pProgram, 0);\n          if ( started )\n          {\n            if ( started \u003c= 0 )\n            {\n              if ( started == -1 )\n                v7 = -2;\n            }\n            else if ( started == 1 \u0026\u0026 !vm_loadBinary((int)\u0026pProgram-\u003einitCodeSegment, fileFd) )\n            {\n              vm_errprintf(\"Failed to load binary: %s\\n\", pInFileName);\n              v7 = -2;\n            }\n          }\n          else if ( vm_yyparse(0) || vm_errors )\n          {\n            v7 = -2;\n          }\n          else\n          {\n            vm_genXAction(0, 0, 0x48u, 0, 0);\n            allActions = vm_appendXActions((Vm_XNode_T *)v5, v9);\n            vm_genXAction(0, 0, 0x1Du, 0, 0);\n            allActions = vm_appendXActions((Vm_XNode_T *)v5, v10);\n            vm_postProcessXActionsTempMark(0);\n            allActions = vm_optimize(allActions);\n            vm_transformXActions((Vm_Code_Segment_T_0 *)\u0026pProgram-\u003einitCodeSegment, 0, (int)allActions);\n          }\n        }\n        if ( !vm_endNewFile(v7 == 0, 1, (Vm_Code_Segment_T_0 *)\u0026pProgram-\u003einitCodeSegment) )\n          v7 = -2;\n        vm_releaseVmMutex();\n        v5 = -5;\n        if ( !v7 )\n        {\n          vm_finalizeCodeSegment((Vm_Code_Segment_T_0 *)0xFFFFFFFB);\n          return 0;\n        }\n      }\n      else\n      {\n        LOBYTE(v5) = -105;\n        vm_releaseVmMutex();\n      }\n    }\n  }\n  return v5;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8661940",
+                     "name":  "currentFile"
+                 },
+                 {
+                     "addr":  "0x804bac4",
+                     "name":  "._setjmp"
+                 },
+                 {
+                     "addr":  "0x86619e0",
+                     "name":  "vm_shellEnv"
+                 },
+                 {
+                     "addr":  "0x8080508",
+                     "name":  "vm_startNewFile"
+                 },
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82af0f5",
+                     "name":  "aFailedToLoadBi",
+                     "string":  "Failed to load binary: %s\n"
+                 },
+                 {
+                     "addr":  "0x80b9264",
+                     "name":  "vm_loadBinary"
+                 },
+                 {
+                     "addr":  "0x8095e74",
+                     "name":  "vm_genXAction"
+                 },
+                 {
+                     "addr":  "0x8604120",
+                     "name":  "allActions"
+                 },
+                 {
+                     "addr":  "0x8096d3c",
+                     "name":  "vm_appendXActions"
+                 },
+                 {
+                     "addr":  "0x80968a0",
+                     "name":  "vm_postProcessXActionsTempMark"
+                 },
+                 {
+                     "addr":  "0x80bf568",
+                     "name":  "vm_optimize"
+                 },
+                 {
+                     "addr":  "0x8096950",
+                     "name":  "vm_transformXActions"
+                 },
+                 {
+                     "addr":  "0x80ffa64",
+                     "name":  "vm_yyparse"
+                 },
+                 {
+                     "addr":  "0x8667a6c",
+                     "name":  "vm_errors"
+                 },
+                 {
+                     "addr":  "0x8088874",
+                     "name":  "vm_endNewFile"
+                 },
+                 {
+                     "addr":  "0x80b5d50",
+                     "name":  "vm_releaseVmMutex"
+                 },
+                 {
+                     "addr":  "0x8095ed0",
+                     "name":  "vm_finalizeCodeSegment"
+                 },
+                 {
+                     "addr":  "0x8089008",
+                     "name":  "vm_buildScratch"
+                 },
+                 {
+                     "addr":  "0x80b5bec",
+                     "name":  "vm_getVmMutex"
+                 }
+             ]
+}

@@ -1,0 +1,161 @@
+﻿{
+    "addr":  "0x8080508",
+    "code":  "int __cdecl vm_startNewFile(Vm_Program_T *pProgram, int a2)\n{\n  Vm_Program_T *v3; // edx\n  Vm_Program_T *v4; // eax\n  Vm_Program_T *v5; // ecx\n  Vm_Program_T *v6; // eax\n  Vm_Program_T *v7; // eax\n  const char *v8; // ebx\n  unsigned int v9; // kr04_4\n  unsigned int v10; // kr08_4\n\n  vm_pCurrentProgram = pProgram;\n  vm_generateFileDirName();\n  v3 = vm_pCurrentProgram;\n  if ( vm_pCurrentProgram )\n  {\n    v4 = vm_pCurrentProgram;\n    v5 = vm_pGlobalProgram;\n  }\n  else\n  {\n    v5 = vm_pGlobalProgram;\n    v4 = vm_pGlobalProgram;\n  }\n  vm_functionBC = v4-\u003emaxFunctionNo;\n  v6 = vm_pCurrentProgram;\n  if ( !vm_pCurrentProgram )\n    v6 = v5;\n  vm_stringBC = v6-\u003emaxStringNo;\n  v7 = vm_pCurrentProgram;\n  if ( !vm_pCurrentProgram )\n    v7 = v5;\n  if ( v7 == v5 )\n    vm_variableBC = (__int16)vm_globalVar;\n  else\n    vm_variableBC = 0;\n  if ( !vm_pCurrentProgram )\n    v3 = v5;\n  vm_hiddenFunsBC = v3-\u003epHiddenFuns;\n  v8 = (const char *)currentFile;\n  vm_yyinDesc = a2;\n  vm_yyinCryptType = 0;\n  vm_yyinCryptCode = 0;\n  vm_yyinStart = 1;\n  vm_lexFatal = 0;\n  vm_pCurLbuf = \u0026vm_headLbuf;\n  vm_pOut = (_BYTE *)(\u0026vm_headLbuf + 6404);\n  vm_headLbuf.pBufEnd = (_BYTE *)(\u0026vm_headLbuf + 6404);\n  vm_pLastNl = (_BYTE *)(\u0026vm_headLbuf + 6403);\n  vm_headLbuf.buf[6399] = 10;\n  vm_nexpands = 0;\n  vm_incNum = 0;\n  currentAttrib = vm_defaultAttrib;\n  currentLine = 1;\n  currentLineBase = 0;\n  currentLineSaved = 0;\n  currentCounter = 1;\n  vm_lineWords = 0;\n  if ( currentFile\n    \u0026\u0026 (v9 = strlen((const char *)currentFile) + 1, v10 = strlen(vm_binSuffix) + 1, (int)(v9 - 1) \u003e (int)(v10 - 1))\n    \u0026\u0026 !strcmp((const char *)currentFile + v9 - v10, vm_binSuffix) )\n  {\n    currentInputFile = \"binary.o\";\n    currentFile = (Vm_String_T **)\"binary.o\";\n    vm_isBinaryFile = 1;\n    return 1;\n  }\n  else\n  {\n    currentInputFile = vm_addFileName(v8, currentFile);\n    currentFile = (Vm_String_T **)currentInputFile;\n    if ( !currentInputFile )\n    {\n      yyerror(\"No enough memory for compiler.\\n\");\n      yystop(-1);\n    }\n    vm_refillBuffer();\n    vm_isBinaryFile = 0;\n    vm_localDefaultObject[0] = 0;\n    return 0;\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x847aac0",
+                     "name":  "vm_pCurrentProgram"
+                 },
+                 {
+                     "addr":  "0x807ed10",
+                     "name":  "vm_generateFileDirName"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x8660900",
+                     "name":  "vm_functionBC"
+                 },
+                 {
+                     "addr":  "0x8661938",
+                     "name":  "vm_stringBC"
+                 },
+                 {
+                     "addr":  "0x866090c",
+                     "name":  "vm_variableBC"
+                 },
+                 {
+                     "addr":  "0x847aac4",
+                     "name":  "vm_globalVar"
+                 },
+                 {
+                     "addr":  "0x866192c",
+                     "name":  "vm_hiddenFunsBC"
+                 },
+                 {
+                     "addr":  "0x8661940",
+                     "name":  "currentFile"
+                 },
+                 {
+                     "addr":  "0x847fba0",
+                     "name":  "vm_yyinDesc"
+                 },
+                 {
+                     "addr":  "0x847fba4",
+                     "name":  "vm_yyinCryptType"
+                 },
+                 {
+                     "addr":  "0x847fba8",
+                     "name":  "vm_yyinCryptCode"
+                 },
+                 {
+                     "addr":  "0x847fbac",
+                     "name":  "vm_yyinStart"
+                 },
+                 {
+                     "addr":  "0x847fbb0",
+                     "name":  "vm_lexFatal"
+                 },
+                 {
+                     "addr":  "0x847fbc4",
+                     "name":  "vm_pCurLbuf"
+                 },
+                 {
+                     "addr":  "0x847ad00",
+                     "name":  "vm_headLbuf"
+                 },
+                 {
+                     "addr":  "0x847fbbc",
+                     "name":  "vm_pOut"
+                 },
+                 {
+                     "addr":  "0x847fbb4",
+                     "name":  "vm_pLastNl"
+                 },
+                 {
+                     "addr":  "0x847ace8",
+                     "name":  "vm_nexpands"
+                 },
+                 {
+                     "addr":  "0x847fbc0",
+                     "name":  "vm_incNum"
+                 },
+                 {
+                     "addr":  "0x8661928",
+                     "name":  "currentAttrib"
+                 },
+                 {
+                     "addr":  "0x847acf8",
+                     "name":  "vm_defaultAttrib"
+                 },
+                 {
+                     "addr":  "0x8661924",
+                     "name":  "currentLine"
+                 },
+                 {
+                     "addr":  "0x8660908",
+                     "name":  "currentLineBase"
+                 },
+                 {
+                     "addr":  "0x8661930",
+                     "name":  "currentLineSaved"
+                 },
+                 {
+                     "addr":  "0x866193c",
+                     "name":  "currentCounter"
+                 },
+                 {
+                     "addr":  "0x847fbb8",
+                     "name":  "vm_lineWords"
+                 },
+                 {
+                     "addr":  "0x8661934",
+                     "name":  "currentInputFile"
+                 },
+                 {
+                     "addr":  "0x82aac7b",
+                     "name":  "aBinaryO",
+                     "string":  "binary.o"
+                 },
+                 {
+                     "addr":  "0x8660914",
+                     "name":  "vm_isBinaryFile"
+                 },
+                 {
+                     "addr":  "0x807f5b4",
+                     "name":  "vm_addFileName"
+                 },
+                 {
+                     "addr":  "0x80ff80c",
+                     "name":  "yyerror"
+                 },
+                 {
+                     "addr":  "0x82ab300",
+                     "name":  "aNoEnoughMemory_12",
+                     "string":  "No enough memory for compiler.\n"
+                 },
+                 {
+                     "addr":  "0x80ff758",
+                     "name":  "yystop"
+                 },
+                 {
+                     "addr":  "0x807f180",
+                     "name":  "vm_refillBuffer"
+                 },
+                 {
+                     "addr":  "0x847abe0",
+                     "name":  "vm_localDefaultObject"
+                 },
+                 {
+                     "addr":  "0x83cfb20",
+                     "name":  "vm_binSuffix",
+                     "string":  ".o"
+                 },
+                 {
+                     "addr":  "0x804b064",
+                     "name":  ".strcmp"
+                 }
+             ]
+}

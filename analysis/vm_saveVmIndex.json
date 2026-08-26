@@ -1,0 +1,10 @@
+﻿{
+    "addr":  "0x80b871c",
+    "code":  "int __cdecl vm_saveVmIndex(int fd, Vm_Index_T index)\n{\n  pthread_mutex_t *v2; // ebx\n  Vm_Index_T indexa; // [esp+Ah] [ebp-2h] BYREF\n\n  indexa = index;\n  return vm_write(v2, \u0026indexa, 2, fd) == 2;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 }
+             ]
+}

@@ -1,0 +1,10 @@
+﻿{
+    "addr":  "0x8085820",
+    "code":  "void __cdecl vm_finalizeProgram(int a1)\n{\n  _DWORD *i; // ebx\n\n  for ( i = *(_DWORD **)(a1 + 40); i; i = (_DWORD *)i[3] )\n  {\n    vm_scratchFinalize(i);\n    vm_scratchFinalize(i);\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8089b00",
+                     "name":  "vm_scratchFinalize"
+                 }
+             ]
+}

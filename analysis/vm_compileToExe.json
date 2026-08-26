@@ -1,0 +1,14 @@
+﻿{
+    "addr":  "0x80ca554",
+    "code":  "void __cdecl vm_compileToExe(_DWORD *bytes)\n{\n  unsigned __int8 *v2; // eax\n  _BYTE *v3; // edx\n  void **v4; // eax\n  int v5; // ebx\n  int v6; // ebx\n\n  v2 = (unsigned __int8 *)bytes[7];\n  if ( v2[12] \u003e 1u )\n  {\n    v5 = bytes[9];\n    vm_jitPutBytes((int)bytes, 2376903, 3u);\n    vm_jitPutBytes((int)bytes, 4, 1u);\n    vm_jitPutBytes((int)bytes, v5, 4u);\n    v2 = (unsigned __int8 *)bytes[7];\n    if ( !v2[12] )\n      goto LABEL_3;\n  }\n  else if ( !v2[12] )\n  {\n    goto LABEL_3;\n  }\n  v6 = bytes[8];\n  vm_jitPutBytes((int)bytes, 2360519, 3u);\n  vm_jitPutBytes((int)bytes, v6, 4u);\n  v2 = (unsigned __int8 *)bytes[7];\nLABEL_3:\n  v3 = (_BYTE *)bytes[2];\n  v4 = vm_entryAddressList[*v2];\n  if ( v3 )\n  {\n    *v3 = -24;\n    *(_DWORD *)(bytes[2] + 1) = (char *)v4 - bytes[2] - 5;\n    bytes[2] += 5;\n  }\n  bytes[4] += 5;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80cad90",
+                     "name":  "vm_jitPutBytes"
+                 },
+                 {
+                     "addr":  "0x860cda0",
+                     "name":  "vm_entryAddressList"
+                 }
+             ]
+}

@@ -1,0 +1,48 @@
+﻿{
+    "addr":  "0x8087164",
+    "code":  "int __cdecl vm_saveInheritPrograms(int fd)\n{\n  Vm_Program_T *v1; // eax\n  int v2; // edx\n  int v3; // eax\n  int v4; // ecx\n  unsigned __int8 *p_attrib; // edx\n  Vm_Index_T maxConsititutionNo; // bx\n  int v7; // eax\n  __int16 v8; // di\n  int v9; // ebx\n  bool v10; // cc\n  Vm_Program_T *v12; // eax\n  Vm_Program_T *v13; // [esp+8h] [ebp-10h]\n\n  if ( vm_pCurrentProgram )\n  {\n    v13 = vm_pCurrentProgram;\n    v1 = vm_pGlobalProgram;\n  }\n  else\n  {\n    v1 = vm_pGlobalProgram;\n    v13 = vm_pGlobalProgram;\n  }\n  v2 = 1;\n  if ( v13 == v1 )\n    return v2;\n  vm_saveComment(fd, \"INHERITS\");\n  v3 = vm_saveVmIndex(fd, v13-\u003emaxConsititutionNo);\n  v2 = 0;\n  if ( !v3 )\n    return v2;\n  v4 = 0;\n  if ( v13-\u003emaxConsititutionNo \u003e 0 )\n  {\n    p_attrib = \u0026v13-\u003epConsititutions-\u003eattrib;\n    maxConsititutionNo = v13-\u003emaxConsititutionNo;\n    do\n    {\n      v4 -= ((*p_attrib \u0026 1) == 0) - 1;\n      p_attrib += 12;\n      --maxConsititutionNo;\n    }\n    while ( maxConsititutionNo );\n  }\n  v7 = vm_saveNumber32(fd, v4);\n  v2 = 0;\n  if ( !v7 )\n    return v2;\n  v8 = v13-\u003emaxConsititutionNo;\n  v9 = 0;\n  if ( v8 \u003c= 0 )\n    return 1;\n  while ( (v13-\u003epConsititutions[(__int16)v9].attrib \u0026 1) == 0 )\n  {\n    v10 = v8 \u003c= (__int16)++v9;\nLABEL_12:\n    if ( v10 )\n      return 1;\n  }\n  v12 = (Vm_Program_T *)vm_saveString(fd, (const char *)(__int16)v9);\n  if ( !v12 )\n    return 0;\n  if ( vm_saveBinaryInherit((__int16)v9, v12, fd) )\n  {\n    v8 = v13-\u003emaxConsititutionNo;\n    v10 = v8 \u003c= (__int16)++v9;\n    goto LABEL_12;\n  }\n  vm_errprintf(\"Save program failed: write inherit program.\\n\");\n  return 0;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x847aac0",
+                     "name":  "vm_pCurrentProgram"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x80b8698",
+                     "name":  "vm_saveComment"
+                 },
+                 {
+                     "addr":  "0x82ab0ba",
+                     "name":  "comment",
+                     "string":  "INHERITS"
+                 },
+                 {
+                     "addr":  "0x80b871c",
+                     "name":  "vm_saveVmIndex"
+                 },
+                 {
+                     "addr":  "0x80b86a4",
+                     "name":  "vm_saveNumber32"
+                 },
+                 {
+                     "addr":  "0x80b8770",
+                     "name":  "vm_saveString"
+                 },
+                 {
+                     "addr":  "0x80a1fd0",
+                     "name":  "vm_saveBinaryInherit"
+                 },
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82ab888",
+                     "name":  "aSaveProgramFai",
+                     "string":  "Save program failed: write inherit program.\n"
+                 }
+             ]
+}

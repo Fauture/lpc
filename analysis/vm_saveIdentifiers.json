@@ -1,0 +1,137 @@
+﻿{
+    "addr":  "0x8087aec",
+    "code":  "int __cdecl vm_saveIdentifiers(int fd)\n{\n  Vm_Program_T *v1; // edi\n  Vm_Ident_Hash_Elem **ppHashHead; // eax\n  Vm_Ident_Hash_Elem_T *v3; // ebx\n  bool i; // zf\n  Vm_Ident_Hash_Elem_T *pNext; // esi\n  char *Memory; // eax\n  int v7; // edx\n  Vm_Program_T *v8; // edi\n  Vm_Ident_Hash_Elem **v9; // eax\n  Vm_Ident_Hash_Elem_T *v10; // ebx\n  bool j; // zf\n  Vm_Ident_Hash_Elem_T *v12; // esi\n  Vm_Program_T *v14; // esi\n  Vm_Prog_Var_T *pProgVars; // eax\n  Vm_Index_T v16; // dx\n  Vm_Index_T v17; // bx\n  Vm_Prog_Var_T *k; // ebx\n  Vm_Program_T *v19; // esi\n  int v20; // edx\n  Vm_Fun_T *m; // ebx\n  Vm_Fun_T *n; // ebx\n  int v23; // eax\n  int attrib; // eax\n  int v25; // ebx\n  Vm_Dlt_T *v26; // esi\n  const char *v27; // eax\n  int v28; // [esp+8h] [ebp-38h]\n  int v29; // [esp+Ch] [ebp-34h]\n  int size; // [esp+10h] [ebp-30h]\n  unsigned int count; // [esp+14h] [ebp-2Ch]\n  char *pNames; // [esp+18h] [ebp-28h]\n  Vm_Dlt_T *pDlt; // [esp+1Ch] [ebp-24h]\n  void *para[2]; // [esp+20h] [ebp-20h] BYREF\n  unsigned int num[6]; // [esp+28h] [ebp-18h]\n\n  num[0] = 0;\n  num[1] = 0;\n  vm_saveComment(fd, \"IDENTIFIERS\");\n  v1 = vm_pGlobalProgram;\n  if ( vm_pCurrentProgram )\n    v1 = vm_pCurrentProgram;\n  v29 = 0;\n  ppHashHead = v1-\u003eppHashHead;\n  do\n  {\n    v3 = ppHashHead[v29];\n    for ( i = v3 == 0; !i; i = ppHashHead[v29] == 0 )\n    {\n      pNext = v3-\u003epNext;\n      if ( vm_countIdents(v3, pNext) )\n      {\n        ppHashHead = v1-\u003eppHashHead;\n        v3 = pNext;\n        if ( pNext == ppHashHead[v29] )\n          break;\n      }\n      else\n      {\n        vm_freeIdentInProgram(v1, pNext);\n        v3 = pNext;\n        ppHashHead = v1-\u003eppHashHead;\n      }\n    }\n    ++v29;\n  }\n  while ( v29 \u003c= 1023 );\n  size = (num[1] | 0xF) + 1;\n  Memory = (char *)pdb_allocateMemory(size, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x170Cu);\n  v7 = 0;\n  pNames = Memory;\n  if ( !Memory )\n    return v7;\n  count = num[0];\n  pDlt = (Vm_Dlt_T *)pdb_allocateMemory(20 * num[0], \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x1713u);\n  if ( !pDlt )\n  {\n    pdb_freeMemory(v3, 0, pNames, (unsigned int)\"VM\");\n    return 0;\n  }\n  para[1] = pNames;\n  v8 = vm_pGlobalProgram;\n  if ( vm_pCurrentProgram )\n    v8 = vm_pCurrentProgram;\n  para[0] = pDlt;\n  v28 = 0;\n  v9 = v8-\u003eppHashHead;\n  do\n  {\n    v10 = v9[v28];\n    for ( j = v10 == 0; !j; j = v9[v28] == 0 )\n    {\n      v12 = v10-\u003epNext;\n      if ( vm_copyIdentsName(v10, para) )\n      {\n        v9 = v8-\u003eppHashHead;\n        v10 = v12;\n        if ( v12 == v9[v28] )\n          break;\n      }\n      else\n      {\n        vm_freeIdentInProgram(v8, v12);\n        v10 = v12;\n        v9 = v8-\u003eppHashHead;\n      }\n    }\n    ++v28;\n  }\n  while ( v28 \u003c= 1023 );\n  vm_saveComment(fd, \"NAMES\");\n  if ( !vm_saveNumber32(fd, count) || !vm_saveNumber32(fd, size) || !vm_saveBuffer(fd, pNames, (int)v10) )\n    return 0;\n  v14 = vm_pGlobalProgram;\n  if ( vm_pCurrentProgram )\n    v14 = vm_pCurrentProgram;\n  vm_saveComment(fd, \"VARIABLES\");\n  if ( v14 == vm_pGlobalProgram )\n  {\n    v17 = (__int16)vm_globalVar;\n    if ( !vm_saveVmIndex(fd, (Vm_Index_T)vm_globalVar) )\n      return 0;\n  }\n  else\n  {\n    if ( !vm_saveVmIndex(fd, v14-\u003emaxVariableNo) )\n      return 0;\n    pProgVars = v14-\u003epProgVars;\n    v16 = 0;\n    v17 = 0;\n    if ( pProgVars )\n    {\n      do\n      {\n        pProgVars = pProgVars-\u003epNext;\n        ++v16;\n      }\n      while ( pProgVars );\n      v17 = v16;\n    }\n  }\n  if ( !vm_saveVmIndex(fd, v17) )\n    return 0;\n  if ( v14 != vm_pGlobalProgram )\n  {\n    vm_saveComment(fd, \"PROG_VARS\");\n    for ( k = v14-\u003epProgVars; k; k = k-\u003epNext )\n    {\n      if ( !vm_saveBuffer(fd, k, (int)k) || !vm_saveString(fd, (const char *)v14) )\n        return 0;\n    }\n  }\n  v19 = vm_pGlobalProgram;\n  if ( vm_pCurrentProgram )\n    v19 = vm_pCurrentProgram;\n  vm_saveComment(fd, \"FUNCTIONS\");\n  if ( !vm_saveVmIndex(fd, vm_efunsCount) )\n    return 0;\n  if ( !vm_saveVmIndex(fd, v19-\u003emaxFunctionNo) )\n    return 0;\n  vm_saveComment(fd, \"HIDDEN_FUNS\");\n  v20 = 0;\n  for ( m = v19-\u003epHiddenFuns; m != vm_hiddenFunsBC; m = m-\u003epNext )\n    ++v20;\n  if ( !vm_saveNumber32(fd, v20) )\n    return 0;\n  for ( n = v19-\u003epHiddenFuns; n != vm_hiddenFunsBC; n = n-\u003epNext )\n  {\n    if ( !vm_saveFun((int)n, (char *)fd, (char *)n) )\n      return 0;\n  }\n  v23 = vm_saveInheritPrograms(fd);\n  v7 = 0;\n  if ( v23 )\n  {\n    vm_saveComment(fd, \"DLT\");\n    attrib = vm_saveNumber32(fd, count);\n    v7 = 0;\n    if ( attrib )\n    {\n      v25 = count - 1;\n      if ( (int)(count - 1) \u003c 0 )\n      {\nLABEL_67:\n        pdb_freeMemory((void *)v25, (const char *)attrib, (const char *)pDlt, (unsigned int)\"VM\");\n        pdb_freeMemory((void *)v25, v27, pNames, (unsigned int)\"VM\");\n        return 1;\n      }\n      v26 = \u0026pDlt[v25];\n      while ( vm_saveBuffer(fd, v26, v25) )\n      {\n        attrib = v26-\u003eattrib;\n        if ( (attrib \u0026 0x80000) == 0 \u0026\u0026 (attrib \u0026 0x40000) == 0 )\n        {\n          if ( (attrib \u0026 0x8000000) == 0 )\n          {\n            vm_syslogf(\n              2,\n              4,\n              \"Fatal error = %s\\nFILE(%s)\\nLINE(%d)\\n\",\n              \"Bad type of DLT to save.\\n\",\n              \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\",\n              6835);\n            vm_endProcess(0);\n          }\n          attrib = vm_saveFun(v25, (char *)fd, (char *)v26-\u003ev.pInfo);\n          if ( !attrib )\n            break;\n        }\n        --v26;\n        if ( --v25 \u003c 0 )\n          goto LABEL_67;\n      }\n      return 0;\n    }\n  }\n  return v7;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80b8698",
+                     "name":  "vm_saveComment"
+                 },
+                 {
+                     "addr":  "0x82ab0cf",
+                     "name":  "aIdentifiers",
+                     "string":  "IDENTIFIERS"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x847aac0",
+                     "name":  "vm_pCurrentProgram"
+                 },
+                 {
+                     "addr":  "0x80856d8",
+                     "name":  "vm_freeIdentInProgram"
+                 },
+                 {
+                     "addr":  "0x80879d4",
+                     "name":  "vm_countIdents"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82ab14c",
+                     "name":  "aHomeCcXxxxGame",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_lex.c"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x8087a3c",
+                     "name":  "vm_copyIdentsName"
+                 },
+                 {
+                     "addr":  "0x82ab0db",
+                     "name":  "aNames",
+                     "string":  "NAMES"
+                 },
+                 {
+                     "addr":  "0x80b86a4",
+                     "name":  "vm_saveNumber32"
+                 },
+                 {
+                     "addr":  "0x80b8748",
+                     "name":  "vm_saveBuffer"
+                 },
+                 {
+                     "addr":  "0x82ab0e1",
+                     "name":  "aVariables",
+                     "string":  "VARIABLES"
+                 },
+                 {
+                     "addr":  "0x847aac4",
+                     "name":  "vm_globalVar"
+                 },
+                 {
+                     "addr":  "0x80b871c",
+                     "name":  "vm_saveVmIndex"
+                 },
+                 {
+                     "addr":  "0x82ab0eb",
+                     "name":  "aProgVars",
+                     "string":  "PROG_VARS"
+                 },
+                 {
+                     "addr":  "0x80b8770",
+                     "name":  "vm_saveString"
+                 },
+                 {
+                     "addr":  "0x82ab0f5",
+                     "name":  "aFunctions",
+                     "string":  "FUNCTIONS"
+                 },
+                 {
+                     "addr":  "0x847ace0",
+                     "name":  "vm_efunsCount"
+                 },
+                 {
+                     "addr":  "0x82ab0ff",
+                     "name":  "aHiddenFuns",
+                     "string":  "HIDDEN_FUNS"
+                 },
+                 {
+                     "addr":  "0x866192c",
+                     "name":  "vm_hiddenFunsBC"
+                 },
+                 {
+                     "addr":  "0x8095848",
+                     "name":  "vm_saveFun"
+                 },
+                 {
+                     "addr":  "0x8087164",
+                     "name":  "vm_saveInheritPrograms"
+                 },
+                 {
+                     "addr":  "0x82ab10b",
+                     "name":  "aDlt",
+                     "string":  "DLT"
+                 },
+                 {
+                     "addr":  "0x80b61c4",
+                     "name":  "vm_syslogf"
+                 },
+                 {
+                     "addr":  "0x82a825c",
+                     "name":  "aFatalErrorSFil",
+                     "string":  "Fatal error = %s\nFILE(%s)\nLINE(%d)\n"
+                 },
+                 {
+                     "addr":  "0x82ab10f",
+                     "name":  "aBadTypeOfDltTo",
+                     "string":  "Bad type of DLT to save.\n"
+                 },
+                 {
+                     "addr":  "0x80a3980",
+                     "name":  "_vm_endProcess"
+                 }
+             ]
+}

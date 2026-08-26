@@ -1,0 +1,176 @@
+﻿{
+    "addr":  "0x8098b20",
+    "code":  "Vm_Status __cdecl vm_run(\n        int fileFd,\n        int inFd,\n        int outFd,\n        int priority,\n        int rpcClient,\n        const char *pInFileName,\n        int *pErrCode,\n        int isFreeDefine,\n        Vm_End_Execute_Hook_T endHook,\n        void *pCookie)\n{\n  Vm_Status v10; // ebx\n  int v12; // esi\n  int v13; // edx\n  Vm_Node_T *nodes; // edx\n  int v15; // ecx\n  Vm_Action_No_T actionNo; // al\n  int started; // eax\n  Vm_Status v18; // ebx\n  int VmMutex; // eax\n  int v20; // edx\n  Vm_XNode_T *v21; // ecx\n  Vm_PCB_Attribs_T *Memory; // eax\n  const char *v23; // esi\n  Vm_Tid_T v24; // edx\n  unsigned int v25; // ecx\n  const char *v26; // eax\n  int v27; // ecx\n  Vm_Tid_T v28; // edx\n  int start; // [esp+8h] [ebp-40h] BYREF\n  Vm_Scratchpad_Info_T *pScratchpad; // [esp+Ch] [ebp-3Ch] BYREF\n  Vm_Code_Segment_T_0 finalCodeSegment; // [esp+10h] [ebp-38h] BYREF\n\n  if ( !vm_runningInScheduler() || (v10 = Vm_Status::VM_RUNNING_IN_MAIN_LOOP, endHook) )\n  {\n    v10 = Vm_Status::VM_CAN_NOT_OPEN_INPUT;\n    if ( fileFd )\n    {\n      LOBYTE(v10) = -104;\n      if ( vm_getVmMutex() )\n      {\n        if ( vm_buildScratch(\u0026pScratchpad) )\n        {\n          vm_inFd = (Vm_Io_Callback_Instance_T)inFd;\n          vm_outFd = outFd;\n          vm_rpcClient = (void *)rpcClient;\n          currentFile = (Vm_String_T **)pInFileName;\n          v12 = _setjmp(vm_shellEnv);\n          if ( !v12 )\n          {\n            started = vm_startNewFile(0, 0);\n            if ( started )\n            {\n              if ( started \u003c= 0 )\n              {\n                if ( started == -1 )\n                  v12 = -2;\n              }\n              else if ( started == 1 \u0026\u0026 !vm_loadBinary((int)\u0026finalCodeSegment, (Vm_Code_Segment_T_0 *)fileFd) )\n              {\n                vm_errprintf(\"Failed to load binary: %s\\n\", pInFileName);\n                v12 = -2;\n              }\n            }\n            else if ( vm_yyparse(0) || vm_errors )\n            {\n              v12 = -2;\n            }\n            else\n            {\n              vm_genXAction(0, 0, 0x1Du, 0, 0);\n              allActions = vm_appendXActions((Vm_XNode_T *)v10, v21);\n              vm_postProcessXActionsTempMark(0);\n              allActions = vm_optimize(allActions);\n              vm_compilingProgram();\n              vm_transformXActions(\u0026finalCodeSegment, 0, (int)allActions);\n            }\n          }\n          if ( !vm_endNewFile(v12 == 0, isFreeDefine, \u0026finalCodeSegment) )\n            v12 = -2;\n          vm_releaseVmMutex();\n          if ( !v12 )\n          {\n            v13 = 1;\n            if ( finalCodeSegment.nodes )\n            {\n              nodes = finalCodeSegment.nodes;\n              v15 = 0;\n              if ( finalCodeSegment.nodesCount \u003c= 0 )\n              {\nLABEL_16:\n                v13 = 1;\n              }\n              else\n              {\n                while ( 1 )\n                {\n                  actionNo = nodes-\u003eactionNo;\n                  if ( actionNo != 46 \u0026\u0026 actionNo != 29 )\n                    break;\n                  ++v15;\n                  ++nodes;\n                  if ( finalCodeSegment.nodesCount \u003c= v15 )\n                    goto LABEL_16;\n                }\n                v13 = 0;\n              }\n            }\n            if ( v13 )\n            {\n              vm_destructScratch(0);\n              if ( endHook )\n                ((void (__cdecl *)(_DWORD, _DWORD, void *, Vm_End_Execute_Hook_T))endHook)(0, 0, pCookie, endHook);\n              v12 = 0;\n            }\n            else\n            {\n              v18 = (Vm_Status)pScratchpad;\n              VmMutex = vm_getVmMutex();\n              v20 = -104;\n              if ( VmMutex )\n              {\n                vm_inFd = (Vm_Io_Callback_Instance_T)inFd;\n                vm_outFd = outFd;\n                vm_rpcClient = (void *)rpcClient;\n                Memory = (Vm_PCB_Attribs_T *)pdb_allocateMemory(\n                                               0xCu,\n                                               \"VM\",\n                                               \"/home/cc/xxxx/gameshell/src/vm/vm_shell.c\",\n                                               0x83Du);\n                v23 = (const char *)Memory;\n                if ( Memory )\n                {\n                  Memory-\u003estackSize = v18;\n                  Memory-\u003efunContextSize = (int)endHook;\n                  Memory-\u003ecatchContextSize = (int)pCookie;\n                  v18 = vm_spawnProcess(\n                          (const char *)\u0026finalCodeSegment,\n                          0,\n                          (int)\u0026start,\n                          0,\n                          (Vm_End_Hook_T)\u0026finalCodeSegment,\n                          vm_endOfActions,\n                          Memory);\n                  if ( v18 )\n                  {\n                    if ( (int)vm_outputFd \u003e 0 )\n                      vm_write(\n                        (pthread_mutex_t *)v18,\n                        \"Can not spawn thread.\\n\",\n                        strlen(\"Can not spawn thread.\\n\"),\n                        (int)vm_outputFd);\n                  }\n                  else\n                  {\n                    vm_setProcessAttrib(v24, v25, 0, (unsigned int *)\u0026finalCodeSegment);\n                    vm_setThreadPriority(0xFFFFFFFF, v27);\n                    vm_resumeProcess(start);\n                    vm_bringupMainLoop();\n                    if ( endHook )\n                    {\n                      if ( pErrCode )\n                        *pErrCode = -2;\n                      v18 = Vm_Status::VM_OK;\n                    }\n                    else\n                    {\n                      vm_waitProcessEnd(v28, (int *)start);\n                      v18 = Vm_Status::VM_OK;\n                    }\n                  }\n                }\n                else\n                {\n                  v18 = Vm_Status::VM_CAN_NOT_PREPARE_TO_RUN;\n                  if ( (int)vm_outputFd \u003e 0 )\n                    vm_write(\n                      (pthread_mutex_t *)0xFFFFFED2,\n                      \"Can not build script-info before spawn thread.\\n\",\n                      strlen(\"Can not build script-info before spawn thread.\\n\"),\n                      (int)vm_outputFd);\n                }\n                if ( pErrCode )\n                  *pErrCode = 0;\n                vm_releaseVmMutex();\n                if ( v18 \u0026\u0026 v23 )\n                  pdb_freeMemory((void *)v18, v26, v23, (unsigned int)\"VM\");\n                v20 = v18;\n              }\n              v12 = 0;\n              if ( v20 )\n              {\n                if ( (int)vm_outputFd \u003e 0 )\n                  vm_write((pthread_mutex_t *)v18, \"Execution abort.\\n\", strlen(\"Execution abort.\\n\"), (int)vm_outputFd);\n                v12 = -3;\n              }\n            }\n          }\n          if ( pErrCode )\n            *pErrCode = v12;\n          v10 = Vm_Status::VM_OK;\n          if ( v12 )\n          {\n            vm_destructScratch((Vm_Scratchpad_Info_T *)v12);\n            return Vm_Status::VM_FAILED_TO_EXECUTE_SCRIPT;\n          }\n        }\n        else\n        {\n          LOBYTE(v10) = -105;\n          vm_releaseVmMutex();\n        }\n      }\n    }\n  }\n  return v10;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x83cc500",
+                     "name":  "vm_inFd"
+                 },
+                 {
+                     "addr":  "0x83cc504",
+                     "name":  "vm_outFd"
+                 },
+                 {
+                     "addr":  "0x83cf744",
+                     "name":  "vm_rpcClient"
+                 },
+                 {
+                     "addr":  "0x8661940",
+                     "name":  "currentFile"
+                 },
+                 {
+                     "addr":  "0x804bac4",
+                     "name":  "._setjmp"
+                 },
+                 {
+                     "addr":  "0x86619e0",
+                     "name":  "vm_shellEnv"
+                 },
+                 {
+                     "addr":  "0x8080508",
+                     "name":  "vm_startNewFile"
+                 },
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82af0f5",
+                     "name":  "aFailedToLoadBi",
+                     "string":  "Failed to load binary: %s\n"
+                 },
+                 {
+                     "addr":  "0x80b9264",
+                     "name":  "vm_loadBinary"
+                 },
+                 {
+                     "addr":  "0x8095e74",
+                     "name":  "vm_genXAction"
+                 },
+                 {
+                     "addr":  "0x8604120",
+                     "name":  "allActions"
+                 },
+                 {
+                     "addr":  "0x8096d3c",
+                     "name":  "vm_appendXActions"
+                 },
+                 {
+                     "addr":  "0x80968a0",
+                     "name":  "vm_postProcessXActionsTempMark"
+                 },
+                 {
+                     "addr":  "0x80bf568",
+                     "name":  "vm_optimize"
+                 },
+                 {
+                     "addr":  "0x807ecfc",
+                     "name":  "vm_compilingProgram"
+                 },
+                 {
+                     "addr":  "0x8096950",
+                     "name":  "vm_transformXActions"
+                 },
+                 {
+                     "addr":  "0x80ffa64",
+                     "name":  "vm_yyparse"
+                 },
+                 {
+                     "addr":  "0x8667a6c",
+                     "name":  "vm_errors"
+                 },
+                 {
+                     "addr":  "0x8088874",
+                     "name":  "vm_endNewFile"
+                 },
+                 {
+                     "addr":  "0x80b5d50",
+                     "name":  "vm_releaseVmMutex"
+                 },
+                 {
+                     "addr":  "0x8089094",
+                     "name":  "vm_destructScratch"
+                 },
+                 {
+                     "addr":  "0x80b5bec",
+                     "name":  "vm_getVmMutex"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82af188",
+                     "name":  "aHomeCcXxxxGame_4",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_shell.c"
+                 },
+                 {
+                     "addr":  "0x80ac554",
+                     "name":  "vm_spawnProcess"
+                 },
+                 {
+                     "addr":  "0x80995e4",
+                     "name":  "vm_endOfActions"
+                 },
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 },
+                 {
+                     "addr":  "0x82af13b",
+                     "name":  "aCanNotSpawnThr",
+                     "string":  "Can not spawn thread.\n"
+                 },
+                 {
+                     "addr":  "0x860412c",
+                     "name":  "vm_outputFd"
+                 },
+                 {
+                     "addr":  "0x80a95a0",
+                     "name":  "vm_setProcessAttrib"
+                 },
+                 {
+                     "addr":  "0x80a98fc",
+                     "name":  "vm_setThreadPriority"
+                 },
+                 {
+                     "addr":  "0x80aac10",
+                     "name":  "vm_resumeProcess"
+                 },
+                 {
+                     "addr":  "0x80a8ff0",
+                     "name":  "vm_bringupMainLoop"
+                 },
+                 {
+                     "addr":  "0x80ada7c",
+                     "name":  "vm_waitProcessEnd"
+                 },
+                 {
+                     "addr":  "0x82af1d4",
+                     "name":  "aCanNotBuildScr",
+                     "string":  "Can not build script-info before spawn thread.\n"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x82af129",
+                     "name":  "aExecutionAbort",
+                     "string":  "Execution abort.\n"
+                 },
+                 {
+                     "addr":  "0x8089008",
+                     "name":  "vm_buildScratch"
+                 },
+                 {
+                     "addr":  "0x80a8f94",
+                     "name":  "vm_runningInScheduler"
+                 }
+             ]
+}

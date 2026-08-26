@@ -1,0 +1,22 @@
+﻿{
+    "addr":  "0x8095f40",
+    "code":  "int __cdecl vm_saveCodeSegment(int fd, Vm_Code_Segment_T_0 *pCodeSegment)\n{\n  int v2; // ebx\n  int v3; // eax\n  int v4; // edx\n  int v5; // edi\n  Vm_Symbol_T *symbols; // esi\n  unsigned __int8 v7; // dl\n  unsigned __int8 v8; // bl\n  int v10; // eax\n  int v11; // eax\n  int v12; // eax\n  int v13; // eax\n  int v14; // eax\n  int v15; // eax\n  int nowLine; // [esp+4h] [ebp-14h]\n  const char *nowFile; // [esp+8h] [ebp-10h]\n\n  if ( pCodeSegment )\n  {\n    v3 = vm_saveNumber32(fd, pCodeSegment-\u003esymbolsCount);\n    v4 = 0;\n    if ( v3 )\n    {\n      v5 = 0;\n      symbols = pCodeSegment-\u003esymbols;\n      nowFile = 0;\n      nowLine = 0;\n      if ( pCodeSegment-\u003esymbolsCount \u003e 0 )\n      {\n        while ( 1 )\n        {\n          v7 = 0;\n          if ( symbols-\u003efile == nowFile )\n          {\n            if ( symbols-\u003eline != nowLine )\n              v7 = 2;\n          }\n          else\n          {\n            v7 = 3;\n          }\n          v8 = v7;\n          if ( !vm_saveNumber8(fd, v7) )\n            return 0;\n          if ( (v8 \u0026 1) != 0 )\n          {\n            nowFile = symbols-\u003efile;\n            if ( !vm_saveString(fd, (const char *)symbols) )\n              return 0;\n          }\n          v2 = v8 \u0026 2;\n          if ( v2 )\n          {\n            nowLine = symbols-\u003eline;\n            if ( !vm_saveNumber32(fd, nowLine) )\n              return 0;\n            ++v5;\n            ++symbols;\n            if ( pCodeSegment-\u003esymbolsCount \u003c= v5 )\n              break;\n          }\n          else\n          {\n            ++v5;\n            ++symbols;\n            if ( pCodeSegment-\u003esymbolsCount \u003c= v5 )\n              break;\n          }\n        }\n      }\n      v10 = vm_saveNumber32(fd, pCodeSegment-\u003enodesCount);\n      v4 = 0;\n      if ( v10 )\n      {\n        v11 = vm_saveBuffer(fd, pCodeSegment-\u003enodes, v2);\n        v4 = 0;\n        if ( v11 )\n        {\n          v12 = vm_saveNumber32(fd, pCodeSegment-\u003emetaDataLen);\n          v4 = 0;\n          if ( v12 )\n          {\n            if ( pCodeSegment-\u003emetaDataLen \u003c= 0 || (v13 = vm_saveBuffer(fd, pCodeSegment-\u003emetaData, v2), v4 = 0, v13) )\n            {\n              if ( pCodeSegment-\u003eruntimeMisc )\n              {\n                v15 = vm_saveNumber32(fd, pCodeSegment-\u003enodesCount);\n                v4 = 0;\n                if ( !v15 )\n                  return v4;\n                v14 = vm_saveBuffer(fd, pCodeSegment-\u003eruntimeMisc, v2);\n              }\n              else\n              {\n                v14 = vm_saveNumber32(fd, 0);\n              }\n              return v14 != 0;\n            }\n          }\n        }\n      }\n    }\n    return v4;\n  }\n  return vm_saveNumber32(fd, 0) != 0;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80b86a4",
+                     "name":  "vm_saveNumber32"
+                 },
+                 {
+                     "addr":  "0x80b86c8",
+                     "name":  "vm_saveNumber8"
+                 },
+                 {
+                     "addr":  "0x80b8770",
+                     "name":  "vm_saveString"
+                 },
+                 {
+                     "addr":  "0x80b8748",
+                     "name":  "vm_saveBuffer"
+                 }
+             ]
+}

@@ -1,0 +1,48 @@
+﻿{
+    "addr":  "0x809a328",
+    "code":  "Vm_Status __usercall vm_apply@\u003ceax\u003e(\n        Vm_Program_T *a1@\u003cebx\u003e,\n        int inFd,\n        int outFd,\n        int *pReturnNumber,\n        int pending,\n        const char *funName,\n        int a7,\n        ...)\n{\n  int VmMutex; // eax\n  int v9; // edx\n  Vm_Ident_Hash_Elem_T *v10; // eax\n  Vm_Ident_Hash_Elem_T *v11; // ebx\n  int v12; // eax\n  Vm_Status v13; // ebx\n  Vm_Fun_Ptr_T *Memory; // esi\n  Vm_Value_T_2 *Values; // eax\n  bool v17; // zf\n  va_list args; // [esp+4h] [ebp-14h] BYREF\n  Vm_Fun_Ptr_T *pFunction; // [esp+8h] [ebp-10h]\n  va_list hash; // [esp+38h] [ebp+20h] BYREF\n\n  va_start(hash, a7);\n  VmMutex = vm_getVmMutex();\n  v9 = -104;\n  if ( VmMutex )\n  {\n    va_copy(args, hash);\n    v10 = vm_lookupIdentInProgram(a1, (const char *)vm_pGlobalProgram, (int)hash);\n    v11 = v10;\n    if ( v10 \u0026\u0026 (v10-\u003etoken \u0026 0x48000000) != 0 )\n    {\n      Memory = (Vm_Fun_Ptr_T *)pdb_allocateMemory(0x18u, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_shell.c\", 0x4EAu);\n      v12 = -107;\n      if ( Memory )\n      {\n        Values = vm_allocateValues(a7);\n        Memory-\u003epArgs = (Vm_Value_1 *)Values;\n        if ( Values )\n        {\n          Memory-\u003eref = 1;\n          v17 = (v11-\u003etoken \u0026 0x40000000) == 0;\n          Memory-\u003eargn = a7;\n          if ( v17 )\n          {\n            Memory-\u003etype = 99;\n            Memory-\u003eisGlobal = 1;\n            Memory-\u003efunOffset = v11-\u003eii.v.uf.funOffset;\n            Memory-\u003epObject = 0;\n            Memory-\u003ef.pEfun = (Vm_Efun *)v11-\u003eii.v.pInfo;\n          }\n          else\n          {\n            Memory-\u003etype = 75;\n            Memory-\u003eisGlobal = 1;\n            Memory-\u003efunOffset = *((_WORD *)\u0026v11-\u003eii.v.stackOffset + 3);\n            Memory-\u003ef.pEfun = (Vm_Efun *)v11;\n            Memory-\u003epObject = 0;\n          }\n          pFunction = Memory;\n          v13 = vm_invokeScriptFunction((int)pReturnNumber, (int)Memory, 0, pending, 0, Memory, \u0026args, a7);\n          goto LABEL_6;\n        }\n        pdb_freeMemory(v11, 0, (const char *)Memory, (unsigned int)\"VM\");\n        v12 = -107;\n      }\n    }\n    else\n    {\n      v12 = -401;\n    }\n    v13 = v12;\nLABEL_6:\n    vm_releaseVmMutex();\n    return v13;\n  }\n  return v9;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80b5bec",
+                     "name":  "vm_getVmMutex"
+                 },
+                 {
+                     "addr":  "0x8081e40",
+                     "name":  "vm_lookupIdentInProgram"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82af188",
+                     "name":  "aHomeCcXxxxGame_4",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_shell.c"
+                 },
+                 {
+                     "addr":  "0x808a088",
+                     "name":  "vm_allocateValues"
+                 },
+                 {
+                     "addr":  "0x80999b0",
+                     "name":  "vm_invokeScriptFunction"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x80b5d50",
+                     "name":  "vm_releaseVmMutex"
+                 }
+             ]
+}

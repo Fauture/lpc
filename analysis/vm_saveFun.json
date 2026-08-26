@@ -1,0 +1,40 @@
+﻿{
+    "addr":  "0x8095848",
+    "code":  "_BOOL4 __usercall vm_saveFun@\u003ceax\u003e(int a1@\u003cebx\u003e, char *str, char *buf)\n{\n  int v5; // eax\n  int v6; // edx\n  int v8; // eax\n  int v9; // eax\n  Vm_Index_T v10; // ax\n  int i; // ebx\n  int v12; // eax\n  _DWORD *j; // ebx\n  Vm_Index_T v14; // ax\n  int k; // ebx\n  int v16; // eax\n  _DWORD *m; // ebx\n  int v18; // eax\n\n  v5 = vm_saveBuffer((int)str, buf, a1);\n  v6 = 0;\n  if ( v5 )\n  {\n    vm_isKeepSymbol();\n    v8 = vm_saveString((int)str, str);\n    v6 = 0;\n    if ( v8 )\n    {\n      v9 = vm_saveComment((int)str, \"ARGUMENTS\");\n      v6 = 0;\n      if ( v9 )\n      {\n        v10 = 0;\n        for ( i = *((_DWORD *)buf + 12); i; i = *(_DWORD *)(i + 16) )\n          ++v10;\n        v12 = vm_saveVmIndex((int)str, v10);\n        v6 = 0;\n        if ( v12 )\n        {\n          for ( j = (_DWORD *)*((_DWORD *)buf + 12); j; j = (_DWORD *)j[4] )\n          {\n            if ( !vm_saveBuffer((int)str, j, (int)j) || !vm_saveString((int)str, str) )\n              return 0;\n          }\n          v14 = 0;\n          for ( k = *((_DWORD *)buf + 13); k; k = *(_DWORD *)(k + 16) )\n            ++v14;\n          v16 = vm_saveVmIndex((int)str, v14);\n          v6 = 0;\n          if ( v16 )\n          {\n            for ( m = (_DWORD *)*((_DWORD *)buf + 13); m; m = (_DWORD *)m[4] )\n            {\n              if ( !vm_saveBuffer((int)str, m, (int)m) || !vm_saveString((int)str, str) )\n                return 0;\n            }\n            v18 = vm_saveComment((int)str, \"ACTIONS\");\n            v6 = 0;\n            if ( v18 )\n              return vm_saveCodeSegment((int)str, (Vm_Code_Segment_T_0 *)(buf + 16)) != 0;\n          }\n        }\n      }\n    }\n  }\n  return v6;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80b8748",
+                     "name":  "vm_saveBuffer"
+                 },
+                 {
+                     "addr":  "0x80b5bd0",
+                     "name":  "vm_isKeepSymbol"
+                 },
+                 {
+                     "addr":  "0x80b8770",
+                     "name":  "vm_saveString"
+                 },
+                 {
+                     "addr":  "0x80b8698",
+                     "name":  "vm_saveComment"
+                 },
+                 {
+                     "addr":  "0x82ae15e",
+                     "name":  "aArguments",
+                     "string":  "ARGUMENTS"
+                 },
+                 {
+                     "addr":  "0x80b871c",
+                     "name":  "vm_saveVmIndex"
+                 },
+                 {
+                     "addr":  "0x82ae168",
+                     "name":  "aActions",
+                     "string":  "ACTIONS"
+                 },
+                 {
+                     "addr":  "0x8095f3c",
+                     "name":  "vm_saveCodeSegment"
+                 }
+             ]
+}

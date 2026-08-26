@@ -1,0 +1,46 @@
+﻿{
+    "addr":  "0x8087080",
+    "code":  "int __usercall vm_loadDefines@\u003ceax\u003e(int *a1@\u003cesi\u003e, Vm_Binary_Buffer_T *a2)\n{\n  int v3; // edx\n  char *name; // [esp+Ch] [ebp-14h]\n  int nargs; // [esp+10h] [ebp-10h] BYREF\n  int count; // [esp+14h] [ebp-Ch]\n\n  if ( vm_loadNumber32(a2, a1) \u0026\u0026 (v3 = count, count \u003e= 0) )\n  {\n    --count;\n    if ( v3 \u003c= 0 )\n      return 1;\n    while ( 1 )\n    {\n      if ( !vm_loadNumber32(a2, \u0026nargs) )\n      {\n        vm_errprintf(\"Load defines failed: read nargs error.\\n\");\n        return 0;\n      }\n      if ( !vm_loadTempString((Vm_Binary_Buffer_T *)\u0026nargs, (char **)a2) )\n      {\n        vm_errprintf(\"Load defines failed: read name error.\\n\");\n        return 0;\n      }\n      if ( !vm_loadTempString((Vm_Binary_Buffer_T *)\u0026nargs, (char **)a2) )\n        break;\n      vm_addDefine((const char *)\u0026nargs, (int)name, (const char *)nargs);\n      vm_scratchFree(a2);\n      vm_scratchFree(a2);\n      if ( count-- \u003c= 0 )\n        return 1;\n    }\n    vm_errprintf(\"Load defines failed: read exps error.\\n\");\n  }\n  else\n  {\n    vm_errprintf(\"Load defines failed: read count error.\\n\");\n  }\n  return 0;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82ab810",
+                     "name":  "aLoadDefinesFai_0",
+                     "string":  "Load defines failed: read nargs error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8bf4",
+                     "name":  "vm_loadNumber32"
+                 },
+                 {
+                     "addr":  "0x82ab838",
+                     "name":  "aLoadDefinesFai_1",
+                     "string":  "Load defines failed: read name error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8c4c",
+                     "name":  "vm_loadTempString"
+                 },
+                 {
+                     "addr":  "0x807fda0",
+                     "name":  "vm_addDefine"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x82ab860",
+                     "name":  "aLoadDefinesFai_2",
+                     "string":  "Load defines failed: read exps error.\n"
+                 },
+                 {
+                     "addr":  "0x82ab7e8",
+                     "name":  "aLoadDefinesFai",
+                     "string":  "Load defines failed: read count error.\n"
+                 }
+             ]
+}

@@ -1,0 +1,331 @@
+﻿{
+    "addr":  "0x8088600",
+    "code":  "int __usercall vm_loadIdentifiers@\u003ceax\u003e(int a1@\u003cedi\u003e, Vm_Binary_Buffer_T *a2)\n{\n  Vm_Program_T *v3; // edi\n  Vm_Prog_Var_T **v4; // ecx\n  Vm_Prog_Var **j; // eax\n  Vm_Prog_Var_T *v6; // edx\n  char *ptr; // eax\n  bool v8; // cc\n  Vm_Program_T *v9; // eax\n  const char *v10; // eax\n  __int16 v11; // ax\n  Vm_Fun_Entry_T *Memory; // eax\n  int v13; // edi\n  unsigned int v14; // ecx\n  int v15; // edx\n  Vm_Fun_T *v16; // edx\n  bool v17; // sf\n  Vm_Program_T *v18; // esi\n  int v19; // edi\n  int v20; // ecx\n  Vm_Program_T *v21; // esi\n  Vm_Ident_Hash_Elem **ppHashTable; // edx\n  Vm_Program_T *v23; // eax\n  Vm_Ident_Hash_Elem_T *v24; // edi\n  int token; // edx\n  unsigned int semValue; // eax\n  Vm_Ident_Info *v27; // eax\n  Vm_Fun_T *v28; // eax\n  int v29; // eax\n  size_t v30; // eax\n  unsigned __int16 v31; // ax\n  Vm_Ident_Hash_Elem_T *v32; // eax\n  Vm_Ident_Hash_Elem_T *k; // edi\n  Vm_Index_T maxVariableNo; // dx\n  __int16 maxFunctionNo; // ax\n  int v36; // [esp-4h] [ebp-184h]\n  int v37; // [esp-4h] [ebp-184h]\n  int v38; // [esp-4h] [ebp-184h]\n  char **p_pNames; // [esp-4h] [ebp-184h]\n  int v40; // [esp-4h] [ebp-184h]\n  int v41; // [esp-4h] [ebp-184h]\n  int v42; // [esp-4h] [ebp-184h]\n  int v43; // [esp-4h] [ebp-184h]\n  int v44; // [esp-4h] [ebp-184h]\n  const char *v45; // [esp+0h] [ebp-180h]\n  int v46; // [esp+0h] [ebp-180h]\n  int v47; // [esp+4h] [ebp-17Ch]\n  Vm_Program_T *v48; // [esp+4h] [ebp-17Ch]\n  Vm_Ident_Hash_Elem **v49; // [esp+8h] [ebp-178h]\n  int v50; // [esp+Ch] [ebp-174h]\n  char *s2; // [esp+10h] [ebp-170h]\n  unsigned int v52; // [esp+14h] [ebp-16Ch]\n  Vm_Program_T *v53; // [esp+18h] [ebp-168h]\n  Vm_Prog_Var_T **ppVar; // [esp+1Ch] [ebp-164h]\n  int i; // [esp+20h] [ebp-160h]\n  Vm_Fun_T *ppFun; // [esp+24h] [ebp-15Ch] BYREF\n  Vm_Fun_T *v57; // [esp+28h] [ebp-158h] BYREF\n  int v58; // [esp+2Ch] [ebp-154h] BYREF\n  __int16 v59; // [esp+30h] [ebp-150h] BYREF\n  __int16 v60; // [esp+32h] [ebp-14Eh] BYREF\n  Vm_Prog_Var_T *pVar; // [esp+34h] [ebp-14Ch] BYREF\n  __int16 v62; // [esp+38h] [ebp-148h] BYREF\n  __int16 v63; // [esp+3Ah] [ebp-146h] BYREF\n  char *pNames; // [esp+3Ch] [ebp-144h] BYREF\n  int nameSize; // [esp+40h] [ebp-140h] BYREF\n  int count; // [esp+44h] [ebp-13Ch] BYREF\n  char str[256]; // [esp+48h] [ebp-138h] BYREF\n  char *v68; // [esp+148h] [ebp-38h] BYREF\n  int v69; // [esp+14Ch] [ebp-34h]\n  Vm_Fun_T *v70; // [esp+154h] [ebp-2Ch]\n  int v71; // [esp+158h] [ebp-28h]\n\n  if ( !vm_loadComment(a2, \"IDENTIFIERS\") )\n  {\n    vm_errprintf(\"Load identifiers failed: comment \\\"IDENTIFIERS\\\" mismatched.\\n\", v36);\n    return 0;\n  }\n  if ( !vm_loadComment(a2, \"NAMES\") )\n  {\n    vm_errprintf(\"Load identifiers failed: comment \\\"NAME\\\" mismatched.\\n\", v37);\n    return 0;\n  }\n  if ( !vm_loadNumber32((int)a2, (Vm_Binary_Buffer_T *)\u0026count) || count \u003c 0 )\n  {\n    vm_errprintf(\"Load identifiers failed: count error.\\n\", v38);\n    return 0;\n  }\n  if ( !vm_loadNumber32((int)a2, (Vm_Binary_Buffer_T *)\u0026nameSize)\n    || nameSize \u003c 0\n    || (v47 = a1,\n        v45 = (const char *)nameSize,\n        p_pNames = \u0026pNames,\n        !vm_loadTempBuffer((Vm_Binary_Buffer_T *)\u0026count, a2, a1)) )\n  {\n    vm_errprintf(\"Load identifiers failed: names error.\\n\", p_pNames, v45, v47);\n    return 0;\n  }\n  v3 = vm_pGlobalProgram;\n  if ( vm_pCurrentProgram )\n    v3 = vm_pCurrentProgram;\n  if ( !vm_loadComment(a2, \"VARIABLES\") )\n  {\n    vm_errprintf(\"Load variables failed: comment \\\"VARIABLES\\\" mismatched.\\n\");\n    goto LABEL_17;\n  }\n  if ( !vm_loadVmIndex((int)a2, (Vm_Binary_Buffer_T *)\u0026v63)\n    || v63 \u003c 0\n    || !vm_loadVmIndex((int)a2, (Vm_Binary_Buffer_T *)\u0026v62)\n    || v62 \u003c 0 )\n  {\n    vm_errprintf(\"Load variables failed: read variable error.\\n\");\n    goto LABEL_17;\n  }\n  if ( v3 != vm_pGlobalProgram )\n  {\n    v3-\u003emaxVariableNo = v63;\n    if ( vm_loadComment(a2, \"PROG_VARS\") )\n    {\n      for ( j = \u0026v3-\u003epProgVars; ; j = \u0026pVar-\u003epNext )\n      {\n        ppVar = j;\n        v8 = v62-- \u003c= 0;\n        if ( v8 )\n          goto LABEL_29;\n        v47 = (int)v4;\n        if ( !vm_loadBuffer(a2, a2, \u0026pVar, 16) )\n        {\n          vm_errprintf(\"Load variables failed: read program\u0027s variable error.\\n\");\n          goto LABEL_17;\n        }\n        if ( !vm_loadString(a2, \u0026pVar-\u003epVarName) )\n          break;\n        v6 = pVar;\n        v4 = ppVar;\n        ptr = v3-\u003estrName-\u003eptr;\n        pVar-\u003epNext = 0;\n        *ppVar = v6;\n        v6-\u003epProgName = ptr;\n      }\n      vm_errprintf(\"Load variables failed: read program\u0027s variable name error.\\n\");\n      v47 = 7097;\n      v45 = \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\";\n      pdb_freeMemory(a2, v10, (const char *)pVar, (unsigned int)\"VM\");\n    }\n    else\n    {\n      vm_errprintf(\"Load variables failed: comment \\\"PROG_VARS\\\" mismatched.\\n\");\n    }\nLABEL_17:\n    vm_errprintf(\"Load identifiers failed: load variables error.\\n\", v40, v45, v47);\n    return 0;\n  }\n  if ( v63 \u003c (int)vm_globalVar )\n  {\n    vm_errprintf(\"Load variables failed: bad variable count.\\n\");\n    goto LABEL_17;\n  }\n  vm_globalVar = (char *)v63;\nLABEL_29:\n  v9 = vm_pCurrentProgram;\n  if ( !vm_pCurrentProgram )\n    v9 = vm_pGlobalProgram;\n  v53 = v9;\n  if ( !vm_loadComment(a2, \"FUNCTIONS\") )\n  {\n    vm_errprintf(\"Load functions failed: comment \\\"FUNCTIONS\\\" mismatched.\\n\");\n    goto LABEL_33;\n  }\n  if ( !vm_loadVmIndex((int)a2, (Vm_Binary_Buffer_T *)\u0026v60) || vm_efunsCount != v60 )\n  {\n    vm_errprintf(\"Load functions failed: read efuns error.\\n\");\n    goto LABEL_33;\n  }\n  if ( !vm_loadVmIndex((int)a2, (Vm_Binary_Buffer_T *)\u0026v59) || (v11 = v59, v59 \u003c 0) )\n  {\n    vm_errprintf(\"Load functions failed: read functions error.\\n\");\n    goto LABEL_33;\n  }\n  v53-\u003emaxFunctionNo = v59;\n  if ( v53-\u003epFunctions )\n    Memory = (Vm_Fun_Entry_T *)pdb_reallocateMemory(\n                                 a2,\n                                 (unsigned int)v53-\u003epFunctions,\n                                 (const char *)(8 * v11),\n                                 \"VM\",\n                                 (unsigned int)\"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\");\n  else\n    Memory = (Vm_Fun_Entry_T *)pdb_allocateMemory(8 * v11, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x19F3u);\n  if ( !Memory )\n  {\n    vm_errprintf(\"Load identifiers failed: extend function table error.\\n\");\n    goto LABEL_33;\n  }\n  v13 = vm_functionBC;\n  v14 = 8 * (v53-\u003emaxFunctionNo - vm_functionBC);\n  v53-\u003epFunctions = Memory;\n  memset(\u0026Memory[v13], 0, 4 * (v14 \u003e\u003e 2));\n  if ( !vm_loadComment(a2, \"HIDDEN_FUNS\") )\n  {\n    vm_errprintf(\"Load program failed: comment \\\"HIDDEN_FUNS\\\" mismatched.\\n\");\n    goto LABEL_33;\n  }\n  if ( !vm_loadNumber32((int)a2, (Vm_Binary_Buffer_T *)\u0026v58) || (v15 = v58, v58 \u003c 0) )\n  {\n    vm_errprintf(\"Load program failed: read count of hidden functions error.\\n\");\n    goto LABEL_33;\n  }\n  --v58;\n  if ( v15 \u003e 0 )\n  {\n    while ( vm_loadFun((Vm_Fun_T *)a2, (int)\u0026v57, a2, \u0026v57) )\n    {\n      v16 = v57;\n      v57-\u003epNext = v53-\u003epHiddenFuns;\n      v53-\u003epHiddenFuns = v16;\n      v8 = v58-- \u003c= 0;\n      if ( v8 )\n        goto LABEL_61;\n    }\n    vm_errprintf(\"Load program failed: load hidden function error.\\n\");\nLABEL_33:\n    vm_errprintf(\"Load identifiers failed: load functions error.\\n\", v41, v45, v47);\n    return 0;\n  }\nLABEL_61:\n  if ( !vm_loadInheritPrograms(a2) )\n  {\n    vm_errprintf(\"Load identifiers failed: load program error.\\n\", v41, v45, v47);\n    return 0;\n  }\n  if ( !vm_loadComment(a2, \"DLT\") )\n  {\n    vm_errprintf(\"Load identifiers failed: DLT error.\\n\", v42, v45, v47);\n    return 0;\n  }\n  if ( !vm_loadNumber32((int)a2, (Vm_Binary_Buffer_T *)\u0026count) )\n  {\n    vm_errprintf(\"Load identifiers failed: DLT count error.\\n\", v43, v45, v47);\n    return 0;\n  }\n  v17 = count - 1 \u003c 0;\n  for ( i = count - 1; ; --i )\n  {\n    if ( v17 )\n    {\n      vm_scratchFree(a2);\n      return 1;\n    }\n    v18 = vm_pGlobalProgram;\n    if ( vm_pCurrentProgram )\n      v18 = vm_pCurrentProgram;\n    v48 = vm_pCurrentProgram;\n    v19 = (int)pNames;\n    v52 = nameSize;\n    if ( !vm_loadBufferAt(a2, (char *)\u0026v68, 20) )\n    {\n      vm_errprintf(\"Load dlt entry failed: read DLT entry error.\\n\", v44, v46, v48);\n      goto LABEL_93;\n    }\n    if ( (unsigned int)v68 \u003e= v52 )\n    {\n      vm_errprintf(\"Load dlt entry failed: name error.\\n\", v44, v46, v48);\n      goto LABEL_93;\n    }\n    v68 += v19;\n    if ( (v69 \u0026 0x80000) != 0 )\n    {\n      if ( (int)v70 \u003c 0 || (int)v70 \u003e= (int)vm_globalVar )\n      {\n        vm_errprintf(\"Bad offset (%d) of a global variable (max %d).\\n\", v70, vm_globalVar);\n        goto LABEL_93;\n      }\n      goto LABEL_76;\n    }\n    if ( (v69 \u0026 0x40000) == 0 )\n      break;\n    v20 = (int)v70;\n    if ( (int)v70 \u003c 0 )\n    {\n      maxVariableNo = v18-\u003emaxVariableNo;\nLABEL_119:\n      vm_errprintf(\"Bad offset (%d) of an object variable (max %d).\\n\", v70, maxVariableNo);\n      goto LABEL_93;\n    }\n    maxVariableNo = v18-\u003emaxVariableNo;\n    if ( (int)v70 \u003e= maxVariableNo )\n      goto LABEL_119;\nLABEL_76:\n    v21 = vm_pGlobalProgram;\n    ppHashTable = vm_pGlobalProgram-\u003eppHashTable;\n    s2 = v68;\n    if ( !ppHashTable )\n      goto LABEL_77;\n    v31 = vm_whashstr((const char *)ppHashTable, v20);\n    v49 = v21-\u003eppHashTable;\n    v21 = (Vm_Program_T *)v49[v31 \u0026 0x3FF];\n    v50 = v31 \u0026 0x3FF;\n    if ( !v21 )\n      goto LABEL_77;\n    if ( strcmp((const char *)v21-\u003eref, s2) )\n    {\n      for ( k = *(Vm_Ident_Hash_Elem_T **)\u0026v21-\u003edestructFunOffset; k != (Vm_Ident_Hash_Elem_T *)v21; k = k-\u003epNext )\n      {\n        if ( !strcmp(k-\u003ename, s2) )\n        {\n          if ( (k-\u003etoken \u0026 0x80000000) != 0 || k-\u003esemValue )\n          {\n            v49[v50] = k;\n            v32 = k;\n            goto LABEL_105;\n          }\n          break;\n        }\n      }\nLABEL_77:\n      v23 = vm_pCurrentProgram;\n      if ( !vm_pCurrentProgram )\n        v23 = vm_pGlobalProgram;\n      v24 = vm_findOrAddIdentInProgram(v23, (const char *)v21);\n      goto LABEL_80;\n    }\n    if ( (int)v21-\u003estrName \u003e= 0 \u0026\u0026 !*(_DWORD *)\u0026v21-\u003eattrib )\n      goto LABEL_77;\n    v32 = (Vm_Ident_Hash_Elem_T *)v21;\nLABEL_105:\n    if ( !v32 )\n      goto LABEL_77;\n    v24 = v32;\n    if ( (v32-\u003etoken \u0026 0x80000000) == 0 )\n      goto LABEL_77;\nLABEL_80:\n    token = v24-\u003etoken;\n    if ( (token \u0026 0xC0080000) != 0 )\n    {\n      vm_errprintf(\"Load dlt failed: \\\"%s\\\" is already declared.\\n\", v24-\u003ename);\n      goto LABEL_93;\n    }\n    if ( (token \u0026 0x8000000) != 0 \u0026\u0026 (v69 \u0026 0x8000000) == 0 )\n    {\n      vm_errprintf(\"Load dlt failed: \\\"%s\\\" is already declared as function.\\n\", v24-\u003ename);\n      goto LABEL_93;\n    }\n    semValue = v24-\u003esemValue;\n    if ( semValue )\n    {\n      if ( token \u003c 0 )\n      {\n        yyerror(\"The reserved word can not be redefined.\");\n        goto LABEL_92;\n      }\n      if ( (token \u0026 0x40000000) != 0 )\n      {\n        yyerror(\"The efun can not be redefined.\");\n        goto LABEL_92;\n      }\n      if ( (token \u0026 0x2FFFF) != 0 \u0026\u0026 !v24-\u003eii.pInContext )\n      {\n        yyerrors(\"The name \\\"%s\\\" in line %d has been defined.\\n\");\n        goto LABEL_92;\n      }\n      v27 = (Vm_Ident_Info *)pdb_allocateMemory(0x18u, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\", 0x1324u);\n      if ( !v27 )\n      {\n        yyerrors(\"No enough memort to backup information structure.\\n\");\nLABEL_92:\n        vm_errprintf(\"Load dlt failed: Failed to backup II for \\\"%s\\\".\\n\", v24-\u003ename);\n        goto LABEL_93;\n      }\n      v27-\u003ev.value.no = v24-\u003eii.v.value.no;\n      *((_DWORD *)\u0026v27-\u003ev.pXNode + 1) = *((_DWORD *)\u0026v24-\u003eii.v.pXNode + 1);\n      v27-\u003epInContext = v24-\u003eii.pInContext;\n      v27-\u003eoldToken = v24-\u003eii.oldToken;\n      *(_DWORD *)\u0026v27-\u003erefered = *(_DWORD *)\u0026v24-\u003eii.refered;\n      v27-\u003epNext = v24-\u003eii.pNext;\n      v27-\u003eoldToken = v24-\u003etoken;\n      v24-\u003eii.pNext = v27;\n      semValue = v24-\u003esemValue;\n    }\n    v24-\u003esemValue = semValue + 1;\n    v24-\u003eii.pInContext = 0;\n    v28 = v70;\n    *((_DWORD *)\u0026v24-\u003eii.v.pXNode + 1) = v71;\n    v24-\u003eii.v.value.no = (int)v28;\n    v29 = v69 | 0x20000000;\n    ++v24-\u003edn.globalNum;\n    v17 = i - 1 \u003c 0;\n    v24-\u003eii.oldToken = v29;\n    v24-\u003etoken = v29;\n  }\n  if ( (v69 \u0026 0x8000000) == 0 )\n  {\n    vm_errprintf(\"Load dlt failed: Bad type of DLT entry.\\n\");\n    goto LABEL_93;\n  }\n  if ( (v71 \u0026 0x8000u) == 0 )\n  {\n    maxFunctionNo = v18-\u003emaxFunctionNo;\n    if ( (__int16)v71 \u003e= maxFunctionNo )\n      goto LABEL_132;\n    if ( !vm_loadFun((Vm_Fun_T *)a2, v19, a2, \u0026ppFun) )\n      goto LABEL_93;\n    v70 = ppFun;\n    goto LABEL_76;\n  }\n  maxFunctionNo = v18-\u003emaxFunctionNo;\nLABEL_132:\n  vm_errprintf(\"Bad offset (%d) of a function (max %d).\\n\", (__int16)v71, maxFunctionNo);\nLABEL_93:\n  v30 = nameSize;\n  if ( (unsigned int)nameSize \u003e 0xFF )\n  {\n    nameSize = 255;\n    v30 = 255;\n  }\n  memcpy(str, pNames, v30);\n  str[nameSize] = 0;\n  vm_errprintf(\"Load identifier failed: %s.\\n\", str);\n  return 0;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8097acc",
+                     "name":  "vm_errprintf"
+                 },
+                 {
+                     "addr":  "0x82aba74",
+                     "name":  "aLoadIdentifier",
+                     "string":  "Load identifiers failed: comment \"IDENTIFIERS\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x80b8800",
+                     "name":  "vm_loadComment"
+                 },
+                 {
+                     "addr":  "0x82ab0cf",
+                     "name":  "aIdentifiers",
+                     "string":  "IDENTIFIERS"
+                 },
+                 {
+                     "addr":  "0x82abab0",
+                     "name":  "aLoadIdentifier_0",
+                     "string":  "Load identifiers failed: comment \"NAME\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab0db",
+                     "name":  "aNames",
+                     "string":  "NAMES"
+                 },
+                 {
+                     "addr":  "0x82abb10",
+                     "name":  "aLoadIdentifier_2",
+                     "string":  "Load identifiers failed: count error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8bf4",
+                     "name":  "vm_loadNumber32"
+                 },
+                 {
+                     "addr":  "0x82abae8",
+                     "name":  "aLoadIdentifier_1",
+                     "string":  "Load identifiers failed: names error.\n"
+                 },
+                 {
+                     "addr":  "0x80b899c",
+                     "name":  "vm_loadTempBuffer"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x847aac0",
+                     "name":  "vm_pCurrentProgram"
+                 },
+                 {
+                     "addr":  "0x82abb38",
+                     "name":  "aLoadVariablesF",
+                     "string":  "Load variables failed: comment \"VARIABLES\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab0e1",
+                     "name":  "aVariables",
+                     "string":  "VARIABLES"
+                 },
+                 {
+                     "addr":  "0x82abc08",
+                     "name":  "aLoadVariablesF_0",
+                     "string":  "Load variables failed: read variable error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8b44",
+                     "name":  "vm_loadVmIndex"
+                 },
+                 {
+                     "addr":  "0x82abd04",
+                     "name":  "aLoadVariablesF_4",
+                     "string":  "Load variables failed: read program\u0027s variable error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8a70",
+                     "name":  "vm_loadBuffer"
+                 },
+                 {
+                     "addr":  "0x80b8dc8",
+                     "name":  "vm_loadString"
+                 },
+                 {
+                     "addr":  "0x82abcc8",
+                     "name":  "aLoadVariablesF_3",
+                     "string":  "Load variables failed: read program\u0027s variable name error.\n"
+                 },
+                 {
+                     "addr":  "0x82ab14c",
+                     "name":  "aHomeCcXxxxGame",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_lex.c"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82abc64",
+                     "name":  "aLoadVariablesF_1",
+                     "string":  "Load variables failed: comment \"PROG_VARS\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab0eb",
+                     "name":  "aProgVars",
+                     "string":  "PROG_VARS"
+                 },
+                 {
+                     "addr":  "0x82abb70",
+                     "name":  "aLoadIdentifier_3",
+                     "string":  "Load identifiers failed: load variables error.\n"
+                 },
+                 {
+                     "addr":  "0x82abc9c",
+                     "name":  "aLoadVariablesF_2",
+                     "string":  "Load variables failed: bad variable count.\n"
+                 },
+                 {
+                     "addr":  "0x847aac4",
+                     "name":  "vm_globalVar"
+                 },
+                 {
+                     "addr":  "0x82abba0",
+                     "name":  "aLoadFunctionsF",
+                     "string":  "Load functions failed: comment \"FUNCTIONS\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab0f5",
+                     "name":  "aFunctions",
+                     "string":  "FUNCTIONS"
+                 },
+                 {
+                     "addr":  "0x82abc38",
+                     "name":  "aLoadFunctionsF_0",
+                     "string":  "Load functions failed: read efuns error.\n"
+                 },
+                 {
+                     "addr":  "0x847ace0",
+                     "name":  "vm_efunsCount"
+                 },
+                 {
+                     "addr":  "0x82abd74",
+                     "name":  "aLoadFunctionsF_1",
+                     "string":  "Load functions failed: read functions error.\n"
+                 },
+                 {
+                     "addr":  "0x80cf588",
+                     "name":  "pdb_reallocateMemory"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82abdd8",
+                     "name":  "aLoadIdentifier_5",
+                     "string":  "Load identifiers failed: extend function table error.\n"
+                 },
+                 {
+                     "addr":  "0x8660900",
+                     "name":  "vm_functionBC"
+                 },
+                 {
+                     "addr":  "0x82abd3c",
+                     "name":  "aLoadProgramFai_6",
+                     "string":  "Load program failed: comment \"HIDDEN_FUNS\" mismatched.\n"
+                 },
+                 {
+                     "addr":  "0x82ab0ff",
+                     "name":  "aHiddenFuns",
+                     "string":  "HIDDEN_FUNS"
+                 },
+                 {
+                     "addr":  "0x82abe40",
+                     "name":  "aLoadProgramFai_8",
+                     "string":  "Load program failed: read count of hidden functions error.\n"
+                 },
+                 {
+                     "addr":  "0x80959b8",
+                     "name":  "vm_loadFun"
+                 },
+                 {
+                     "addr":  "0x82abda4",
+                     "name":  "aLoadProgramFai_7",
+                     "string":  "Load program failed: load hidden function error.\n"
+                 },
+                 {
+                     "addr":  "0x82abbd8",
+                     "name":  "aLoadIdentifier_4",
+                     "string":  "Load identifiers failed: load functions error.\n"
+                 },
+                 {
+                     "addr":  "0x82abe10",
+                     "name":  "aLoadIdentifier_6",
+                     "string":  "Load identifiers failed: load program error.\n"
+                 },
+                 {
+                     "addr":  "0x808729c",
+                     "name":  "vm_loadInheritPrograms"
+                 },
+                 {
+                     "addr":  "0x82abe7c",
+                     "name":  "aLoadIdentifier_7",
+                     "string":  "Load identifiers failed: DLT error.\n"
+                 },
+                 {
+                     "addr":  "0x82ab10b",
+                     "name":  "aDlt",
+                     "string":  "DLT"
+                 },
+                 {
+                     "addr":  "0x82abfb8",
+                     "name":  "aLoadIdentifier_9",
+                     "string":  "Load identifiers failed: DLT count error.\n"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x82abf88",
+                     "name":  "aLoadDltEntryFa_0",
+                     "string":  "Load dlt entry failed: read DLT entry error.\n"
+                 },
+                 {
+                     "addr":  "0x80b8904",
+                     "name":  "vm_loadBufferAt"
+                 },
+                 {
+                     "addr":  "0x82abf64",
+                     "name":  "aLoadDltEntryFa",
+                     "string":  "Load dlt entry failed: name error.\n"
+                 },
+                 {
+                     "addr":  "0x82abf00",
+                     "name":  "aBadOffsetDOfAG",
+                     "string":  "Bad offset (%d) of a global variable (max %d).\n"
+                 },
+                 {
+                     "addr":  "0x82abf30",
+                     "name":  "aBadOffsetDOfAn",
+                     "string":  "Bad offset (%d) of an object variable (max %d).\n"
+                 },
+                 {
+                     "addr":  "0x8089dc8",
+                     "name":  "vm_whashstr"
+                 },
+                 {
+                     "addr":  "0x804b064",
+                     "name":  ".strcmp"
+                 },
+                 {
+                     "addr":  "0x8085a94",
+                     "name":  "vm_findOrAddIdentInProgram"
+                 },
+                 {
+                     "addr":  "0x82abed4",
+                     "name":  "aLoadDltFailedS",
+                     "string":  "Load dlt failed: \"%s\" is already declared.\n"
+                 },
+                 {
+                     "addr":  "0x82abfe4",
+                     "name":  "aLoadDltFailedS_0",
+                     "string":  "Load dlt failed: \"%s\" is already declared as function.\n"
+                 },
+                 {
+                     "addr":  "0x80ff80c",
+                     "name":  "yyerror"
+                 },
+                 {
+                     "addr":  "0x82ab6d4",
+                     "name":  "aTheReservedWor",
+                     "string":  "The reserved word can not be redefined."
+                 },
+                 {
+                     "addr":  "0x82ab6b4",
+                     "name":  "aTheEfunCanNotB",
+                     "string":  "The efun can not be redefined."
+                 },
+                 {
+                     "addr":  "0x80ff97c",
+                     "name":  "yyerrors"
+                 },
+                 {
+                     "addr":  "0x82ab730",
+                     "name":  "aTheNameSInLine",
+                     "string":  "The name \"%s\" in line %d has been defined.\n"
+                 },
+                 {
+                     "addr":  "0x82ab6fc",
+                     "name":  "aNoEnoughMemort",
+                     "string":  "No enough memort to backup information structure.\n"
+                 },
+                 {
+                     "addr":  "0x82abea4",
+                     "name":  "aLoadDltFailedF",
+                     "string":  "Load dlt failed: Failed to backup II for \"%s\".\n"
+                 },
+                 {
+                     "addr":  "0x82ac048",
+                     "name":  "aLoadDltFailedB",
+                     "string":  "Load dlt failed: Bad type of DLT entry.\n"
+                 },
+                 {
+                     "addr":  "0x82ac01c",
+                     "name":  "aBadOffsetDOfAF",
+                     "string":  "Bad offset (%d) of a function (max %d).\n"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x82ab129",
+                     "name":  "aLoadIdentifier_8",
+                     "string":  "Load identifier failed: %s.\n"
+                 }
+             ]
+}

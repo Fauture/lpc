@@ -1,0 +1,26 @@
+﻿{
+    "addr":  "0x80b8c4c",
+    "code":  "int __cdecl vm_loadTempString(Vm_Binary_Buffer_T *ppStr, char **ppStra)\n{\n  char *len; // edx\n  char *p; // eax\n  int v5; // ecx\n  int v6; // ebx\n  char *v7; // eax\n  int result; // eax\n  char *v9; // eax\n  char *dest; // [esp+0h] [ebp-18h]\n  char *str; // [esp+4h] [ebp-14h] BYREF\n  int size; // [esp+8h] [ebp-10h] BYREF\n\n  len = (char *)ppStr-\u003elen;\n  if ( (unsigned int)len \u003e 3\n    || (vm_fetchBinaryBufferData((int)ppStr), len = (char *)ppStr-\u003elen, result = 0, (unsigned int)len \u003e 3) )\n  {\n    p = ppStr-\u003ep;\n    v5 = *(_DWORD *)p;\n    ppStr-\u003ep = p + 4;\n    ppStr-\u003elen = (int)(len - 4);\n    if ( \u0026size )\n      size = v5;\n    v6 = size;\n    if ( size \u003c= 0 )\n    {\n      *ppStra = 0;\n    }\n    else\n    {\n      v7 = vm_scratchAlloc(size);\n      dest = v7;\n      if ( (unsigned int)v6 \u003e 0xFA0 )\n      {\n        memcpy(v7, ppStr-\u003ep, ppStr-\u003elen);\n        v9 = (char *)ppStr-\u003elen;\n        ppStr-\u003ep = ppStr-\u003edata;\n        ppStr-\u003elen = 0;\n        if ( vm_read(\u0026dest[(_DWORD)v9], v6 - (_DWORD)v9, v6) != v6 - (_DWORD)v9 )\n        {\nLABEL_17:\n          vm_scratchFree((void *)v6);\n          return 0;\n        }\n      }\n      else\n      {\n        if ( ppStr-\u003elen \u003c v6 )\n        {\n          vm_fetchBinaryBufferData((int)ppStr);\n          if ( ppStr-\u003elen \u003c v6 )\n            goto LABEL_17;\n        }\n        memcpy(dest, ppStr-\u003ep, v6);\n        ppStr-\u003ep += v6;\n        ppStr-\u003elen -= v6;\n      }\n      if ( \u0026str )\n        str = dest;\n      else\n        vm_scratchFree((void *)v6);\n      str[size - 1] = 0;\n      if ( ppStra )\n        *ppStra = str;\n      else\n        vm_scratchFree((void *)v6);\n    }\n    return 1;\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8089390",
+                     "name":  "vm_scratchAlloc"
+                 },
+                 {
+                     "addr":  "0x804b7e4",
+                     "name":  ".memcpy"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x80a110c",
+                     "name":  "vm_read"
+                 },
+                 {
+                     "addr":  "0x80b88a0",
+                     "name":  "vm_fetchBinaryBufferData"
+                 }
+             ]
+}

@@ -1,0 +1,22 @@
+﻿{
+    "addr":  "0x80f33fc",
+    "code":  "void __cdecl vm_endOfExecute(Vm_PCB_0 *pPCB, Vm_Pend_Object_T *pObject, Vm_PCB_T *a3)\n{\n  int nodes; // ebx\n  Vm_PCB_T *ctrlFlags; // ebx\n\n  if ( a3 )\n  {\n    nodes = (int)a3-\u003eentryCodeSegment.nodes;\n    a3-\u003eentryCodeSegment.nodes = (Vm_Node_T *)(nodes - 1);\n    if ( nodes - 1 \u003c= 0 )\n      vm_deletePendObject(a3-\u003etid);\n    if ( nodes \u003e 1 )\n    {\n      if ( a3-\u003eentryCodeSegment.nodesCount )\n      {\n        a3-\u003eentryCodeSegment.nodesCount = 0;\n      }\n      else\n      {\n        ctrlFlags = (Vm_PCB_T *)a3-\u003ectrlFlags;\n        vm_setProcessReturnNumber((int)ctrlFlags, (int)pObject);\n        vm_resumeFromObject((int)a3, ctrlFlags);\n        vm_releaseObject((int)ctrlFlags, a3);\n      }\n    }\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80aa844",
+                     "name":  "vm_deletePendObject"
+                 },
+                 {
+                     "addr":  "0x80a9f58",
+                     "name":  "vm_setProcessReturnNumber"
+                 },
+                 {
+                     "addr":  "0x80aaab8",
+                     "name":  "vm_resumeFromObject"
+                 },
+                 {
+                     "addr":  "0x80a9b90",
+                     "name":  "vm_releaseObject"
+                 }
+             ]
+}

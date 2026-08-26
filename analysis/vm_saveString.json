@@ -1,0 +1,10 @@
+﻿{
+    "addr":  "0x80b8770",
+    "code":  "_BOOL4 __usercall vm_saveString@\u003ceax\u003e(pthread_mutex_t *a1@\u003cebx\u003e, int fd, const char *len)\n{\n  pthread_mutex_t *v4; // ebx\n  pthread_mutex_t *pBuffer; // [esp+4h] [ebp-14h] BYREF\n  _DWORD v7[4]; // [esp+8h] [ebp-10h] BYREF\n\n  if ( len )\n  {\n    v4 = (pthread_mutex_t *)(strlen(len) + 1);\n    pBuffer = v4;\n    return vm_write(v4, \u0026pBuffer, 4, fd) == 4 \u0026\u0026 vm_write(v4, len, (int)v4, fd) == (_DWORD)v4;\n  }\n  else\n  {\n    v7[0] = 0;\n    vm_write(a1, v7, 4, fd);\n    return 0;\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 }
+             ]
+}

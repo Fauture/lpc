@@ -1,0 +1,173 @@
+﻿{
+    "addr":  "0x8088874",
+    "code":  "int __cdecl vm_endNewFile(int succ, int isFreeDefine, Vm_Code_Segment_T_0 *pFinalCodeSegment)\n{\n  void *v3; // ebx\n  const char *v4; // esi\n  const char *v5; // eax\n  Vm_Incstate_T *i; // ebx\n  Vm_Ifstate_T *v7; // edx\n  __int16 maxFunctionNo; // ax\n  Vm_Fun_Entry_T *Memory; // eax\n  int v10; // edi\n  unsigned int v11; // ecx\n  __int16 v12; // ax\n  __int16 v13; // dx\n  Vm_Quick_Function *v14; // eax\n  int m; // esi\n  Vm_Defn_T *v16; // edi\n  Vm_Defn_T **p_pNext; // ebx\n  unsigned int v18; // edx\n  int v19; // esi\n  Vm_Ident_Hash_Elem **ppHashHead; // eax\n  Vm_Ident_Hash_Elem_T *v21; // edi\n  bool v22; // zf\n  Vm_Prog_Var_T *n; // ebx\n  Vm_Program_T *v24; // edx\n  Vm_Program_T *v25; // ecx\n  const char *pNext; // eax\n  const char *v28; // eax\n  int j; // edx\n  int k; // ecx\n  Vm_Defn_T *v31; // edx\n  unsigned int flags; // eax\n  int v33; // eax\n  Vm_Global_Var_T *v34; // ecx\n  int v35; // ebx\n  char *v36; // edx\n  int v37; // eax\n  bool v38; // zf\n  const char *v39; // edi\n  int v40; // ecx\n  Vm_Value_T *v41; // ebx\n  Vm_Index_T v42; // ax\n  int v43; // ebx\n  int v44; // esi\n  Vm_Program_T *pCurrentProgram; // [esp+1Ch] [ebp-11Ch]\n  char size[280]; // [esp+20h] [ebp-118h] BYREF\n\n  pCurrentProgram = vm_pCurrentProgram;\n  if ( !vm_pCurrentProgram )\n    pCurrentProgram = vm_pGlobalProgram;\n  if ( vm_pszLocalIncList )\n  {\n    pdb_freeMemory(v3, (const char *)vm_pszLocalIncList, *vm_pszLocalIncList, (unsigned int)\"VM\");\n    pdb_freeMemory(v3, v5, (const char *)vm_pszLocalIncList, (unsigned int)\"VM\");\n    vm_pszLocalIncList = 0;\n    vm_localIncListSize = 0;\n  }\n  for ( i = incTop; incTop; i = incTop )\n  {\n    vm_close(vm_yyinDesc);\n    currentFile = (Vm_String_T **)i-\u003efile;\n    vm_yyinDesc = i-\u003eyyinDesc;\n    vm_yyinCryptType = i-\u003eyyinCryptType;\n    vm_yyinCryptCode = i-\u003eyyinCryptCode;\n    incTop = i-\u003epNext;\n    vm_yyinStart = 0;\n    vm_scratchFree(i);\n  }\n  v7 = vm_iftop;\n  for ( incTop = 0; vm_iftop; v7 = vm_iftop )\n  {\n    vm_iftop = v7-\u003epNext;\n    vm_scratchFree(i);\n  }\n  if ( succ )\n  {\n    maxFunctionNo = pCurrentProgram-\u003emaxFunctionNo;\n    if ( maxFunctionNo \u003e vm_functionBC )\n    {\n      if ( pCurrentProgram-\u003epFunctions )\n      {\n        i = (Vm_Incstate_T *)pCurrentProgram;\n        Memory = (Vm_Fun_Entry_T *)pdb_reallocateMemory(\n                                     pCurrentProgram,\n                                     (unsigned int)pCurrentProgram-\u003epFunctions,\n                                     (const char *)(8 * maxFunctionNo),\n                                     \"VM\",\n                                     (unsigned int)\"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\");\n      }\n      else\n      {\n        Memory = (Vm_Fun_Entry_T *)pdb_allocateMemory(\n                                     8 * maxFunctionNo,\n                                     \"VM\",\n                                     \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\",\n                                     0x19F3u);\n      }\n      if ( !Memory )\n      {\nLABEL_22:\n        succ = 0;\n        goto LABEL_23;\n      }\n      v10 = vm_functionBC;\n      v11 = 8 * (pCurrentProgram-\u003emaxFunctionNo - vm_functionBC);\n      pCurrentProgram-\u003epFunctions = Memory;\n      memset(\u0026Memory[v10], 0, 4 * (v11 \u003e\u003e 2));\n    }\n    if ( pCurrentProgram == vm_pGlobalProgram \u0026\u0026 vm_variableBC \u003c (int)vm_globalVar )\n    {\n      v33 = (int)(vm_pGlobalVar\n                ? pdb_reallocateMemory(\n                    i,\n                    (unsigned int)vm_pGlobalVar,\n                    (const char *)(12 * (_DWORD)vm_globalVar),\n                    \"VM\",\n                    (unsigned int)\"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\")\n                : pdb_allocateMemory(\n                    12 * (_DWORD)vm_globalVar,\n                    \"VM\",\n                    \"/home/cc/xxxx/gameshell/src/vm/vm_lex.c\",\n                    0x1A10u));\n      if ( !v33 )\n        goto LABEL_22;\n      v34 = (Vm_Global_Var_T *)v33;\n      vm_pGlobalVar = (Vm_Global_Var_T *)v33;\n      LOWORD(v33) = vm_variableBC;\n      v35 = vm_variableBC;\n      v36 = vm_globalVar;\n      if ( vm_variableBC \u003c (int)vm_globalVar )\n      {\n        v37 = vm_variableBC;\n        while ( 1 )\n        {\n          v34[v37].attrib = 0;\n          ++v35;\n          v36 = vm_globalVar;\n          v34[v37].pValue = 0;\n          v34[v37++].pName = 0;\n          if ( v35 \u003e= (int)v36 )\n            break;\n          v34 = vm_pGlobalVar;\n        }\n        LOWORD(v33) = vm_variableBC;\n      }\n      v33 = (__int16)v33;\n      vm_varTableSize = (__int16)v33;\n      while ( v33 \u003c (int)v36 )\n      {\n        v41 = (Vm_Value_T *)vm_safeNewValue();\n        if ( !v41 )\n        {\n          v36 = vm_globalVar;\n          v33 = vm_varTableSize;\n          break;\n        }\n        v33 = vm_varTableSize + 1;\n        vm_pGlobalVar[vm_varTableSize].pValue = v41;\n        vm_varTableSize = v33;\n        v36 = vm_globalVar;\n      }\n      if ( v33 \u003c (int)v36 )\n        goto LABEL_22;\n    }\n    if ( !vm_isBinaryFile \u0026\u0026 (currentAttrib \u0026 0x80000000) != 0 )\n    {\n      v38 = currentInputFile == 0;\n      if ( currentInputFile )\n      {\n        v4 = \"/v/\";\n        v39 = currentInputFile;\n        v40 = 3;\n        do\n        {\n          if ( !v40 )\n            break;\n          v38 = *v4++ == *v39++;\n          --v40;\n        }\n        while ( v38 );\n        if ( !v38 \u0026\u0026 vm_generateBinFileName(size, (char *)currentInputFile, (int)size) )\n          vm_saveBinary(size, pFinalCodeSegment, isFreeDefine == 0);\n      }\n    }\n    if ( pCurrentProgram != vm_pGlobalProgram )\n    {\n      v12 = pCurrentProgram-\u003emaxFunctionNo;\n      v13 = v12 + 15;\n      if ( v12 \u003e -1 )\n        v13 = pCurrentProgram-\u003emaxFunctionNo;\n      pCurrentProgram-\u003equickFunctionSize = v12 + (v13 \u003e\u003e 4) + 1;\n      v14 = (Vm_Quick_Function *)vm_scratchLargeAlloc((unsigned int)v4);\n      pCurrentProgram-\u003epQuickFunction = v14;\n      if ( !v14 )\n        goto LABEL_22;\n      for ( j = 0; pCurrentProgram-\u003equickFunctionSize \u003e j; v14[j++].strNo = -1 )\n        v14[j].funOffset = -1;\n    }\n    if ( vm_pCurrentProgram )\n      vm_finalizeIdentifiersInProgram(vm_pCurrentProgram);\n    else\n      vm_finalizeIdentifiersInProgram(vm_pGlobalProgram);\n    if ( !isFreeDefine )\n    {\n      for ( k = 0; k \u003c= 63; ++k )\n      {\n        v31 = vm_defns[k];\n        while ( v31 )\n        {\n          flags = v31-\u003eflags;\n          if ( (flags \u0026 0x8000) == 0 || (flags \u0026 0x4000) != 0 )\n          {\n            v31 = v31-\u003epNext;\n          }\n          else\n          {\n            BYTE1(flags) \u0026= ~0x80u;\n            v31-\u003eflags = flags;\n            v31 = v31-\u003epNext;\n          }\n        }\n      }\n    }\n  }\nLABEL_23:\n  if ( vm_pCurrentProgram )\n    vm_freeUnusedIdentifiersInProgram(vm_pCurrentProgram);\n  else\n    vm_freeUnusedIdentifiersInProgram(vm_pGlobalProgram);\n  for ( m = 0; m \u003c= 63; ++m )\n  {\n    v16 = vm_defns[m];\n    p_pNext = \u0026vm_defns[m];\n    while ( v16 )\n    {\n      v18 = v16-\u003eflags;\n      if ( (v18 \u0026 0x8000) != 0 )\n      {\n        pNext = (const char *)v16-\u003epNext;\n        *p_pNext = v16-\u003epNext;\n        if ( (v18 \u0026 8) == 0 )\n          pdb_freeMemory(p_pNext, pNext, v16-\u003eexps, (unsigned int)\"VM\");\n        pdb_freeMemory(p_pNext, pNext, v16-\u003ename, (unsigned int)\"VM\");\n        pdb_freeMemory(p_pNext, v28, (const char *)v16, (unsigned int)\"VM\");\n        v16 = *p_pNext;\n      }\n      else\n      {\n        p_pNext = \u0026v16-\u003epNext;\n        v16 = v16-\u003epNext;\n      }\n    }\n  }\n  vm_nexpands = 0;\n  if ( succ )\n  {\n    if ( pCurrentProgram != vm_pGlobalProgram )\n    {\n      vm_gatherProgramFunctionTable(pCurrentProgram);\n      v19 = 0;\n      ppHashHead = pCurrentProgram-\u003eppHashHead;\n      do\n      {\n        v21 = ppHashHead[v19];\n        if ( v21 )\n        {\n          do\n          {\n            p_pNext = (Vm_Defn_T **)v21-\u003epNext;\n            if ( vm_pickupFunAndfreeAll(v21, pCurrentProgram) )\n            {\n              v21 = (Vm_Ident_Hash_Elem_T *)p_pNext;\n              p_pNext = (Vm_Defn_T **)pCurrentProgram;\n              ppHashHead = pCurrentProgram-\u003eppHashHead;\n              if ( v21 == ppHashHead[v19] )\n                break;\n              v22 = ppHashHead[v19] == 0;\n            }\n            else\n            {\n              vm_freeIdentInProgram(pCurrentProgram, (Vm_Ident_Hash_Elem_T *)v19);\n              ppHashHead = pCurrentProgram-\u003eppHashHead;\n              v21 = (Vm_Ident_Hash_Elem_T *)p_pNext;\n              v22 = ppHashHead[v19] == 0;\n            }\n          }\n          while ( !v22 );\n        }\n        ++v19;\n      }\n      while ( v19 \u003c= 1023 );\n      pdb_freeMemory(\n        p_pNext,\n        (const char *)pCurrentProgram,\n        (const char *)pCurrentProgram-\u003eppHashTable,\n        (unsigned int)\"VM\");\n      pCurrentProgram-\u003eppHashTable = 0;\n      pCurrentProgram-\u003eppHashHead = 0;\n      vm_scratchFinalize(p_pNext);\n      for ( n = pCurrentProgram-\u003epProgVars; n; n = n-\u003epNext )\n      {\n        vm_scratchFinalize(n);\n        vm_scratchFinalize(n);\n      }\n    }\n  }\n  else\n  {\n    if ( vm_pCurrentProgram )\n    {\n      v24 = vm_pCurrentProgram;\n      v25 = vm_pGlobalProgram;\n    }\n    else\n    {\n      v25 = vm_pGlobalProgram;\n      v24 = vm_pGlobalProgram;\n    }\n    v24-\u003epHiddenFuns = vm_hiddenFunsBC;\n    v24-\u003emaxFunctionNo = vm_functionBC;\n    if ( v24 == v25 )\n    {\n      v42 = vm_variableBC;\n      v43 = vm_variableBC;\n      if ( vm_variableBC \u003c vm_varTableSize )\n      {\n        v44 = vm_variableBC;\n        do\n        {\n          vm_unrefValue((Vm_Value_T_2 *)v43++);\n          vm_pGlobalVar[v44++].pValue = 0;\n        }\n        while ( v43 \u003c vm_varTableSize );\n        v42 = vm_variableBC;\n      }\n      vm_varTableSize = v42;\n      vm_globalVar = (char *)v42;\n    }\n  }\n  vm_pCurrentProgram = 0;\n  return succ;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x847aac0",
+                     "name":  "vm_pCurrentProgram"
+                 },
+                 {
+                     "addr":  "0x847aad0",
+                     "name":  "vm_pGlobalProgram"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x847df14",
+                     "name":  "vm_pszLocalIncList"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x847df10",
+                     "name":  "vm_localIncListSize"
+                 },
+                 {
+                     "addr":  "0x847acec",
+                     "name":  "incTop"
+                 },
+                 {
+                     "addr":  "0x80a0504",
+                     "name":  "vm_close"
+                 },
+                 {
+                     "addr":  "0x847fba0",
+                     "name":  "vm_yyinDesc"
+                 },
+                 {
+                     "addr":  "0x8661940",
+                     "name":  "currentFile"
+                 },
+                 {
+                     "addr":  "0x847fba4",
+                     "name":  "vm_yyinCryptType"
+                 },
+                 {
+                     "addr":  "0x847fba8",
+                     "name":  "vm_yyinCryptCode"
+                 },
+                 {
+                     "addr":  "0x847fbac",
+                     "name":  "vm_yyinStart"
+                 },
+                 {
+                     "addr":  "0x80891d4",
+                     "name":  "vm_scratchFree"
+                 },
+                 {
+                     "addr":  "0x847df18",
+                     "name":  "vm_iftop"
+                 },
+                 {
+                     "addr":  "0x80cf588",
+                     "name":  "pdb_reallocateMemory"
+                 },
+                 {
+                     "addr":  "0x82ab14c",
+                     "name":  "aHomeCcXxxxGame",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_lex.c"
+                 },
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x8660900",
+                     "name":  "vm_functionBC"
+                 },
+                 {
+                     "addr":  "0x847aacc",
+                     "name":  "vm_pGlobalVar"
+                 },
+                 {
+                     "addr":  "0x847aac4",
+                     "name":  "vm_globalVar"
+                 },
+                 {
+                     "addr":  "0x866090c",
+                     "name":  "vm_variableBC"
+                 },
+                 {
+                     "addr":  "0x847aac8",
+                     "name":  "vm_varTableSize"
+                 },
+                 {
+                     "addr":  "0x8089f78",
+                     "name":  "vm_safeNewValue"
+                 },
+                 {
+                     "addr":  "0x8661934",
+                     "name":  "currentInputFile"
+                 },
+                 {
+                     "addr":  "0x82ab146",
+                     "name":  "pFileName",
+                     "string":  "/v/"
+                 },
+                 {
+                     "addr":  "0x80b9018",
+                     "name":  "vm_saveBinary"
+                 },
+                 {
+                     "addr":  "0x80bdc10",
+                     "name":  "vm_generateBinFileName"
+                 },
+                 {
+                     "addr":  "0x8660914",
+                     "name":  "vm_isBinaryFile"
+                 },
+                 {
+                     "addr":  "0x8661928",
+                     "name":  "currentAttrib"
+                 },
+                 {
+                     "addr":  "0x8089630",
+                     "name":  "vm_scratchLargeAlloc"
+                 },
+                 {
+                     "addr":  "0x80854b4",
+                     "name":  "vm_finalizeIdentifiersInProgram"
+                 },
+                 {
+                     "addr":  "0x847fbe0",
+                     "name":  "vm_defns"
+                 },
+                 {
+                     "addr":  "0x80877d0",
+                     "name":  "vm_freeUnusedIdentifiersInProgram"
+                 },
+                 {
+                     "addr":  "0x847ace8",
+                     "name":  "vm_nexpands"
+                 },
+                 {
+                     "addr":  "0x80a31bc",
+                     "name":  "vm_gatherProgramFunctionTable"
+                 },
+                 {
+                     "addr":  "0x80856d8",
+                     "name":  "vm_freeIdentInProgram"
+                 },
+                 {
+                     "addr":  "0x8087528",
+                     "name":  "vm_pickupFunAndfreeAll"
+                 },
+                 {
+                     "addr":  "0x8089b00",
+                     "name":  "vm_scratchFinalize"
+                 },
+                 {
+                     "addr":  "0x866192c",
+                     "name":  "vm_hiddenFunsBC"
+                 },
+                 {
+                     "addr":  "0x808bfb4",
+                     "name":  "vm_unrefValue"
+                 }
+             ]
+}

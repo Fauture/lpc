@@ -1,0 +1,46 @@
+﻿{
+    "addr":  "0x80b9018",
+    "code":  "int __cdecl vm_saveBinary(const char *binFileName, Vm_Code_Segment_T_0 *pCodeSegment, int saveDefine)\n{\n  int v3; // edi\n  char *v4; // ebx\n  int v5; // eax\n  int v6; // edx\n  int v8; // eax\n  int v9; // eax\n  Vm_String *v10; // eax\n  char *ptr; // esi\n  int i; // [esp+8h] [ebp-144h]\n  Vm_FunCall_Context::Vm_Program_Consititution::Vm_Program *v13; // [esp+Ch] [ebp-140h]\n  _BOOL4 ret; // [esp+10h] [ebp-13Ch]\n  int fd; // [esp+14h] [ebp-138h]\n  char *v16; // [esp+18h] [ebp-134h] BYREF\n  int v17; // [esp+1Ch] [ebp-130h] BYREF\n  int maxStringNo; // [esp+20h] [ebp-12Ch] BYREF\n  int v19; // [esp+24h] [ebp-128h] BYREF\n  int v20; // [esp+28h] [ebp-124h] BYREF\n  int v21; // [esp+2Ch] [ebp-120h] BYREF\n  int pBuffer; // [esp+30h] [ebp-11Ch] BYREF\n  char localFileName[256]; // [esp+34h] [ebp-118h] BYREF\n\n  v4 = localFileName;\n  v5 = vm_generateLocalFileName(binFileName, localFileName, 256);\n  v6 = 0;\n  if ( v5 )\n  {\n    v8 = vm_assurePath(localFileName);\n    v6 = 0;\n    if ( v8 )\n    {\n      v9 = vm_open(localFileName, (int)localFileName);\n      v6 = 0;\n      fd = v9;\n      if ( v9 \u003e= 0 )\n      {\n        ret = 0;\n        pBuffer = 65537;\n        vm_write((pthread_mutex_t *)localFileName, \u0026pBuffer, 4, v9);\n        v21 = 0;\n        vm_write((pthread_mutex_t *)localFileName, \u0026v21, 4, fd);\n        v20 = vm_functionBC;\n        vm_write((pthread_mutex_t *)localFileName, \u0026v20, 4, fd);\n        if ( saveDefine )\n        {\n          if ( !vm_saveDefines(v3) )\n          {\nLABEL_14:\n            vm_close(fd);\n            return ret;\n          }\n        }\n        else\n        {\n          v19 = 0;\n          vm_write((pthread_mutex_t *)localFileName, \u0026v19, 4, fd);\n        }\n        v13 = vm_compilingProgram();\n        maxStringNo = v13-\u003emaxStringNo;\n        vm_write((pthread_mutex_t *)localFileName, \u0026maxStringNo, 4, fd);\n        for ( i = 0; v13-\u003emaxStringNo \u003e i; ++i )\n        {\n          v10 = v13-\u003eppStrings[i];\n          ptr = v10-\u003eptr;\n          if ( ptr )\n          {\n            v4 = (char *)(strlen(v10-\u003eptr) + 1);\n            v16 = v4;\n            if ( vm_write((pthread_mutex_t *)v4, \u0026v16, 4, fd) == 4 )\n              vm_write((pthread_mutex_t *)v4, ptr, (int)v4, fd);\n          }\n          else\n          {\n            v17 = 0;\n            vm_write((pthread_mutex_t *)v4, \u0026v17, 4, fd);\n          }\n        }\n        if ( vm_saveIdentifiers(fd) )\n          ret = vm_saveCodeSegment(fd, pCodeSegment) != 0;\n        goto LABEL_14;\n      }\n    }\n  }\n  return v6;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80be1fc",
+                     "name":  "vm_generateLocalFileName"
+                 },
+                 {
+                     "addr":  "0x80eadac",
+                     "name":  "vm_assurePath"
+                 },
+                 {
+                     "addr":  "0x80a1530",
+                     "name":  "vm_open"
+                 },
+                 {
+                     "addr":  "0x80a0b00",
+                     "name":  "vm_write"
+                 },
+                 {
+                     "addr":  "0x8660900",
+                     "name":  "vm_functionBC"
+                 },
+                 {
+                     "addr":  "0x80a0504",
+                     "name":  "vm_close"
+                 },
+                 {
+                     "addr":  "0x8086fb8",
+                     "name":  "vm_saveDefines"
+                 },
+                 {
+                     "addr":  "0x807ecfc",
+                     "name":  "vm_compilingProgram"
+                 },
+                 {
+                     "addr":  "0x8095f3c",
+                     "name":  "vm_saveCodeSegment"
+                 },
+                 {
+                     "addr":  "0x8087aec",
+                     "name":  "vm_saveIdentifiers"
+                 }
+             ]
+}

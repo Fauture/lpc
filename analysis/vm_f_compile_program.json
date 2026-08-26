@@ -1,0 +1,39 @@
+﻿{
+    "addr":  "0x80f5fd0",
+    "code":  "void __usercall vm_f_compile_program(Vm_Value_T_2 *a1@\u003cedi\u003e)\n{\n  Vm_Value_T_2 *Argument; // esi\n  Vm_Object_T *Object; // eax\n  Vm_Object_T *v3; // ebx\n\n  if ( vm_currentContext-\u003eargNum \u003e 1 )\n    vm_error(\"Too many arguments to compile_program.\\n\");\n  Argument = vm_getArgument(0, (char *)4);\n  if ( vm_lookupObject((unsigned int)Argument-\u003ev.info, 0) )\n  {\n    vm_popNStack(a1, vm_currentContext-\u003eargNum);\n    vm_pushNumber(1);\n  }\n  else\n  {\n    Object = vm_loadObject(*(const char **)(Argument-\u003ev.number + 12), 0, 0);\n    v3 = Object;\n    if ( Object )\n    {\n      Object-\u003eflags = 2048;\n      Object-\u003einitStep = 0;\n    }\n    vm_popNStack(a1, vm_currentContext-\u003eargNum);\n    vm_pushNumber(v3 != 0);\n  }\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x8097b24",
+                     "name":  "vm_error"
+                 },
+                 {
+                     "addr":  "0x82bf6c8",
+                     "name":  "aTooManyArgumen_196",
+                     "string":  "Too many arguments to compile_program.\n"
+                 },
+                 {
+                     "addr":  "0x86619d8",
+                     "name":  "vm_currentContext"
+                 },
+                 {
+                     "addr":  "0x808a364",
+                     "name":  "vm_getArgument"
+                 },
+                 {
+                     "addr":  "0x8091ab0",
+                     "name":  "vm_popNStack"
+                 },
+                 {
+                     "addr":  "0x8090b3c",
+                     "name":  "vm_pushNumber"
+                 },
+                 {
+                     "addr":  "0x80b1e90",
+                     "name":  "vm_loadObject"
+                 },
+                 {
+                     "addr":  "0x80b0f2c",
+                     "name":  "vm_lookupObject"
+                 }
+             ]
+}

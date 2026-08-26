@@ -1,0 +1,41 @@
+﻿{
+    "addr":  "0x80b1d08",
+    "code":  "Vm_Object_T *__usercall vm_allocateObject@\u003ceax\u003e(Vm_Program_T *a1@\u003ceax\u003e, unsigned int a2@\u003cedx\u003e)\n{\n  Vm_Object_T *Memory; // ebx\n  Vm_Object_T *result; // eax\n  int v6; // eax\n  Vm_Object_T **v7; // ecx\n  Vm_Value_T_2 *Values; // eax\n  Vm_Object_T **p_pNextHashObject; // edx\n  Vm_Object_T *i; // eax\n\n  Memory = (Vm_Object_T *)pdb_allocateMemory(0x40u, \"VM\", \"/home/cc/xxxx/gameshell/src/vm/vm_object.c\", 0x406u);\n  result = 0;\n  if ( Memory )\n  {\n    memset(Memory, 0, sizeof(Vm_Object_T));\n    Memory-\u003epProgram = a1;\n    Memory-\u003eoid = a2;\n    Memory-\u003euid = 255;\n    Memory-\u003eeuid = 255;\n    if ( a2 )\n      Memory-\u003eflags = 4097;\n    else\n      Memory-\u003eflags = 4096;\n    v6 = ((_WORD)a2 + a1-\u003estrName-\u003ehash) \u0026 0x3FFF;\n    Memory-\u003epEnvObject = 0;\n    Memory-\u003epLogderObject = 0;\n    Memory-\u003epNeighbourObject = 0;\n    Memory-\u003epTemplateObject = 0;\n    v7 = vm_objectHashTable;\n    Memory-\u003epNextHashObject = vm_objectHashTable[v6];\n    v7[v6] = Memory;\n    if ( a1-\u003emaxVariableNo \u003c= 0 )\n    {\n      Memory-\u003epObjectValues = 0;\n    }\n    else\n    {\n      Values = vm_allocateValues((int)\u0026Memory[1]);\n      Memory-\u003epObjectValues = Values;\n      if ( !Values )\n      {\n        p_pNextHashObject = \u0026vm_objectHashTable[(Memory-\u003eoid + Memory-\u003epProgram-\u003estrName-\u003ehash) \u0026 0x3FFF];\n        for ( i = *p_pNextHashObject; ; i = i-\u003epNextHashObject )\n        {\n          if ( !i )\n            goto LABEL_10;\n          if ( i == Memory )\n            break;\n          p_pNextHashObject = \u0026i-\u003epNextHashObject;\n        }\n        i = Memory-\u003epNextHashObject;\n        *p_pNextHashObject = i;\nLABEL_10:\n        pdb_freeMemory(Memory, (const char *)i, (const char *)Memory, (unsigned int)\"VM\");\n        vm_error(\"Can not allocate new object (init variabls failed).\\n\");\n      }\n    }\n    ++a1-\u003eref;\n    return Memory;\n  }\n  return result;\n}",
+    "refs":  [
+                 {
+                     "addr":  "0x80ce784",
+                     "name":  "pdb_allocateMemory"
+                 },
+                 {
+                     "addr":  "0x82a376b",
+                     "name":  "moduleName",
+                     "string":  "VM"
+                 },
+                 {
+                     "addr":  "0x82b0e28",
+                     "name":  "aHomeCcXxxxGame_16",
+                     "string":  "/home/cc/xxxx/gameshell/src/vm/vm_object.c"
+                 },
+                 {
+                     "addr":  "0x8609a44",
+                     "name":  "vm_objectHashTable"
+                 },
+                 {
+                     "addr":  "0x808a088",
+                     "name":  "vm_allocateValues"
+                 },
+                 {
+                     "addr":  "0x80ceb94",
+                     "name":  "pdb_freeMemory"
+                 },
+                 {
+                     "addr":  "0x8097b24",
+                     "name":  "vm_error"
+                 },
+                 {
+                     "addr":  "0x82b0f9c",
+                     "name":  "aCanNotAllocate_4",
+                     "string":  "Can not allocate new object (init variabls failed).\n"
+                 }
+             ]
+}
