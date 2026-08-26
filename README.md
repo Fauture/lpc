@@ -13,8 +13,16 @@ Studio 2022 / CMake.
   reads the binary format used by the original VM, including the header, string
   pool, identifier table, hidden functions, DLT function table, and code segments.
 - Original `.o`/`.pak` execution (`src/original_vm.cpp`): a partial action-bytecode
-  VM that can run global initializers from real `magic_Linux32` `.o` files.
-  Efun/user-function bodies are currently stubbed.
+  VM that can run global initializers and user functions from real `magic_Linux32`
+  `.o` files.
+- Efun index table extracted from IDA (`src/efun_table.h`): `call_in_efun` is now
+  connected to the implemented builtins, so `write/printf/sprintf` etc. can produce
+  real output during `.pak` startup.
+- `call_other` basic object loading: when a `.o` references another object file, the
+  VM attempts to load the corresponding `.o` from the pak extraction directory and
+  call the requested function.
+- `create()` call and a simple `heart_beat` scheduler stub are invoked after global
+  initialization.
 - LZSS decompression (`src/lzss.cpp`) and `.pak` unpacking (`src/pak_loader.cpp`)
   for the `lib_aaa32.pak` / `etc.pak` archives used by the original driver.
 - Builtin efuns (stubs plus common helpers) so simple scripts can run.

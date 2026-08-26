@@ -1,11 +1,18 @@
 #include "original_vm.h"
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <stdexcept>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
+#include "builtins.h"
+#include "efun_table.h"
 #include "value.h"
 
 namespace lpc {
@@ -27,6 +34,9 @@ StackItem makeValue(Value v) {
     return it;
 }
 
+Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
+                         const std::string& funName, const std::vector<Value>& args);
+
 int32_t readI32(const std::vector<uint8_t>& meta, uint32_t off) {
     if (off + 4 > meta.size()) throw std::runtime_error("original_vm: bad metadata reference");
     return static_cast<int32_t>(meta[off]) |
@@ -37,7 +47,7 @@ int32_t readI32(const std::vector<uint8_t>& meta, uint32_t off) {
 
 class OriginalVm {
 public:
-    explicit OriginalVm(const OriginalObject& obj) : obj_(obj) {
+    explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "") : obj_(obj), searchRoot_(std::move(searchRoot)) {
         globals_.resize(obj.globalVarCount);
         for (auto& g : globals_) g = make_int(0);
         for (const auto& fn : obj.functions) {
@@ -45,9 +55,23 @@ public:
         }
     }
 
+    Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
+        for (const auto& fn : obj_.functions) {
+            if (fn.name == name && fn.index >= 0) {
+                auto it = funcsByIndex_.find(fn.index);
+                if (it != funcsByIndex_.end()) return executeFunction(*it->second, args);
+            }
+        }
+        return make_int(0);
+    }
+
     int run() {
         try {
             execute(obj_.globalCode, obj_.globalMeta);
+            // LPC object loading normally calls create() after the global initializer.
+            callCreate();
+            // Simple main loop: run heart_beat ticks on a timer until the tick limit.
+            runMainLoop(10, std::chrono::milliseconds(50));
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
                                      " op=" + std::to_string(lastOp_));
@@ -55,13 +79,46 @@ public:
         return 0;
     }
 
+    void callCreate() {
+        for (const auto& fn : obj_.functions) {
+            if (fn.name == "create" && fn.index >= 0) {
+                auto it = funcsByIndex_.find(fn.index);
+                if (it != funcsByIndex_.end()) {
+                    std::vector<Value> args;
+                    for (int i = 0; i < fn.argCount; ++i) args.push_back(make_int(0));
+                    executeFunction(*it->second, args);
+                }
+                break;
+            }
+        }
+    }
+
+    void callHeartBeat(int ticks) {
+        const OriginalFunction* hb = nullptr;
+        for (const auto& fn : obj_.functions) {
+            if (fn.name == "heart_beat" && fn.index >= 0) {
+                auto it = funcsByIndex_.find(fn.index);
+                if (it != funcsByIndex_.end()) { hb = it->second; break; }
+            }
+        }
+        if (!hb) return;
+        std::vector<Value> args;
+        for (int i = 0; i < hb->argCount; ++i) args.push_back(make_int(0));
+        for (int i = 0; i < ticks; ++i) {
+            executeFunction(*hb, args);
+        }
+    }
+
 private:
     const OriginalObject& obj_;
+    std::string searchRoot_;
     std::vector<StackItem> stack_;
     std::vector<Value> globals_;
+    std::vector<Value> locals_;
     std::map<int, const OriginalFunction*> funcsByIndex_;
     int lastOp_ = -1;
     size_t lastIp_ = 0;
+    Value returnValue_ = make_int(0);
 
     void push(const StackItem& it) { stack_.push_back(it); }
     StackItem pop() {
@@ -75,9 +132,13 @@ private:
         return readI32(meta, static_cast<uint32_t>(a) | (static_cast<uint32_t>(b) << 16));
     }
 
-    Value callEfunStub(int /*efunIndex*/, int argCount) {
-        // We do not have the original efun name table wired up yet; return 0.
-        for (int i = 0; i < argCount; ++i) pop();
+    Value callEfunStub(int efunIndex, int argCount) {
+        std::vector<Value> args;
+        for (int i = 0; i < argCount && !stack_.empty(); ++i) args.insert(args.begin(), pop().value);
+        const auto& names = efunNameTable();
+        if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
+            return call_builtin(nullptr, names[efunIndex], args);
+        }
         return make_int(0);
     }
 
@@ -88,11 +149,30 @@ private:
         // Pop arguments (the VM pushes them before the call).
         std::vector<Value> args;
         for (int i = 0; i < fn.argCount && !stack_.empty(); ++i) args.insert(args.begin(), pop().value);
-        // Execute the function body on a separate stack? For global initialization
-        // we simply return 0 after discarding the body. This is enough to let the
-        // global initializer continue without crashing.
-        (void)fn;
-        return make_int(0);
+        return executeFunction(fn, args);
+    }
+
+    Value executeFunction(const OriginalFunction& fn, const std::vector<Value>& args) {
+        std::vector<Value> savedLocals = std::move(locals_);
+        Value savedReturn = returnValue_;
+        locals_.clear();
+        locals_.reserve(static_cast<size_t>(fn.argCount + fn.localCount));
+        for (const auto& a : args) locals_.push_back(a);
+        for (int i = 0; i < fn.localCount; ++i) locals_.push_back(make_int(0));
+        returnValue_ = make_int(0);
+        size_t savedStackSize = stack_.size();
+        try {
+            execute(fn.code, fn.metaData);
+        } catch (...) {
+            locals_ = std::move(savedLocals);
+            returnValue_ = savedReturn;
+            throw;
+        }
+        Value result = returnValue_;
+        if (stack_.size() > savedStackSize) stack_.resize(savedStackSize);
+        locals_ = std::move(savedLocals);
+        returnValue_ = savedReturn;
+        return result;
     }
 
     void execute(const std::vector<OriginalInsn>& code, const std::vector<uint8_t>& meta) {
@@ -108,6 +188,8 @@ private:
                 return;
             case 72: // return_from_fake_fun
             case 73: // return_from_fun
+                if (!stack_.empty()) returnValue_ = pop().value;
+                else returnValue_ = make_int(0);
                 return;
             case 59: // push_number(S)
                 push(makeValue(make_int(static_cast<int16_t>(in.a))));
@@ -137,11 +219,8 @@ private:
                 break;
             }
             case 55: { // push_local_value
-                StackItem it;
-                it.kind = ItemKind::LocalRef;
-                it.index = in.a;
-                it.value = make_int(0);
-                push(it);
+                Value v = in.a < locals_.size() ? locals_[in.a] : make_int(0);
+                push(makeValue(v));
                 break;
             }
             case 57: { // push_local_vptr
@@ -155,8 +234,8 @@ private:
                 StackItem ref = pop();
                 if (ref.kind == ItemKind::GlobalRef && ref.index >= 0 && static_cast<size_t>(ref.index) < globals_.size()) {
                     if (!stack_.empty()) globals_[ref.index] = stack_.back().value;
-                } else if (ref.kind == ItemKind::LocalRef) {
-                    // local refs are not backed by a real frame in this partial VM
+                } else if (ref.kind == ItemKind::LocalRef && ref.index >= 0 && static_cast<size_t>(ref.index) < locals_.size()) {
+                    if (!stack_.empty()) locals_[ref.index] = stack_.back().value;
                 }
                 break;
             }
@@ -245,10 +324,32 @@ private:
                 pop();
                 push(makeValue(make_int(0)));
                 break;
-            case 8: // call_in_other_fun_ex
-                pop();
-                push(makeValue(make_int(0)));
+            case 8: { // call_in_other_fun_ex
+                // Stack: [args...] [function name] [object path]
+                Value pathVal = pop().value;
+                Value funVal = pop().value;
+                int argn = in.b;
+                std::vector<Value> args;
+                for (int i = 0; i < argn && !stack_.empty(); ++i) args.insert(args.begin(), pop().value);
+                std::string funName = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
+                Value result = make_int(0);
+                bool found = false;
+                for (const auto& fn : obj_.functions) {
+                    if (fn.name == funName && fn.index >= 0) {
+                        auto fit = funcsByIndex_.find(fn.index);
+                        if (fit != funcsByIndex_.end()) {
+                            result = executeFunction(*fit->second, args);
+                            found = true;
+                        }
+                        break;
+                    }
+                }
+                if (!found && pathVal.index() == 4) {
+                    result = tryCallOtherObject(searchRoot_, std::get<std::string>(pathVal), funName, args);
+                }
+                push(makeValue(result));
                 break;
+            }
             case 33: { // if
                 Value cond = pop().value;
                 if (!is_truthy(cond)) ip += in.a;
@@ -269,7 +370,10 @@ private:
                 if (in.a < globals_.size()) globals_[in.a] = pop().value;
                 break;
             case 77: // set_local_var
-                pop();
+                if (!stack_.empty()) {
+                    Value v = pop().value;
+                    if (in.a < locals_.size()) locals_[in.a] = v;
+                }
                 break;
             case 34: // inc_value
                 if (!stack_.empty()) {
@@ -317,10 +421,55 @@ private:
     }
 };
 
+struct ObjectRegistry {
+    std::unordered_map<std::string, std::shared_ptr<OriginalObject>> objects;
+    std::unordered_map<std::string, std::shared_ptr<OriginalVm>> vms;
+};
+
+ObjectRegistry& objectRegistry() {
+    static ObjectRegistry reg;
+    return reg;
+}
+
+bool hasSuffix(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
+                         const std::string& funName, const std::vector<Value>& args) {
+    if (searchRoot.empty() || objectPath.empty()) return make_int(0);
+    std::string rel = objectPath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    std::vector<std::string> candidates;
+    candidates.push_back(searchRoot + "/" + rel);
+    // Some pak roots omit the leading "aaa/" directory.
+    if (rel.compare(0, 4, "aaa/") == 0) candidates.push_back(searchRoot + "/" + rel.substr(4));
+    for (const auto& c : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(c, ec)) continue;
+        auto& reg = objectRegistry();
+        auto it = reg.vms.find(c);
+        if (it != reg.vms.end()) {
+            return it->second->callFunctionByName(funName, args);
+        }
+        try {
+            auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
+            auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            reg.objects[c] = objPtr;
+            reg.vms[c] = vmPtr;
+            return vmPtr->callFunctionByName(funName, args);
+        } catch (...) {
+            // try next candidate
+        }
+    }
+    return make_int(0);
+}
+
 } // namespace
 
-int runOriginalObject(const OriginalObject& obj, std::ostream& out) {
-    OriginalVm vm(obj);
+int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
+    OriginalVm vm(obj, searchRoot);
     vm.run();
     out << "Original .o VM finished (partial opcode support).\n";
     return 0;

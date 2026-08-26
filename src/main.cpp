@@ -48,7 +48,10 @@ int runOriginalObject(const std::string& path) {
     std::cout << "  strings=" << obj.strings.size()
               << " functions=" << obj.functions.size()
               << " globalNodes=" << obj.globalCode.size() << "\n";
-    return lpc::runOriginalObject(obj, std::cout);
+    std::string searchRoot;
+    size_t slash = path.find_last_of("/\\");
+    if (slash != std::string::npos) searchRoot = path.substr(0, slash);
+    return lpc::runOriginalObject(obj, std::cout, searchRoot);
 }
 
 int disasmOriginalObject(const std::string& path) {
@@ -75,7 +78,12 @@ int runPak(const std::string& path) {
     lpc::extractPak(path, outDir);
     std::string oPath = outDir + "/" + entry->name;
     std::cout << "Extracted " << entry->name << " to " << oPath << "\n";
-    return runOriginalObject(oPath);
+    lpc::OriginalObject obj = lpc::loadOriginalObject(oPath);
+    std::cout << "Loaded original .o: " << oPath << "\n";
+    std::cout << "  strings=" << obj.strings.size()
+              << " functions=" << obj.functions.size()
+              << " globalNodes=" << obj.globalCode.size() << "\n";
+    return lpc::runOriginalObject(obj, std::cout, outDir);
 }
 
 void usage() {
