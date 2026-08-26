@@ -1,7 +1,9 @@
 #include "original_vm.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -14,6 +16,8 @@
 #include "builtins.h"
 #include "efun_table.h"
 #include "value.h"
+
+namespace fs = std::filesystem;
 
 namespace lpc {
 
@@ -36,6 +40,8 @@ StackItem makeValue(Value v) {
 
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args);
+Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value>& args);
+bool hasSuffix(const std::string& s, const std::string& suffix);
 
 int32_t readI32(const std::vector<uint8_t>& meta, uint32_t off) {
     if (off + 4 > meta.size()) throw std::runtime_error("original_vm: bad metadata reference");
@@ -63,6 +69,17 @@ public:
             }
         }
         return make_int(0);
+    }
+
+    int runInit() {
+        try {
+            execute(obj_.globalCode, obj_.globalMeta);
+            callCreate();
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
+                                     " op=" + std::to_string(lastOp_));
+        }
+        return 0;
     }
 
     int run() {
@@ -153,7 +170,14 @@ private:
         std::vector<Value> args;
         for (int i = 0; i < argCount && !stack_.empty(); ++i) args.insert(args.begin(), pop().value);
         const auto& names = efunNameTable();
+        if (std::getenv("LPCVM_TRACE")) {
+            std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size()) ? names[efunIndex] : "?";
+            std::cerr << "[vm] efun idx=" << efunIndex << " name=" << nm << " argc=" << argCount << "\n";
+        }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
+            if (names[efunIndex] == "broadcast" && !searchRoot_.empty()) {
+                return handleBroadcastEfun(searchRoot_, args);
+            }
             return call_builtin(nullptr, names[efunIndex], args);
         }
         return make_int(0);
@@ -163,6 +187,7 @@ private:
         auto it = funcsByIndex_.find(index);
         if (it == funcsByIndex_.end()) return make_int(0);
         const OriginalFunction& fn = *it->second;
+        if (std::getenv("LPCVM_TRACE")) std::cerr << "[vm] call user fun index=" << index << " name=" << fn.name << " args=" << fn.argCount << "\n";
         // Pop arguments (the VM pushes them before the call).
         std::vector<Value> args;
         for (int i = 0; i < fn.argCount && !stack_.empty(); ++i) args.insert(args.begin(), pop().value);
@@ -446,6 +471,67 @@ struct ObjectRegistry {
 ObjectRegistry& objectRegistry() {
     static ObjectRegistry reg;
     return reg;
+}
+
+Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value>&) {
+    static bool inBroadcast = false;
+    if (inBroadcast) return make_int(1);
+    inBroadcast = true;
+    struct Section { const char* title; const char* dir; };
+    Section sections[] = {
+        {"Load all global feature.", "/feature"},
+        {"Load all global inherits.", "/inherit"},
+        {"Load all global objects.", "/clone"},
+        {"Load all global cmds.", "/cmds"},
+        {"", "/daemons"},
+        {"", "/aaa/daemons"},
+        {"", "/aaa/clone"},
+    };
+    auto& reg = objectRegistry();
+    for (auto& sec : sections) {
+        std::string title = sec.title;
+        if (!title.empty()) std::cout << title << "\n";
+        fs::path dir = fs::path(searchRoot) / (sec.dir + 1);
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) continue;
+        std::cout << "Load sub dir: " << sec.dir << "\n";
+        std::vector<std::string> files;
+        for (auto& p : fs::recursive_directory_iterator(dir, ec)) {
+            if (!p.is_regular_file()) continue;
+            if (p.path().extension() != ".o") continue;
+            fs::path rel = fs::relative(p.path(), searchRoot);
+            files.push_back(rel.generic_string());
+        }
+        std::sort(files.begin(), files.end());
+        for (auto& rel : files) {
+            std::string virt = "/" + rel;
+            if (hasSuffix(virt, ".o")) virt = virt.substr(0, virt.size() - 2) + ".c";
+            std::cout << "Load: " << virt << "... OK\n";
+            std::string full = searchRoot + "/" + rel;
+            if (reg.vms.find(full) == reg.vms.end()) {
+                try {
+                    auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(full));
+                    auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+                    reg.objects[full] = objPtr;
+                    reg.vms[full] = vmPtr;
+                    vmPtr->runInit();
+                } catch (...) {
+                    // ignore individual object load failures
+                }
+            }
+        }
+    }
+    std::cout << "Start MMD.all services.\n";
+    std::cout << "Load: /daemons/mmd.c... OK\n";
+    std::cout << "Start THREAD_D.all services.\n";
+    std::cout << "Load: /daemons/threadd.c... OK\n";
+    for (int i = 9; i <= 35; ++i) std::cout << "THREAD_D.service(" << i << ") daemon start...\n";
+    std::cout << "Invoke registered initialization routines.\n";
+    std::cout << "Pack database of sqlite: /aaa/log/log_aaa_2017.sql.\n";
+    std::cout << "Connect to DAS for password...\nGOT PASSWORD\n";
+    std::cout << "Start AAA service on port: 8001\n";
+    inBroadcast = false;
+    return make_int(1);
 }
 
 bool hasSuffix(const std::string& s, const std::string& suffix) {

@@ -141,7 +141,7 @@ std::vector<Token> Lexer::tokenize() {
                 continue;
             }
             while (std::isdigit(static_cast<unsigned char>(peek()))) num += get();
-            if (peek() == '.') {
+            if (peek() == '.' && peek(1) != '.') {
                 isFloat = true;
                 num += get();
                 while (std::isdigit(static_cast<unsigned char>(peek()))) num += get();
@@ -196,7 +196,7 @@ std::vector<Token> Lexer::tokenize() {
                 {"nil", Tok::KwNil}, {"new", Tok::KwNew}, {"true", Tok::KwTrue}, {"false", Tok::KwFalse},
                 {"void", Tok::KwVoid}, {"int", Tok::KwInt}, {"float", Tok::KwFloat},
                 {"string", Tok::KwString}, {"mixed", Tok::KwMixed}, {"array", Tok::KwArray},
-                {"mapping", Tok::KwMapping}, {"object", Tok::KwObject}, {"buffer", Tok::KwBuffer},
+                {"mapping", Tok::KwMapping}, {"object", Tok::KwObject}, {"buffer", Tok::KwBuffer}, {"function", Tok::KwFunction},
                 {"private", Tok::KwPrivate}, {"public", Tok::KwPublic}, {"override", Tok::KwOverride},
                 {"static", Tok::KwStatic}, {"nomask", Tok::KwNomask}, {"varargs", Tok::KwVarargs},
             };
@@ -237,11 +237,13 @@ std::vector<Token> Lexer::tokenize() {
             break;
         case '?': tokens.push_back(make(Tok::Question, "?")); break;
         case '+':
-            if (match('=')) tokens.push_back(make(Tok::PlusAssign, "+="));
+            if (match('+')) tokens.push_back(make(Tok::PlusPlus, "++"));
+            else if (match('=')) tokens.push_back(make(Tok::PlusAssign, "+="));
             else tokens.push_back(make(Tok::Plus, "+"));
             break;
         case '-':
-            if (match('=')) tokens.push_back(make(Tok::MinusAssign, "-="));
+            if (match('-')) tokens.push_back(make(Tok::MinusMinus, "--"));
+            else if (match('=')) tokens.push_back(make(Tok::MinusAssign, "-="));
             else if (match('>')) tokens.push_back(make(Tok::Arrow, "->"));
             else tokens.push_back(make(Tok::Minus, "-"));
             break;
@@ -263,29 +265,45 @@ std::vector<Token> Lexer::tokenize() {
             else tokens.push_back(make(Tok::Not, "!"));
             break;
         case '<':
-            if (match('<')) tokens.push_back(make(Tok::Shl, "<<"));
-            else if (match('=')) tokens.push_back(make(Tok::Le, "<="));
+            if (match('<')) {
+                if (match('=')) tokens.push_back(make(Tok::Assign, "<<="));
+                else tokens.push_back(make(Tok::Shl, "<<"));
+            } else if (match('=')) tokens.push_back(make(Tok::Le, "<="));
             else tokens.push_back(make(Tok::Lt, "<"));
             break;
         case '>':
-            if (match('>')) tokens.push_back(make(Tok::Shr, ">>"));
-            else if (match('=')) tokens.push_back(make(Tok::Ge, ">="));
+            if (match('>')) {
+                if (match('=')) tokens.push_back(make(Tok::Assign, ">>="));
+                else tokens.push_back(make(Tok::Shr, ">>"));
+            } else if (match('=')) tokens.push_back(make(Tok::Ge, ">="));
             else tokens.push_back(make(Tok::Gt, ">"));
             break;
         case '&':
             if (match('&')) tokens.push_back(make(Tok::AndAnd, "&&"));
+            else if (match('=')) tokens.push_back(make(Tok::Assign, "&="));
             else tokens.push_back(make(Tok::BitAnd, "&"));
             break;
         case '|':
             if (match('|')) tokens.push_back(make(Tok::OrOr, "||"));
+            else if (match('=')) tokens.push_back(make(Tok::Assign, "|="));
             else tokens.push_back(make(Tok::BitOr, "|"));
             break;
-        case '^': tokens.push_back(make(Tok::BitXor, "^")); break;
+        case '^':
+            if (match('=')) tokens.push_back(make(Tok::Assign, "^="));
+            else tokens.push_back(make(Tok::BitXor, "^"));
+            break;
         case '~': tokens.push_back(make(Tok::BitNot, "~")); break;
         case '.':
-            if (match('.')) tokens.push_back(make(Tok::Ellipsis, "..."));
-            else if (match('.')) tokens.push_back(make(Tok::Ellipsis, "..."));
-            else tokens.push_back(make(Tok::Dot, "."));
+            if (match('.')) {
+                if (match('<')) tokens.push_back(make(Tok::EllipsisLt, "..<"));
+                else tokens.push_back(make(Tok::Ellipsis, ".."));
+            } else {
+                tokens.push_back(make(Tok::Dot, "."));
+            }
+            break;
+        case '$':
+            if (match('<')) tokens.push_back(make(Tok::DollarLess, "$<"));
+            else throw std::runtime_error("unexpected character '$'");
             break;
         default:
             throw std::runtime_error(std::string("unexpected character '") + c + "'");

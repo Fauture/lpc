@@ -9,15 +9,15 @@ enum class Tok {
     End, Ident, Number, Float, String,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Comma, Semicolon, Colon, Question, Arrow, Scope,
-    Plus, Minus, Star, Slash, Percent,
+    Plus, Minus, Star, Slash, Percent, PlusPlus, MinusMinus,
     Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign,
     Eq, Ne, Lt, Gt, Le, Ge,
     AndAnd, OrOr, Not, BitAnd, BitOr, BitXor, BitNot, Shl, Shr,
-    Dot, Ellipsis,
+    Dot, Ellipsis, EllipsisLt, DollarLess,
     KwIf, KwElse, KwWhile, KwDo, KwFor, KwLoop, KwIn, KwSwitch, KwCase, KwDefault,
     KwBreak, KwContinue, KwReturn, KwCatch, KwTry, KwInherit,
     KwUndefined, KwNil, KwNew, KwTrue, KwFalse,
-    KwVoid, KwInt, KwFloat, KwString, KwMixed, KwArray, KwMapping, KwObject, KwBuffer,
+    KwVoid, KwInt, KwFloat, KwString, KwMixed, KwArray, KwMapping, KwObject, KwBuffer, KwFunction,
     KwPrivate, KwPublic, KwOverride, KwStatic, KwNomask, KwVarargs,
     LambdaBegin, LambdaEnd // (: :)
 };

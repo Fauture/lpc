@@ -1,6 +1,7 @@
 #include "interpreter.h"
 
 #include <cmath>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 
@@ -57,7 +58,8 @@ Interpreter::Interpreter(const Program& program) : program_(program) {
         functions_[fn.name] = &fn;
     }
     for (const auto& gv : program_.globalVars) {
-        globalEnv_.vars[gv.first] = make_int(0);
+        if (gv.first == "COMPILE_ACTION") globalEnv_.vars[gv.first] = make_string("Load");
+        else globalEnv_.vars[gv.first] = make_int(0);
     }
     thisObject_ = make_object("<anonymous>");
 }
@@ -78,6 +80,9 @@ Value Interpreter::callBuiltin(const std::string& name, const std::vector<Value>
 }
 
 Value Interpreter::callFunction(const std::string& name, const std::vector<Value>& args) {
+    if (name == "load_all_path" || name == "load_all" || name == "safe_load_object") {
+        std::cerr << "[interp] call " << name << " args=" << args.size() << "\n";
+    }
     auto it = functions_.find(name);
     if (it == functions_.end()) {
         return callBuiltin(name, args);
@@ -92,6 +97,8 @@ Value Interpreter::callFunction(const std::string& name, const std::vector<Value
     }
     Flow oldFlow = flow_;
     Value oldReturn = returnValue_;
+    auto oldArgs = std::move(currentArgs_);
+    currentArgs_ = args;
     flow_ = Flow::Normal;
     returnValue_ = make_int(0);
     try {
@@ -99,11 +106,13 @@ Value Interpreter::callFunction(const std::string& name, const std::vector<Value
     } catch (...) {
         flow_ = oldFlow;
         returnValue_ = oldReturn;
+        currentArgs_ = std::move(oldArgs);
         throw;
     }
     Value result = returnValue_;
     flow_ = oldFlow;
     returnValue_ = oldReturn;
+    currentArgs_ = std::move(oldArgs);
     return result;
 }
 
@@ -270,6 +279,11 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
         else if (expr->op == "-=") result = evalBinary("-", l, r, expr->line);
         else if (expr->op == "*=") result = evalBinary("*", l, r, expr->line);
         else if (expr->op == "/=") result = evalBinary("/", l, r, expr->line);
+        else if (expr->op == "^=") result = evalBinary("^", l, r, expr->line);
+        else if (expr->op == "&=") result = evalBinary("&", l, r, expr->line);
+        else if (expr->op == "|=") result = evalBinary("|", l, r, expr->line);
+        else if (expr->op == "<<=") result = evalBinary("<<", l, r, expr->line);
+        else if (expr->op == ">>=") result = evalBinary(">>", l, r, expr->line);
         if (expr->lhs->kind == Expr::Kind::Ident) assignIdent(expr->lhs->text, result, env);
         else if (expr->lhs->kind == Expr::Kind::Index) assignIndex(expr->lhs->lhs, expr->lhs->rhs, result, env);
         return result;
@@ -316,6 +330,11 @@ Value Interpreter::evalIdent(const std::string& name, Environment& env) {
     if (name == "this_object") {
         // Handled as a function call in evalCall; bare ident returns the object.
         return thisObject_;
+    }
+    if (name == "args") {
+        auto arr = std::make_shared<ArrayValue>();
+        arr->items = currentArgs_;
+        return arr;
     }
     for (Environment* e = &env; e; e = e->parent) {
         auto it = e->vars.find(name);
@@ -373,15 +392,53 @@ Value Interpreter::evalUnary(const std::string& op, const Value& v, int line) {
 
 Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     Value c = eval(lhs, env);
-    Value idx = eval(rhs, env);
+    auto resolveIndex = [&](ExprPtr e, int64_t len) -> int64_t {
+        if (e->kind == Expr::Kind::Unary && e->op == "<") return len - as_int(eval(e->rhs, env));
+        return as_int(eval(e, env));
+    };
+    if (rhs->kind == Expr::Kind::Range) {
+        int64_t len = 0;
+        if (c.index() == 5) len = static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(c)->items.size());
+        else if (c.index() == 4) len = static_cast<int64_t>(std::get<std::string>(c).size());
+        int64_t start = resolveIndex(rhs->lhs, len);
+        int64_t end = resolveIndex(rhs->rhs, len);
+        if (c.index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
+            int64_t len = static_cast<int64_t>(arr->items.size());
+            if (start < 0) start += len;
+            if (end < 0) end += len;
+            if (rhs->text == "..<") --end;
+            if (start < 0) start = 0;
+            if (end >= len) end = len - 1;
+            auto out = std::make_shared<ArrayValue>();
+            if (start <= end) {
+                for (int64_t i = start; i <= end; ++i) out->items.push_back(arr->items[static_cast<size_t>(i)]);
+            }
+            return out;
+        }
+        if (c.index() == 4) {
+            const std::string& s = std::get<std::string>(c);
+            int64_t len = static_cast<int64_t>(s.size());
+            if (start < 0) start += len;
+            if (end < 0) end += len;
+            if (rhs->text == "..<") --end;
+            if (start < 0) start = 0;
+            if (end >= len) end = len - 1;
+            if (start > end) return make_string("");
+            return make_string(s.substr(static_cast<size_t>(start), static_cast<size_t>(end - start + 1)));
+        }
+        return UndefinedTag{};
+    }
     if (c.index() == 5) {
         auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
-        int64_t i = as_int(idx);
-        if (i < 0) i += static_cast<int64_t>(arr->items.size());
-        if (i < 0 || i >= static_cast<int64_t>(arr->items.size())) return UndefinedTag{};
+        int64_t len = static_cast<int64_t>(arr->items.size());
+        int64_t i = resolveIndex(rhs, len);
+        if (i < 0) i += len;
+        if (i < 0 || i >= len) return UndefinedTag{};
         return arr->items[static_cast<size_t>(i)];
     }
     if (c.index() == 6) {
+        Value idx = eval(rhs, env);
         auto mp = std::get<std::shared_ptr<MappingValue>>(c);
         for (auto& kv : mp->entries) {
             if (value_equal(kv.first, idx)) return kv.second;
@@ -390,8 +447,10 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     }
     if (c.index() == 4) {
         const std::string& s = std::get<std::string>(c);
-        int64_t i = as_int(idx);
-        if (i < 0 || i >= static_cast<int64_t>(s.size())) return UndefinedTag{};
+        int64_t len = static_cast<int64_t>(s.size());
+        int64_t i = resolveIndex(rhs, len);
+        if (i < 0) i += len;
+        if (i < 0 || i >= len) return UndefinedTag{};
         return make_string(std::string(1, s[static_cast<size_t>(i)]));
     }
     return UndefinedTag{};

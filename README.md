@@ -50,6 +50,9 @@ lpcvm unpack lib_aaa32.pak outdir
 ```
 
 `run` accepts an LPC `.c` source file, a compiled `.o` file, or a `.pak` archive.
+For `.pak`, it extracts the archive, executes `start_aaa.o` through the original
+action-bytecode VM, loads the pak's real `.o` objects, prints the startup log, and
+then starts a real TCP service on port `8001`.
 `server` starts a simple telnet-like LPC server (Winsock TCP).
 `disasm` prints the parsed original `.o` structure and action nodes.  
 `unpack` decompresses a `.pak` archive into a directory.

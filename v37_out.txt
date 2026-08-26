@@ -1,0 +1,22 @@
+Done of init_startup_module.
+
+Done of init_compile_module.
+
+Done of init_sql_module.
+
+Done of init_debug_cmds_module.
+
+Init platform ok.
+
+Load all global feature.
+
+Load all global inherits.
+
+Load all global objects.
+
+Load all global cmds.
+
+Invoke registered initialization routines.
+
+[1;33mDriver load ok!
+[2;37;0m

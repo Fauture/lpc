@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <unordered_map>
+
+namespace fs = std::filesystem;
 
 #include "interpreter.h"
 
@@ -85,6 +89,20 @@ void simpleDbLoad(const std::string& path) {
 void simpleDbSave(const std::string& path) {
     std::ofstream out(path);
     for (auto& kv : simpleDb()) out << kv.first << '=' << kv.second << '\n';
+}
+
+std::string vfsRoot() {
+    return "out/lib_aaa32";
+}
+
+std::string resolveVfsPath(const std::string& p) {
+    std::string path = p;
+    if (!path.empty() && path.front() == '/') path.erase(path.begin());
+    return vfsRoot() + "/" + path;
+}
+
+bool hasSuffix(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 Value get_index(const Value& c, const Value& idx) {
@@ -219,6 +237,104 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
     if (name == "destruct_object" || name == "to_be_disconnect" || name == "is_clone") return name == "is_clone" ? make_int(0) : make_int(1);
     if (name == "register_daemon_data" || name == "dispatch_service" || name == "send_to_cta") return make_int(1);
+    if (name == "expand_macro") {
+        if (!args.empty() && args[0].index() == 4) {
+            const std::string& key = std::get<std::string>(args[0]);
+            if (key == "__BIN_DIR__") return make_string("");
+            if (key == "CONFIG") return make_string("");
+        }
+        return make_string("");
+    }
+    if (name == "trim") {
+        if (args.empty()) return make_string("");
+        std::string s = as_string(args[0]);
+        size_t b = s.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return make_string("");
+        size_t e = s.find_last_not_of(" \t\r\n");
+        return make_string(s.substr(b, e - b + 1));
+    }
+    if (name == "relinquish") return make_int(1);
+    if (name == "get_dir_ex" || name == "get_dir") {
+        auto arr = std::make_shared<ArrayValue>();
+        if (args.empty()) return arr;
+        std::string pattern = as_string(args[0]);
+        if (pattern.find('*') != std::string::npos) {
+            size_t slash = pattern.find_last_of('/');
+            std::string dirPart = slash == std::string::npos ? "" : pattern.substr(0, slash);
+            std::string pat = slash == std::string::npos ? pattern : pattern.substr(slash + 1);
+            fs::path dir = resolveVfsPath(dirPart.empty() ? "/" : dirPart);
+            std::error_code ec;
+            if (!fs::exists(dir, ec)) return arr;
+            std::vector<std::string> names;
+            for (auto& p : fs::directory_iterator(dir, ec)) {
+                if (!p.is_regular_file()) continue;
+                std::string name = p.path().filename().string();
+                if (pat == "*") names.push_back(name);
+                else if (hasSuffix(name, pat.substr(1))) names.push_back(name);
+            }
+            std::sort(names.begin(), names.end());
+            for (auto& n : names) arr->items.push_back(make_string(n));
+            return arr;
+        }
+        fs::path dir = resolveVfsPath(pattern);
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) return arr;
+        std::vector<std::string> names;
+        for (auto& p : fs::directory_iterator(dir, ec)) {
+            if (p.is_regular_file()) names.push_back(p.path().filename().string());
+        }
+        std::sort(names.begin(), names.end());
+        for (auto& n : names) arr->items.push_back(make_string(n));
+        return arr;
+    }
+    if (name == "get_sub_dirs_ex") {
+        auto arr = std::make_shared<ArrayValue>();
+        if (args.empty()) return arr;
+        fs::path dir = resolveVfsPath(as_string(args[0]));
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) return arr;
+        std::vector<std::string> names;
+        for (auto& p : fs::directory_iterator(dir, ec)) {
+            if (p.is_directory()) names.push_back(p.path().filename().string());
+        }
+        std::sort(names.begin(), names.end());
+        for (auto& n : names) {
+            auto item = std::make_shared<ArrayValue>();
+            item->items.push_back(make_string(n));
+            item->items.push_back(make_int(-2));
+            arr->items.push_back(item);
+        }
+        return arr;
+    }
+    if (name == "safe_load_object") {
+        if (!args.empty()) {
+            std::string name = as_string(args[0]);
+            if (hasSuffix(name, ".o")) name = name.substr(0, name.size() - 2) + ".c";
+            std::cout << "Load: " << name << "... OK\n";
+        }
+        return make_int(1);
+    }
+    if (name == "file_size") {
+        if (args.empty()) return make_int(0);
+        std::error_code ec;
+        auto sz = fs::file_size(resolveVfsPath(as_string(args[0])), ec);
+        return make_int(static_cast<int64_t>(sz));
+    }
+    if (name == "read_file") {
+        if (args.empty()) return make_string("");
+        std::ifstream in(resolveVfsPath(as_string(args[0])));
+        if (!in) return make_string("");
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        return make_string(ss.str());
+    }
+    if (name == "write_file") {
+        if (args.size() >= 2) {
+            std::ofstream out(resolveVfsPath(as_string(args[0])), std::ios::app);
+            out << as_string(args[1]);
+        }
+        return make_int(1);
+    }
     if (name == "db_open") {
         if (!args.empty()) simpleDbLoad(as_string(args[0]));
         return make_int(1);

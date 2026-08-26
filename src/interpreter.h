@@ -42,6 +42,7 @@ private:
     Value returnValue_;
     Flow flow_ = Flow::Normal;
     Value thisObject_;
+    std::vector<Value> currentArgs_;
 
     Flow execBlock(const std::vector<StmtPtr>& stmts, Environment& env);
     Value evalIdent(const std::string& name, Environment& env);

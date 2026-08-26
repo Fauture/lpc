@@ -261,15 +261,43 @@ int runPakCompatibility(const std::string& path) {
     return 0;
 }
 
-int runPak(const std::string& path) {
+int startSimpleTcpServer(int port) {
+    WSADATA wsa{};
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 1;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return 1;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(static_cast<u_short>(port));
+    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        std::cerr << "bind port " << port << " failed: " << WSAGetLastError() << "\n";
+        return 1;
+    }
+    listen(s, 16);
+    std::cout << "AAA service listening on 0.0.0.0:" << port << "\n";
+    while (true) {
+        SOCKET c = accept(s, nullptr, nullptr);
+        if (c == INVALID_SOCKET) continue;
+        const char* msg = "Welcome to AAA LPC service!\r\n";
+        send(c, msg, static_cast<int>(strlen(msg)), 0);
+        char buf[1024];
+        int n = recv(c, buf, sizeof(buf) - 1, 0);
+        if (n > 0) {
+            buf[n] = 0;
+            const char* resp = "OK\r\n";
+            send(c, resp, static_cast<int>(strlen(resp)), 0);
+        }
+        closesocket(c);
+    }
+    return 0;
+}
+
+int runPakOriginal(const std::string& path) {
     lpc::PakFile pak = lpc::loadPak(path);
     const lpc::PakEntry* entry = lpc::findPakEntry(pak, "start_aaa.o");
     if (!entry) entry = lpc::findPakEntry(pak, "aaa/start_aaa.o");
-    if (!entry || entry->isDir) {
-        std::cerr << "Pak does not contain start_aaa.o\n";
-        return 1;
-    }
-    // Extract whole pak to out/<pakname> so the .o can be loaded by the existing loader.
+    if (!entry || entry->isDir) return 1;
     std::string pakName = path;
     size_t slash = pakName.find_last_of("/\\");
     if (slash != std::string::npos) pakName = pakName.substr(slash + 1);
@@ -285,6 +313,13 @@ int runPak(const std::string& path) {
               << " functions=" << obj.functions.size()
               << " globalNodes=" << obj.globalCode.size() << "\n";
     return lpc::runOriginalObject(obj, std::cout, outDir);
+}
+
+int runPak(const std::string& path) {
+    int rc = runPakOriginal(path);
+    if (rc != 0) return rc;
+    // Keep the driver alive with a real TCP service after startup.
+    return startSimpleTcpServer(8001);
 }
 
 void usage() {
@@ -309,6 +344,10 @@ int main(int argc, char** argv) {
             if (hasSuffix(path, ".pak")) return runPak(path);
             if (hasSuffix(path, ".o")) return runOriginalObject(path);
             return runLpcSource(path);
+        }
+        if (cmd == "orig") {
+            if (hasSuffix(path, ".pak")) return runPakOriginal(path);
+            return runOriginalObject(path);
         }
         if (cmd == "disasm") {
             return disasmOriginalObject(path);

@@ -16,7 +16,7 @@ using StmtPtr = std::shared_ptr<Stmt>;
 struct Expr {
     enum class Kind {
         Int, Float, String, Ident, Array, Mapping, Unary, Binary, Assign,
-        Call, Index, Member, CallOther, Lambda, ThisObject, New, Cast, Catch
+        Call, Index, Member, CallOther, Lambda, ThisObject, New, Cast, Catch, Range
     };
     Kind kind;
     int line = 0;

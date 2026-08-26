@@ -17,7 +17,7 @@ bool Parser::atType() const {
     switch (cur().kind) {
     case Tok::KwVoid: case Tok::KwInt: case Tok::KwFloat: case Tok::KwString:
     case Tok::KwMixed: case Tok::KwArray: case Tok::KwMapping: case Tok::KwObject:
-    case Tok::KwBuffer:
+    case Tok::KwBuffer: case Tok::KwFunction:
         return true;
     default: return false;
     }
@@ -55,7 +55,7 @@ bool Parser::isTypeToken(Tok k) const {
     switch (k) {
     case Tok::KwVoid: case Tok::KwInt: case Tok::KwFloat: case Tok::KwString:
     case Tok::KwMixed: case Tok::KwArray: case Tok::KwMapping: case Tok::KwObject:
-    case Tok::KwBuffer:
+    case Tok::KwBuffer: case Tok::KwFunction:
         return true;
     default: return false;
     }
@@ -86,6 +86,7 @@ Program Parser::parseProgram() {
                         Param p;
                         if (atType()) p.type = parseType();
                         else p.type = "mixed";
+                        match(Tok::BitAnd); // reference parameter marker
                         p.name = expect(Tok::Ident, "parameter name").text;
                         if (match(Tok::Assign)) p.defaultValue = parseAssignment();
                         fn.params.push_back(std::move(p));
@@ -112,7 +113,12 @@ Program Parser::parseProgram() {
             expect(Tok::Semicolon, "';' after global variable");
             continue;
         }
-        // Global initializer / expression statement.
+        // Global initializer / statement.
+        if (at(Tok::KwIf) || at(Tok::KwWhile) || at(Tok::KwFor) || at(Tok::KwLoop) ||
+            at(Tok::KwSwitch) || at(Tok::KwReturn) || at(Tok::LBrace) || at(Tok::KwTry) || at(Tok::KwDo)) {
+            prog.globalBody.push_back(parseStatement());
+            continue;
+        }
         prog.globalBody.push_back(std::make_shared<Stmt>(Stmt{Stmt::Kind::Expr, cur().line, parseExpression(), {}, "", {}, nullptr, nullptr, nullptr, nullptr, nullptr, "", {}, {}, false}));
         expect(Tok::Semicolon, "';' after global expression");
     }
@@ -273,6 +279,27 @@ ExprPtr Parser::parseMultiplicative() {
 }
 
 ExprPtr Parser::parseUnary() {
+    if (at(Tok::PlusPlus) || at(Tok::MinusMinus)) {
+        std::string op = advance().text;
+        ExprPtr target = parseUnary();
+        auto one = std::make_shared<Expr>();
+        one->kind = Expr::Kind::Int;
+        one->line = target->line;
+        one->intValue = 1;
+        auto bin = std::make_shared<Expr>();
+        bin->kind = Expr::Kind::Binary;
+        bin->line = target->line;
+        bin->op = (op == "++") ? "+" : "-";
+        bin->lhs = target;
+        bin->rhs = one;
+        auto e = std::make_shared<Expr>();
+        e->kind = Expr::Kind::Assign;
+        e->line = target->line;
+        e->op = "=";
+        e->lhs = target;
+        e->rhs = bin;
+        return e;
+    }
     if (at(Tok::Not) || at(Tok::Minus) || at(Tok::BitNot) || at(Tok::Star) || at(Tok::BitAnd)) {
         auto e = std::make_shared<Expr>();
         e->kind = Expr::Kind::Unary;
@@ -306,13 +333,55 @@ ExprPtr Parser::parsePostfix(ExprPtr lhs) {
             lhs = e;
         } else if (at(Tok::LBracket)) {
             advance();
-            ExprPtr idx = parseExpression();
+            ExprPtr idx;
+            if (at(Tok::Lt)) {
+                // LPC <n> means "nth from the end" inside an index.
+                advance();
+                auto neg = std::make_shared<Expr>();
+                neg->kind = Expr::Kind::Unary;
+                neg->line = cur().line;
+                neg->op = "<";
+                neg->rhs = parseExpression();
+                idx = neg;
+            } else {
+                idx = parseExpression();
+            }
+            if (at(Tok::Ellipsis) || at(Tok::EllipsisLt)) {
+                std::string op = advance().text;
+                ExprPtr end = parseExpression();
+                auto range = std::make_shared<Expr>();
+                range->kind = Expr::Kind::Range;
+                range->line = idx->line;
+                range->text = op;
+                range->lhs = idx;
+                range->rhs = end;
+                idx = range;
+            }
             expect(Tok::RBracket, "']'");
             auto e = std::make_shared<Expr>();
             e->kind = Expr::Kind::Index;
             e->line = lhs->line;
             e->lhs = lhs;
             e->rhs = idx;
+            lhs = e;
+        } else if (at(Tok::PlusPlus) || at(Tok::MinusMinus)) {
+            std::string op = advance().text;
+            auto one = std::make_shared<Expr>();
+            one->kind = Expr::Kind::Int;
+            one->line = lhs->line;
+            one->intValue = 1;
+            auto bin = std::make_shared<Expr>();
+            bin->kind = Expr::Kind::Binary;
+            bin->line = lhs->line;
+            bin->op = (op == "++") ? "+" : "-";
+            bin->lhs = lhs;
+            bin->rhs = one;
+            auto e = std::make_shared<Expr>();
+            e->kind = Expr::Kind::Assign;
+            e->line = lhs->line;
+            e->op = "=";
+            e->lhs = lhs;
+            e->rhs = bin;
             lhs = e;
         } else if (at(Tok::Arrow)) {
             Token arrow = advance();
@@ -399,6 +468,14 @@ ExprPtr Parser::parsePrimary() {
         e->kind = Expr::Kind::Ident;
         e->line = cur().line;
         e->text = advance().text;
+        return e;
+    }
+    if (at(Tok::DollarLess)) {
+        advance();
+        auto e = std::make_shared<Expr>();
+        e->kind = Expr::Kind::Ident;
+        e->line = cur().line;
+        e->text = "args";
         return e;
     }
     if (at(Tok::KwUndefined) || at(Tok::KwNil) || at(Tok::KwTrue) || at(Tok::KwFalse)) {
