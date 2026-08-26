@@ -80,9 +80,6 @@ Value Interpreter::callBuiltin(const std::string& name, const std::vector<Value>
 }
 
 Value Interpreter::callFunction(const std::string& name, const std::vector<Value>& args) {
-    if (name == "load_all_path" || name == "load_all" || name == "safe_load_object") {
-        std::cerr << "[interp] call " << name << " args=" << args.size() << "\n";
-    }
     auto it = functions_.find(name);
     if (it == functions_.end()) {
         return callBuiltin(name, args);
@@ -407,7 +404,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
             int64_t len = static_cast<int64_t>(arr->items.size());
             if (start < 0) start += len;
             if (end < 0) end += len;
-            if (rhs->text == "..<") --end;
+            if (rhs->text == "..<") end = len - end;
             if (start < 0) start = 0;
             if (end >= len) end = len - 1;
             auto out = std::make_shared<ArrayValue>();
@@ -421,7 +418,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
             int64_t len = static_cast<int64_t>(s.size());
             if (start < 0) start += len;
             if (end < 0) end += len;
-            if (rhs->text == "..<") --end;
+            if (rhs->text == "..<") end = len - end;
             if (start < 0) start = 0;
             if (end >= len) end = len - 1;
             if (start > end) return make_string("");

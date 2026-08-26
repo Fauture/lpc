@@ -578,4 +578,10 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
     return 0;
 }
 
+int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRoot) {
+    OriginalVm vm(obj, searchRoot);
+    vm.runInit();
+    return 0;
+}
+
 } // namespace lpc

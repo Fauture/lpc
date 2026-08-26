@@ -1,5 +1,8 @@
 #include "builtins.h"
 
+#include "o_loader.h"
+#include "original_vm.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -307,12 +310,28 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return arr;
     }
     if (name == "safe_load_object") {
-        if (!args.empty()) {
-            std::string name = as_string(args[0]);
+        if (args.empty()) return make_int(0);
+        std::string name = as_string(args[0]);
+        std::string rel = name;
+        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+        if (hasSuffix(rel, ".c")) rel = rel.substr(0, rel.size() - 2) + ".o";
+        if (!hasSuffix(rel, ".o")) rel += ".o";
+        std::string full = vfsRoot() + "/" + rel;
+        std::error_code ec;
+        if (!fs::exists(full, ec)) {
+            std::cout << "Load: " << name << "... Failed\n";
+            return make_int(0);
+        }
+        try {
+            lpc::OriginalObject obj = lpc::loadOriginalObject(full);
+            lpc::runOriginalObjectInit(obj, vfsRoot());
             if (hasSuffix(name, ".o")) name = name.substr(0, name.size() - 2) + ".c";
             std::cout << "Load: " << name << "... OK\n";
+            return make_int(1);
+        } catch (...) {
+            std::cout << "Load: " << name << "... Failed\n";
+            return make_int(0);
         }
-        return make_int(1);
     }
     if (name == "file_size") {
         if (args.empty()) return make_int(0);
