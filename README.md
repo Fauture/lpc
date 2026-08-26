@@ -12,8 +12,11 @@ Studio 2022 / CMake.
 - Original compiled `.o` container parser and disassembler (`src/o_loader.cpp`):
   reads the binary format used by the original VM, including the header, string
   pool, identifier table, hidden functions, DLT function table, and code segments.
-  `run` currently executes trivial original global segments; full original
-  action-bytecode execution is still under development.
+- Original `.o`/`.pak` execution (`src/original_vm.cpp`): a partial action-bytecode
+  VM that can run global initializers from real `magic_Linux32` `.o` files.
+  Efun/user-function bodies are currently stubbed.
+- LZSS decompression (`src/lzss.cpp`) and `.pak` unpacking (`src/pak_loader.cpp`)
+  for the `lib_aaa32.pak` / `etc.pak` archives used by the original driver.
 - Builtin efuns (stubs plus common helpers) so simple scripts can run.
 
 ## Build
@@ -32,11 +35,14 @@ Or use the open folder / CMake integration in VS2022.
 ```bat
 lpcvm run script.c
 lpcvm run script.o
+lpcvm run lib_aaa32.pak
 lpcvm disasm script.o
+lpcvm unpack lib_aaa32.pak outdir
 ```
 
-`run` accepts either an LPC `.c` source file or a compiled `.o` file.  
-`disasm` prints the parsed original `.o` structure and action nodes.
+`run` accepts an LPC `.c` source file, a compiled `.o` file, or a `.pak` archive.
+`disasm` prints the parsed original `.o` structure and action nodes.  
+`unpack` decompresses a `.pak` archive into a directory.
 
 ## Layout
 

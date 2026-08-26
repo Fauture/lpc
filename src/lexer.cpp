@@ -62,6 +62,75 @@ std::vector<Token> Lexer::tokenize() {
             break;
         }
         char c = peek();
+        if (c == '#') {
+            get();
+            if (peek() == '#') {
+                get();
+                std::string num;
+                if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+                    num += get(); num += get();
+                    while (std::isxdigit(static_cast<unsigned char>(peek()))) num += get();
+                    Token t = make(Tok::Number, num);
+                    t.number = static_cast<double>(std::strtoll(num.c_str(), nullptr, 16));
+                    tokens.push_back(t);
+                } else {
+                    while (std::isdigit(static_cast<unsigned char>(peek()))) num += get();
+                    Token t = make(Tok::Number, num);
+                    t.number = std::strtod(num.c_str(), nullptr);
+                    tokens.push_back(t);
+                }
+            } else {
+                std::string word;
+                while (std::isalpha(static_cast<unsigned char>(peek()))) word += get();
+                if (word == "define") {
+                    while (peek() == ' ' || peek() == '\t') get();
+                    std::string name;
+                    while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_') name += get();
+                    while (peek() == ' ' || peek() == '\t') get();
+                    // Read one macro value token until end of line.
+                    Token val = make(Tok::Number, "0");
+                    if (peek() == '#' && peek(1) == '#') {
+                        get(); get();
+                        std::string num;
+                        if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+                            num += get(); num += get();
+                            while (std::isxdigit(static_cast<unsigned char>(peek()))) num += get();
+                            val = make(Tok::Number, num);
+                            val.number = static_cast<double>(std::strtoll(num.c_str(), nullptr, 16));
+                        } else {
+                            while (std::isdigit(static_cast<unsigned char>(peek()))) num += get();
+                            val = make(Tok::Number, num);
+                            val.number = std::strtod(num.c_str(), nullptr);
+                        }
+                    } else if (peek() == '"') {
+                        get();
+                        std::string s;
+                        while (peek() && peek() != '"') s += get();
+                        if (peek() == '"') get();
+                        val = make(Tok::String, s);
+                    } else if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+                        std::string num;
+                        num += get(); num += get();
+                        while (std::isxdigit(static_cast<unsigned char>(peek()))) num += get();
+                        val = make(Tok::Number, num);
+                        val.number = static_cast<double>(std::strtoll(num.c_str(), nullptr, 16));
+                    } else if (std::isdigit(static_cast<unsigned char>(peek()))) {
+                        std::string num;
+                        while (std::isdigit(static_cast<unsigned char>(peek()))) num += get();
+                        val = make(Tok::Number, num);
+                        val.number = std::strtod(num.c_str(), nullptr);
+                    } else {
+                        std::string ident;
+                        while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_') ident += get();
+                        val = make(Tok::Ident, ident);
+                    }
+                    defines_[name] = val;
+                }
+                // skip rest of preprocessor line
+                while (pos_ < src_.size() && peek() != '\n') get();
+            }
+            continue;
+        }
         if (std::isdigit(static_cast<unsigned char>(c)) || (c == '.' && std::isdigit(static_cast<unsigned char>(peek(1))))) {
             bool isFloat = false;
             std::string num;
@@ -131,6 +200,13 @@ std::vector<Token> Lexer::tokenize() {
                 {"private", Tok::KwPrivate}, {"public", Tok::KwPublic}, {"override", Tok::KwOverride},
                 {"static", Tok::KwStatic}, {"nomask", Tok::KwNomask}, {"varargs", Tok::KwVarargs},
             };
+            auto dit = defines_.find(id);
+            if (dit != defines_.end()) {
+                Token t = dit->second;
+                t.line = line_;
+                tokens.push_back(t);
+                continue;
+            }
             Tok kind = Tok::Ident;
             for (auto& k : kw) {
                 if (id == k.name) { kind = k.tok; break; }

@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace lpc {
@@ -37,6 +38,7 @@ private:
     std::string src_;
     size_t pos_ = 0;
     int line_ = 1;
+    std::unordered_map<std::string, Token> defines_;
 
     char peek(size_t off = 0) const;
     char get();

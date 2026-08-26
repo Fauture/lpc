@@ -6,6 +6,8 @@
 #include "interpreter.h"
 #include "lexer.h"
 #include "o_loader.h"
+#include "original_vm.h"
+#include "pak_loader.h"
 #include "parser.h"
 
 namespace {
@@ -46,19 +48,7 @@ int runOriginalObject(const std::string& path) {
     std::cout << "  strings=" << obj.strings.size()
               << " functions=" << obj.functions.size()
               << " globalNodes=" << obj.globalCode.size() << "\n";
-    bool trivial = true;
-    for (const auto& in : obj.globalCode) {
-        if (in.op != 29 && in.op != 46 && in.op != 72) {
-            trivial = false;
-            break;
-        }
-    }
-    if (trivial) {
-        std::cout << "  Global code is trivial (null/finish/return), executed OK.\n";
-    } else {
-        std::cout << "  Original bytecode execution is not fully implemented; use `disasm` to inspect.\n";
-    }
-    return 0;
+    return lpc::runOriginalObject(obj, std::cout);
 }
 
 int disasmOriginalObject(const std::string& path) {
@@ -67,10 +57,32 @@ int disasmOriginalObject(const std::string& path) {
     return 0;
 }
 
+int runPak(const std::string& path) {
+    lpc::PakFile pak = lpc::loadPak(path);
+    const lpc::PakEntry* entry = lpc::findPakEntry(pak, "start_aaa.o");
+    if (!entry) entry = lpc::findPakEntry(pak, "aaa/start_aaa.o");
+    if (!entry || entry->isDir) {
+        std::cerr << "Pak does not contain start_aaa.o\n";
+        return 1;
+    }
+    // Extract whole pak to out/<pakname> so the .o can be loaded by the existing loader.
+    std::string pakName = path;
+    size_t slash = pakName.find_last_of("/\\");
+    if (slash != std::string::npos) pakName = pakName.substr(slash + 1);
+    size_t dot = pakName.rfind('.');
+    if (dot != std::string::npos) pakName = pakName.substr(0, dot);
+    std::string outDir = "out/" + pakName;
+    lpc::extractPak(path, outDir);
+    std::string oPath = outDir + "/" + entry->name;
+    std::cout << "Extracted " << entry->name << " to " << oPath << "\n";
+    return runOriginalObject(oPath);
+}
+
 void usage() {
     std::cout << "Usage:\n"
-              << "  lpcvm run <file.c|file.o>\n"
-              << "  lpcvm disasm <file.o>\n";
+              << "  lpcvm run <file.c|file.o|file.pak>\n"
+              << "  lpcvm disasm <file.o>\n"
+              << "  lpcvm unpack <file.pak> [outdir]\n";
 }
 
 } // namespace
@@ -84,11 +96,19 @@ int main(int argc, char** argv) {
         std::string cmd = argv[1];
         std::string path = argv[2];
         if (cmd == "run") {
+            if (hasSuffix(path, ".pak")) return runPak(path);
             if (hasSuffix(path, ".o")) return runOriginalObject(path);
             return runLpcSource(path);
         }
         if (cmd == "disasm") {
             return disasmOriginalObject(path);
+        }
+        if (cmd == "unpack") {
+            std::string outDir = "out";
+            if (argc >= 4) outDir = argv[3];
+            lpc::extractPak(path, outDir);
+            std::cout << "Unpacked " << path << " to " << outDir << "\n";
+            return 0;
         }
         usage();
         return 1;

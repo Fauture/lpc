@@ -19,6 +19,9 @@ add_executable(lpcvm
     src/interpreter.cpp
     src/builtins.cpp
     src/o_loader.cpp
+    src/lzss.cpp
+    src/pak_loader.cpp
+    src/original_vm.cpp
 )
 
 target_include_directories(lpcvm PRIVATE src)

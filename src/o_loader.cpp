@@ -8,6 +8,11 @@ namespace lpc {
 
 namespace {
 
+struct OriginalCode {
+    std::vector<OriginalInsn> insns;
+    std::vector<uint8_t> meta;
+};
+
 struct Reader {
     const std::vector<uint8_t>& data;
     size_t pos = 0;
@@ -52,7 +57,7 @@ struct Reader {
         uint32_t n = u32();
         return cstr(n);
     }
-    std::vector<OriginalInsn> codeSegment() {
+    OriginalCode codeSegment() {
         uint32_t symbolsCount = u32();
         for (uint32_t i = 0; i < symbolsCount; ++i) {
             uint8_t flag = u8();
@@ -63,19 +68,21 @@ struct Reader {
         std::vector<uint8_t> nodeBytes;
         if (nodesCount) nodeBytes = bytes(4ULL * nodesCount);
         uint32_t metaLen = u32();
-        if (metaLen) bytes(metaLen);
+        std::vector<uint8_t> meta;
+        if (metaLen) meta = bytes(metaLen);
         uint32_t runtimeCount = u32();
         if (runtimeCount) bytes(4ULL * runtimeCount);
-        std::vector<OriginalInsn> nodes;
-        nodes.reserve(nodesCount);
+        OriginalCode code;
+        code.insns.reserve(nodesCount);
         for (uint32_t i = 0; i < nodesCount; ++i) {
             OriginalInsn ins;
             ins.a = static_cast<uint16_t>(nodeBytes[i * 4] | (nodeBytes[i * 4 + 1] << 8));
             ins.b = nodeBytes[i * 4 + 2];
             ins.op = nodeBytes[i * 4 + 3];
-            nodes.push_back(ins);
+            code.insns.push_back(ins);
         }
-        return nodes;
+        code.meta = std::move(meta);
+        return code;
     }
     OriginalFunction function() {
         OriginalFunction fn;
@@ -93,7 +100,9 @@ struct Reader {
             bytes(20);
             tempString();
         }
-        fn.code = codeSegment();
+        OriginalCode code = codeSegment();
+        fn.code = std::move(code.insns);
+        fn.metaData = std::move(code.meta);
         return fn;
     }
 };
@@ -175,10 +184,15 @@ OriginalObject loadOriginalObject(const std::string& path) {
     }
 
     uint16_t globalVarCount = r.u16();
+    obj.globalVarCount = globalVarCount;
     uint16_t progVarCount = r.u16();
-    for (uint16_t i = 0; i < progVarCount; ++i) {
-        r.bytes(16);
-        r.tempString();
+    // Object files (functionBC == 0) store per-object PROG_VARS records.
+    // Global programs (functionBC != 0) store only the global variable count.
+    if (obj.functionBC == 0) {
+        for (uint16_t i = 0; i < progVarCount; ++i) {
+            r.bytes(16);
+            r.tempString();
+        }
     }
 
     uint16_t efunCount = r.u16();
@@ -191,14 +205,16 @@ OriginalObject loadOriginalObject(const std::string& path) {
         obj.functions.push_back(r.function());
     }
 
-    // Inherit table is present for object files (pCurrentProgram != nullptr).
-    uint16_t maxConstitution = r.u16();
-    uint32_t inheritCount = r.u32();
-    for (uint32_t i = 0; i < inheritCount; ++i) {
-        r.tempString();
-        r.bytes(12);
+    // Inherit table is present only for object files (pCurrentProgram != nullptr).
+    if (obj.functionBC == 0) {
+        uint16_t maxConstitution = r.u16();
+        uint32_t inheritCount = r.u32();
+        for (uint32_t i = 0; i < inheritCount; ++i) {
+            r.tempString();
+            r.bytes(12);
+        }
+        (void)maxConstitution;
     }
-    (void)maxConstitution;
 
     uint32_t dltCount = r.u32();
     for (uint32_t i = 0; i < dltCount; ++i) {
@@ -213,11 +229,16 @@ OriginalObject loadOriginalObject(const std::string& path) {
                 size_t end = namePool.find('\0', nameOff);
                 fn.name = namePool.substr(nameOff, end == std::string::npos ? std::string::npos : end - nameOff);
             }
+            // DLT entry +12/+13/+14/+15 store the function index.
+            fn.index = static_cast<int32_t>(dlt[12]) | (static_cast<int32_t>(dlt[13]) << 8) |
+                       (static_cast<int32_t>(dlt[14]) << 16) | (static_cast<int32_t>(dlt[15]) << 24);
             obj.functions.push_back(std::move(fn));
         }
     }
 
-    obj.globalCode = r.codeSegment();
+    OriginalCode globalCode = r.codeSegment();
+    obj.globalCode = std::move(globalCode.insns);
+    obj.globalMeta = std::move(globalCode.meta);
     return obj;
 }
 
