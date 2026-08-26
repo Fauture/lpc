@@ -109,6 +109,23 @@ public:
         }
     }
 
+    void runMainLoop(int ticks, std::chrono::milliseconds interval) {
+        const OriginalFunction* hb = nullptr;
+        for (const auto& fn : obj_.functions) {
+            if (fn.name == "heart_beat" && fn.index >= 0) {
+                auto it = funcsByIndex_.find(fn.index);
+                if (it != funcsByIndex_.end()) { hb = it->second; break; }
+            }
+        }
+        if (!hb) return;
+        std::vector<Value> args;
+        for (int i = 0; i < hb->argCount; ++i) args.push_back(make_int(0));
+        for (int i = 0; i < ticks; ++i) {
+            executeFunction(*hb, args);
+            if (i + 1 < ticks) std::this_thread::sleep_for(interval);
+        }
+    }
+
 private:
     const OriginalObject& obj_;
     std::string searchRoot_;

@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 #include "interpreter.h"
 
@@ -23,6 +25,67 @@ int64_t as_int(const Value& v) {
 }
 
 std::string as_string(const Value& v) { return to_string(v, false); }
+
+std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
+    std::string out;
+    size_t argi = 0;
+    for (size_t i = 0; i < fmt.size(); ++i) {
+        if (fmt[i] != '%' || i + 1 >= fmt.size()) {
+            out += fmt[i];
+            continue;
+        }
+        char spec = fmt[++i];
+        if (spec == '%') {
+            out += '%';
+        } else if (spec == 's') {
+            out += argi < args.size() ? as_string(args[argi++]) : "";
+        } else if (spec == 'd' || spec == 'i') {
+            out += argi < args.size() ? std::to_string(as_int(args[argi++])) : "0";
+        } else if (spec == 'f') {
+            if (argi < args.size()) {
+                const Value& v = args[argi++];
+                if (v.index() == 3) out += std::to_string(std::get<double>(v));
+                else out += std::to_string(static_cast<double>(as_int(v)));
+            } else {
+                out += "0";
+            }
+        } else if (spec == 'x' || spec == 'X') {
+            char buf[32];
+            if (argi < args.size()) {
+                if (spec == 'x') snprintf(buf, sizeof(buf), "%llx", static_cast<unsigned long long>(as_int(args[argi++])));
+                else snprintf(buf, sizeof(buf), "%llX", static_cast<unsigned long long>(as_int(args[argi++])));
+            } else {
+                buf[0] = '0'; buf[1] = 0;
+            }
+            out += buf;
+        } else {
+            out += '%';
+            out += spec;
+        }
+    }
+    return out;
+}
+
+std::unordered_map<std::string, std::string>& simpleDb() {
+    static std::unordered_map<std::string, std::string> db;
+    return db;
+}
+
+void simpleDbLoad(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return;
+    std::string line;
+    while (std::getline(in, line)) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        simpleDb()[line.substr(0, eq)] = line.substr(eq + 1);
+    }
+}
+
+void simpleDbSave(const std::string& path) {
+    std::ofstream out(path);
+    for (auto& kv : simpleDb()) out << kv.first << '=' << kv.second << '\n';
+}
 
 Value get_index(const Value& c, const Value& idx) {
     if (c.index() == 5) {
@@ -47,18 +110,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
 
     if (name == "write" || name == "printf" || name == "dump_file") {
         if (!args.empty()) {
-            std::string out;
-            if (args.size() == 1) {
-                out = as_string(args[0]) + "\n";
-            } else {
-                std::string fmt = as_string(args[0]);
-                for (size_t i = 1; i < args.size(); ++i) {
-                    std::string placeholder = "%s";
-                    size_t p = fmt.find(placeholder);
-                    if (p != std::string::npos) fmt.replace(p, placeholder.size(), as_string(args[i]));
-                    else fmt += " " + as_string(args[i]);
-                }
-                out = fmt + "\n";
+            std::vector<Value> rest(args.begin() + 1, args.end());
+            std::string out = formatLpc(as_string(args[0]), rest);
+            if (name != "write" || out.empty() || out.back() != '\n') {
+                // printf usually appends a newline; write writes exactly the string.
+                if (name != "write") out += "\n";
             }
             fputs(out.c_str(), stdout);
         }
@@ -66,17 +122,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "sprintf") {
         if (args.empty()) return make_string("");
-        std::string fmt = as_string(args[0]);
-        for (size_t i = 1; i < args.size(); ++i) {
-            std::string ph = "%s";
-            size_t p = fmt.find(ph);
-            if (p != std::string::npos) fmt.replace(p, ph.size(), as_string(args[i]));
-            else if (i == 1 && fmt.find("%d") != std::string::npos) {
-                p = fmt.find("%d");
-                fmt.replace(p, 2, as_string(args[i]));
-            }
-        }
-        return make_string(fmt);
+        std::vector<Value> rest(args.begin() + 1, args.end());
+        return make_string(formatLpc(as_string(args[0]), rest));
     }
     if (name == "sizeof" || name == "size") {
         if (args.empty()) return make_int(0);
@@ -172,6 +219,33 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
     if (name == "destruct_object" || name == "to_be_disconnect" || name == "is_clone") return name == "is_clone" ? make_int(0) : make_int(1);
     if (name == "register_daemon_data" || name == "dispatch_service" || name == "send_to_cta") return make_int(1);
+    if (name == "db_open") {
+        if (!args.empty()) simpleDbLoad(as_string(args[0]));
+        return make_int(1);
+    }
+    if (name == "db_set") {
+        if (args.size() >= 2) {
+            simpleDb()[as_string(args[0])] = as_string(args[1]);
+            simpleDbSave("lpcvm.db");
+        }
+        return make_int(1);
+    }
+    if (name == "db_get") {
+        if (args.empty()) return make_int(0);
+        auto it = simpleDb().find(as_string(args[0]));
+        if (it == simpleDb().end()) return make_int(0);
+        return make_string(it->second);
+    }
+    if (name == "db_delete") {
+        if (!args.empty()) simpleDb().erase(as_string(args[0]));
+        simpleDbSave("lpcvm.db");
+        return make_int(1);
+    }
+    if (name == "db_query") {
+        auto arr = std::make_shared<ArrayValue>();
+        for (auto& kv : simpleDb()) arr->items.push_back(make_string(kv.first + "=" + kv.second));
+        return arr;
+    }
     if (name == "sql_execute" || name == "sql_insert" || name == "sql_close_db") return make_int(0);
     if (name == "sleep" || name == "wait_event" || name == "send_to_queue") return make_int(1);
     if (name == "get_thread_id") return make_int(-1);

@@ -15,14 +15,14 @@ Studio 2022 / CMake.
 - Original `.o`/`.pak` execution (`src/original_vm.cpp`): a partial action-bytecode
   VM that can run global initializers and user functions from real `magic_Linux32`
   `.o` files.
-- Efun index table extracted from IDA (`src/efun_table.h`): `call_in_efun` is now
-  connected to the implemented builtins, so `write/printf/sprintf` etc. can produce
-  real output during `.pak` startup.
-- `call_other` basic object loading: when a `.o` references another object file, the
-  VM attempts to load the corresponding `.o` from the pak extraction directory and
-  call the requested function.
-- `create()` call and a simple `heart_beat` scheduler stub are invoked after global
-  initialization.
+- Efun index table extracted from IDA (`src/efun_table.h`): includes both efun
+  names and return-type bytes. `call_in_efun` is connected to the implemented
+  builtins, so `write/printf/sprintf` etc. can produce real output during `.pak`
+  startup.
+- `call_other` object loading with a global object registry: loaded `.o` objects are
+  cached and reused, so later `call_other` calls can see the same object state.
+- `create()` call and a real `while` main-loop/timer stub: if the object defines
+  `heart_beat`, the VM runs it repeatedly with a timed interval.
 - LZSS decompression (`src/lzss.cpp`) and `.pak` unpacking (`src/pak_loader.cpp`)
   for the `lib_aaa32.pak` / `etc.pak` archives used by the original driver.
 - Builtin efuns (stubs plus common helpers) so simple scripts can run.
@@ -44,13 +44,24 @@ Or use the open folder / CMake integration in VS2022.
 lpcvm run script.c
 lpcvm run script.o
 lpcvm run lib_aaa32.pak
+lpcvm server examples\server.c 4000
 lpcvm disasm script.o
 lpcvm unpack lib_aaa32.pak outdir
 ```
 
 `run` accepts an LPC `.c` source file, a compiled `.o` file, or a `.pak` archive.
+`server` starts a simple telnet-like LPC server (Winsock TCP).
 `disasm` prints the parsed original `.o` structure and action nodes.  
 `unpack` decompresses a `.pak` archive into a directory.
+
+Try the live server:
+
+```bat
+build\Release\lpcvm.exe server examples\server.c 4000
+```
+
+Then connect with telnet/PowerShell to `127.0.0.1:4000` and send:
+`hello`, `who`, `time`, `dbdemo`, `help`.
 
 ## Layout
 

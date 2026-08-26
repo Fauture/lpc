@@ -25,3 +25,6 @@ add_executable(lpcvm
 )
 
 target_include_directories(lpcvm PRIVATE src)
+if(WIN32)
+    target_link_libraries(lpcvm PRIVATE ws2_32)
+endif()
