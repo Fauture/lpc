@@ -19,6 +19,7 @@
 #include "interpreter.h"
 #include "lexer.h"
 #include "lzss.h"
+#include "builtins.h"
 #include "o_loader.h"
 #include "original_vm.h"
 #include "pak_loader.h"
@@ -281,6 +282,7 @@ int runPakOriginal(const std::string& path) {
               << " globalNodes=" << obj.globalCode.size() << "\n";
     int rc = lpc::runOriginalObject(obj, std::cout, root);
     std::cout.flush();
+    std::cerr << "[pak] runOriginalObject returned rc=" << rc << "\n";
     if (rc != 0) return rc;
     // Keep the driver alive so LPC-started services (telnet_on) keep running.
     for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -305,6 +307,21 @@ void usage() {
 
 int main(int argc, char** argv) {
     try {
+        // Driver-level telnet options (mirroring the original driver's
+        // -w <password> / -p <port>): telnet is only enabled when a port is
+        // configured.  Without these options the driver does not listen.
+        std::string telnetPwd;
+        int telnetPort = 0;
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
+                telnetPwd = argv[++i];
+            } else if (std::strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+                telnetPort = std::atoi(argv[++i]);
+            }
+        }
+        if (!telnetPwd.empty()) lpc::setDriverTelnetPassword(telnetPwd);
+        if (telnetPort >= 1024) lpc::startDriverTelnet(telnetPort);
+
         if (argc < 3) {
             usage();
             return 1;

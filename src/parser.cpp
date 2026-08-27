@@ -790,4 +790,8 @@ StmtPtr Parser::parseTryCatch() {
     return s;
 }
 
+ExprPtr Parser::parseShellExpression() {
+    return parseExpression();
+}
+
 } // namespace lpc

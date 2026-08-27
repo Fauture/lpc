@@ -10,6 +10,9 @@ class Parser {
 public:
     explicit Parser(std::vector<Token> tokens);
     Program parseProgram();
+    // Parse a single LPC expression (used by the telnet shell's execute_data
+    // to evaluate command strings like "obj->func()" or "1 + 2").
+    ExprPtr parseShellExpression();
 
 private:
     std::vector<Token> toks_;

@@ -16,4 +16,12 @@ Value call_builtin(Interpreter* interp, const std::string& name, const std::vect
 void setThreadTelnetClient(int clientNo);
 int threadTelnetClient();
 
+// Driver-level telnet shell configured by the -w/-p command line options
+// (mirroring the original driver: only when a port is configured does the
+// driver listen for telnet).  startDriverTelnet(port) binds and accepts
+// connections that go through the driver shell (password check +
+// execute_data).  Returns 1 on success.
+int startDriverTelnet(int port);
+void setDriverTelnetPassword(const std::string& pwd);
+
 } // namespace lpc

@@ -25,4 +25,15 @@ Value callMasterProgramFunction(const std::string& funName, const std::vector<Va
 // runOriginalObject itself; this drains the runtime ones.
 void drainPendingOriginalThreads(const std::string& searchRoot);
 
+// Driver-side object loader used by the load_object / safe_load_object efuns:
+// loads the .o for a virtual path (e.g. "/aaa/daemons/configd.c"), registers
+// it in the object registry (so find_object / cross-object calls work) and
+// runs its global initializer + create().  Returns 1 on success.
+int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot);
+
+// find_object: returns an object value if the object is loaded, otherwise 0.
+// (The original driver does not auto-load here; load_object/safe_load_object
+// do the loading.)
+Value findObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot);
+
 } // namespace lpc

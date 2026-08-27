@@ -365,6 +365,16 @@ class OriginalVm;
 struct ObjectRegistry {
     std::unordered_map<std::string, std::shared_ptr<OriginalObject>> objects;
     std::unordered_map<std::string, std::shared_ptr<OriginalVm>> vms;
+    // Objects whose global initializer + create() have already run.  Threads
+    // spawned later (daemon/echo_daemon on the master program) share this
+    // initialized state; re-running it would restart the whole driver.
+    std::unordered_map<std::string, bool> initialized;
+    // The same, keyed by object pointer (the master's local VM uses the
+    // original object, not the registry copy).
+    std::unordered_map<const OriginalObject*, bool> initializedObj;
+    // The driver's global program object (start_aaa), as used by the running
+    // master VM.  Threads/timers on it must not re-run the full startup.
+    const OriginalObject* masterObj = nullptr;
 };
 ObjectRegistry& objectRegistry();
 std::vector<PendingThread>& pendingThreads();
@@ -372,6 +382,8 @@ std::mutex& pendingThreadsMutex();
 std::vector<PendingThread>& postInitFuncs();
 void runPendingOriginalThreads(const std::string& searchRoot);
 void runPostInitFunctions(const std::string& searchRoot);
+bool isObjectInitialized(const OriginalObject* obj);
+bool isMasterObject(const OriginalObject* obj);
 
 int32_t readI32(const std::vector<uint8_t>& meta, uint32_t off) {
     if (off + 4 > meta.size()) throw std::runtime_error("original_vm: bad metadata reference");
@@ -444,6 +456,18 @@ public:
     }
 
     int runInit() {
+        if (std::getenv("LPCVM_TRACE") && isMasterObject(&obj_))
+            std::cerr << "[master-init] running global code\n";
+        // Detect re-execution of the master program's global code (start_aaa,
+        // identified by its "Driver load ok!" string) from object copies.
+        if (std::getenv("LPCVM_TRACE")) {
+            for (const auto& str : obj_.strings) {
+                if (str.find("Driver load ok") != std::string::npos) {
+                    std::cerr << "[master-copy-init] runInit on start_aaa copy tid=" << std::this_thread::get_id() << "\n";
+                    break;
+                }
+            }
+        }
         try {
             execute(obj_.globalCode, obj_.globalMeta);
             callCreate();
@@ -515,6 +539,12 @@ private:
     Value returnValue_ = make_int(0);
     bool returned_ = false;
     int catchDepth_ = 0;
+    struct CatchRecord {
+        size_t ipTarget = 0;     // resume ip when an error is caught
+        size_t stackSize = 0;    // stack to unwind to
+        size_t frameCount = 0;   // frames to keep
+    };
+    std::vector<CatchRecord> catches_;
 
     const OriginalFunction* findFunction(const std::string& name) {
         for (const auto& fn : obj_.functions)
@@ -624,7 +654,23 @@ private:
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
-            if (nm == "broadcast" && !searchRoot_.empty()) return handleBroadcastEfun(searchRoot_, args);
+            if (nm == "broadcast") {
+                // Original vm_f_broadcast logs the message; object loading is
+                // done by the LPC load_all/safe_load_object/load_object path.
+                // To keep the extracted-game startup working, the very first
+                // broadcast (from the master's global code, "Driver startup")
+                // also pre-loads every object once; later broadcasts are pure
+                // log messages (preventing the infinite re-load loop).
+                static bool preloadDone = false;
+                if (!preloadDone && !searchRoot_.empty()) {
+                    preloadDone = true;
+                    handleBroadcastEfun(searchRoot_, args);
+                }
+                std::string msg;
+                if (!args.empty()) msg = to_string(args[0], false);
+                if (!msg.empty()) std::cout << msg << "\n";
+                return make_int(1);
+            }
             if (nm == "create_thread" && args.size() >= 2 && args[1].index() == 8) {
                 auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
                 if (std::getenv("LPCVM_TRACE"))
@@ -647,8 +693,9 @@ private:
                 const Value& fn = args[2];
                 std::string fnName;
                 std::vector<Value> bound;
+                std::shared_ptr<ClosureValue> cl;
                 if (fn.index() == 8) {
-                    auto cl = std::get<std::shared_ptr<ClosureValue>>(fn);
+                    cl = std::get<std::shared_ptr<ClosureValue>>(fn);
                     fnName = cl->functionName;
                     bound = cl->boundArgs;
                 } else if (fn.index() == 4) {
@@ -656,15 +703,36 @@ private:
                 }
                 if (!fnName.empty()) {
                     int64_t timeout = std::max<int64_t>(1, toInt(args[0]));
+                    // The timer callback runs in the context of the object that
+                    // owns the closure (cl->owner); string callbacks belong to
+                    // the current VM's object.  We NEVER re-run the object's
+                    // initializer here - that would restart the whole driver
+                    // (create() re-registers threads and timers).  Instead the
+                    // callback VM gets the initialized instance variables.
+                    const OriginalObject* owner = cl ? cl->owner : nullptr;
+                    if (!owner) owner = &obj_;
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[timer] schedule " << fnName << " in " << timeout << "s\n";
-                    auto objPtr = std::make_shared<OriginalObject>(obj_);
-                    std::thread([objPtr, fnName, bound, timeout]() {
+                    auto objPtr = std::make_shared<OriginalObject>(*owner);
+                    std::vector<Value> objVarsSnapshot;
+                    {
+                        auto& reg = objectRegistry();
+                        for (auto& kv : reg.vms) {
+                            if (&kv.second->object() == owner) {
+                                objVarsSnapshot = kv.second->objVars();
+                                break;
+                            }
+                        }
+                    }
+                    std::thread([objPtr, fnName, bound, timeout,
+                                 objVarsSnapshot = std::move(objVarsSnapshot)]() {
                         if (timeout > 0)
                             std::this_thread::sleep_for(std::chrono::seconds(timeout));
                         try {
                             OriginalVm vm(*objPtr);
-                            vm.runInit();
+                            auto& dst = vm.objVars();
+                            if (dst.size() < objVarsSnapshot.size()) dst.resize(objVarsSnapshot.size());
+                            for (size_t i = 0; i < objVarsSnapshot.size(); ++i) dst[i] = objVarsSnapshot[i];
                             vm.callFunctionByName(fnName, bound);
                         } catch (...) {
                         }
@@ -784,7 +852,8 @@ private:
                 m0 = readI32(meta, off);
                 if (ai.parameters == 2) m1 = readI32(meta, off + 4);
             }
-            switch (in.op) {
+            try {
+                switch (in.op) {
             case 46: // null_action
                 break;
             case 29: // finish_action
@@ -901,7 +970,11 @@ private:
                     std::vector<Value> bound;
                     int boundCount = in.b & 0x3F;
                     for (int i = 0; i < boundCount && !stack_.empty(); ++i) bound.push_back(pop().value);
-                    pushValue(make_closure(it->second->name, bound));
+                    auto cl = std::make_shared<ClosureValue>();
+                    cl->functionName = it->second->name;
+                    cl->boundArgs = bound;
+                    cl->owner = &obj_;
+                    pushValue(cl);
                 } else {
                     pushValue(make_int(0));
                 }
@@ -1154,6 +1227,20 @@ private:
                     const OriginalFunction* fn = findFunction(cl->functionName);
                     if (fn) {
                         result = executeFunctionFromOutside(*fn, all);
+                    } else if (cl->owner && cl->owner != &obj_) {
+                        // The closure was created by another object (e.g. the
+                        // master's post_init loop calling a daemon's do_init):
+                        // resolve the function in the owner's VM.
+                        auto& reg = objectRegistry();
+                        for (auto& kv : reg.vms) {
+                            if (&kv.second->object() == cl->owner) {
+                                if (std::getenv("LPCVM_TRACE"))
+                                    std::cerr << "[cfv] owner-resolve " << cl->functionName
+                                              << " in " << kv.first << "\n";
+                                result = kv.second->callFunctionByName(cl->functionName, all);
+                                break;
+                            }
+                        }
                     } else {
                         // The closure may reference a builtin efun (e.g. the
                         // mysql_connect closure created by find_function).
@@ -1275,8 +1362,22 @@ private:
                 if (!stack_.empty()) pop();
                 break;
             case 14: // caught_error
+                // Arrived here after an error was caught: the error value is
+                // already pushed; nothing else to do.
+                break;
             case 26: // end_thread_catch
-            case 44: // new_thread_catch
+                if (!catches_.empty()) catches_.pop_back();
+                break;
+            case 44: { // new_thread_catch: protect the following code; on an
+                       // error, resume at ip+offset with the error value pushed.
+                int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                CatchRecord rec;
+                rec.ipTarget = ip + static_cast<size_t>(offset);
+                rec.stackSize = stack_.size();
+                rec.frameCount = frames_.size();
+                catches_.push_back(rec);
+                break;
+            }
             case 16: // check_is_ref_type
             case 17: // check_is_ref_type_i
             case 19: // convert_to_ptr
@@ -1319,6 +1420,33 @@ private:
                     std::cerr << "[vm] unhandled op " << in.op << " " << ai.name
                               << " at ip=" << (ip - 1) << "\n";
                 break;
+            }
+            } catch (const VmError& e) {
+                // Unwind to the innermost new_thread_catch, if any.
+                if (catches_.empty()) throw;
+                CatchRecord rec = catches_.back();
+                // The catch must belong to the current frame; otherwise let the
+                // error propagate up to the frame that owns the catch.
+                if (rec.frameCount != frames_.size()) throw;
+                catches_.pop_back();
+                stack_.resize(rec.stackSize);
+                pushValue(make_string(std::string(e.what())));
+                ip = rec.ipTarget;
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[catch] error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
+            } catch (const std::exception& e) {
+                if (!catches_.empty()) {
+                    CatchRecord rec = catches_.back();
+                    if (rec.frameCount != frames_.size()) throw;
+                    catches_.pop_back();
+                    stack_.resize(rec.stackSize);
+                    pushValue(make_string(std::string(e.what())));
+                    ip = rec.ipTarget;
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[catch] std error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
+                } else {
+                    throw;
+                }
             }
         }
     }
@@ -1452,6 +1580,34 @@ std::mutex& pendingThreadsMutex() {
     return m;
 }
 
+// True if the object already ran its global initializer + create() (either the
+// main master VM or a loaded object).  Threads for such objects must not
+// re-run the initializer: that would restart the whole driver (broadcast,
+// post_init, thread registration) for every spawned thread.
+bool isObjectInitialized(const OriginalObject* obj) {
+    if (!obj) return false;
+    auto& reg = objectRegistry();
+    auto it = reg.initializedObj.find(obj);
+    if (it != reg.initializedObj.end()) return true;
+    for (auto& kv : reg.initialized) {
+        auto it2 = reg.objects.find(kv.first);
+        if (it2 != reg.objects.end() && it2->second.get() == obj) return true;
+    }
+    return false;
+}
+
+// True if obj is the driver's global program (the master, start_aaa).
+bool isMasterObject(const OriginalObject* obj) {
+    if (!obj) return false;
+    auto& reg = objectRegistry();
+    if (reg.masterObj == obj) return true;
+    for (auto& kv : reg.vms) {
+        if (kv.first.find("<main>") != std::string::npos && &kv.second->object() == obj)
+            return true;
+    }
+    return false;
+}
+
 std::vector<PendingThread>& postInitFuncs() {
     static std::vector<PendingThread> funcs;
     return funcs;
@@ -1501,6 +1657,7 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
                     reg.objects[full] = objPtr;
                     reg.vms[full] = vmPtr;
                     vmPtr->runInit();
+                    reg.initialized[full] = true;
                 } catch (const std::exception& e) {
                     std::cout << "Load: " << virt << "... FAILED: " << e.what() << "\n";
                 }
@@ -1544,6 +1701,7 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             // A freshly loaded object must run its global initializer and
             // create() exactly like the broadcast loader does.
             vmPtr->runInit();
+            reg.initialized[c] = true;
             return vmPtr->callFunctionByName(funName, args);
         } catch (...) {
         }
@@ -1574,10 +1732,22 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
             }
             try {
                 OriginalVm vm(*copy.obj, searchRoot);
-                // Telnet daemons rely on the shared global program state that the
-                // main VM already initialized; re-running runInit would re-execute
-                // the whole startup (broadcast load etc.) for every connection.
-                if (!isTelnet) vm.runInit();
+                // Like the original driver, a thread shares the object context
+                // of its creator: we never re-run the initializer here (that
+                // would re-run create() and re-register threads/timers).  The
+                // thread VM gets the initialized instance variables instead.
+                {
+                    auto& reg = objectRegistry();
+                    for (auto& kv : reg.vms) {
+                        if (&kv.second->object() == copy.obj) {
+                            auto& src = kv.second->objVars();
+                            auto& dst = vm.objVars();
+                            if (dst.size() < src.size()) dst.resize(src.size());
+                            for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
+                            break;
+                        }
+                    }
+                }
                 vm.callFunctionByName(copy.fun, copy.args);
             } catch (const std::exception& e) {
                 std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";
@@ -1608,7 +1778,8 @@ void runPostInitFunctions(const std::string& searchRoot) {
 int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
     OriginalVm vm(obj, searchRoot);
     // Register the main object (the driver's "global program") so cross-object
-    // function lookups can resolve its functions.
+    // function lookups can resolve its functions.  The same OriginalObject is
+    // used by the running VM, so thread closures created from it share state.
     {
         auto& reg = objectRegistry();
         std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
@@ -1616,9 +1787,22 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
             auto objPtr = std::make_shared<OriginalObject>(obj);
             reg.objects[key] = objPtr;
             reg.vms[key] = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            // mark the registered copy initialized after vm.run() below
         }
     }
+    std::cerr << "[run-orig] vm.run() returned\n";
     vm.run();
+    std::cerr << "[run-orig] vm.run() done\n";
+    {
+        auto& reg = objectRegistry();
+        std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
+        reg.initialized[key] = true;
+        // The local vm ran the init on the caller's obj (not the registry
+        // copy); mark that instance too so master-object thread closures
+        // (daemon/echo_daemon) don't re-run the whole driver startup.
+        reg.initializedObj[&obj] = true;
+        reg.masterObj = &obj;
+    }
     runPendingOriginalThreads(searchRoot);
     out << "Original .o VM finished.\n";
     return 0;
@@ -1628,6 +1812,50 @@ int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRo
     OriginalVm vm(obj, searchRoot);
     vm.runInit();
     return 0;
+}
+
+int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot) {
+    if (searchRoot.empty() || virtualPath.empty()) return 0;
+    std::string rel = virtualPath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    std::vector<std::string> candidates;
+    candidates.push_back(searchRoot + "/" + rel);
+    if (rel.compare(0, 4, "aaa/") == 0) candidates.push_back(searchRoot + "/" + rel.substr(4));
+    for (const auto& c : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(c, ec)) continue;
+        auto& reg = objectRegistry();
+        auto it = reg.vms.find(c);
+        if (it != reg.vms.end()) return 1;
+        try {
+            auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
+            auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            reg.objects[c] = objPtr;
+            reg.vms[c] = vmPtr;
+            vmPtr->runInit();
+            reg.initialized[c] = true;
+            return 1;
+        } catch (...) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+Value findObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot) {
+    (void)searchRoot;
+    std::string rel = virtualPath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    auto& reg = objectRegistry();
+    for (auto& kv : reg.vms) {
+        std::string key = kv.first;
+        // registry keys are real paths like "linux/aaa - bak/aaa/daemons/x.o";
+        // compare by suffix so "/aaa/daemons/x.c" matches.
+        if (hasSuffix(key, rel)) return make_object(virtualPath);
+    }
+    return make_int(0);
 }
 
 Value callOriginalObjectFunction(const std::string& oPath, const std::string& funName,
@@ -1667,7 +1895,20 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
             }
             try {
                 OriginalVm vm(*copy.obj, searchRoot);
-                if (!isTelnet) vm.runInit();
+                // Never re-run the initializer (would restart the driver);
+                // copy the initialized instance variables instead.
+                {
+                    auto& reg = objectRegistry();
+                    for (auto& kv : reg.vms) {
+                        if (&kv.second->object() == copy.obj) {
+                            auto& src = kv.second->objVars();
+                            auto& dst = vm.objVars();
+                            if (dst.size() < src.size()) dst.resize(src.size());
+                            for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
+                            break;
+                        }
+                    }
+                }
                 vm.callFunctionByName(copy.fun, copy.args);
             } catch (const std::exception& e) {
                 std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";

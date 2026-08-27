@@ -24,6 +24,8 @@
 namespace fs = std::filesystem;
 
 #include "interpreter.h"
+#include "lexer.h"
+#include "parser.h"
 
 namespace lpc {
 
@@ -319,6 +321,11 @@ void telnetServerLoop(SOCKET listener) {
     }
 }
 
+// Driver-level telnet shell (enabled only by the -w/-p command line options,
+// like the original driver).  It asks for the configured password and then
+// runs an interactive shell where execute_data() evaluates LPC expressions.
+// Implemented at lpc scope (see below) so main.cpp can call it.
+
 std::string resolveVfsPath(const std::string& p) {
     std::string path = p;
     if (!path.empty() && path.front() == '/') path.erase(path.begin());
@@ -574,6 +581,78 @@ Value get_index(const Value& c, const Value& idx) {
 void setThreadTelnetClient(int clientNo) { tlsCurrentClient = clientNo; }
 int threadTelnetClient() { return tlsCurrentClient; }
 
+std::string& driverTelnetPassword() {
+    static std::string pwd = "123456";
+    return pwd;
+}
+
+void setDriverTelnetPassword(const std::string& pwd) { driverTelnetPassword() = pwd; }
+
+void driverTelnetShellLoop(SOCKET listener) {
+    while (true) {
+        SOCKET c = accept(listener, nullptr, nullptr);
+        if (c == INVALID_SOCKET) {
+            if (WSAGetLastError() == WSAEINTR) continue;
+            break;
+        }
+        std::thread([c]() {
+            int cno = nextTelnetClientNo().fetch_add(1);
+            {
+                std::lock_guard<std::mutex> lk(telnetMutex());
+                TelnetClient& tc = telnetClients()[cno];
+                tc.sock = c;
+                tc.nativeProcess = true;
+            }
+            setThreadTelnetClient(cno);
+            telnetSend(cno, telnetLineEnd("Welcome to LPC driver shell!\r\n"));
+            telnetSend(cno, telnetLineEnd("Password: "));
+            std::string pwd = telnetReadLine(cno);
+            if (pwd != driverTelnetPassword()) {
+                telnetSend(cno, telnetLineEnd("\r\nBad password!\r\n"));
+                closeTelnetClient(cno);
+                setThreadTelnetClient(-1);
+                return;
+            }
+            telnetSend(cno, telnetLineEnd("\r\nLogged in.  Type LPC expressions; \".\" to quit.\r\n"));
+            while (findTelnetClient(cno)) {
+                telnetSend(cno, telnetLineEnd("shell> "));
+                std::string line = telnetReadLine(cno);
+                if (line.empty()) break;
+                if (line == ".") {
+                    telnetSend(cno, telnetLineEnd("logout\r\n"));
+                    closeTelnetClient(cno);
+                    break;
+                }
+                Value r = call_builtin(nullptr, "execute_data", {make_string(line), make_int(1)});
+                (void)r;
+            }
+            closeTelnetClient(cno);
+            setThreadTelnetClient(-1);
+        }).detach();
+    }
+}
+
+int startDriverTelnet(int port) {
+    ensureWsa();
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return 0;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(static_cast<u_short>(port));
+    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(s);
+        return 0;
+    }
+    if (listen(s, 16) == SOCKET_ERROR) {
+        closesocket(s);
+        return 0;
+    }
+    std::thread(driverTelnetShellLoop, s).detach();
+    std::cout << "Driver telnet shell started on port " << port << "\n";
+    return 1;
+}
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
@@ -786,29 +865,32 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return arr;
     }
-    if (name == "safe_load_object") {
+    if (name == "safe_load_object" || name == "load_object") {
+        // The driver-side object loader: load + initialize the object and
+        // register it so find_object / cross-object calls can reach it.
         if (args.empty()) return make_int(0);
-        std::string name = normalizeSlashes(as_string(args[0]));
-        std::string rel = name;
-        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
-        if (hasSuffix(rel, ".c")) rel = rel.substr(0, rel.size() - 2) + ".o";
-        if (!hasSuffix(rel, ".o")) rel += ".o";
-        std::string full = normalizeSlashes(vfsRoot() + "/" + rel);
-        std::error_code ec;
-        if (!fs::exists(full, ec)) {
-            std::cout << "Load: " << name << "... Failed\n";
-            return make_int(0);
+        std::string vpath = normalizeSlashes(as_string(args[0]));
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[load_object] " << vpath << "\n";
+        int ok = loadObjectIntoRegistry(vpath, vfsRoot());
+        std::string disp = vpath;
+        if (hasSuffix(disp, ".o")) disp = disp.substr(0, disp.size() - 2) + ".c";
+        std::cout << "Load: " << disp << (ok ? "... OK\n" : "... Failed\n");
+        return make_int(ok);
+    }
+    if (name == "find_object") {
+        // find_object(path) - object value if loaded, else 0.
+        if (args.empty()) return make_int(0);
+        std::string vpath = normalizeSlashes(as_string(args[0]));
+        return findObjectInRegistry(vpath, vfsRoot());
+    }
+    if (name == "object_name") {
+        // object_name(ob) - return the object's path.
+        if (!args.empty() && args[0].index() == 7) {
+            auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+            if (!ov->programName.empty()) return make_string(ov->programName);
         }
-        try {
-            lpc::OriginalObject obj = lpc::loadOriginalObject(full);
-            lpc::runOriginalObjectInit(obj, vfsRoot());
-            if (hasSuffix(name, ".o")) name = name.substr(0, name.size() - 2) + ".c";
-            std::cout << "Load: " << name << "... OK\n";
-            return make_int(1);
-        } catch (...) {
-            std::cout << "Load: " << name << "... Failed\n";
-            return make_int(0);
-        }
+        return make_string("");
     }
     if (name == "file_size") {
         if (args.empty()) return make_int(0);
@@ -1259,31 +1341,43 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_string(buf);
     }
     if (name == "execute_data") {
-        // execute_data(cmd[, enable_log]) - run a shell command string.
-        // The game's telnet shell feeds commands here; support a small set.
-        if (!args.empty()) {
-            std::string cmd = as_string(args[0]);
+        // execute_data(cmd[, enable_log]) - the driver's telnet shell command
+        // executor: the command string is parsed as an LPC expression and
+        // evaluated in the VM's shared context (so "help", "obj->func()",
+        // "x + 1", etc. all work like the original driver's shell).
+        if (args.empty()) return make_int(0);
+        std::string cmd = as_string(args[0]);
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[execute_data] '" << cmd << "'\n";
+        std::string t = cmd;
+        size_t b = t.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return make_int(0);
+        t = t.substr(b);
+        if (t.empty()) return make_int(0);
+        try {
+            lpc::Lexer lexer(t);
+            std::vector<lpc::Token> toks = lexer.tokenize();
+            lpc::Parser parser(toks);
+            lpc::ExprPtr expr = parser.parseShellExpression();
+            lpc::Program prog;
+            lpc::Interpreter interp(prog);
+            lpc::Environment env;
+            Value result = interp.eval(expr, env);
             if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[execute_data] '" << cmd << "'\n";
-            std::string t = cmd;
-            size_t b = t.find_first_not_of(" \t\r\n");
-            if (b == std::string::npos) return make_int(0);
-            t = t.substr(b);
-            // Simple replies for the interactive shell.
-            if (t == "help" || t == "?") {
-                telnetSend(threadTelnetClient(), telnetLineEnd("Available commands: quit, .\r\n"));
-                return make_int(1);
+                std::cerr << "[execute_data] => " << to_string(result, false) << "\n";
+            // Echo non-trivial results back to the telnet client.
+            if (result.index() != 0 && result.index() != 1) {
+                telnetSend(threadTelnetClient(),
+                           telnetLineEnd(to_string(result, false) + "\r\n"));
             }
-            if (t == "quit" || t == "exit" || t == ".") {
-                telnetSend(threadTelnetClient(), telnetLineEnd("logout\r\n"));
-                closeTelnetClient(threadTelnetClient());
-                return make_int(1);
-            }
-            // Unknown commands are acknowledged without breaking the session.
-            telnetSend(threadTelnetClient(), telnetLineEnd("OK\r\n"));
-            return make_int(1);
+            return result;
+        } catch (const std::exception& e) {
+            telnetSend(threadTelnetClient(),
+                       telnetLineEnd("Error: " + std::string(e.what()) + "\r\n"));
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[execute_data] error: " << e.what() << "\n";
+            return make_int(0);
         }
-        return make_int(0);
     }
     if (name == "log_to_das") return make_int(1);
     if (name == "start_buildin_telnet_shell" || name == "buildin_telnet_daemon") {

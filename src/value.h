@@ -43,6 +43,11 @@ struct ObjectValue {
 struct ClosureValue {
     std::string functionName;
     std::vector<Value> boundArgs;
+    // Object that owns this closure (the program whose bytecode created it).
+    // When the closure is invoked from another VM (e.g. the master's post_init
+    // loop calling a daemon's do_init), call_fun_ptr resolves the function in
+    // this owner instead of the current VM.  Null for efun closures.
+    const struct OriginalObject* owner = nullptr;
 };
 // Loop control block created by init_for_loop (original VM value type 20).
 struct LoopCtrl {
