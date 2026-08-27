@@ -421,7 +421,15 @@ public:
         for (const auto& fn : obj_.functions) {
             if (fn.name == name && fn.index >= 0) {
                 auto it = funcsByIndex_.find(fn.index);
-                if (it != funcsByIndex_.end()) return executeFunctionFromOutside(*it->second, args);
+                if (it != funcsByIndex_.end()) {
+                    Value r = executeFunctionFromOutside(*it->second, args);
+                    if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
+                        std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
+                        std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+                        std::cerr.flush();
+                    }
+                    return r;
+                }
             }
         }
         return make_int(0);
@@ -459,6 +467,9 @@ public:
     void callCreate() {
         for (const auto& fn : obj_.functions) {
             if (fn.name == "create" && fn.index >= 0) {
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[create] object=" << obj_.magic << " fn=" << fn.name
+                              << " index=" << fn.index << " args=" << fn.argCount << "\n";
                 auto it = funcsByIndex_.find(fn.index);
                 if (it != funcsByIndex_.end()) {
                     std::vector<Value> args;
@@ -592,17 +603,21 @@ private:
     // ------------------------------------------------------------------
     // Efun / function dispatch
     // ------------------------------------------------------------------
+    // Call an efun by index, popping its arguments from the stack.
     Value callEfun(int efunIndex, int argCount) {
         std::vector<Value> args;
         for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
-        // The compiler pushes args in reverse (param0 last, on top), so the
-        // pop order already yields param0..paramN-1 - no reversal needed.
+        return callEfunWithArgs(efunIndex, args);
+    }
+
+    // Call an efun by index with already-collected arguments.
+    Value callEfunWithArgs(int efunIndex, const std::vector<Value>& args) {
         const auto& names = efunNameTable();
         if (std::getenv("LPCVM_TRACE")) {
             std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                  ? names[efunIndex] : "?";
             std::string fn = frames_.empty() ? "<global>" : frames_.back().fn->name;
-            std::cerr << "[vm] efun idx=" << efunIndex << " name=" << nm << " argc=" << argCount
+            std::cerr << "[vm] efun idx=" << efunIndex << " name=" << nm << " argc=" << args.size()
                       << " in=" << fn << "\n";
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
@@ -644,6 +659,7 @@ private:
                             std::this_thread::sleep_for(std::chrono::seconds(timeout));
                         try {
                             OriginalVm vm(*objPtr);
+                            vm.runInit();
                             vm.callFunctionByName(fnName, bound);
                         } catch (...) {
                         }
@@ -660,19 +676,44 @@ private:
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
             const OriginalFunction& fn = *it->second;
-            if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[vm] call user fun index=" << index << " name=" << fn.name
-                          << " args=" << fn.argCount << "\n";
-            return executeFunctionOnStack(fn);
+            if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "get_info_by_type" || fn.name == "get_aaa_info" || fn.name == "get_my_info" || fn.name == "fetch_config_list")) {
+                std::string msg = "[xret] " + fn.name + " start argc=" + std::to_string(fn.argCount) + "\n";
+                std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+            }
+            Value r = executeFunctionOnStack(fn);
+            if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "get_info_by_type" || fn.name == "get_aaa_info" || fn.name == "get_my_info" || fn.name == "fetch_config_list")) {
+                std::string msg = "[xret] " + fn.name + " result=" + to_string(r, false) + "\n";
+                std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+                std::cerr.flush();
+            }
+            return r;
         }
-        // Cross-object function table fallback.
+        // Cross-object function table fallback (inherited/global functions).
+        // The arguments are still on this stack: transfer them to the callee.
+        int argCount = flags & 0x3F;
         for (auto& kv : objectRegistry().vms) {
             std::string name = kv.second->functionNameByIndex(index);
             if (!name.empty()) {
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
-                return kv.second->callFunctionByIndex(index);
+                std::vector<Value> args;
+                for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
+                if (std::getenv("LPCVM_TRACE")) {
+                    std::string dbg;
+                    for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
+                    std::cerr << "[xobj] " << name << " argc=" << argCount << " args=[" << dbg << "]\n";
+                }
+                return kv.second->callFunctionByName(name, args);
             }
+        }
+        // Some global function indices refer to builtin efuns (e.g. the telnet
+        // helpers). The low 6 bits of the flags carry the argument count.
+        const auto& names = efunNameTable();
+        if (index >= 0 && static_cast<size_t>(index) < names.size() && !names[index].empty()) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[vm] global efun fallback index=" << index << " name=" << names[index]
+                          << " argc=" << argCount << "\n";
+            return callEfun(index, argCount);
         }
         return make_int(0);
     }
@@ -723,6 +764,12 @@ private:
             const OriginalInsn& in = code[ip++];
             lastOp_ = in.op;
             lastIp_ = ip - 1;
+            if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
+                std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                if (cur == std::getenv("LPCVM_TRACE_FN"))
+                    std::cerr << "[fn] " << cur << " ip=" << (ip - 1) << " op=" << in.op
+                              << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
+            }
             if (++stepCounter_ > 20000000) return;
             const ActionInfo& ai = actionInfo(in.op);
             int32_t m0 = 0, m1 = 0;
@@ -1108,7 +1155,7 @@ private:
                         const auto& names = efunNameTable();
                         for (size_t i = 0; i < names.size(); ++i) {
                             if (names[i] == cl->functionName) {
-                                result = callEfun(static_cast<int>(i), static_cast<int>(all.size()));
+                                result = callEfunWithArgs(static_cast<int>(i), all);
                                 break;
                             }
                         }
@@ -1240,6 +1287,9 @@ private:
             case 10: { // case_check_number
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int number = fromMeta ? m1 : 0;
+                if (std::getenv("LPCVM_TRACE_CASE"))
+                    std::cerr << "[case] num offset=" << offset << " value=" << number
+                              << " top=" << to_string(top().value, false) << "\n";
                 Value v = top().value;
                 if (v.index() == 2 && std::get<int64_t>(v) == number) {
                     pop();
@@ -1328,6 +1378,10 @@ private:
     }
 
     Value queryMemberValue(const Value& container, const Value& key) {
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_MEMBER")) {
+            std::string msg = "[member] key=" + to_string(key, false) + " cont=" + to_string(container, false) + "\n";
+            std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+        }
         if (container.index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(container);
             for (auto& kv : mp->entries)
@@ -1429,6 +1483,8 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
             std::cout << "Load: " << virt << "... OK\n";
             std::string full = searchRoot + "/" + rel;
             if (reg.vms.find(full) == reg.vms.end()) {
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[load] " << full << "\n";
                 try {
                     auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(full));
                     auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
@@ -1475,6 +1531,9 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
             reg.objects[c] = objPtr;
             reg.vms[c] = vmPtr;
+            // A freshly loaded object must run its global initializer and
+            // create() exactly like the broadcast loader does.
+            vmPtr->runInit();
             return vmPtr->callFunctionByName(funName, args);
         } catch (...) {
         }
@@ -1495,8 +1554,12 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
                 std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
             try {
                 OriginalVm vm(*copy.obj, searchRoot);
+                vm.runInit();   // the global initializer + create() must run first
                 vm.callFunctionByName(copy.fun, copy.args);
+            } catch (const std::exception& e) {
+                std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";
             } catch (...) {
+                std::cerr << "[thread] " << copy.fun << " error: unknown\n";
             }
         });
     }
@@ -1521,6 +1584,17 @@ void runPostInitFunctions(const std::string& searchRoot) {
 
 int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
     OriginalVm vm(obj, searchRoot);
+    // Register the main object (the driver's "global program") so cross-object
+    // function lookups can resolve its functions.
+    {
+        auto& reg = objectRegistry();
+        std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
+        if (reg.vms.find(key) == reg.vms.end()) {
+            auto objPtr = std::make_shared<OriginalObject>(obj);
+            reg.objects[key] = objPtr;
+            reg.vms[key] = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+        }
+    }
     vm.run();
     runPendingOriginalThreads(searchRoot);
     out << "Original .o VM finished.\n";

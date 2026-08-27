@@ -99,6 +99,18 @@ void simpleDbSave(const std::string& path) {
     for (auto& kv : simpleDb()) out << kv.first << '=' << kv.second << '\n';
 }
 
+// Cursor positions for mysql result sets (keyed by the array instance).
+std::unordered_map<const void*, int>& mysqlCursor() {
+    static std::unordered_map<const void*, int> cursors;
+    return cursors;
+}
+
+// The record published by the most recent mysql_fetch_record.
+Value& mysqlCurrentRecord() {
+    static Value rec = make_int(0);
+    return rec;
+}
+
 std::string vfsRoot() {
     std::error_code ec;
     if (fs::exists("linux/aaa - bak", ec)) return "linux/aaa - bak";
@@ -338,6 +350,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
+    if (name == "allocate_array") {
+        // allocate_array(n) -> an array with n undefined slots.
+        auto arr = std::make_shared<ArrayValue>();
+        int64_t n = args.empty() ? 0 : as_int(args[0]);
+        if (n < 0) n = 0;
+        for (int64_t i = 0; i < n; ++i) arr->items.push_back(UndefinedTag{});
+        return arr;
+    }
+    if (name == "defined") {
+        // The original driver is built with CONFIG defined, which selects the
+        // direct find_function path in find_mysql_func.
+        if (!args.empty() && as_string(args[0]) == "CONFIG") return make_int(1);
+        return make_int(0);
+    }
     if (name == "expand_macro") {
         if (!args.empty() && args[0].index() == 4) {
             const std::string& key = std::get<std::string>(args[0]);
@@ -499,6 +525,74 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "mysql_is_connected") return make_int(1);
     if (name == "mysql_disconnect" || name == "mysql_close_db") return make_int(1);
     if (name == "mysql_select_db" || name == "mysql_set_auto_commit") return make_int(1);
+    if (name == "mysql_query") {
+        // Return a result handle (array of row mappings) for a SELECT.
+        if (args.size() >= 2) {
+            std::string sql = as_string(args[1]);
+            std::string table;
+            size_t p = sql.find("from ");
+            if (p != std::string::npos) {
+                std::string rest = sql.substr(p + 5);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
+                size_t e = rest.find_first_of(" ;`");
+                table = rest.substr(0, e);
+            }
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_query] sql=" << sql << " table=" << table << "\n";
+            if (!table.empty()) {
+                Value r = simpleDbSelect(table);
+                if (r.index() == 5) {
+                    auto arr = std::get<std::shared_ptr<ArrayValue>>(r);
+                    mysqlCursor()[arr.get()] = -1;   // before the first record
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size() << "\n";
+                }
+                return r;
+            }
+        }
+        return make_array();
+    }
+    if (name == "mysql_num_records") {
+        if (!args.empty() && args[0].index() == 5)
+            return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(args[0])->items.size()));
+        return make_int(0);
+    }
+    if (name == "mysql_fetch_record") {
+        // Advance the result-set cursor and publish the current record.
+        // Returns 0 while a record is available, nonzero past the end.
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+            int& cur = mysqlCursor()[arr.get()];
+            ++cur;
+            if (cur < static_cast<int>(arr->items.size())) {
+                mysqlCurrentRecord() = arr->items[static_cast<size_t>(cur)];
+                return make_int(0);
+            }
+            mysqlCurrentRecord() = make_int(0);
+            return make_int(1);
+        }
+        return make_int(1);
+    }
+    if (name == "mysql_this_record") {
+        // The record published by the last mysql_fetch_record call.
+        return mysqlCurrentRecord();
+    }
+    if (name == "mysql_finalize") {
+        if (!args.empty() && args[0].index() == 5) mysqlCursor().erase(std::get<std::shared_ptr<ArrayValue>>(args[0]).get());
+        return make_int(1);
+    }
+    if (name == "mysql_field_value" || name == "mysql_field_name") {
+        if (args.size() >= 2 && args[0].index() == 6) {
+            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+            Value key = args[1];
+            for (auto& kv : mp->entries)
+                if (value_equal(kv.first, key)) return kv.second;
+        }
+        return make_int(0);
+    }
+    if (name == "mysql_get_error" || name == "mysql_finalize" ||
+        name == "mysql_num_fields" || name == "mysql_int_field" ||
+        name == "mysql_get_insert_id") return make_int(0);
     if (name == "mysql_execute") {
         // Run a query against the local CSV-backed database.
         if (args.size() >= 2) {
@@ -511,6 +605,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t e = rest.find_first_of(" ;`");
                 table = rest.substr(0, e);
             }
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_execute] sql=" << sql << " table=" << table << "\n";
             if (!table.empty()) return simpleDbSelect(table);
         }
         return make_array();
@@ -659,6 +755,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return arr;
     }
     if (name == "sql_execute" || name == "sql_insert" || name == "sql_close_db") return make_int(0);
+    if (name == "get_telnet_password") {
+        // Return the telnet login password configured for a server name.
+        if (!args.empty()) {
+            std::string server = as_string(args[0]);
+            auto it = simpleDb().find("telnet_" + server);
+            if (it != simpleDb().end()) return make_string(it->second);
+        }
+        return make_string("123456");
+    }
+    if (name == "get_telnet_settings" || name == "get_telnet_info") {
+        if (!args.empty()) return args[0];
+        return make_string("127.0.0.1");
+    }
+    if (name == "set_timer") return make_int(1);
     if (name == "sleep") {
         // The driver's sleep() takes seconds and suspends the calling thread.
         int64_t secs = args.empty() ? 0 : as_int(args[0]);

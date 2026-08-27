@@ -1,2 +1,2 @@
-id,ccs,port,enable,name,password
-1,aaa,7001,1,aaa,123456
+id,ccs,port,enable,name,password,aaa
+1,aaa_2017,7001,1,aaa_2017,123456,aaa_2017

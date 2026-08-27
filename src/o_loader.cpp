@@ -255,7 +255,7 @@ std::string disassembleOriginalObject(const OriginalObject& obj) {
     os << "functions: " << obj.functions.size() << "\n";
     for (size_t i = 0; i < obj.functions.size(); ++i) {
         const auto& fn = obj.functions[i];
-        os << "  " << i << ": " << fn.name << " args=" << fn.argCount << " locals=" << fn.localCount
+        os << "  " << i << ": " << fn.name << " dlt=" << fn.index << " args=" << fn.argCount << " locals=" << fn.localCount
            << " nodes=" << fn.code.size() << "\n";
         for (size_t j = 0; j < fn.code.size(); ++j) {
             const auto& in = fn.code[j];
