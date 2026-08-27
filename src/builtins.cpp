@@ -181,6 +181,30 @@ std::string vfsRoot() {
     return "out/lib_aaa32";
 }
 
+// The driver's run directory.  The original driver was started from the game
+// directory (see linux/aaa/runaaa: "./magic_Linux32 /r ./ ..."), so virtual
+// paths like "/aaa/aaa.ini" and "/aaa/pack_data/etc.pak" resolve relative to
+// that directory, NOT to the extracted .o tree (linux/aaa - bak) which only
+// holds object files.  "/aaa/x" -> <runDir>/aaa/x.
+std::string dataRoot() {
+    std::error_code ec;
+    if (fs::exists("linux/aaa/magic_Linux32", ec) || fs::exists("linux/aaa/runaaa", ec))
+        return "linux/aaa";
+    if (fs::exists("linux/aaa/aaa", ec)) return "linux/aaa";
+    return vfsRoot();
+}
+
+bool hasSuffix(const std::string& s, const std::string& suffix);   // defined below
+
+// The unpacked etc directory (sibling of the game dir).  The original driver
+// read etc files from inside etc.pak; this is the same content already
+// unpacked, so both are supported.
+std::string etcRoot() {
+    std::error_code ec;
+    if (fs::exists("linux/etc", ec)) return "linux/etc";
+    return "";
+}
+
 std::string normalizeSlashes(std::string s) {
     std::string out;
     for (size_t i = 0; i < s.size(); ++i) {
@@ -388,15 +412,26 @@ void telnetServerLoop(SOCKET listener) {
 std::string resolveVfsPath(const std::string& p) {
     std::string path = p;
     if (!path.empty() && path.front() == '/') path.erase(path.begin());
+    // Data files (ini/config/pak/etc) live in the real game directory, not in
+    // the extracted .o tree.  The .o tree has no such files, so trying the
+    // data root first is unambiguous for them.
+    if (hasSuffix(path, ".ini") || path.rfind("pack_data/", 0) == 0 ||
+        path.rfind("aaa/pack_data/", 0) == 0) {
+        std::string d = dataRoot() + "/" + path;
+        std::error_code ec;
+        if (fs::exists(d, ec)) {
+            return d;
+        }
+    }
     return vfsRoot() + "/" + path;
 }
 
 // Read the bytes of a virtual path, with the same fallbacks the original
 // driver uses:
-//   - /aaa/etc/<file>            -> <root>/aaa/etc/<file>, then linux/etc/<file>
+//   - /aaa/etc/<file>            -> the unpacked etc dir (etcRoot)
 //   - /aaa/pack_data/<pak>/<f>   -> entry <f> inside the real <pak> file
-//                                   (searched under <root>/aaa/pack_data and
-//                                   linux/aaa/aaa/pack_data)
+//                                   (searched under the data root and the
+//                                   object root)
 //   - anything else              -> plain vfs path
 std::string readVfsFile(const std::string& vpath) {
     std::error_code ec;
@@ -409,20 +444,25 @@ std::string readVfsFile(const std::string& vpath) {
             return ss.str();
         }
     }
-    // /aaa/etc/<file> fallback: the real etc dir next to the game root.
+    // /aaa/etc/<file> fallback: the unpacked etc dir (same content as the
+    // original etc.pak).
     if (vpath.rfind("/aaa/etc/", 0) == 0) {
         std::string name = vpath.substr(10);
-        fs::path alt = "linux/etc/" + name;
-        if (fs::is_regular_file(alt, ec)) {
-            std::ifstream in(alt, std::ios::binary);
-            if (in) {
-                std::ostringstream ss;
-                ss << in.rdbuf();
-                return ss.str();
+        std::string etc = etcRoot();
+        if (!etc.empty()) {
+            fs::path alt = etc + "/" + name;
+            if (fs::is_regular_file(alt, ec)) {
+                std::ifstream in(alt, std::ios::binary);
+                if (in) {
+                    std::ostringstream ss;
+                    ss << in.rdbuf();
+                    return ss.str();
+                }
             }
         }
     }
-    // /aaa/pack_data/<pak>/<entry> fallback: read from the real pak file.
+    // /aaa/pack_data/<pak>/<entry> fallback: read from the real pak file in
+    // the game data root.
     static const std::string pakPrefix = "/aaa/pack_data/";
     if (vpath.rfind(pakPrefix, 0) == 0) {
         std::string rest = vpath.substr(pakPrefix.size());
@@ -431,9 +471,10 @@ std::string readVfsFile(const std::string& vpath) {
             std::string pakName = rest.substr(0, slash);
             std::string entry = rest.substr(slash + 1);
             std::vector<std::string> candidates = {
-                vfsRoot() + "/aaa/pack_data/" + pakName,
-                "linux/aaa/aaa/pack_data/" + pakName,
+                dataRoot() + "/aaa/pack_data/" + pakName,
+                dataRoot() + "/pack_data/" + pakName,
                 vfsRoot() + "/pack_data/" + pakName,
+                vfsRoot() + "/aaa/pack_data/" + pakName,
             };
             for (const auto& pakPath : candidates) {
                 if (!fs::is_regular_file(pakPath, ec)) continue;
