@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "builtins.h"
+#include "original_vm.h"
 
 namespace lpc {
 
@@ -16,6 +17,11 @@ namespace {
 class RuntimeError : public std::runtime_error {
 public:
     explicit RuntimeError(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+class ThreadYield : public std::exception {
+public:
+    const char* what() const noexcept override { return "thread yield"; }
 };
 
 int64_t as_int(const Value& v) {
@@ -76,7 +82,37 @@ void Interpreter::runGlobal() {
 }
 
 Value Interpreter::callBuiltin(const std::string& name, const std::vector<Value>& args) {
+    if (name == "create_thread") {
+        if (args.size() >= 2 && args[1].index() == 8) {
+            auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+            threads_.emplace_back(cl->functionName, cl->boundArgs);
+            return make_int(static_cast<int64_t>(threads_.size()));
+        }
+        return make_int(0);
+    }
+    if (name == "sleep" && inThread_) {
+        throw ThreadYield();
+    }
     return call_builtin(this, name, args);
+}
+
+void Interpreter::runThreads(int maxTicks) {
+    for (int tick = 0; tick < maxTicks; ++tick) {
+        bool any = false;
+        for (auto& th : threads_) {
+            inThread_ = true;
+            stepCounter_ = 0;
+            try {
+                callFunction(th.first, th.second);
+            } catch (const ThreadYield&) {
+                any = true;
+            } catch (...) {
+                // ignore thread errors
+            }
+            inThread_ = false;
+        }
+        if (!any) break;
+    }
 }
 
 Value Interpreter::callFunction(const std::string& name, const std::vector<Value>& args) {
@@ -145,6 +181,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
     }
     case Stmt::Kind::DoWhile: {
         do {
+            if (++stepCounter_ > 50000) throw ThreadYield();
             Flow f = exec(stmt->thenStmt, env);
             if (f == Flow::Return) return f;
             if (f == Flow::Break) break;
@@ -153,6 +190,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
     }
     case Stmt::Kind::While: {
         while (is_truthy(eval(stmt->cond, env))) {
+            if (++stepCounter_ > 50000) throw ThreadYield();
             Flow f = exec(stmt->thenStmt, env);
             if (f == Flow::Return) return f;
             if (f == Flow::Break) break;
@@ -164,6 +202,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
         loopEnv.parent = &env;
         if (stmt->initStmt) exec(stmt->initStmt, loopEnv);
         while (!stmt->cond || is_truthy(eval(stmt->cond, loopEnv))) {
+            if (++stepCounter_ > 50000) throw ThreadYield();
             Flow f = exec(stmt->thenStmt, loopEnv);
             if (f == Flow::Return) return f;
             if (f == Flow::Break) break;
@@ -176,6 +215,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
         if (container.index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(container);
             for (auto& item : arr->items) {
+                if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = item;
                 Flow f = exec(stmt->thenStmt, env);
                 if (f == Flow::Return) return f;
@@ -184,6 +224,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
         } else if (container.index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(container);
             for (auto& kv : mp->entries) {
+                if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = kv.first;
                 Flow f = exec(stmt->thenStmt, env);
                 if (f == Flow::Return) return f;
@@ -515,9 +556,12 @@ Value Interpreter::evalCallOther(ExprPtr target, const std::string& fn, const st
         if (functions_.find(fn) != functions_.end()) return callFunction(fn, argValues);
         return make_int(0);
     }
-    // String call_other: "path"->func(...) cannot load arbitrary objects yet.
-    // If the function exists in this program, allow it (some restored files use this for local forwarding).
-    if (functions_.find(fn) != functions_.end()) return callFunction(fn, argValues);
+    // String call_other: load the target object from the extracted pak and call
+    // the requested function through the original bytecode VM.
+    if (obj.index() == 4) {
+        if (functions_.find(fn) != functions_.end()) return callFunction(fn, argValues);
+        return callOriginalObjectFunction(std::get<std::string>(obj), fn, argValues, "out/lib_aaa32");
+    }
     return make_int(0);
 }
 

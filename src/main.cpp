@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -16,6 +18,7 @@
 
 #include "interpreter.h"
 #include "lexer.h"
+#include "lzss.h"
 #include "o_loader.h"
 #include "original_vm.h"
 #include "pak_loader.h"
@@ -50,6 +53,7 @@ int runLpcSource(const std::string& path) {
     } catch (...) {
         // create is optional
     }
+    interp.runThreads(5);
     return 0;
 }
 
@@ -71,6 +75,41 @@ int disasmOriginalObject(const std::string& path) {
     return 0;
 }
 
+int opStats(const std::string& path) {
+    lpc::OriginalObject obj = lpc::loadOriginalObject(path);
+    std::map<int, int> global, funcs;
+    for (const auto& in : obj.globalCode) global[in.op]++;
+    for (const auto& fn : obj.functions)
+        for (const auto& in : fn.code) funcs[in.op]++;
+    std::cout << "object: " << path << "\n";
+    std::cout << "opcode histogram (global code):\n";
+    for (auto& [op, n] : global)
+        std::cout << "  " << op << " " << lpc::actionName(static_cast<uint8_t>(op)) << " x" << n << "\n";
+    std::cout << "opcode histogram (functions):\n";
+    for (auto& [op, n] : funcs)
+        std::cout << "  " << op << " " << lpc::actionName(static_cast<uint8_t>(op)) << " x" << n << "\n";
+    return 0;
+}
+
+int disasmFunction(const std::string& path, const std::string& fnName) {
+    lpc::OriginalObject obj = lpc::loadOriginalObject(path);
+    for (const auto& fn : obj.functions) {
+        if (fn.name == fnName) {
+            std::cout << "function: " << fn.name << " args=" << fn.argCount
+                      << " locals=" << fn.localCount << " nodes=" << fn.code.size() << "\n";
+            for (size_t j = 0; j < fn.code.size(); ++j) {
+                const auto& in = fn.code[j];
+                std::cout << "  " << j << ": op=" << static_cast<int>(in.op) << " "
+                          << lpc::actionName(in.op) << " par16=" << static_cast<int16_t>(in.a)
+                          << " par8=" << static_cast<int>(in.b) << "\n";
+            }
+            return 0;
+        }
+    }
+    std::cout << "function not found: " << fnName << "\n";
+    return 1;
+}
+
 int runServer(const std::string& path, int port) {
     std::string source = readTextFile(path);
     lpc::Lexer lexer(source);
@@ -80,6 +119,7 @@ int runServer(const std::string& path, int port) {
     lpc::Interpreter interp(prog);
     interp.runGlobal();
     try { interp.callFunction("create", {}); } catch (...) {}
+    interp.runThreads(3);
 
     WSADATA wsa{};
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -186,80 +226,6 @@ void printLoadDir(const fs::path& root, const std::string& virtualDir) {
     for (auto& f : files) std::cout << "Load: " << f << "... OK\n";
 }
 
-int runPakCompatibility(const std::string& path) {
-    // Extract the pak exactly like runPak does.
-    std::string pakName = path;
-    size_t slash = pakName.find_last_of("/\\");
-    if (slash != std::string::npos) pakName = pakName.substr(slash + 1);
-    size_t dot = pakName.rfind('.');
-    if (dot != std::string::npos) pakName = pakName.substr(0, dot);
-    std::string outDir = "out/" + pakName;
-    lpc::extractPak(path, outDir);
-    fs::path root(outDir);
-
-    std::cout << "PDB is initialized by vmmemlib.\n";
-    std::cout << "Connect to DAS for authenticating...\nOK\n";
-    std::cout << "Done of init_startup_module.\n";
-    std::cout << "Done of init_compile_module.\n";
-    std::cout << "Done of init_sql_module.\n";
-    std::cout << "Done of init_debug_cmds_module.\n";
-    std::cout << "Init platform ok.\n";
-
-    std::cout << "Load all global feature.\n";
-    printLoadDir(root, "/feature");
-    std::cout << "Load all global inherits.\n";
-    printLoadDir(root, "/inherit");
-    std::cout << "Load all global objects.\n";
-    printLoadDir(root, "/clone");
-    std::cout << "Load all global cmds.\n";
-    printLoadDir(root, "/cmds");
-    printLoadDir(root, "/daemons");
-    printLoadDir(root, "/aaa/daemons");
-    printLoadDir(root, "/aaa/clone");
-
-    std::cout << "Start MMD.all services.\n";
-    std::cout << "Load: /daemons/mmd.c... OK\n";
-    std::cout << "Start THREAD_D.all services.\n";
-    std::cout << "Load: /daemons/threadd.c... OK\n";
-    for (int i = 9; i <= 35; ++i) std::cout << "THREAD_D.service(" << i << ") daemon start...\n";
-    std::cout << "Invoke registered initialization routines.\n";
-    std::cout << "Pack database of sqlite: /aaa/log/log_aaa_2017.sql.\n";
-    std::cout << "Connect to DAS for password...\nGOT PASSWORD\n";
-    std::cout << "Start AAA service on port: 8001\n";
-    std::cout << "Driver load ok!\n";
-    std::cout << "Driver startup\n";
-
-    // Start a real TCP listener so the program is actually running.
-    WSADATA wsa{};
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 1;
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == INVALID_SOCKET) return 1;
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(8001);
-    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-        std::cerr << "bind port 8001 failed: " << WSAGetLastError() << "\n";
-        return 1;
-    }
-    listen(s, 16);
-    std::cout << "AAA service listening on 0.0.0.0:8001\n";
-    while (true) {
-        SOCKET c = accept(s, nullptr, nullptr);
-        if (c == INVALID_SOCKET) continue;
-        const char* msg = "Welcome to AAA LPC service!\r\n";
-        send(c, msg, static_cast<int>(strlen(msg)), 0);
-        char buf[1024];
-        int n = recv(c, buf, sizeof(buf) - 1, 0);
-        if (n > 0) {
-            buf[n] = 0;
-            const char* resp = "OK\r\n";
-            send(c, resp, static_cast<int>(strlen(resp)), 0);
-        }
-        closesocket(c);
-    }
-    return 0;
-}
 
 int startSimpleTcpServer(int port) {
     WSADATA wsa{};
@@ -294,32 +260,37 @@ int startSimpleTcpServer(int port) {
 }
 
 int runPakOriginal(const std::string& path) {
-    lpc::PakFile pak = lpc::loadPak(path);
-    const lpc::PakEntry* entry = lpc::findPakEntry(pak, "start_aaa.o");
-    if (!entry) entry = lpc::findPakEntry(pak, "aaa/start_aaa.o");
-    if (!entry || entry->isDir) return 1;
-    std::string pakName = path;
-    size_t slash = pakName.find_last_of("/\\");
-    if (slash != std::string::npos) pakName = pakName.substr(slash + 1);
-    size_t dot = pakName.rfind('.');
-    if (dot != std::string::npos) pakName = pakName.substr(0, dot);
-    std::string outDir = "out/" + pakName;
-    lpc::extractPak(path, outDir);
-    std::string oPath = outDir + "/" + entry->name;
-    std::cout << "Extracted " << entry->name << " to " << oPath << "\n";
+    // Use the already-extracted structure provided by the user.
+    std::string root = "linux/aaa - bak";
+    std::error_code ec;
+    if (!fs::exists(root, ec)) {
+        std::cerr << "Missing extracted structure: " << root << "\n";
+        return 1;
+    }
+    std::string oPath = root + "/aaa/start_aaa.o";
+    if (!fs::exists(oPath, ec)) {
+        std::cerr << "Missing " << oPath << "\n";
+        return 1;
+    }
+    (void)path;
+    std::cout << "Using extracted game root: " << root << "\n";
     lpc::OriginalObject obj = lpc::loadOriginalObject(oPath);
     std::cout << "Loaded original .o: " << oPath << "\n";
     std::cout << "  strings=" << obj.strings.size()
               << " functions=" << obj.functions.size()
               << " globalNodes=" << obj.globalCode.size() << "\n";
-    return lpc::runOriginalObject(obj, std::cout, outDir);
+    int rc = lpc::runOriginalObject(obj, std::cout, root);
+    std::cout.flush();
+    if (rc != 0) return rc;
+    // Keep the driver alive so LPC-started services (telnet_on) keep running.
+    for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
+    return 0;
 }
 
 int runPak(const std::string& path) {
-    int rc = runPakOriginal(path);
-    if (rc != 0) return rc;
-    // Keep the driver alive with a real TCP service after startup.
-    return startSimpleTcpServer(8001);
+    // Execute the pak through the original bytecode VM. Network/service startup
+    // is expected to be performed by the LPC code itself, not by this C++ launcher.
+    return runPakOriginal(path);
 }
 
 void usage() {
@@ -351,6 +322,13 @@ int main(int argc, char** argv) {
         }
         if (cmd == "disasm") {
             return disasmOriginalObject(path);
+        }
+        if (cmd == "opstats") {
+            return opStats(path);
+        }
+        if (cmd == "disfn") {
+            if (argc < 4) { usage(); return 1; }
+            return disasmFunction(path, argv[3]);
         }
         if (cmd == "server") {
             int port = 4000;

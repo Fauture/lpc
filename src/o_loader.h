@@ -25,6 +25,7 @@ struct OriginalObject {
     uint32_t version = 0;
     uint32_t functionBC = 0;
     uint32_t globalVarCount = 0;
+    int baseFunOffset = 0;
     std::vector<std::string> strings;
     std::vector<std::string> names;
     std::vector<OriginalFunction> functions;

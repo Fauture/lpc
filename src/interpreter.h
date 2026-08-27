@@ -26,6 +26,7 @@ public:
     explicit Interpreter(const Program& program);
 
     void runGlobal();
+    void runThreads(int maxTicks = 3);
     Value callFunction(const std::string& name, const std::vector<Value>& args);
     Value eval(ExprPtr expr, Environment& env);
     Flow exec(StmtPtr stmt, Environment& env);
@@ -43,6 +44,9 @@ private:
     Flow flow_ = Flow::Normal;
     Value thisObject_;
     std::vector<Value> currentArgs_;
+    std::vector<std::pair<std::string, std::vector<Value>>> threads_;
+    bool inThread_ = false;
+    int stepCounter_ = 0;
 
     Flow execBlock(const std::vector<StmtPtr>& stmts, Environment& env);
     Value evalIdent(const std::string& name, Environment& env);

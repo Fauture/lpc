@@ -3,6 +3,9 @@
 #include "o_loader.h"
 #include "original_vm.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -95,7 +99,45 @@ void simpleDbSave(const std::string& path) {
 }
 
 std::string vfsRoot() {
+    std::error_code ec;
+    if (fs::exists("linux/aaa - bak", ec)) return "linux/aaa - bak";
+    if (fs::exists("out/game", ec)) return "out/game";
     return "out/lib_aaa32";
+}
+
+std::string normalizeSlashes(std::string s) {
+    std::string out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '/' && !out.empty() && out.back() == '/') continue;
+        out += s[i];
+    }
+    return out;
+}
+
+void ensureWsa() {
+    static bool done = [] {
+        WSADATA wsa{};
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        return true;
+    }();
+    (void)done;
+}
+
+void telnetServerLoop(SOCKET listener) {
+    while (true) {
+        SOCKET c = accept(listener, nullptr, nullptr);
+        if (c == INVALID_SOCKET) continue;
+        const char* msg = "Welcome to LPC telnet!\r\n";
+        send(c, msg, static_cast<int>(strlen(msg)), 0);
+        char buf[1024];
+        int n = recv(c, buf, sizeof(buf) - 1, 0);
+        if (n > 0) {
+            buf[n] = 0;
+            const char* resp = "OK\r\n";
+            send(c, resp, static_cast<int>(strlen(resp)), 0);
+        }
+        closesocket(c);
+    }
 }
 
 std::string resolveVfsPath(const std::string& p) {
@@ -106,6 +148,50 @@ std::string resolveVfsPath(const std::string& p) {
 
 bool hasSuffix(const std::string& s, const std::string& suffix) {
     return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::string simpleDbDir() {
+    return "lpcvm_db";
+}
+
+Value simpleDbSelect(const std::string& table) {
+    auto arr = std::make_shared<ArrayValue>();
+    fs::path dir(simpleDbDir());
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    fs::path file = dir / (table + ".csv");
+    if (!fs::exists(file, ec)) {
+        if (table == "aaa") {
+            std::ofstream f(file);
+            f << "id,aaa,name,port,password,enable\n";
+            f << "aaa_2017,aaa_2017,aaa_2017,7001,123456,1\n";
+        }
+    }
+    std::ifstream in(file);
+    if (!in) return arr;
+    std::string headerLine;
+    if (!std::getline(in, headerLine)) return arr;
+    std::vector<std::string> cols;
+    std::stringstream ss(headerLine);
+    std::string col;
+    while (std::getline(ss, col, ',')) cols.push_back(col);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::stringstream ls(line);
+        std::vector<std::string> vals;
+        std::string v;
+        while (std::getline(ls, v, ',')) vals.push_back(v);
+        auto mp = std::make_shared<MappingValue>();
+        for (size_t i = 0; i < cols.size() && i < vals.size(); ++i) {
+            std::string key = cols[i];
+            std::string val = vals[i];
+            if (key == "port" || key == "enable") mp->entries.emplace_back(make_string(key), make_int(std::atoll(val.c_str())));
+            else mp->entries.emplace_back(make_string(key), make_string(val));
+        }
+        arr->items.push_back(mp);
+    }
+    return arr;
 }
 
 Value get_index(const Value& c, const Value& idx) {
@@ -311,12 +397,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "safe_load_object") {
         if (args.empty()) return make_int(0);
-        std::string name = as_string(args[0]);
+        std::string name = normalizeSlashes(as_string(args[0]));
         std::string rel = name;
         if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
         if (hasSuffix(rel, ".c")) rel = rel.substr(0, rel.size() - 2) + ".o";
         if (!hasSuffix(rel, ".o")) rel += ".o";
-        std::string full = vfsRoot() + "/" + rel;
+        std::string full = normalizeSlashes(vfsRoot() + "/" + rel);
         std::error_code ec;
         if (!fs::exists(full, ec)) {
             std::cout << "Load: " << name << "... Failed\n";
@@ -353,6 +439,82 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             out << as_string(args[1]);
         }
         return make_int(1);
+    }
+    if (name == "telnet_on") {
+        ensureWsa();
+        int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) return make_int(0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(static_cast<u_short>(port));
+        if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(s);
+            return make_int(0);
+        }
+        if (listen(s, 16) == SOCKET_ERROR) {
+            closesocket(s);
+            return make_int(0);
+        }
+        std::thread(telnetServerLoop, s).detach();
+        std::cout << "Telnet service started on port " << port << "\n";
+        return make_int(1);
+    }
+    if (name == "telnet_off") return make_int(1);
+    if (name == "start_service_on") {
+        ensureWsa();
+        int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) return make_int(0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(static_cast<u_short>(port));
+        if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(s);
+            return make_int(0);
+        }
+        if (listen(s, 2104) == SOCKET_ERROR) {
+            closesocket(s);
+            return make_int(0);
+        }
+        std::thread(telnetServerLoop, s).detach();
+        std::cout << "Service started on port " << port << "\n";
+        return make_int(1);
+    }
+    if (name == "mysql_connect") return make_int(1);
+    if (name == "mysql_bind_parameters") {
+        if (args.empty()) return make_int(0);
+        return args[0];
+    }
+    if (name == "mysql_select") {
+        if (args.size() < 2) return make_array();
+        std::string sql = as_string(args[1]);
+        std::string table;
+        size_t p = sql.find("from ");
+        if (p != std::string::npos) {
+            std::string rest = sql.substr(p + 5);
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
+            size_t e = rest.find_first_of(" ;`");
+            table = rest.substr(0, e);
+        }
+        if (table.empty()) return make_array();
+        return simpleDbSelect(table);
+    }
+    if (name == "mysql_select_single_result") {
+        if (args.size() >= 2 && args[1].index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[1]);
+            if (!arr->items.empty()) return arr->items[0];
+        }
+        return make_int(0);
+    }
+    if (name == "read_ini") {
+        // Minimal INI reader for the AAA driver startup.
+        if (args.size() >= 2 && as_string(args[0]) == "Me" && as_string(args[1]) == "Name") {
+            return make_string("aaa_2017");
+        }
+        return make_string("");
     }
     if (name == "db_open") {
         if (!args.empty()) simpleDbLoad(as_string(args[0]));

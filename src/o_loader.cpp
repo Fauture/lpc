@@ -211,7 +211,11 @@ OriginalObject loadOriginalObject(const std::string& path) {
         uint32_t inheritCount = r.u32();
         for (uint32_t i = 0; i < inheritCount; ++i) {
             r.tempString();
-            r.bytes(12);
+            std::vector<uint8_t> inh = r.bytes(12);
+            if (i == 0 && inh.size() >= 4) {
+                // 6 u16: baseConsOffset, baseFunOffset, baseVarOffset, ...
+                obj.baseFunOffset = static_cast<int16_t>(inh[2] | (inh[3] << 8));
+            }
         }
         (void)maxConstitution;
     }
@@ -229,9 +233,9 @@ OriginalObject loadOriginalObject(const std::string& path) {
                 size_t end = namePool.find('\0', nameOff);
                 fn.name = namePool.substr(nameOff, end == std::string::npos ? std::string::npos : end - nameOff);
             }
-            // DLT entry +12/+13/+14/+15 store the function index.
-            fn.index = static_cast<int32_t>(dlt[12]) | (static_cast<int32_t>(dlt[13]) << 8) |
-                       (static_cast<int32_t>(dlt[14]) << 16) | (static_cast<int32_t>(dlt[15]) << 24);
+            // DLT entry +16/+17/+18/+19 store the original function index.
+            fn.index = static_cast<int32_t>(dlt[16]) | (static_cast<int32_t>(dlt[17]) << 8) |
+                       (static_cast<int32_t>(dlt[18]) << 16) | (static_cast<int32_t>(dlt[19]) << 24);
             obj.functions.push_back(std::move(fn));
         }
     }

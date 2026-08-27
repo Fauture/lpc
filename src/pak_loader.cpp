@@ -31,9 +31,7 @@ uint32_t rd32(const std::vector<uint8_t>& d, size_t off) {
            (static_cast<uint32_t>(d[off + 3]) << 24);
 }
 
-bool looksLikeName(const std::vector<uint8_t>& data, size_t off) {
-    // Name field starts at off+0x14 in directory entries.
-    size_t base = off + 0x14;
+bool looksLikeNameAt(const std::vector<uint8_t>& data, size_t base) {
     size_t maxRead = base + 32;
     if (maxRead > data.size()) return false;
     bool any = false;
@@ -46,26 +44,51 @@ bool looksLikeName(const std::vector<uint8_t>& data, size_t off) {
     return any;
 }
 
-std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableOff) {
+std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableOff, bool rootFormat = false) {
     std::vector<PakEntry> entries;
     const size_t entrySize = 0x40;
+    int consecutiveInvalid = 0;
     for (size_t off = tableOff; off + entrySize <= data.size(); off += entrySize) {
-        uint32_t type = rd32(data, off);
-        uint32_t childOff = rd32(data, off + 4);
-        uint32_t compSize = rd32(data, off + 8);
-        uint32_t origSize = rd32(data, off + 12);
-        if (type > 1) break;
-        if (!looksLikeName(data, off)) break;
-        if (childOff >= data.size()) break;
+        uint32_t type, childOff, compSize, origSize;
+        size_t nameBase;
+        if (rootFormat) {
+            // Root directory entries: name at +4, type at +0x30, child at +0x34.
+            nameBase = off + 4;
+            type = rd32(data, off + 0x30);
+            childOff = rd32(data, off + 0x34);
+            compSize = rd32(data, off + 0x38);
+            origSize = rd32(data, off + 0x3C);
+        } else {
+            // Subdirectory/file entries: type at +0, child at +4, name at +0x14.
+            nameBase = off + 0x14;
+            type = rd32(data, off);
+            childOff = rd32(data, off + 4);
+            compSize = rd32(data, off + 8);
+            origSize = rd32(data, off + 12);
+        }
+        bool valid = (type <= 1) && looksLikeNameAt(data, nameBase) && childOff < data.size();
+        if (!valid && rootFormat) {
+            // Some pak roots mix in file-format entries (e.g. start_aaa.o).
+            type = rd32(data, off);
+            childOff = rd32(data, off + 4);
+            compSize = rd32(data, off + 8);
+            origSize = rd32(data, off + 12);
+            nameBase = off + 0x14;
+            valid = (type <= 1) && looksLikeNameAt(data, nameBase) && childOff < data.size();
+        }
+        if (!valid) {
+            if (++consecutiveInvalid >= 2) break;
+            continue;
+        }
+        consecutiveInvalid = 0;
         PakEntry e;
-        size_t nameBase = off + 0x14;
         for (size_t i = nameBase; i < nameBase + 32 && i < data.size() && data[i]; ++i) e.name.push_back(static_cast<char>(data[i]));
         e.isDir = (type == 1);
         e.offset = childOff;
         e.compSize = compSize;
         e.origSize = origSize;
         if (e.isDir) {
-            e.children = parseTable(data, childOff);
+            e.children = parseTable(data, childOff, false);
         }
         entries.push_back(std::move(e));
     }
@@ -98,9 +121,9 @@ PakFile loadPak(const std::string& path) {
     std::vector<uint8_t> data = readFileBytes(path);
     if (data.size() < 0x190 || rd32(data, 0) != 0x11223344)
         throw std::runtime_error("bad pak magic");
-    uint32_t rootOff = rd32(data, 0x14);
+    // Header is 16 bytes; root directory entries start at 0x10 in file format.
     PakFile pak;
-    pak.root = parseTable(data, rootOff);
+    pak.root = parseTable(data, 0x10, false);
     return pak;
 }
 
@@ -108,9 +131,8 @@ bool extractPak(const std::string& pakPath, const std::string& outputDir) {
     std::vector<uint8_t> data = readFileBytes(pakPath);
     if (data.size() < 0x190 || rd32(data, 0) != 0x11223344)
         throw std::runtime_error("bad pak magic");
-    uint32_t rootOff = rd32(data, 0x14);
     fs::create_directories(outputDir);
-    auto entries = parseTable(data, rootOff);
+    auto entries = parseTable(data, 0x10, false);
     for (const auto& e : entries) extractEntry(data, e, outputDir);
     return true;
 }
