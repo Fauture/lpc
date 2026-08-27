@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /feature/common/dbase.c()
  * Functions: 6 names, 6 code segments found
- * Strings: 107, Variables: 4
+ * Strings: 112, Variables: 4
  *********************************************************************/
 
 inherit "/feature/common/dbase.c";
@@ -33,7 +33,7 @@ private void create();
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   org_key_map = ([ ]);  // /daemons/data_save/guard.c:185
+   org_key_map = ([ ]);  // /daemons/data_save/guard.c:190
    new_key_map = ([ ]);
 
 /* ================================================================
@@ -137,7 +137,7 @@ mixed convert_to_memory_mapping(mapping &save_mapping) {
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=422, nargs=0, insts=422
+// @code  nc=442, nargs=0, insts=442
 // --------------------------------------------------------------------
 private void create() {
     /* ---- Enhanced Pseudocode ---- */
@@ -245,6 +245,11 @@ private void create() {
     set_convert_key("shipo-tianjing", 102);
     set_convert_key("ignore_phy_absorb", 103);
     set_convert_key("religion", 104);
+    set_convert_key("rec_intimacy", 105);
+    set_convert_key("repair_ver", 106);
+    set_convert_key("vigour", 107);
+    set_convert_key("max_vigour", 108);
+    set_convert_key("tactics_type", 109);
 
 }
 

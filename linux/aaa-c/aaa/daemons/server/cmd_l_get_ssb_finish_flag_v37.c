@@ -12,22 +12,11 @@
    ================================================================ */
 
 /* ================================================================
-   DECLARED FUNCTIONS (no bytecode - likely inherited or forward decl)
-   ================================================================ */
-/*
-   ACTION_REQ_CAN_C();  // inherited from parent or forward declaration
-*/
-
-/* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
    Total function names:        0
    Code segments found:         0
    Successfully decoded:        0
    Unresolved/minimal:          0
-   Functions without code:      1
-
-   Note: Functions without code are usually inherited from the
-   parent object (), forward declarations, or
-   simple property accessor methods that the compiler optimizes away.
+   Functions without code:      0
    ================================================================ */

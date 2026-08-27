@@ -4,8 +4,8 @@
  * Source: /aaa/daemons/server/cmd_l_cost_coin.c
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
- * Functions: 9 names, 9 code segments found
- * Strings: 85, Variables: 3
+ * Functions: 10 names, 10 code segments found
+ * Strings: 95, Variables: 4
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -13,6 +13,7 @@ inherit "/inherit/misc/handler.c";
 /* ================================================================
    Global/Object Variables
    ================================================================ */
+   mapping forbid_limit_coin;
    /* mixed global_0; */
    int log_timeout;
    int log_timeout_status;
@@ -29,14 +30,16 @@ private void _do_when_coin_trade_add_ok(string account, int cost, int coin_trade
 private int log_coin_common(int cno, string gid, string account, string server, string dist, int cost, int silver_coin_cost, int silver_coin_left, int gold_coin_cost, int gold_coin_left, int cur_state, string uid, string para);
 private int log_gbuy_coin(int cno, string server, string dist, string account, string gid, int gold_coin_before, int silver_coin_before, int add_gold_coin, int add_silver_coin, int gold_coin_after, int silver_coin_after, string para);
 void main(object agent, string dist, string server, string gid, string account, int cost, string cookie, string para1, string para2, string coin_type, int cur_state, string uid, int send_time);
+private int log_coin_red_packets(int cno, string dist, string server, string gid, string account, int cost, int gold_coin_before, int gold_coin_after, string para, string coin_type);
 private int log_coin_trade(int cno, string dist, string server, string gid, string account, int cost, int gold_coin_before, int gold_coin_after, string para);
 
 /* ================================================================
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   log_timeout = 15;  // /aaa/daemons/server/cmd_l_cost_coin.c:574
-   log_timeout_status = 1;
+   log_timeout = 15;  // /aaa/daemons/server/cmd_l_cost_coin.c:20
+   log_timeout_status = 1;  // /aaa/daemons/server/cmd_l_cost_coin.c:24
+   forbid_limit_coin = ([ "coin_trade" : 1, "hongbhxxt" : 1, "tanxss" : 2, "wendcbg" : 2 ]);
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -88,7 +91,7 @@ private void success_notice(string account, int cost, string order_id, string di
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=308, nargs=13, insts=308
+// @code  nc=319, nargs=13, insts=319
 // --------------------------------------------------------------------
 private void _main(mixed agent, string dist, string server, string gid, string account, int cost, string cookie, string para1, string para2, string coin_type, int cur_state, string uid, int send_time) {
     /* ---- Enhanced Pseudocode ---- */
@@ -137,6 +140,9 @@ private void _main(mixed agent, string dist, string server, string gid, string a
     }
     if ((!result)) {
         "/daemons/logd.c"->log_local(1, "cost_coin", "cost_failed", account, gid, server, (memo + sprintf(", result=%O, reason=%O, sql_err=%s", result, failed_reason, (*f_get_error)(cno))));
+        "/aaa/daemons/account_transactiond.c"->register_cost_fail(account);
+    } else {
+        "/aaa/daemons/account_transactiond.c"->unregister_cost_fail(account);
     }
     if ((!is_object(agent))) {
         return;
@@ -150,7 +156,7 @@ private void _main(mixed agent, string dist, string server, string gid, string a
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=431, nargs=15, insts=431
+// @code  nc=492, nargs=15, insts=492
 // --------------------------------------------------------------------
 int cost_coin(int cno, string gid, string account, string server, string dist, int cost, string cookie, string para2, string coin_type, int cur_state, string uid, int test_flag, mixed &result, mapping account_info, mixed fields) {
     /* ---- Enhanced Pseudocode ---- */
@@ -221,10 +227,19 @@ int cost_coin(int cno, string gid, string account, string server, string dist, i
     // --- label L0229 ---
     limit_trade_coin = atoi(account_info["limit_trade_coin"]);
     limit_trade_coin_cost = 0;
-    if ((cookie != "coin_trade")) {
+    if ((!forbid_limit_coin[cookie])) {
         if (test_flag) {
             limit_trade_coin -= silver_coin_cost;
         } else {
+            limit_trade_coin -= gold_coin_cost;
+        }
+        if ((limit_trade_coin < 0)) {
+            limit_trade_coin = 0;
+        }
+        limit_trade_coin_cost = (atoi(account_info["limit_trade_coin"]) - limit_trade_coin);
+        account_info["limit_trade_coin"] = (string)limit_trade_coin;
+    } else if ((forbid_limit_coin[cookie] == 2)) {
+        if ((!test_flag)) {
             limit_trade_coin -= gold_coin_cost;
         }
         if ((limit_trade_coin < 0)) {
@@ -236,8 +251,9 @@ int cost_coin(int cno, string gid, string account, string server, string dist, i
     account_info["gold_coin"] = (string)gold_coin;
     account_info["silver_coin"] = (string)silver_coin;
     account_info["trade_lock_time"] = "";
+    result = ([ "silver_coin": silver_coin, "gold_coin": gold_coin, "gold_coin_cost": gold_coin_cost, "silver_coin_cost": silver_coin_cost, "trade_coin": atoi(account_info["trade_coin"]), "last_trade_coin": account_info["last_trade_coin"], "consum_coin": atoi(account_info["consum_coin"]), "last_consum_coin": account_info["last_consum_coin"], "cookie": cookie, "limit_trade_coin": limit_trade_coin, "limit_trade_coin_cost": limit_trade_coin_cost ]);
     if ((!"/aaa/daemons/account_transactiond.c"->update_account_info(cno, account_info, fields))) {
-        result = ([ "result": 0, "reason": "update_account_failed" ]);
+        result << ([ "result": 0, "reason": "update_account_failed" ]);
         return 0;
     }
     switch (cookie) {
@@ -247,17 +263,20 @@ int cost_coin(int cno, string gid, string account, string server, string dist, i
         case "group_buying":
         log_ret = log_gbuy_coin(cno, server, dist, account, gid, gold_coin_before, silver_coin_before, gold_coin_cost, silver_coin_cost, gold_coin, silver_coin, para2);
         break;
+        case "hongbhxxt":
+        log_ret = log_coin_red_packets(cno, dist, server, gid, account, cost, gold_coin_before, gold_coin, para2, coin_type);
+        break;
         default:
         log_ret = log_coin_common(cno, gid, account, server, dist, cost, silver_coin_cost, silver_coin, gold_coin_cost, gold_coin, cur_state, uid, para2);
         break;
     }  // end switch
 
-    // --- label L0375 ---
+    // --- label L0468 ---
     if ((!log_ret)) {
-        result = ([ "result": 0, "reason": "write_log_failed" ]);
+        result << ([ "result": 0, "reason": "write_log_failed" ]);
         return 0;
     }
-    result = ([ "result": 1, "silver_coin": silver_coin, "gold_coin": gold_coin, "gold_coin_cost": gold_coin_cost, "silver_coin_cost": silver_coin_cost, "trade_coin": atoi(account_info["trade_coin"]), "last_trade_coin": account_info["last_trade_coin"], "consum_coin": atoi(account_info["consum_coin"]), "last_consum_coin": account_info["last_consum_coin"], "cookie": cookie, "limit_trade_coin": limit_trade_coin, "limit_trade_coin_cost": limit_trade_coin_cost ]);
+    result["result"] = 1;
     return 1;
 
 }
@@ -308,7 +327,7 @@ private void _do_when_coin_trade_add_ok(string account, int cost, int coin_trade
 }
 
 // --------------------------------------------------------------------
-// @code  nc=83, nargs=13, insts=83
+// @code  nc=95, nargs=13, insts=95
 // --------------------------------------------------------------------
 private int log_coin_common(int cno, string gid, string account, string server, string dist, int cost, int silver_coin_cost, int silver_coin_left, int gold_coin_cost, int gold_coin_left, int cur_state, string uid, string para) {
     /* ---- Enhanced Pseudocode ---- */
@@ -316,6 +335,7 @@ private int log_coin_common(int cno, string gid, string account, string server, 
     mixed str;
     int key;
     mixed value;
+    mixed gs_memo;
     mapping m;
 
     m = ([ ]);
@@ -325,7 +345,10 @@ private int log_coin_common(int cno, string gid, string account, string server, 
         }
         m[key] = value;
     }  // end loop (verified)
-    sql_cmd = mysql_bind_parameters("insert into cost_log(gid, account, server, dist, cost_time, cost_platform, cost_coin, item_price, buy_item, buy_item_amount, silver_coin_cost, silver_coin_left, gold_coin_cost, gold_coin_left, cur_state, uid, para1, para2, para3, gs_memo) VALUES(?, ?, ?, ?, date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", gid, account, server, dist, 0, cost, m["price"], m["name"], m["amount"], silver_coin_cost, silver_coin_left, gold_coin_cost, gold_coin_left, cur_state, uid, (string)m["level"], "", "", para);
+    if ((!is_string(gs_memo = m["gs_memo"]))) {
+        gs_memo = para;
+    }
+    sql_cmd = mysql_bind_parameters("insert into cost_log(gid, account, server, dist, cost_time, cost_platform, cost_coin, item_price, buy_item, buy_item_amount, silver_coin_cost, silver_coin_left, gold_coin_cost, gold_coin_left, cur_state, uid, para1, para2, para3, gs_memo) VALUES(?, ?, ?, ?, date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", gid, account, server, dist, 0, cost, m["price"], m["name"], m["amount"], silver_coin_cost, silver_coin_left, gold_coin_cost, gold_coin_left, cur_state, uid, (string)m["level"], "", "", gs_memo);
     if (((*f_execute)(cno, sql_cmd) < 1)) {
         printf("log_coin_common mysql_execute failed.%s\n", (*f_get_error)(cno));
         return 0;
@@ -372,7 +395,36 @@ void main(object agent, string dist, string server, string gid, string account, 
 }
 
 // --------------------------------------------------------------------
-// @code  nc=66, nargs=9, insts=66
+// @brief  interaction: calls other objects
+// @code  nc=76, nargs=10, insts=76
+// --------------------------------------------------------------------
+private int log_coin_red_packets(int cno, string dist, string server, string gid, string account, int cost, int gold_coin_before, int gold_coin_after, string para, string coin_type) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed sql_cmd;
+    mapping m;
+
+    try {
+        m = restore_value(para);
+    } catch { /* error handled */ }
+
+    // --- label L0012 ---
+    if ((!is_mapping(m))) {
+        printf("log_coin_red_packets restore_value failed.\n");
+        return 0;
+    }
+    sql_cmd = mysql_bind_parameters("insert into coin_red_packets_log(update_time, server, account, gid, name, type, amount, gold_coin_before, gold_coin_after, para2) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ", ctime(time(), 3), server, account, gid, m["name"], m["log_type"], cost, gold_coin_before, gold_coin_after, coin_type);
+    if (((*f_execute)(cno, sql_cmd) < 1)) {
+        printf("log_coin_red_packets mysql_execute failed.%s\n", (*f_get_error)(cno));
+        return 0;
+    }
+    "/daemons/threadd.c"->dispatch(random(10), (: success_notice, account, cost, "hongbhxxt", dist, gid :));
+    return 1;
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=97, nargs=9, insts=97
 // --------------------------------------------------------------------
 private int log_coin_trade(int cno, string dist, string server, string gid, string account, int cost, int gold_coin_before, int gold_coin_after, string para) {
     /* ---- Enhanced Pseudocode ---- */
@@ -393,6 +445,17 @@ private int log_coin_trade(int cno, string dist, string server, string gid, stri
         printf("log_coin_trade mysql_execute failed.%s\n", (*f_get_error)(cno));
         return 0;
     }
+    do {
+        if ((3 != m["log_type"])) {
+            break;
+        }
+        if (("silver_coin" == m["coin_type"])) {
+            break;
+        }
+        "/daemons/threadd.c"->dispatch(random(10), (: success_notice, account, cost, m["order_id"], dist, gid :));
+    } while (0);
+
+    // --- label L0093 ---
     return 1;
 
 }
@@ -400,9 +463,9 @@ private int log_coin_trade(int cno, string dist, string server, string gid, stri
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        9
-   Code segments found:         9
-   Successfully decoded:        9
+   Total function names:        10
+   Code segments found:         10
+   Successfully decoded:        10
    Unresolved/minimal:          0
    Functions without code:      0
    Inherited programs:          1

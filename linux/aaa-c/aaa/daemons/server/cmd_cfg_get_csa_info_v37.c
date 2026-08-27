@@ -22,13 +22,13 @@ void main(object agent, int type, string name, string dummy_dist);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=61, nargs=4, insts=61
+// @code  nc=66, nargs=4, insts=66
 // --------------------------------------------------------------------
 void main(object agent, int type, string name, string dummy_dist) {
     /* ---- Enhanced Pseudocode ---- */
     mapping csa_info;
 
-    if ((type != 7)) {
+    if (((type != 7) && (type != 16))) {
         return;
     }
     csa_info = "/aaa/daemons/configd.c"->get_csa_info_by_dist(agent->query("dist"));

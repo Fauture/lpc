@@ -24,7 +24,7 @@ private int get_dur_time(mixed bind_list);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=455, nargs=3, insts=455
+// @code  nc=475, nargs=3, insts=475
 // --------------------------------------------------------------------
 private void _main(object agent, string account, int dist_type) {
     /* ---- Enhanced Pseudocode ---- */
@@ -54,6 +54,7 @@ private void _main(object agent, string account, int dist_type) {
     if ((is_mapping(m) && (int)m["bonus_time"])) {
         if ((((!dist_type) && is_same_month(time(m["bonus_time"]), time())) || (dist_type && is_same_week(time(m["bonus_time"]), time())))) {
             info["bonus_flag"] = 1;
+            info["bonus_time"] = time(m["bonus_time"]);
         }
     }
     month_zero_time = get_month_zero_time(time());
@@ -67,6 +68,7 @@ private void _main(object agent, string account, int dist_type) {
             m = mysql_select_single_result(cno, sql_cmd);
             if (((is_mapping(m) && (int)m["bonus_time"]) && is_same_week(time(m["bonus_time"]), time()))) {
                 info["bonus_flag"] = 1;
+                info["bonus_time"] = time(m["bonus_time"]);
             }
         }
         loop (protect in keys(protect_types)) {
@@ -125,7 +127,7 @@ private void _main(object agent, string account, int dist_type) {
             protect_day = (dur_day + ((dur_time < 0) ? 0 : dur_time));
         } while (0);
 
-        // --- label L0427 ---
+        // --- label L0447 ---
         info["dur_bind_time"][protect_types[protect]] = protect_day;
     }  // end loop (verified)
     info["protects"] = protects;

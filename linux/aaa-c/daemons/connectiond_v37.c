@@ -112,7 +112,7 @@ private void do_when_new_connection(int client_no) {
     agent->set_client_no(client_no);
     agent->set_cmd_module("/daemons/connectiond.c");
     clean_array(ban_func, 9);
-    prompt = "é€£æŽ¥ä¼ºæœå™¨å¤±æ•—ã€‚ï¼ˆåŽŸå› ï¼š1006ï¼‰";
+    prompt = "Á¬½Ó·þÎñÆ÷Ê§°Ü¡££¨Ô­Òò£º1006£©";
     loop (func in ban_func) {
         try {
             ret = (*func)(agent, &prompt);
@@ -124,7 +124,7 @@ private void do_when_new_connection(int client_no) {
             agent->to_be_disconnect(1);
         }
     }  // end loop (verified)
-    set_client_attrib(client_no, ([ "type": "internal", "peek": 1 ]));
+    set_client_attrib(client_no, ([ "type": "internal", "peek": 20 ]));
 
 }
 
@@ -218,12 +218,13 @@ private void create() {
 }
 
 // --------------------------------------------------------------------
-// @code  nc=52, nargs=4, insts=52
+// @code  nc=54, nargs=4, insts=54
 // --------------------------------------------------------------------
 mixed auth_connection(object agent, int type, string name, int cookie) {
     /* ---- Enhanced Pseudocode ---- */
     switch (type) {
         case 5:
+        case 18:
         return auth_in_config_list("game_server_list", agent, name, cookie);
         case 7:
         return (auth_in_config_list("ccs_list", agent, name, cookie) || auth_in_config_info("ccs_info", agent, name, cookie));

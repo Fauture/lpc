@@ -3,14 +3,16 @@
  * File: account_transactiond.o
  * Source: /aaa/daemons/account_transactiond.c
  * Inherits: (none)
- * Functions: 15 names, 15 code segments found
- * Strings: 33, Variables: 5
+ * Functions: 19 names, 19 code segments found
+ * Strings: 34, Variables: 7
  *********************************************************************/
 
 /* ================================================================
    Global/Object Variables
    ================================================================ */
    mapping check_info_func_map;
+   mapping cost_fail_list;
+   int max_cost_fail_times;
    int precost_lock_effective_interval;
    int precost_lock_enabled;
    mapping precost_lock_list;
@@ -24,25 +26,31 @@ int update_account_info(int cno, mapping info, mixed fields);
 void delete_precost_lock(string account);
 int insert_account_coin_trade_info(int cno, mapping info);
 string calc_account_coin_trade_checksum(mapping coin_trade_info);
+void unregister_cost_fail(string account);
 private void clear_timeout_precost_lock();
 private void destruct();
 void set_precost_lock(string account, mixed lock);
 int is_precost_locked(string account);
 mixed query_account_info(int cno, string account);
+void register_cost_fail(string account);
 int update_account_coin_trade_info(int cno, mapping info, mixed fields);
 int end_account_transaction(int cno, int ret);
 private void create();
+int is_cost_fail_times_full(string account);
 int start_account_transaction(int cno, string account, string table = "account");
 mixed query_account_coin_trade_info(int cno, string account);
 mixed do_account_transaction(int cno, string account, string table, function proc_func, mixed fields);
+int query_cost_fail(string account);
 
 /* ================================================================
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
    precost_lock_enabled = 1;  // /aaa/daemons/account_transactiond.c:28
-   precost_lock_effective_interval = 60;  // /aaa/daemons/account_transactiond.c:54
-   precost_lock_list = ([ ]);
+   precost_lock_effective_interval = 60;  // /aaa/daemons/account_transactiond.c:59
+   precost_lock_list = ([ ]);  // /aaa/daemons/account_transactiond.c:66
+   max_cost_fail_times = 2;
+   cost_fail_list = ([ ]);
    query_info_func_map = ([ "account" : (: query_account_info :), "account_coin_trade" : (: query_account_coin_trade_info :) ]);
    check_info_func_map = ([ "account" : (: call_other, "/aaa/daemons/accountd.c", "calc_account_checksum" :), "account_coin_trade" : (: calc_account_coin_trade_checksum :) ]);
 
@@ -136,6 +144,15 @@ string calc_account_coin_trade_checksum(mapping coin_trade_info) {
 }
 
 // --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
+void unregister_cost_fail(string account) {
+    /* ---- Enhanced Pseudocode ---- */
+    map_delete(cost_fail_list, account);
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=58, nargs=0, insts=58
 // --------------------------------------------------------------------
 private void clear_timeout_precost_lock() {
@@ -166,13 +183,16 @@ private void clear_timeout_precost_lock() {
 
 // --------------------------------------------------------------------
 // @brief  destructor: cleanup before object removal
-// @code  nc=17, nargs=0, insts=17
+// @code  nc=25, nargs=0, insts=25
 // --------------------------------------------------------------------
 private void destruct() {
     /* ---- Enhanced Pseudocode ---- */
     "/daemons/scheduled.c"->delete_scheme("sClearPrecostLock");
     if (sizeof(precost_lock_list)) {
         register_daemon_data("/aaa/daemons/account_transactiond.c", "precost_lock_list", precost_lock_list);
+    }
+    if (sizeof(cost_fail_list)) {
+        register_daemon_data("/aaa/daemons/account_transactiond.c", "cost_fail_list", cost_fail_list);
     }
 
 }
@@ -219,6 +239,19 @@ mixed query_account_info(int cno, string account) {
 
     sql_cmd = mysql_bind_parameters("select * from account where account = ? limit 1", account);
     return mysql_select_single_result(cno, sql_cmd);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=22, nargs=1, insts=22
+// --------------------------------------------------------------------
+void register_cost_fail(string account) {
+    /* ---- Enhanced Pseudocode ---- */
+    if (is_int(cost_fail_list[account])) {
+        cost_fail_list[account] += 1;
+    } else {
+        cost_fail_list[account] = 1;
+    }
 
 }
 
@@ -277,7 +310,7 @@ int end_account_transaction(int cno, int ret) {
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=36, nargs=0, insts=36
+// @code  nc=52, nargs=0, insts=52
 // --------------------------------------------------------------------
 private void create() {
     /* ---- Enhanced Pseudocode ---- */
@@ -288,8 +321,22 @@ private void create() {
             precost_lock_list = m["precost_lock_list"];
             unregister_daemon_data("/aaa/daemons/account_transactiond.c", "precost_lock_list");
         }
+        if (is_mapping(m["cost_fail_list"])) {
+            cost_fail_list = m["cost_fail_list"];
+            unregister_daemon_data("/aaa/daemons/account_transactiond.c", "cost_fail_list");
+        }
     }
     "/daemons/scheduled.c"->create_scheme("sClearPrecostLock", (: clear_timeout_precost_lock :), time(), 300, 1);
+
+}
+
+// --------------------------------------------------------------------
+// @brief  predicate: boolean check
+// @code  nc=11, nargs=1, insts=11
+// --------------------------------------------------------------------
+int is_cost_fail_times_full(string account) {
+    /* ---- Enhanced Pseudocode ---- */
+    return ((int)cost_fail_list[account] >= max_cost_fail_times);
 
 }
 
@@ -363,7 +410,6 @@ mixed do_account_transaction(int cno, string account, string table, function pro
             }
             ret = 1;
         } catch { /* error handled */ }
-        goto L0088;
 
         // --- label L0088 ---
     } while (0);
@@ -377,12 +423,22 @@ mixed do_account_transaction(int cno, string account, string table, function pro
 
 }
 
+// --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=9, nargs=1, insts=9
+// --------------------------------------------------------------------
+int query_cost_fail(string account) {
+    /* ---- Enhanced Pseudocode ---- */
+    return (int)cost_fail_list[account];
+
+}
+
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        15
-   Code segments found:         15
-   Successfully decoded:        15
+   Total function names:        19
+   Code segments found:         19
+   Successfully decoded:        19
    Unresolved/minimal:          0
    Functions without code:      0
    ================================================================ */

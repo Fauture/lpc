@@ -4,7 +4,7 @@
  * Source: /aaa/daemons/rebootd.c
  * Inherits: (none)
  * Functions: 3 names, 3 code segments found
- * Strings: 7, Variables: 0
+ * Strings: 9, Variables: 0
  *********************************************************************/
 
 /* ================================================================
@@ -21,14 +21,16 @@ private void create();
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=23, nargs=0, insts=23
+// @code  nc=29, nargs=0, insts=29
 // --------------------------------------------------------------------
 void reboot_daemon() {
     /* ---- Enhanced Pseudocode ---- */
+    set_as_daemon();
     broadcast("[Reboot]: 开始关闭 AAA(%s) 服务器\n", _server_name);
     set_server_status(1);
     broadcast("[Reboot]: 停止 AAA 服务\n");
     "/aaa/daemons/aaaserverd.c"->stop_service();
+    "/aaa/daemons/admintoold.c"->save();
     broadcast("AAA shutdown.\n");
     shutdown();
 

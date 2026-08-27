@@ -4,7 +4,7 @@
  * Source: /aaa/daemons/cta/cmd_cta_get_dist_info.c
  * Inherits: (none)
  * Functions: 3 names, 3 code segments found
- * Strings: 33, Variables: 0
+ * Strings: 35, Variables: 0
  *********************************************************************/
 
 /* ================================================================
@@ -21,7 +21,7 @@ int main(int client_no, mapping paras);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=293, nargs=2, insts=293
+// @code  nc=354, nargs=2, insts=354
 // --------------------------------------------------------------------
 private void _main(int client_no, mapping paras) {
     /* ---- Enhanced Pseudocode ---- */
@@ -31,6 +31,7 @@ private void _main(int client_no, mapping paras) {
     mapping spa_config;
     mixed gs_config;
     mapping tts_config;
+    mixed ldba_config;
     mixed dist;
     int server_name;
     mapping server_info;
@@ -64,6 +65,16 @@ private void _main(int client_no, mapping paras) {
         if (paras["dba"]) {
             paras["dba"] = paras["dba"][0..<2];
         }
+        ldba_config = "/aaa/daemons/configd.c"->get_ldba_list_by_dist(dist);
+        paras["ldba"] = "";
+        if (is_array(ldba_config)) {
+            for (i = 0; i <= (sizeof(ldba_config) - 1); i++) {
+                paras["ldba"] += sprintf("%s:%d;", ldba_config[i]["ip"], ldba_config[i]["port"]);
+            }  // end loop (verified)
+        }
+        if (paras["ldba"]) {
+            paras["ldba"] = paras["ldba"][0..<2];
+        }
         spa_config = "/aaa/daemons/configd.c"->get_spa_info_by_dist(dist);
         if (is_mapping(spa_config)) {
             paras["spa"] = sprintf("%s:%d", spa_config["ip"], spa_config["port"]);
@@ -80,10 +91,10 @@ private void _main(int client_no, mapping paras) {
             paras["gs"] = paras["gs"][0..<2];
         }
         paras["result"] = 0;
-        paras["prompt"] = "获取区组资讯成功";
+        paras["prompt"] = "获取区组信息成功";
     } while (0);
 
-    // --- label L0279 ---
+    // --- label L0340 ---
     paras["msg"] = "get_dist_info";
     "/daemons/ctad.c"->send_to_cta_ex(client_no, paras);
 

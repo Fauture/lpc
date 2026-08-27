@@ -14,8 +14,8 @@ inherit "/inherit/misc/handler.c";
    FORWARD DECLARATIONS
    ================================================================ */
 
-private void block_account(mixed agent, string server_name, string account, int interval, string reason);
-void main(object agent, string server_name, string account, int interval, string reason);
+private void block_account(mixed agent, string server_name, string account, int interval, string reason, string ma_account, int to_gy);
+void main(object agent, string server_name, string account, int interval, string reason, string ma_account, int to_gy);
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -23,9 +23,9 @@ void main(object agent, string server_name, string account, int interval, string
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=116, nargs=5, insts=116
+// @code  nc=119, nargs=7, insts=119
 // --------------------------------------------------------------------
-private void block_account(mixed agent, string server_name, string account, int interval, string reason) {
+private void block_account(mixed agent, string server_name, string account, int interval, string reason, string ma_account, int to_gy) {
     /* ---- Enhanced Pseudocode ---- */
     string dist;
     mixed cno;
@@ -38,11 +38,11 @@ private void block_account(mixed agent, string server_name, string account, int 
     }
     dist = (string)agent->query("dist");
     cno = "/daemons/dbd.c"->assure_connection("adb");
-    ret = "/aaa/daemons/accountd.c"->block_account(dist, account, interval, reason);
+    ret = "/aaa/daemons/accountd.c"->block_account(dist, account, interval, reason, 1);
     }
-    msg = sprintf("GSÓÎÏ··þÎñÆ÷%s%sÕËºÅ%s£¬Ô­Òò:%s =>", agent->get_name(), ((interval == 0) ? "½â·â" : "·â±Õ"), ((interval < 0) ? "ÓÀ¾Ã" : (("" + interval) + "Ãë")), reason);
-    if ((ret && (-2 != interval))) {
-        "/aaa/daemons/share_stored.c"->block_share_store(account, interval);
+    msg = sprintf("GSÓÎÏ··þÎñÆ÷%s%sÕÊºÅ%s£¬Ô­Òò:%s =>", agent->get_name(), ((interval == 0) ? "½â·â" : "·â±Õ"), ((interval < 0) ? "ÓÀ¾Ã" : (("" + interval) + "Ãë")), reason);
+    if ((to_gy && (-2 != interval))) {
+        "/aaa/daemons/admintoold.c"->add_notice_gy(account, ma_account, interval, reason);
     }
     if ((cno == -1)) {
         return;
@@ -54,11 +54,11 @@ private void block_account(mixed agent, string server_name, string account, int 
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=22, nargs=5, insts=22
+// @code  nc=24, nargs=7, insts=24
 // --------------------------------------------------------------------
-void main(object agent, string server_name, string account, int interval, string reason) {
+void main(object agent, string server_name, string account, int interval, string reason, string ma_account, int to_gy) {
     /* ---- Enhanced Pseudocode ---- */
-    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: block_account, agent, server_name, account, interval, reason :));
+    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: block_account, agent, server_name, account, interval, reason, ma_account, to_gy :));
 
 }
 

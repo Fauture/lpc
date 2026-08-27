@@ -4,7 +4,7 @@
  * Source: /daemons/scheduled.c
  * Inherits: (none)
  * Functions: 14 names, 14 code segments found
- * Strings: 15, Variables: 2
+ * Strings: 14, Variables: 2
  *********************************************************************/
 
 /* ================================================================
@@ -36,7 +36,7 @@ int create_scheme(string event_name, function f, int execute_time, mixed time_se
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   scheme_events = ([ ]);  // /daemons/scheduled.c:421
+   scheme_events = ([ ]);  // /daemons/scheduled.c:427
    execute_list = ({ });
 
 /* ================================================================
@@ -144,10 +144,11 @@ mixed query_scheme_event(string event_name) {
 }
 
 // --------------------------------------------------------------------
-// @code  nc=120, nargs=1, insts=120
+// @code  nc=134, nargs=1, insts=134
 // --------------------------------------------------------------------
 private void calc_event_execute_time(string event_name) {
     /* ---- Enhanced Pseudocode ---- */
+    mixed next_ti;
     mixed event;
     mapping lt;
 
@@ -157,26 +158,30 @@ private void calc_event_execute_time(string event_name) {
     } else if (is_function(event[2])) {
         event[3] = (*event[2])();
     } else if (is_string(event[2])) {
-        lt = local_time();
         switch (event[2]) {
             case "per_year":
+            lt = local_time();
             ++lt["year"];
+            next_ti = mktime(lt);
             break;
             case "per_month":
+            lt = local_time();
             ++lt["mon"];
+            next_ti = mktime(lt);
             break;
             case "per_week":
-            lt["mday"] += 7;
+            next_ti = (time() + 604800);
             break;
             case "per_day":
-            ++lt["mday"];
+            next_ti = (time() + 86400);
             break;
             default:
+            next_ti = time();
             break;
         }  // end switch
 
-        // --- label L0101 ---
-        event[3] = mktime(lt);
+        // --- label L0116 ---
+        event[3] = next_ti;
     }
     unregister_daemon_data("/daemons/scheduled.c", event_name);
     register_daemon_data("/daemons/scheduled.c", event_name, event);

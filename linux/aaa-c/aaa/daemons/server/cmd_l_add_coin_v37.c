@@ -4,8 +4,8 @@
  * Source: /aaa/daemons/server/cmd_l_add_coin.c
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
- * Functions: 11 names, 11 code segments found
- * Strings: 64, Variables: 0
+ * Functions: 12 names, 12 code segments found
+ * Strings: 69, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -24,6 +24,7 @@ private int log_coin_common(int cno, string gid, string account, string server, 
 private int log_gbuy_coin(int cno, string server, string dist, string account, string gid, int gold_coin_before, int silver_coin_before, int add_gold_coin, int add_silver_coin, int gold_coin_after, int silver_coin_after, string para);
 void main(object agent, string dist, string server, string gid, string account, int add_silver_coin, int add_gold_coin, int add_limit_coin, string cookie, string para1, string para2, string type);
 private int prepare_add_salary(int cno, string account, string gid, string cookie, int &result);
+private int log_coin_red_packets(int cno, string server, string dist, string account, string gid, int gold_coin_before, int gold_coin_after, string para);
 private int log_coin_trade(int cno, string server, string dist, string account, string gid, int add, int gold_coin_before, int gold_coin_after, string para);
 
 /* ================================================================
@@ -173,7 +174,7 @@ private int log_add_gold_coin(int cno, string server, string dist, string accoun
 
     switch (type) {
         case "fishing":
-        name = "逍遥online捕鱼活动";
+        name = "问道捕鱼活动";
         break;
         default:
         return 0;
@@ -190,7 +191,7 @@ private int log_add_gold_coin(int cno, string server, string dist, string accoun
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=309, nargs=14, insts=309
+// @code  nc=324, nargs=14, insts=324
 // --------------------------------------------------------------------
 int add_coin(int cno, string gid, string account, string server, string dist, string cookie, string para2, string type, int add_silver_coin, int add_gold_coin, int add_limit_coin, mixed &result, mapping account_info, mixed fields) {
     /* ---- Enhanced Pseudocode ---- */
@@ -255,6 +256,9 @@ int add_coin(int cno, string gid, string account, string server, string dist, st
         case "group_buying":
         log_ret = log_gbuy_coin(cno, server, dist, account, gid, gold_coin_left, silver_coin_left, add_gold_coin, add_silver_coin, cur_gold_coin, cur_silver_coin, para2);
         break;
+        case "hongbhxxt":
+        log_ret = log_coin_red_packets(cno, server, dist, account, gid, gold_coin_left, cur_gold_coin, para2);
+        break;
         default:
         if (((add_gold_coin > 0) && (type == "fishing"))) {
             log_ret = log_add_gold_coin(cno, server, dist, account, gid, add_gold_coin, cur_gold_coin, cur_silver_coin, para2, type);
@@ -266,7 +270,7 @@ int add_coin(int cno, string gid, string account, string server, string dist, st
         break;
     }  // end switch
 
-    // --- label L0275 ---
+    // --- label L0290 ---
     if ((!log_ret)) {
         result = ([ "result": ret, "reason": "write_log_failed" ]);
         return 0;
@@ -373,7 +377,32 @@ private int prepare_add_salary(int cno, string account, string gid, string cooki
 }
 
 // --------------------------------------------------------------------
-// @code  nc=63, nargs=9, insts=63
+// @code  nc=59, nargs=8, insts=59
+// --------------------------------------------------------------------
+private int log_coin_red_packets(int cno, string server, string dist, string account, string gid, int gold_coin_before, int gold_coin_after, string para) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed sql_cmd;
+    mapping m;
+
+    try {
+        m = restore_value(para);
+    } catch { /* error handled */ }
+
+    // --- label L0012 ---
+    if ((!is_mapping(m))) {
+        return 0;
+    }
+    sql_cmd = mysql_bind_parameters("insert into coin_red_packets_log(update_time, server, account, gid, name, type, amount, gold_coin_before, gold_coin_after, para2) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ", ctime(time(), 3), server, account, gid, m["name"], m["log_type"], m["add"], gold_coin_before, gold_coin_after, m["coin_type"]);
+    if (((*f_execute)(cno, sql_cmd) < 1)) {
+        return 0;
+    }
+    return 1;
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=95, nargs=9, insts=95
 // --------------------------------------------------------------------
 private int log_coin_trade(int cno, string server, string dist, string account, string gid, int add, int gold_coin_before, int gold_coin_after, string para) {
     /* ---- Enhanced Pseudocode ---- */
@@ -392,6 +421,17 @@ private int log_coin_trade(int cno, string server, string dist, string account, 
     if (((*f_execute)(cno, sql_cmd) < 1)) {
         return 0;
     }
+    do {
+        if ((1 != m["log_type"])) {
+            break;
+        }
+        if (("silver_coin" == m["coin_type"])) {
+            break;
+        }
+        "/daemons/threadd.c"->dispatch(random(10), (: success_notice, m["owner_account"], add, m["order_id"], dist :));
+    } while (0);
+
+    // --- label L0091 ---
     return 1;
 
 }
@@ -399,9 +439,9 @@ private int log_coin_trade(int cno, string server, string dist, string account, 
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        11
-   Code segments found:         11
-   Successfully decoded:        11
+   Total function names:        12
+   Code segments found:         12
+   Successfully decoded:        12
    Unresolved/minimal:          0
    Functions without code:      0
    Inherited programs:          1

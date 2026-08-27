@@ -4,7 +4,7 @@
  * Source: /aaa/daemons/express_recharged.c
  * Inherits: (none)
  * Functions: 23 names, 23 code segments found
- * Strings: 64, Variables: 7
+ * Strings: 61, Variables: 7
  *********************************************************************/
 
 /* ================================================================
@@ -50,7 +50,7 @@ private int get_thread_id_by_order_id(string order_id);
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   cur_seq_no = 0;  // /aaa/daemons/express_recharged.c:52
+   cur_seq_no = 0;  // /aaa/daemons/express_recharged.c:51
    can_record_defined_error = ([ 100 : 0, 101 : 1, 102 : 1, 103 : 0 ]);
    card_type_to_gy = ([ 1 : 0, 2 : 1, 3 : 2 ]);
    wrong_rsp_stat = 0;
@@ -61,14 +61,12 @@ private int get_thread_id_by_order_id(string order_id);
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=217, nargs=1, insts=217
+// @code  nc=180, nargs=1, insts=180
 // --------------------------------------------------------------------
 private string get_entire_recharge_url(mapping info) {
     /* ---- Enhanced Pseudocode ---- */
     int par_value;
-    int i;
     int card_type;
-    buffer buf_serv;
     mixed card_no;
     mixed card_pwd;
     mixed user_name;
@@ -77,7 +75,7 @@ private string get_entire_recharge_url(mapping info) {
     mixed sales_name;
     mixed user_ip;
     mixed pay_type;
-    string str_serv;
+    mixed str_serv;
     mixed str_md5;
     mixed sign_key;
     mixed addr_url;
@@ -92,15 +90,7 @@ private string get_entire_recharge_url(mapping info) {
     par_value = (int)info["par_value"];
     pay_type = info["pay_type"];
     card_type = (int)info["card_type"];
-    if (new_convert_code) {
-        str_serv = convert_to_url_encode(server_name);
-    } else {
-        buf_serv = (buffer)iconv(server_name, "utf-8", "gbk");
-        str_serv = "";
-        for (i = 0; i <= (sizeof(buf_serv) - 1); i++) {
-            str_serv += sprintf("%%%02x", buf_serv[i]);
-        }  // end loop (verified)
-    }
+    str_serv = convert_to_url_encode(server_name);
     switch (pay_type) {
         case "S19Pay":
         if ((strlen(addr_url = "/aaa/daemons/configd.c"->get_global_config("mobile_recharge_url")) < 1)) {
@@ -223,7 +213,7 @@ private int write_order_log(mapping info) {
     if ((!is_string(info["order_id"]))) {
         return 1;
     }
-    if (((info["result"] == 9) && can_record_defined_error[info["result"]])) {
+    if (((info["result"] == 9) && can_record_defined_error[info["result_code"]])) {
         info["result"] = 0;
     }
     cno = "/daemons/dbd.c"->assure_connection("adb");
@@ -398,29 +388,19 @@ private void do_init() {
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=93, nargs=3, insts=93
+// @code  nc=56, nargs=3, insts=56
 // --------------------------------------------------------------------
 private string get_entire_alipay_url(string dist, string account, int rmb) {
     /* ---- Enhanced Pseudocode ---- */
-    int i;
-    buffer buf_serv;
     mixed alipay_url;
-    string str_serv;
+    mixed str_serv;
     mixed sign_key;
     mixed sign_key_md5;
 
     if (((!is_string(alipay_url = "/aaa/daemons/configd.c"->get_global_config("alipay_recharge_url"))) || (strlen(alipay_url) < 1))) {
         return "";
     }
-    if (new_convert_code) {
-        str_serv = convert_to_url_encode(dist);
-    } else {
-        buf_serv = (buffer)iconv(dist, "utf-8", "gbk");
-        str_serv = "";
-        for (i = 0; i <= (sizeof(buf_serv) - 1); i++) {
-            str_serv += sprintf("%%%02x", buf_serv[i]);
-        }  // end loop (verified)
-    }
+    str_serv = convert_to_url_encode(dist);
     sign_key = (((account + str_serv) + rmb) + "KfEqyUUHllKPz37EVYyUzGQvgM3ck7yFO0EVwCqQhxrlMwFG9zI9OhvYfHMwUiHHgAhl9Uk7Jv4");
     sign_key_md5 = save_string(md5(sign_key))[1..<2];
     return sprintf("%s?gameId=%d&serverName=%s&userId=%d&account=%s&rmb=%d&sign=%s", alipay_url, 2, str_serv, 0, account, rmb, sign_key_md5);
@@ -515,7 +495,7 @@ private int create_order_log(mapping info) {
     if ((cno < 1)) {
         return 0;
     }
-    if (((info["result"] == 9) && can_record_defined_error[info["result"]])) {
+    if (((info["result"] == 9) && can_record_defined_error[info["result_code"]])) {
         info["result"] = 0;
     }
     info["update_time"] = (info["insert_time"] = ctime(time(), 3));
@@ -589,16 +569,14 @@ private void handle_internal_rsp(int request_type, int rsp, mapping info) {
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=137, nargs=1, insts=137
+// @code  nc=100, nargs=1, insts=100
 // --------------------------------------------------------------------
 private string get_entire_inquiry_url(mapping info) {
     /* ---- Enhanced Pseudocode ---- */
-    int i;
-    buffer buf_serv;
     mixed order_id;
     mixed server_name;
     mixed pay_type;
-    string str_serv;
+    mixed str_serv;
     mixed str_md5;
     mixed sign_key;
     mixed addr_url;
@@ -606,15 +584,7 @@ private string get_entire_inquiry_url(mapping info) {
     order_id = info["order_id"];
     server_name = info["server_name"];
     pay_type = info["pay_type"];
-    if (new_convert_code) {
-        str_serv = convert_to_url_encode(server_name);
-    } else {
-        buf_serv = (buffer)iconv(server_name, "utf-8", "gbk");
-        str_serv = "";
-        for (i = 0; i <= (sizeof(buf_serv) - 1); i++) {
-            str_serv += sprintf("%%%02x", buf_serv[i]);
-        }  // end loop (verified)
-    }
+    str_serv = convert_to_url_encode(server_name);
     switch (pay_type) {
         case "S19Pay":
         if ((strlen(addr_url = "/aaa/daemons/configd.c"->get_global_config("mobile_inquiry_url")) < 1)) {

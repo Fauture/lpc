@@ -42,7 +42,7 @@ private void temp_block_account(mixed agent, string server_name, string account,
     if (((cno = "/daemons/dbd.c"->assure_connection("adb")) == -1)) {
         return;
     }
-    msg = sprintf("GS游戏服务器%s%s账号%s，原因:%s =>", agent->get_name(), ((interval == 0) ? "解除封停" : "暂时封停"), ((interval == 0) ? "" : sprintf("%d秒", interval)), reason);
+    msg = sprintf("GS游戏服务器%s%s帐号%s，原因:%s =>", agent->get_name(), ((interval == 0) ? "解除封停" : "暂时封停"), ((interval == 0) ? "" : sprintf("%d秒", interval)), reason);
     sql_cmd = mysql_bind_parameters("insert into acc_log(ip, time,account, dist, type, msg, memo) values(?, ?, ?, ?, ?, ?, ?)", agent->get_peer_ip(), ctime(time(), 3)[0..13], account, "", "temp_block_account", (msg + (ret ? "成功" : "失败")), "");
     (*f_execute)(cno, sql_cmd);
 

@@ -3,7 +3,7 @@
  * File: dbase.o
  * Source: /feature/common/dbase.c
  * Inherits: (none)
- * Functions: 14 names, 14 code segments found
+ * Functions: 20 names, 20 code segments found
  * Strings: 1, Variables: 2
  *********************************************************************/
 
@@ -19,24 +19,30 @@
 
 void delete(string path);
 mixed query_temp(string path);
+mixed lite_set(string path, mixed val);
 mixed query(string path, mixed raw);
 mixed add_temp_ex(string path, mixed val);
 mapping query_entire_temp_dbase();
 mapping query_entire_dbase();
+mixed lite_set_temp(string path, mixed val);
 mixed add_temp(string path, mixed val);
+mixed lite_query_temp(string path);
 mixed set(string path, mixed val);
 mixed set_temp(string path, mixed val);
 void replace_entire_temp_dbase(mapping new_temp_dbase);
 mixed add(string path, mixed val);
+void lite_delete_temp(string path);
 void delete_temp(string path);
 mixed add_ex(string path, mixed val);
+void lite_delete(string path);
 void replace_entire_dbase(mapping new_dbase);
+mixed lite_query(string path);
 
 /* ================================================================
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   dbase = ([ ]);  // /feature/common/dbase.c:108
+   dbase = ([ ]);  // /feature/common/dbase.c:168
    tmp_dbase = ([ ]);
 
 /* ================================================================
@@ -59,6 +65,15 @@ void delete(string path) {
 mixed query_temp(string path) {
     /* ---- Enhanced Pseudocode ---- */
     return express_query(path, tmp_dbase);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=10, nargs=2, insts=10
+// --------------------------------------------------------------------
+mixed lite_set(string path, mixed val) {
+    /* ---- Enhanced Pseudocode ---- */
+    return (dbase[path] = val);
 
 }
 
@@ -110,11 +125,29 @@ mapping query_entire_dbase() {
 }
 
 // --------------------------------------------------------------------
+// @code  nc=10, nargs=2, insts=10
+// --------------------------------------------------------------------
+mixed lite_set_temp(string path, mixed val) {
+    /* ---- Enhanced Pseudocode ---- */
+    return (tmp_dbase[path] = val);
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=9, nargs=2, insts=9
 // --------------------------------------------------------------------
 mixed add_temp(string path, mixed val) {
     /* ---- Enhanced Pseudocode ---- */
     return express_add(path, tmp_dbase, val);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
+mixed lite_query_temp(string path) {
+    /* ---- Enhanced Pseudocode ---- */
+    return tmp_dbase[path];
 
 }
 
@@ -158,6 +191,15 @@ mixed add(string path, mixed val) {
 // --------------------------------------------------------------------
 // @code  nc=8, nargs=1, insts=8
 // --------------------------------------------------------------------
+void lite_delete_temp(string path) {
+    /* ---- Enhanced Pseudocode ---- */
+    map_delete(tmp_dbase, path);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
 void delete_temp(string path) {
     /* ---- Enhanced Pseudocode ---- */
     express_delete(path, tmp_dbase);
@@ -179,18 +221,36 @@ mixed add_ex(string path, mixed val) {
 // --------------------------------------------------------------------
 // @code  nc=8, nargs=1, insts=8
 // --------------------------------------------------------------------
+void lite_delete(string path) {
+    /* ---- Enhanced Pseudocode ---- */
+    map_delete(dbase, path);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
 void replace_entire_dbase(mapping new_dbase) {
     /* ---- Enhanced Pseudocode ---- */
     dbase = new_dbase;
 
 }
 
+// --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
+mixed lite_query(string path) {
+    /* ---- Enhanced Pseudocode ---- */
+    return dbase[path];
+
+}
+
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        14
-   Code segments found:         14
-   Successfully decoded:        14
+   Total function names:        20
+   Code segments found:         20
+   Successfully decoded:        20
    Unresolved/minimal:          0
    Functions without code:      0
    ================================================================ */

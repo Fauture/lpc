@@ -22,7 +22,7 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=64, nargs=3, insts=64
+// @code  nc=69, nargs=3, insts=69
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
@@ -31,7 +31,7 @@ void main(object agent, int type, string name) {
     mapping aaa_info;
     mixed aaa_map;
 
-    if ((type != 5)) {
+    if (((type != 5) && (type != 18))) {
         return;
     }
     aaa_map = "/aaa/daemons/configd.c"->get_aaa_list();

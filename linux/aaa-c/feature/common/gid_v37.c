@@ -31,7 +31,7 @@ mixed get_gid();
 void set_gid(string _gid) {
     /* ---- Enhanced Pseudocode ---- */
     gid = _gid;
-    this_object()->set("gid", gid);
+    this_object()->lite_set("gid", gid);
 
 }
 

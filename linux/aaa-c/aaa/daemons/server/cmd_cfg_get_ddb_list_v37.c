@@ -22,17 +22,17 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=62, nargs=3, insts=62
+// @code  nc=72, nargs=3, insts=72
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
     mixed ddb_list;
     mixed ddb_info;
 
-    if (((type != 4) && (type != 9))) {
+    if ((((type != 4) && (type != 9)) && (type != 19))) {
         return;
     }
-    if ((type == 4)) {
+    if (((type == 4) || (type == 19))) {
         ddb_info = "/aaa/daemons/configd.c"->get_ddb_info_by_dist(agent->query("dist"));
         if ((!is_mapping(ddb_info))) {
             return;

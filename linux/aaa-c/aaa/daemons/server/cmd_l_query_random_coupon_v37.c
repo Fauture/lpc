@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 20, Variables: 0
+ * Strings: 22, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -33,7 +33,7 @@ void main(mixed agent, string dist, string account, string gid, string type, str
 
 // --------------------------------------------------------------------
 // @brief  accessor: read property
-// @code  nc=212, nargs=10, insts=212
+// @code  nc=215, nargs=10, insts=215
 // --------------------------------------------------------------------
 private void query_coupon(mixed agent, string dist, string account, string gid, string type, string para, int start_time, int end_time, int once, int coin_type) {
     /* ---- Enhanced Pseudocode ---- */
@@ -79,7 +79,7 @@ private void query_coupon(mixed agent, string dist, string account, string gid, 
             break;
         }
         loop (encourage in arr) {
-            checksum = save_string(md5(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", encourage["transaction_id"], encourage["account"], encourage["source"], encourage["gold_coin"], encourage["silver_coin"], encourage["coupon_gold_used"], encourage["coupon_silver_used"], encourage["time"], "201004")))[1..<2];
+            checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", encourage["transaction_id"], encourage["account"], encourage["source"], encourage["gold_coin"], encourage["silver_coin"], encourage["coupon_gold_used"], encourage["coupon_silver_used"], encourage["time"], "201004"), "utf-8", "GBK")))[1..<2];
             if (stricmp(checksum, encourage["checksum"])) {
                 continue;
             }
@@ -92,7 +92,7 @@ private void query_coupon(mixed agent, string dist, string account, string gid, 
         result = 0;
     } while (0);
 
-    // --- label L0195 ---
+    // --- label L0198 ---
     if ((!is_object(agent))) {
         return;
     }

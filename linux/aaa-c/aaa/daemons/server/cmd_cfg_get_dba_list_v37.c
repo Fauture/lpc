@@ -22,13 +22,13 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=42, nargs=3, insts=42
+// @code  nc=47, nargs=3, insts=47
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
     mixed dba_list;
 
-    if ((((type != 5) && (type != 7)) && (type != 9))) {
+    if (((((type != 5) && (type != 18)) && (type != 7)) && (type != 9))) {
         return;
     }
     dba_list = "/aaa/daemons/configd.c"->get_dba_list_by_dist(agent->query("dist"));

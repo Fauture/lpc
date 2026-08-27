@@ -23,7 +23,7 @@ void main(object agent, string dist, string account, string bonus_info);
 
 // --------------------------------------------------------------------
 // @brief  mutator: set property
-// @code  nc=136, nargs=4, insts=136
+// @code  nc=134, nargs=4, insts=134
 // --------------------------------------------------------------------
 private void set_protect_bonus(mixed agent, string dist, string account, string bonus_info) {
     /* ---- Enhanced Pseudocode ---- */
@@ -35,6 +35,7 @@ private void set_protect_bonus(mixed agent, string dist, string account, string 
     mixed branch;
     string protects;
     mapping m;
+    mapping lt_m;
 
     cno = 0;
     if ((!is_object(agent))) {
@@ -43,10 +44,11 @@ private void set_protect_bonus(mixed agent, string dist, string account, string 
     if (((cno = "/daemons/dbd.c"->assure_connection("adb")) < 0)) {
         return;
     }
-    year = local_time()["year"];
-    if ((!month = (local_time()["mon"] - 1))) {
+    lt_m = local_time();
+    year = lt_m["year"];
+    if ((!month = (lt_m["mon"] - 1))) {
         month = 12;
-        year = (local_time()["year"] - 1);
+        --year;
     }
     branch = sprintf("%d-%02d", year, month);
     sql_cmd = mysql_bind_parameters("select * from protect_bonus where account = ? and branch = ?", account, branch);

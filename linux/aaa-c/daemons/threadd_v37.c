@@ -4,8 +4,8 @@
  * Source: /daemons/threadd.c
  * Inherits: (none)
  * Inherited programs: /feature/common/daemon.c()
- * Functions: 16 names, 16 code segments found
- * Strings: 33, Variables: 14
+ * Functions: 19 names, 19 code segments found
+ * Strings: 39, Variables: 17
  *********************************************************************/
 
 inherit "/feature/common/daemon.c";
@@ -16,11 +16,14 @@ inherit "/feature/common/daemon.c";
    int max_comm_for_gs_thread_num;
    int max_cs_thread_num;
    int max_ddb_service_thread_num;
+   int max_http_service_thread_num;
    int max_inter_service_thread_num;
    int max_ldb_service_thread_num;
+   int max_ma_service_thread_num;
    int max_rpc_exec_thread_num;
    int max_service_thread_num;
    int max_thread_num;
+   int max_trade_service_thread_num;
    int max_user_thread_num;
    int max_web_service_thread_num;
    array rpc_exec_tids;
@@ -34,6 +37,7 @@ inherit "/feature/common/daemon.c";
 
 void dispatch_web_service(function func, int timeout = -1);
 void dispatch_ddb_service(function func, int timeout = -1);
+void dispatch_http_service(function func, int timeout = -1);
 private void invoke_before_timeout(int time_limit, function f);
 void dispatch_ldb_service(function func, int timeout = -1);
 void dispatch_rpc_exec(function func, int timeout = -1);
@@ -41,7 +45,9 @@ void dispatch_inter_service(function func, int timeout = -1);
 private void destruct();
 void dispatch_comm_service(int i, function func, int timeout = -1);
 int is_rpc_exec_thread(int tid);
+void dispatch_trade_service(function func, int timeout = -1);
 void dispatch_cs_service(int i, function func, int timeout = -1);
+void dispatch_ma_service(function func, int timeout = -1);
 mapping get_stat();
 void dispatch_service(function func, int timeout = -1);
 private void create();
@@ -53,16 +59,19 @@ void dispatch(int qno, function func, int timeout = -1);
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   max_user_thread_num = 5;  // /daemons/threadd.c:42
-   max_service_thread_num = 20;  // /daemons/threadd.c:67
-   max_rpc_exec_thread_num = 0;  // /daemons/threadd.c:79
-   max_comm_for_gs_thread_num = 20;  // /daemons/threadd.c:83
-   max_cs_thread_num = 0;  // /daemons/threadd.c:122
-   max_web_service_thread_num = 0;
-   max_ddb_service_thread_num = 0;
+   max_user_thread_num = 5;  // /daemons/threadd.c:48
+   max_service_thread_num = 20;  // /daemons/threadd.c:73
+   max_rpc_exec_thread_num = 0;  // /daemons/threadd.c:92
+   max_comm_for_gs_thread_num = 20;  // /daemons/threadd.c:104
+   max_cs_thread_num = 0;  // /daemons/threadd.c:108
+   max_web_service_thread_num = 0;  // /daemons/threadd.c:112
+   max_ddb_service_thread_num = 0;  // /daemons/threadd.c:738
    max_ldb_service_thread_num = 0;
    max_inter_service_thread_num = 0;
-   max_thread_num = ((((((((max_user_thread_num + max_service_thread_num) + max_rpc_exec_thread_num) + max_comm_for_gs_thread_num) + max_cs_thread_num) + max_web_service_thread_num) + max_ddb_service_thread_num) + max_ldb_service_thread_num) + max_inter_service_thread_num);
+   max_ma_service_thread_num = 6;
+   max_trade_service_thread_num = 0;
+   max_http_service_thread_num = 0;
+   max_thread_num = (((((((((((max_user_thread_num + max_service_thread_num) + max_rpc_exec_thread_num) + max_comm_for_gs_thread_num) + max_cs_thread_num) + max_web_service_thread_num) + max_ddb_service_thread_num) + max_ldb_service_thread_num) + max_inter_service_thread_num) + max_ma_service_thread_num) + max_trade_service_thread_num) + max_http_service_thread_num);
    tids = ({ });
    rpc_exec_tids = ({ });
 
@@ -80,7 +89,6 @@ void dispatch_web_service(function func, int timeout) {
         func = (: invoke_before_timeout, (time() + timeout), func :);
     }
     send_to_queue(threadQ[(((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2)], func);
-    return -1;
 
 }
 
@@ -90,13 +98,26 @@ void dispatch_web_service(function func, int timeout) {
 void dispatch_ddb_service(function func, int timeout) {
     /* ---- Enhanced Pseudocode ---- */
     if ((!max_ddb_service_thread_num)) {
-        return -1;
+        return;
     }
     ++stat["dispatch_ddb_service"];
     if ((timeout > 0)) {
         func = (: invoke_before_timeout, (time() + timeout), func :);
     }
     send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 1)], func);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=41, nargs=2, insts=41
+// --------------------------------------------------------------------
+void dispatch_http_service(function func, int timeout) {
+    /* ---- Enhanced Pseudocode ---- */
+    ++stat["dispatch_http_service"];
+    if ((timeout > 0)) {
+        func = (: invoke_before_timeout, (time() + timeout), func :);
+    }
+    send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 6)], func);
 
 }
 
@@ -119,7 +140,7 @@ private void invoke_before_timeout(int time_limit, function f) {
 void dispatch_ldb_service(function func, int timeout) {
     /* ---- Enhanced Pseudocode ---- */
     if ((!max_ldb_service_thread_num)) {
-        return -1;
+        return;
     }
     ++stat["dispatch_ldb_service"];
     if ((timeout > 0)) {
@@ -139,7 +160,6 @@ void dispatch_rpc_exec(function func, int timeout) {
         func = (: invoke_before_timeout, (time() + timeout), func :);
     }
     send_to_queue(threadQ[(max_user_thread_num + 1)], func);
-    return -1;
 
 }
 
@@ -149,7 +169,7 @@ void dispatch_rpc_exec(function func, int timeout) {
 void dispatch_inter_service(function func, int timeout) {
     /* ---- Enhanced Pseudocode ---- */
     if ((!max_inter_service_thread_num)) {
-        return -1;
+        return;
     }
     ++stat["dispatch_inter_service"];
     if ((timeout > 0)) {
@@ -161,7 +181,7 @@ void dispatch_inter_service(function func, int timeout) {
 
 // --------------------------------------------------------------------
 // @brief  destructor: cleanup before object removal
-// @code  nc=282, nargs=0, insts=282
+// @code  nc=366, nargs=0, insts=366
 // --------------------------------------------------------------------
 private void destruct() {
     /* ---- Enhanced Pseudocode ---- */
@@ -234,9 +254,30 @@ private void destruct() {
     i = 0;
 
     // --- label L0231 ---
+    while (i < max_ma_service_thread_num) {
+        send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 4)], 0);
+        ++i;
+    }  // end loop (verified)
+    i = 0;
+
+    // --- label L0259 ---
+    while (i < max_trade_service_thread_num) {
+        send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 5)], 0);
+        ++i;
+    }  // end loop (verified)
+    i = 0;
+
+    // --- label L0287 ---
+    while (i < max_http_service_thread_num) {
+        send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 6)], 0);
+        ++i;
+    }  // end loop (verified)
+    i = 0;
+
+    // --- label L0315 ---
     while (i < max_thread_num) {
 
-        // --- label L0235 ---
+        // --- label L0319 ---
         if ((get_thread_id(tids[i]) != -1)) {
             sleep(0.1);
         }
@@ -245,8 +286,8 @@ private void destruct() {
 }  // end loop (verified)
 i = 0;
 
-// --- label L0256 ---
-while ((i < (((max_user_thread_num + 6) + max_comm_for_gs_thread_num) + max_cs_thread_num))) {
+// --- label L0340 ---
+while ((i < (((max_user_thread_num + 9) + max_comm_for_gs_thread_num) + max_cs_thread_num))) {
     delete_queue(threadQ[i]);
     ++i;
 }  // end loop (verified)
@@ -260,7 +301,7 @@ printf("THREAD_D.all services done.\n");
 void dispatch_comm_service(int i, function func, int timeout) {
     /* ---- Enhanced Pseudocode ---- */
     if ((!max_comm_for_gs_thread_num)) {
-        return -1;
+        return;
     }
     ++stat["dispatch_comm_service"];
     if ((timeout > 0)) {
@@ -281,18 +322,44 @@ int is_rpc_exec_thread(int tid) {
 }
 
 // --------------------------------------------------------------------
+// @code  nc=41, nargs=2, insts=41
+// --------------------------------------------------------------------
+void dispatch_trade_service(function func, int timeout) {
+    /* ---- Enhanced Pseudocode ---- */
+    ++stat["dispatch_trade_service"];
+    if ((timeout > 0)) {
+        func = (: invoke_before_timeout, (time() + timeout), func :);
+    }
+    send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 5)], func);
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=43, nargs=3, insts=43
 // --------------------------------------------------------------------
 void dispatch_cs_service(int i, function func, int timeout) {
     /* ---- Enhanced Pseudocode ---- */
     if ((!max_cs_thread_num)) {
-        return -1;
+        return;
     }
     ++stat["dispatch_cs_service"];
     if ((timeout > 0)) {
         func = (: invoke_before_timeout, (time() + timeout), func :);
     }
     send_to_queue(threadQ[((max_user_thread_num + 2) + (i % max_cs_thread_num))], func);
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=41, nargs=2, insts=41
+// --------------------------------------------------------------------
+void dispatch_ma_service(function func, int timeout) {
+    /* ---- Enhanced Pseudocode ---- */
+    ++stat["dispatch_ma_service"];
+    if ((timeout > 0)) {
+        func = (: invoke_before_timeout, (time() + timeout), func :);
+    }
+    send_to_queue(threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 4)], func);
 
 }
 
@@ -316,13 +383,12 @@ void dispatch_service(function func, int timeout) {
         func = (: invoke_before_timeout, (time() + timeout), func :);
     }
     send_to_queue(threadQ[max_user_thread_num], func);
-    return -1;
 
 }
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=400, nargs=0, insts=400
+// @code  nc=498, nargs=0, insts=498
 // --------------------------------------------------------------------
 private void create() {
     /* ---- Enhanced Pseudocode ---- */
@@ -333,11 +399,11 @@ private void create() {
     set_euid(0);
     reset_stat("all");
     printf("Start THREAD_D.all services.\n");
-    threadQ = allocate_array((((max_user_thread_num + 6) + max_comm_for_gs_thread_num) + max_cs_thread_num));
+    threadQ = allocate_array((((max_user_thread_num + 9) + max_comm_for_gs_thread_num) + max_cs_thread_num));
     i = 0;
 
     // --- label L0028 ---
-    while ((i < (((max_user_thread_num + 6) + max_comm_for_gs_thread_num) + max_cs_thread_num))) {
+    while ((i < (((max_user_thread_num + 9) + max_comm_for_gs_thread_num) + max_cs_thread_num))) {
         threadQ[i] = create_queue("qthread");
         ++i;
     }  // end loop (verified)
@@ -346,71 +412,93 @@ private void create() {
         if ((para < 1)) {
             para = 1;
         }
+        max_thread_num -= max_service_thread_num;
         max_service_thread_num = para;
-        max_thread_num = (((((((max_user_thread_num + max_service_thread_num) + max_rpc_exec_thread_num) + max_comm_for_gs_thread_num) + max_cs_thread_num) + max_web_service_thread_num) + max_ddb_service_thread_num) + max_ldb_service_thread_num);
+        max_thread_num += max_service_thread_num;
         printf("THREAD_D.max_service_thread_num is updated to %d.\n", para);
     }
     i = 0;
 
-    // --- label L0101 ---
+    // --- label L0091 ---
     while (i < max_user_thread_num) {
         tids += ({ create_thread(("tthreaduser" + (i + 1)), "daemon", threadQ[i]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0130 ---
+    // --- label L0120 ---
     while (i < max_service_thread_num) {
         tids += ({ create_thread(("tthreadsrv" + (i + 1)), "daemon", threadQ[max_user_thread_num]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0159 ---
+    // --- label L0149 ---
     while (i < max_rpc_exec_thread_num) {
         tids += ({ create_thread(("tthreadrpc" + (i + 1)), "daemon", threadQ[(max_user_thread_num + 1)]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0190 ---
+    // --- label L0180 ---
     while (i < max_comm_for_gs_thread_num) {
         tids += ({ create_thread(("tthreadcomm" + (i + 1)), "daemon", threadQ[((max_user_thread_num + 2) + i)]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0222 ---
+    // --- label L0212 ---
     while (i < max_cs_thread_num) {
         tids += ({ create_thread(("tthreadcs" + (i + 1)), "daemon", threadQ[(((max_user_thread_num + max_comm_for_gs_thread_num) + 2) + i)]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0256 ---
+    // --- label L0246 ---
     while (i < max_web_service_thread_num) {
         tids += ({ create_thread(("tthreadweb" + (i + 1)), "daemon", threadQ[(((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2)]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0290 ---
+    // --- label L0280 ---
     while (i < max_ddb_service_thread_num) {
         tids += ({ create_thread(("tthreadddbsrv" + (i + 1)), "daemon", threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 1)]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0326 ---
+    // --- label L0316 ---
     while (i < max_ldb_service_thread_num) {
         tids += ({ create_thread(("tthreadldbsrv" + (i + 1)), "daemon", threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 2)]) });
         ++i;
     }  // end loop (verified)
     i = 0;
 
-    // --- label L0362 ---
+    // --- label L0352 ---
     while (i < max_inter_service_thread_num) {
         tids += ({ create_thread(([ "name": ("tthreadintersrv" + (i + 1)), "stack_size": 512 ]), "daemon", threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 3)]) });
+        ++i;
+    }  // end loop (verified)
+    i = 0;
+
+    // --- label L0392 ---
+    while (i < max_ma_service_thread_num) {
+        tids += ({ create_thread(("tthreadmasrv" + (i + 1)), "daemon", threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 4)]) });
+        ++i;
+    }  // end loop (verified)
+    i = 0;
+
+    // --- label L0428 ---
+    while (i < max_trade_service_thread_num) {
+        tids += ({ create_thread(("tthreadtradesrv" + (i + 1)), "daemon", threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 5)]) });
+        ++i;
+    }  // end loop (verified)
+    i = 0;
+
+    // --- label L0464 ---
+    while (i < max_http_service_thread_num) {
+        tids += ({ create_thread(("tthreadhttpsrv" + (i + 1)), "daemon", threadQ[((((max_user_thread_num + max_comm_for_gs_thread_num) + max_cs_thread_num) + 2) + 6)]) });
         ++i;
     }  // end loop (verified)
 
@@ -447,12 +535,12 @@ private void daemon(int qid) {
 }
 
 // --------------------------------------------------------------------
-// @code  nc=58, nargs=1, insts=58
+// @code  nc=64, nargs=1, insts=64
 // --------------------------------------------------------------------
 void reset_stat(string index) {
     /* ---- Enhanced Pseudocode ---- */
     if ((index == "all")) {
-        stat = ([ "dispatch": 0, "dispatch_service": 0, "dispatch_comm_service": 0, "dispatch_cs_service": 0, "dispatch_rpc_exec": 0, "dispatch_web_service": 0, "dispatch_ddb_service": 0, "dispatch_ldb_service": 0, "dispatch_inter_service": 0, "drop": 0, "start_time": time() ]);
+        stat = ([ "dispatch": 0, "dispatch_service": 0, "dispatch_comm_service": 0, "dispatch_cs_service": 0, "dispatch_rpc_exec": 0, "dispatch_web_service": 0, "dispatch_ddb_service": 0, "dispatch_ldb_service": 0, "dispatch_inter_service": 0, "dispatch_ma_service": 0, "dispatch_trade_service": 0, "dispatch_http_service": 0, "drop": 0, "start_time": time() ]);
         return;
     }
     if ((index == "start_time")) {
@@ -475,16 +563,15 @@ void dispatch(int qno, function func, int timeout) {
         func = (: invoke_before_timeout, (time() + timeout), func :);
     }
     send_to_queue(threadQ[(qno % max_user_thread_num)], func);
-    return -1;
 
 }
 
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        16
-   Code segments found:         16
-   Successfully decoded:        16
+   Total function names:        19
+   Code segments found:         19
+   Successfully decoded:        19
    Unresolved/minimal:          0
    Functions without code:      0
    Inherited programs:          1

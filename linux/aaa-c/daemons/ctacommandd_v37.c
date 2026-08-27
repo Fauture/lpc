@@ -155,7 +155,7 @@ int cta_command(int client_no, buffer buf) {
             break;
         }
         if (((privilege != "*") && (strsrch(privilege, cmd) < 0))) {
-            ret_str = "没有许可权";
+            ret_str = "没有权限";
             break;
         }
         ret_val = 1;

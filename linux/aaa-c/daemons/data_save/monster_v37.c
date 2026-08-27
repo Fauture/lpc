@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /feature/common/dbase.c()
  * Functions: 6 names, 6 code segments found
- * Strings: 191, Variables: 4
+ * Strings: 202, Variables: 4
  *********************************************************************/
 
 inherit "/feature/common/dbase.c";
@@ -33,7 +33,7 @@ private void create();
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   org_key_map = ([ ]);  // /daemons/data_save/monster.c:279
+   org_key_map = ([ ]);  // /daemons/data_save/monster.c:290
    new_key_map = ([ ]);
 
 /* ================================================================
@@ -143,7 +143,7 @@ mixed convert_to_memory_mapping(mapping &save_mapping) {
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=754, nargs=0, insts=754
+// @code  nc=798, nargs=0, insts=798
 // --------------------------------------------------------------------
 private void create() {
     /* ---- Enhanced Pseudocode ---- */
@@ -334,6 +334,17 @@ private void create() {
     set_convert_key("mag_rebuild_rate", 185);
     set_convert_key("dunwu_rate", 186);
     set_convert_key("rec_att", 187);
+    set_convert_key("org_owner", 188);
+    set_convert_key("own_ti", 189);
+    set_convert_key("master", 190);
+    set_convert_key("inherit_exp", 191);
+    set_convert_key("last_exchange_owner", 192);
+    set_convert_key("last_exchange_time", 193);
+    set_convert_key("rec_intimacy", 194);
+    set_convert_key("exp_ex", 195);
+    set_convert_key("prop_basic", 196);
+    set_convert_key("prop_extra", 197);
+    set_convert_key("prop_basic_cp", 198);
 
 }
 

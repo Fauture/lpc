@@ -4,7 +4,7 @@
  * Source: /daemons/data_save/user.c
  * Inherits: (none)
  * Functions: 5 names, 5 code segments found
- * Strings: 22, Variables: 0
+ * Strings: 24, Variables: 0
  *********************************************************************/
 
 /* ================================================================
@@ -97,22 +97,25 @@ mixed convert_to_save_mapping(mapping &memory_map) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=178, nargs=1, insts=178
+// @code  nc=274, nargs=1, insts=274
 // --------------------------------------------------------------------
 mixed convert_to_save_data(string memory_text) {
     /* ---- Enhanced Pseudocode ---- */
-    mapping memory_map;
-    mixed mp;
-    mixed mi;
     int pos;
+    mixed type;
+    mixed item_convert_ob;
+    mixed pet_convert_ob;
+    mixed guard_convert_ob;
     mixed data;
     mixed name;
     mixed combat;
     mixed visible;
     mixed converted_data;
-    mixed item_convert_ob;
-    mixed pet_convert_ob;
-    mixed guard_convert_ob;
+    mapping memory_map;
+    mixed mp;
+    mixed mi;
+    mixed ms;
+    mixed mu;
 
     item_convert_ob = "/daemons/datasaved.c"->query_entry("item");
     pet_convert_ob = "/daemons/datasaved.c"->query_entry("monster");
@@ -138,6 +141,26 @@ mixed convert_to_save_data(string memory_text) {
             mi[pos] = sprintf("%s:%s", name, converted_data);
         }  // end loop (verified)
     }
+    if (is_mapping(mu = memory_map["upgrade_equip"])) {
+        loop (pos in keys(mu)) {
+            data = mu[pos];
+            if ((sscanf(data, "%s:%s", &name, &data) != 2)) {
+                continue;
+            }
+            converted_data = item_convert_ob->convert_to_save_data(data);
+            mu[pos] = sprintf("%s:%s", name, converted_data);
+        }  // end loop (verified)
+    }
+    if (is_mapping(ms = memory_map["stall"])) {
+        loop (pos in keys(ms)) {
+            data = ms[pos];
+            if ((sscanf(data, "%d:%s:%s", &type, &name, &data) != 3)) {
+                continue;
+            }
+            converted_data = item_convert_ob->convert_to_save_data(data);
+            ms[pos] = sprintf("%d:%s:%s", type, name, converted_data);
+        }  // end loop (verified)
+    }
     if (is_mapping(mp = memory_map["guards"])) {
         loop (pos in keys(mp)) {
             data = mp[pos];
@@ -154,22 +177,25 @@ mixed convert_to_save_data(string memory_text) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=178, nargs=1, insts=178
+// @code  nc=274, nargs=1, insts=274
 // --------------------------------------------------------------------
 mixed convert_to_memory_data(string save_text) {
     /* ---- Enhanced Pseudocode ---- */
-    mapping save_map;
-    mixed mp;
-    mixed mi;
     int pos;
+    mixed type;
+    mixed item_convert_ob;
+    mixed pet_convert_ob;
+    mixed guard_convert_ob;
     mixed data;
     mixed name;
     mixed combat;
     mixed visible;
     mixed converted_data;
-    mixed item_convert_ob;
-    mixed pet_convert_ob;
-    mixed guard_convert_ob;
+    mapping save_map;
+    mixed mp;
+    mixed mi;
+    mixed ms;
+    mixed mu;
 
     item_convert_ob = "/daemons/datasaved.c"->query_entry("item");
     pet_convert_ob = "/daemons/datasaved.c"->query_entry("monster");
@@ -193,6 +219,26 @@ mixed convert_to_memory_data(string save_text) {
             }
             converted_data = item_convert_ob->convert_to_memory_data(data);
             mi[pos] = sprintf("%s:%s", name, converted_data);
+        }  // end loop (verified)
+    }
+    if (is_mapping(mu = save_map["upgrade_equip"])) {
+        loop (pos in keys(mu)) {
+            data = mu[pos];
+            if ((sscanf(data, "%s:%s", &name, &data) != 2)) {
+                continue;
+            }
+            converted_data = item_convert_ob->convert_to_memory_data(data);
+            mu[pos] = sprintf("%s:%s", name, converted_data);
+        }  // end loop (verified)
+    }
+    if (is_mapping(ms = save_map["stall"])) {
+        loop (pos in keys(ms)) {
+            data = ms[pos];
+            if ((sscanf(data, "%d:%s:%s", &type, &name, &data) != 3)) {
+                continue;
+            }
+            converted_data = item_convert_ob->convert_to_memory_data(data);
+            ms[pos] = sprintf("%d:%s:%s", type, name, converted_data);
         }  // end loop (verified)
     }
     if (is_mapping(mp = save_map["guards"])) {

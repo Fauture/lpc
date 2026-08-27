@@ -44,7 +44,7 @@ private void destruct() {
 // --------------------------------------------------------------------
 mixed get_objects() {
     /* ---- Enhanced Pseudocode ---- */
-    printf("统计该模组使用的object类型的资料，需要重载本函数\n");
+    printf("统计该模块使用的object类型的数据，需要重载本函数\n");
     return ({});
 
 }

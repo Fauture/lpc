@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 3 names, 3 code segments found
- * Strings: 28, Variables: 0
+ * Strings: 30, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -55,7 +55,7 @@ void main(object agent, string dist, string account, string gid, string type, st
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=351, nargs=10, insts=351
+// @code  nc=361, nargs=10, insts=361
 // --------------------------------------------------------------------
 private void exchange_coupon(mixed agent, string dist, string account, string gid, string type, string para, int start_time, int end_time, int once, int coin_type) {
     /* ---- Enhanced Pseudocode ---- */
@@ -121,15 +121,15 @@ private void exchange_coupon(mixed agent, string dist, string account, string gi
             coupon_gold_used = encourage["coupon_gold_used"];
             coupon_silver_used = encourage["coupon_silver_used"];
             encourage_time = encourage["time"];
-            checksum = save_string(md5(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", transaction_id, encourage_account, source, gold_coin, silver_coin, coupon_gold_used, coupon_silver_used, encourage_time, "201004")))[1..<2];
+            checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", transaction_id, encourage_account, source, gold_coin, silver_coin, coupon_gold_used, coupon_silver_used, encourage_time, "201004"), "utf-8", "GBK")))[1..<2];
             if (stricmp(checksum, encourage["checksum"])) {
                 continue;
             }
             if (coin_type) {
-                checksum = save_string(md5(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", transaction_id, encourage_account, source, gold_coin, silver_coin, (string)((int)coupon_gold_used + once), coupon_silver_used, encourage_time, "201004")))[1..<2];
+                checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", transaction_id, encourage_account, source, gold_coin, silver_coin, (string)((int)coupon_gold_used + once), coupon_silver_used, encourage_time, "201004"), "utf-8", "GBK")))[1..<2];
                 sql_cmd = mysql_bind_parameters("update credit_log set coupon_gold_used = ?,  para3 = ?, checksum = ? where id = ? ", ((int)coupon_gold_used + once), type, checksum, encourage["id"]);
             } else {
-                checksum = save_string(md5(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", transaction_id, encourage_account, source, gold_coin, silver_coin, coupon_gold_used, (string)((int)coupon_silver_used + once), encourage_time, "201004")))[1..<2];
+                checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s$%s$%s$%s$%s$%s", transaction_id, encourage_account, source, gold_coin, silver_coin, coupon_gold_used, (string)((int)coupon_silver_used + once), encourage_time, "201004"), "utf-8", "GBK")))[1..<2];
                 sql_cmd = mysql_bind_parameters("update credit_log set coupon_silver_used = ?,  para3 = ?, checksum = ? where id = ? ", ((int)coupon_silver_used + once), type, checksum, encourage["id"]);
             }
             if (((*f_execute)(cno, sql_cmd) < 1)) {
@@ -141,12 +141,12 @@ private void exchange_coupon(mixed agent, string dist, string account, string gi
         }  // end loop (verified)
     } while (0);
 
-    // --- label L0320 ---
+    // --- label L0329 ---
     if ((!is_object(agent))) {
         do_encourage_log(dist, account, gid, sprintf("%s/changenoagent", type), (string)encourage["id"], cookie);
         return;
     }
-    agent->send_message(13079, account, gid, result, para, cookie);
+    agent->send_message(13079, account, gid, result, once, para, cookie);
 
 }
 

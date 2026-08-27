@@ -4,7 +4,7 @@
  * Source: /aaa/daemons/ecardd.c
  * Inherits: (none)
  * Functions: 22 names, 22 code segments found
- * Strings: 80, Variables: 7
+ * Strings: 77, Variables: 7
  *********************************************************************/
 
 /* ================================================================
@@ -76,14 +76,14 @@ void ecard_business_done(mapping m) {
         return;
     }
     if ((m["action"] == "sell_add_money")) {
-        sql_cmd = mysql_bind_parameters("UPDATE ecard_business SET seller_done = 1, update_time = date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s') WHERE id = ?", m["id"]);
+        sql_cmd = mysql_bind_parameters("UPDATE ecard_business SET seller_done = 1, update_time = date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s') WHERE id = ? and seller_done <> 1", m["id"]);
         if (((*f_execute)(cno, sql_cmd) < 1)) {
             catch(error("sql cmd fail : m = %O\n", m));
 
             // --- label L0058 ---
         }
     } else if ((m["action"] == "buy_clear_flag")) {
-        sql_cmd = mysql_bind_parameters("UPDATE ecard_business SET buyer_done = 1, update_time = date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s') WHERE id = ?", m["id"]);
+        sql_cmd = mysql_bind_parameters("UPDATE ecard_business SET buyer_done = 1, update_time = date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s') WHERE id = ? and buyer_done <> 1", m["id"]);
         if (((*f_execute)(cno, sql_cmd) < 1)) {
             catch(error("sql cmd fail : m = %O\n", m));
 
@@ -95,13 +95,12 @@ void ecard_business_done(mapping m) {
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=199, nargs=1, insts=199
+// @code  nc=160, nargs=1, insts=160
 // --------------------------------------------------------------------
 private string get_entire_url(mapping info) {
     /* ---- Enhanced Pseudocode ---- */
     int i;
     mixed bufMd5;
-    buffer bufServ;
     mixed CardNO;
     mixed CardPWD;
     mixed OrderID;
@@ -112,7 +111,7 @@ private string get_entire_url(mapping info) {
     string ParValue;
     mixed SignKey;
     string strMd5;
-    string strServ;
+    mixed strServ;
     mixed url;
 
     CardNO = info["ecard_no"];
@@ -125,25 +124,13 @@ private string get_entire_url(mapping info) {
     OrderID = ctime(time(), 3)[2..<1];
     OrderID += sprintf("%08d", IDseq++);
     info["ecard_order_id"] = OrderID;
-    if (new_convert_code) {
-        strServ = convert_to_url_encode(ServerName);
-    } else {
-        bufServ = (buffer)iconv(ServerName, "utf-8", "gbk");
-        strServ = "";
-        i = 0;
-
-        // --- label L0108 ---
-        while ((i < sizeof(bufServ))) {
-            strServ += sprintf("%%%02x", bufServ[i]);
-            ++i;
-        }  // end loop (verified)
-    }
+    strServ = convert_to_url_encode(ServerName);
     SignKey = ((((((((CardNO + CardPWD) + OrderID) + UserName) + strServ) + SalesName) + SalesIP) + ParValue) + "KfEqyUUHllKPz37EVYyUzGQvgM3ck7yFO0EVwCqQhxrlMwFG9zI9OhvYfHMwUiHHgAhl9Uk7Jv4");
     bufMd5 = md5(SignKey);
     strMd5 = "";
     i = 0;
 
-    // --- label L0161 ---
+    // --- label L0122 ---
     while ((i < sizeof(bufMd5))) {
         strMd5 += sprintf("%02X", bufMd5[i]);
         ++i;
@@ -498,12 +485,12 @@ private void log_to_adb(mapping m, int dir, mixed result) {
         catch(error("ecard connection fail : m=%O\n", m));
 
         // --- label L0027 ---
-        return 0;
+        return;
     }
     if ((dir == 0)) {
-        direction = "发送给亿泰利";
+        direction = "发送给光宇";
     } else {
-        direction = "接收自亿泰利";
+        direction = "接收自光宇";
     }
     sql_cmd = mysql_bind_parameters("insert into ecard_log(ecard_no, ecard_pwd, ecard_id, ecard_server, ecard_seller, ecard_buyer, ecard_buyer_account, ecard_price, ecard_type, ecard_time, direction, result, memo, insert_time, update_time) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s'),date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s'))", m["ecard_no"], m["ecard_pwd"], m["ecard_id"], m["ecard_server"], m["ecard_seller"], m["ecard_buyer"], m["ecard_buyer_account"], m["ecard_price"], m["ecard_type"], ctime(time(), 3), direction, result, "");
     if (((*f_execute)(cno, sql_cmd) < 1)) {

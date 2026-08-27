@@ -35,7 +35,7 @@ void main(object agent, int type, string name, string dummy_dist) {
     if ((((((!is_mapping(spa_info)) || (!is_string(spa_info["ip"]))) || (!is_int(spa_info["port"]))) || (spa_info["ip"] == "")) || (spa_info["port"] == 0))) {
         return;
     }
-    agent->send_message(9065, ({ spa_info }));
+    agent->send_message(16629, ({ spa_info }));
 
 }
 

@@ -4,8 +4,8 @@
  * Source: /aaa/daemons/configd.c
  * Inherits: (none)
  * Inherited programs: /feature/daemon/register.c(), /feature/daemon/handler_module.c(), /feature/daemon/eternal_data.c()
- * Functions: 48 names, 48 code segments found
- * Strings: 44, Variables: 12
+ * Functions: 50 names, 50 code segments found
+ * Strings: 46, Variables: 12
  *********************************************************************/
 
 inherit "/feature/daemon/register.c";
@@ -36,6 +36,7 @@ mixed get_spa_list();
 private void fetch_privilege_group(mixed cno);
 private mixed unlock_when_updated();
 mixed get_csa_info_by_dist(string dist);
+void update_online_num(string server, int num);
 mixed get_csa_list();
 mixed get_my_info();
 private void do_init_after_loaded();
@@ -66,6 +67,7 @@ mixed get_cta_list();
 private array update_internal_address_by_type(string server_type);
 mixed get_server_list_by_dist(string dist);
 int is_updating_server_status();
+mixed get_ldba_list_by_dist(string dist);
 private string expand_privilege_group(mapping all_group, string privilege, mixed got);
 mixed get_server_info(string server);
 mixed get_server_list();
@@ -89,9 +91,9 @@ mixed get_ccs_info_by_dist(string dist);
    internal_addrs = ({ });  // /aaa/daemons/configd.c:33
    config_list = ([ ]);  // /aaa/daemons/configd.c:37
    global_config = ([ ]);  // /aaa/daemons/configd.c:41
-   privilege_group = ([ ]);  // /aaa/daemons/configd.c:865
+   privilege_group = ([ ]);  // /aaa/daemons/configd.c:45
    updating_server_status = 0;
-   key_field_map = ([ "aaa" : "aaa", "ccs" : "ccs", "cta" : "cta", "dba" : "dba", "tts" : "tts", "ddb" : "ddb", "spa" : "spa", "csa" : "csa", "district" : "dist", "server" : "server", "ahserver" : "ahserver" ]);
+   key_field_map = ([ "aaa" : "aaa", "ccs" : "ccs", "cta" : "cta", "dba" : "dba", "tts" : "tts", "ddb" : "ddb", "spa" : "spa", "csa" : "csa", "ldba" : "ldba", "district" : "dist", "server" : "server", "ahserver" : "ahserver" ]);
    _last_update_time = 0;
    _last_update_day = 0;
 
@@ -169,6 +171,19 @@ mixed get_csa_info_by_dist(string dist) {
         return 0;
     }
     return (mapping)config_list["csa"][m["csa"]];
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=26, nargs=2, insts=26
+// --------------------------------------------------------------------
+void update_online_num(string server, int num) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed server_list;
+
+    if ((is_mapping(server_list = config_list["server"]) && is_mapping(server_list[server]))) {
+        server_list[server]["online"] = (string)num;
+    }
 
 }
 
@@ -416,7 +431,7 @@ private void destruct() {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=87, nargs=0, insts=87
+// @code  nc=91, nargs=0, insts=91
 // --------------------------------------------------------------------
 private void update_config() {
     /* ---- Enhanced Pseudocode ---- */
@@ -434,6 +449,7 @@ private void update_config() {
     fetch_config_list(cno, "ccs");
     fetch_config_list(cno, "cta");
     fetch_config_list(cno, "dba");
+    fetch_config_list(cno, "ldba");
     fetch_config_list(cno, "ddb");
     fetch_config_list(cno, "tts");
     fetch_config_list(cno, "district");
@@ -452,7 +468,7 @@ private void update_config() {
 }
 
 // --------------------------------------------------------------------
-// @code  nc=57, nargs=0, insts=57
+// @code  nc=62, nargs=0, insts=62
 // --------------------------------------------------------------------
 private void update_internal_address() {
     /* ---- Enhanced Pseudocode ---- */
@@ -466,6 +482,7 @@ private void update_internal_address() {
     results += update_internal_address_by_type("csa");
     results += update_internal_address_by_type("ccs");
     results += update_internal_address_by_type("tts");
+    results += update_internal_address_by_type("ldba");
     results += update_internal_address_by_type("server");
     results += update_internal_address_by_type("ahserver");
     internal_addrs = results;
@@ -698,6 +715,28 @@ int is_updating_server_status() {
 }
 
 // --------------------------------------------------------------------
+// @brief  accessor: retrieve value
+// @code  nc=41, nargs=1, insts=41
+// --------------------------------------------------------------------
+mixed get_ldba_list_by_dist(string dist) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed mks;
+    mixed arr;
+
+    if ((!is_mapping(config_list["ldba"]))) {
+        return 0;
+    }
+    arr = ({});
+    loop (mks in config_list["ldba"]) {
+        if ((mks[1]["dist"] == dist)) {
+            arr += ({ mks[1] });
+        }
+    }  // end loop (verified)
+    return arr;
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=98, nargs=3, insts=98
 // --------------------------------------------------------------------
 private string expand_privilege_group(mapping all_group, string privilege, mixed got) {
@@ -798,17 +837,20 @@ private void fetch_global_config(int cno) {
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=85, nargs=2, insts=85
+// @code  nc=97, nargs=2, insts=97
 // --------------------------------------------------------------------
 mixed get_info_by_type(int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
     switch (type) {
         case 5:
+        case 18:
         return (mapping)get_server_list()[name];
         case 7:
         return (mapping)config_list["ccs"][name];
         case 4:
         return (mapping)config_list["dba"][name];
+        case 19:
+        return (mapping)config_list["ldba"][name];
         case 9:
         return (mapping)config_list["spa"][name];
         case 2:
@@ -978,9 +1020,9 @@ mixed get_ccs_info_by_dist(string dist) {
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        48
-   Code segments found:         48
-   Successfully decoded:        48
+   Total function names:        50
+   Code segments found:         50
+   Successfully decoded:        50
    Unresolved/minimal:          0
    Functions without code:      0
    Inherited programs:          3

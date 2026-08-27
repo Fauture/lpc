@@ -5,10 +5,17 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 25, Variables: 0
+ * Strings: 34, Variables: 3
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
+
+/* ================================================================
+   Global/Object Variables
+   ================================================================ */
+   array all_recharge_return_arr;
+   /* mixed global_0; */
+   mapping recharge_return_map;
 
 /* ================================================================
    FORWARD DECLARATIONS
@@ -18,12 +25,19 @@ private void request_coupon(mixed agent, string dist, string gid, string account
 void main(object agent, string dist, string gid, string account, string type, string para);
 
 /* ================================================================
+   GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
+   ================================================================ */
+
+   recharge_return_map = ([ "充值返利活动20150728充值返利十元礼包" : 1, "充值返利活动20150728充值返利五十元礼包" : 1, "充值返利活动20150728充值返利百元礼包" : 1, "充值返利活动20150728充值返利五百元礼包" : 1, "充值返利活动20150728充值返利千元礼包" : 1 ]);
+   all_recharge_return_arr = keys(recharge_return_map);
+
+/* ================================================================
    FUNCTION DEFINITIONS
    ================================================================ */
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=299, nargs=6, insts=299
+// @code  nc=324, nargs=6, insts=324
 // --------------------------------------------------------------------
 private void request_coupon(mixed agent, string dist, string gid, string account, string type, string para) {
     /* ---- Enhanced Pseudocode ---- */
@@ -55,7 +69,11 @@ private void request_coupon(mixed agent, string dist, string gid, string account
             break;
         }
         ct = time();
-        sql_cmd = mysql_bind_parameters("select * from encourage where account=? and used=? and (expired_time='' or expired_time>=?) limit 1", account, 0, ctime(ct, 3));
+        if (recharge_return_map[type]) {
+            sql_cmd = mysql_bind_parameters("select * from encourage where account=? and encourage_type = ? and used=? and (expired_time='' or expired_time>=?) limit 1", account, type, 0, ctime(ct, 3));
+        } else {
+            sql_cmd = mysql_bind_parameters(sprintf("select * from encourage where account=? and used=? and encourage_type not in ('%s') and (expired_time='' or expired_time>=?) limit 1", implode(all_recharge_return_arr, "', '")), account, 0, ctime(ct, 3));
+        }
         arr = mysql_select(cno, sql_cmd);
         if ((!is_array(arr))) {
             break;
@@ -94,7 +112,7 @@ private void request_coupon(mixed agent, string dist, string gid, string account
                 break;
             }
         }
-        checksum = save_string(md5(sprintf("%s$%s$%s$%s", encourage["account"], encourage["encourage_type"], encourage["used"], "201004")))[1..<2];
+        checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s", encourage["account"], encourage["encourage_type"], encourage["used"], "201004"), "utf-8", "GBK")))[1..<2];
         if (stricmp(checksum, encourage["checksum"])) {
             sql_cmd = mysql_bind_parameters("update encourage set used = ? where id = ?", 3, encourage["id"]);
             (*f_execute)(cno, sql_cmd);
@@ -110,7 +128,7 @@ private void request_coupon(mixed agent, string dist, string gid, string account
         result = 0;
     } while (0);
 
-    // --- label L0281 ---
+    // --- label L0306 ---
     if ((!is_object(agent))) {
         return;
     }

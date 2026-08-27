@@ -22,13 +22,13 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=66, nargs=3, insts=66
+// @code  nc=71, nargs=3, insts=71
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
     mapping tts_info;
 
-    if (((type != 5) && (type != 9))) {
+    if ((((type != 5) && (type != 18)) && (type != 9))) {
         return;
     }
     tts_info = "/aaa/daemons/configd.c"->get_tts_info_by_dist(agent->query("dist"));

@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 17, Variables: 0
+ * Strings: 18, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -23,7 +23,7 @@ void main(object agent, string account, int check_flag, string ip, string dist, 
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=204, nargs=9, insts=204
+// @code  nc=226, nargs=9, insts=226
 // --------------------------------------------------------------------
 private void _main(object agent, string account, int check_flag, string ip, string dist, string passpod, string matrix, int seq_no, int step) {
     /* ---- Enhanced Pseudocode ---- */
@@ -32,12 +32,14 @@ private void _main(object agent, string account, int check_flag, string ip, stri
     mixed passpod_type;
     mixed prompt;
     mapping m;
+    mapping extra_info;
     mixed build_info;
 
     if (("/daemons/dbd.c"->assure_connection("adb") < 0)) {
         return;
     }
     m = ([ ]);
+    m["inc_fail"] = 1;
     if ((check_flag & 1)) {
         check_result = "/aaa/daemons/accountd.c"->auth_sm_protect(account, ip, dist, "", &prompt);
         if (is_string(prompt)) {
@@ -55,7 +57,8 @@ private void _main(object agent, string account, int check_flag, string ip, stri
         }
     }
     if ((check_flag & 4)) {
-        check_result = "/aaa/daemons/accountd.c"->auth_passpod_protect(account, ip, dist, passpod, &prompt);
+        extra_info = ([ ]);
+        check_result = "/aaa/daemons/accountd.c"->auth_passpod_protect(account, ip, dist, passpod, &prompt, &extra_info);
         if (is_string(prompt)) {
             m[4] = ([ "res": check_result, "prompt": prompt ]);
         } else {
@@ -63,6 +66,9 @@ private void _main(object agent, string account, int check_flag, string ip, stri
         }
         if ((sscanf(passpod, "%s|%d", &passpod_text, &passpod_type) == 2)) {
             m["passpod_type"] = passpod_type;
+        }
+        if ((!extra_info["inc_fail"])) {
+            m["inc_fail"] = 0;
         }
     }
     if ((check_flag & 8)) {

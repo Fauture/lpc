@@ -22,13 +22,13 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=78, nargs=3, insts=78
+// @code  nc=88, nargs=3, insts=88
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
     mapping ccs_info;
 
-    if ((((type != 5) && (type != 4)) && (type != 9))) {
+    if ((((((type != 5) && (type != 18)) && (type != 4)) && (type != 19)) && (type != 9))) {
         return;
     }
     ccs_info = "/aaa/daemons/configd.c"->get_ccs_info_by_dist(agent->query("dist"));

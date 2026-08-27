@@ -30,7 +30,7 @@ void to_be_disconnect(int timeout);
 private void destruct();
 string get_peer_ip();
 private void disconnect();
-private void create(mapping m);
+private void create(mapping m = ([ ]));
 void relay_comm(object comm);
 
 /* ================================================================

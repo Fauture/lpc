@@ -4,7 +4,7 @@
  * Source: /aaa/daemons/pwdprotect_authd.c
  * Inherits: (none)
  * Functions: 7 names, 7 code segments found
- * Strings: 39, Variables: 7
+ * Strings: 36, Variables: 7
  *********************************************************************/
 
 /* ================================================================
@@ -45,14 +45,13 @@ private mapping to_auth_protect(string type, string account, string dist, string
    ================================================================ */
 
 // --------------------------------------------------------------------
-// @code  nc=130, nargs=3, insts=130
+// @code  nc=91, nargs=3, insts=91
 // --------------------------------------------------------------------
 mapping auth_protect(string type, string account, string dist) {
     /* ---- Enhanced Pseudocode ---- */
     int i;
-    buffer bufServ;
     mixed sign_key;
-    string strServ;
+    mixed strServ;
     mixed url;
     mapping m;
 
@@ -60,19 +59,7 @@ mapping auth_protect(string type, string account, string dist) {
     if ((!get_status())) {
         return m;
     }
-    if (new_convert_code) {
-        strServ = convert_to_url_encode(dist);
-    } else {
-        bufServ = (buffer)iconv(dist, "utf-8", "gbk");
-        strServ = "";
-        i = 0;
-
-        // --- label L0039 ---
-        while ((i < sizeof(bufServ))) {
-            strServ += sprintf("%%%02x", bufServ[i]);
-            ++i;
-        }  // end loop (verified)
-    }
+    strServ = convert_to_url_encode(dist);
     sign_key = save_string(md5(sprintf(md5_desc, account, protect_type[type], strServ)))[1..<2];
     url = sprintf(url_desc, account, protect_type[type], strServ, sign_key);
     for (i = 1; i <= 3; i++) {

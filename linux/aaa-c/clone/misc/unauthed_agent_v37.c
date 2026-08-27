@@ -81,7 +81,7 @@ override void process_command(string cmd, array args) {
         case "cmd_l_auth_local_encrypt":
         case "cmd_l_get_qr_code_info":
         case "cmd_l_login_by_qr_code":
-        return;
+        break;
         default:
         return;
     }  // end switch
@@ -99,7 +99,7 @@ private void create() {
     /* ---- Enhanced Pseudocode ---- */
     set_name("unauthed_agent");
     if (is_clone()) {
-        to_be_disconnect(15);
+        to_be_disconnect(60);
     }
 
 }

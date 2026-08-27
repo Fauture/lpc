@@ -39,7 +39,7 @@ void main(mixed server);
 // --------------------------------------------------------------------
 void _main(mixed agent) {
     /* ---- Enhanced Pseudocode ---- */
-    printf("[1;32m½ÓÊÕÀ´×ÔCCSµÄÔ¶¶Ë¹Ø»úÇëÇó£¬×¼±¸°²È«¹Ø»ú\n[2;37;0m");
+    printf("[1;32m½ÓÊÕÀ´×ÔCCSµÄÔ¶³Ì¹Ø»úÇëÇó£¬×¼±¸°²È«¹Ø»ú\n[2;37;0m");
     "/aaa/daemons/aaaserverd.c"->stop_service();
     safe_reboot();
 

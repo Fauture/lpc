@@ -3,8 +3,8 @@
  * File: logd.o
  * Source: /daemons/logd.c
  * Inherits: (none)
- * Functions: 10 names, 10 code segments found
- * Strings: 48, Variables: 2
+ * Functions: 9 names, 9 code segments found
+ * Strings: 41, Variables: 2
  *********************************************************************/
 
 /* ================================================================
@@ -19,7 +19,6 @@
 
 void log_login_info(string log_file_name, string action, string memo);
 int get_ldb();
-private string time_desc(mixed ti);
 void log_message(string log_file_name, string memo);
 void browse_log(string sql_cond, int max_count = 128);
 private void init();
@@ -40,11 +39,11 @@ private void create();
    ================================================================ */
 
 // --------------------------------------------------------------------
-// @code  nc=16, nargs=3, insts=16
+// @code  nc=14, nargs=3, insts=14
 // --------------------------------------------------------------------
 void log_login_info(string log_file_name, string action, string memo) {
     /* ---- Enhanced Pseudocode ---- */
-    to_log_file(log_file_name, ((ctime()[4..18] + ":") + memo));
+    to_log_file(log_file_name, ((ctime(time(), 1) + ":") + memo));
 
 }
 
@@ -55,18 +54,6 @@ void log_login_info(string log_file_name, string action, string memo) {
 int get_ldb() {
     /* ---- Enhanced Pseudocode ---- */
     return _ldb;
-
-}
-
-// --------------------------------------------------------------------
-// @code  nc=34, nargs=1, insts=34
-// --------------------------------------------------------------------
-private string time_desc(mixed ti) {
-    /* ---- Enhanced Pseudocode ---- */
-    mapping m;
-
-    m = (ti ? local_time(ti) : local_time());
-    return sprintf("%4d-%02d-%02d-%02d:%02d:%02d", m["year"], m["mon"], m["mday"], m["hour"], m["min"], m["sec"]);
 
 }
 
@@ -91,7 +78,7 @@ void browse_log(string sql_cond, int max_count) {
     query_index = sql_query(_ldb, ("select * from log where " + sql_cond));
     if ((query_index == -1)) {
         printf("[1;31mEmpty result.\n[2;37;0m");
-        return 128;
+        return;
     }
     try {
         printf("[1;36m%-20s %-11s %-10s %-16s\n[2;37;0m", "time", "severity", "type", "action");
@@ -103,7 +90,6 @@ void browse_log(string sql_cond, int max_count) {
             printf("%s%-20s %-11s %-10s %-16s Para: %s/%s/%s Memo: %s\n[2;37;0m", color, ret["time"], ret["severity"], ret["type"], ret["action"], ret["para1"][0..11], ret["para2"][0..11], ret["para3"][0..11], ret["memo"]);
         }  // end loop (verified)
     } catch { /* error handled */ }
-    goto L0099;
 
     // --- label L0099 ---
     sql_finalize(query_index);
@@ -186,9 +172,9 @@ private void create() {
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        10
-   Code segments found:         10
-   Successfully decoded:        10
+   Total function names:        9
+   Code segments found:         9
+   Successfully decoded:        9
    Unresolved/minimal:          0
    Functions without code:      0
    ================================================================ */

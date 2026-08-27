@@ -1,18 +1,21 @@
 /**********************************************************************
  * LPC Decompiled Source (v37 - Readability Enhanced)
- * File: chanpind.o
- * Source: /daemons/chanpind.c
+ * File: cmd_l_get_credit_coins.o
+ * Source: /aaa/daemons/server/cmd_l_get_credit_coins.c
  * Inherits: (none)
+ * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 5, Variables: 0
+ * Strings: 8, Variables: 0
  *********************************************************************/
+
+inherit "/inherit/misc/handler.c";
 
 /* ================================================================
    FORWARD DECLARATIONS
    ================================================================ */
 
-mixed read(string path, string name, mixed branch);
-int write(string path, string name, mixed branch, mixed content);
+private void _main(mixed agent, string account, string gid, string ref_time);
+int main(mixed agent, string account, string gid, string ref_time);
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -20,24 +23,40 @@ int write(string path, string name, mixed branch, mixed content);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=11, nargs=3, insts=11
+// @code  nc=61, nargs=4, insts=61
 // --------------------------------------------------------------------
-mixed read(string path, string name, mixed branch) {
+private void _main(mixed agent, string account, string gid, string ref_time) {
     /* ---- Enhanced Pseudocode ---- */
-    return "/daemons/filed.c"->read_content(path, name, branch);
+    mixed cno;
+    int coins;
+    mixed arr;
+    mixed sql_cmd;
+
+    if (((cno = "/daemons/dbd.c"->assure_connection("adb")) == -1)) {
+        return;
+    }
+    sql_cmd = mysql_bind_parameters("SELECT sum(gold_coin) as coins FROM credit_log WHERE account = ? and time between ? and ?", account, ref_time, ctime(time(), 3));
+    arr = mysql_select(cno, sql_cmd, 1);
+    if ((!is_array(arr))) {
+        return;
+    }
+    if (sizeof(arr)) {
+        coins = atoi(arr[0]["coins"]);
+    } else {
+        coins = 0;
+    }
+    agent->send_message(25487, gid, (string)coins);
 
 }
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=19, nargs=4, insts=19
+// @code  nc=23, nargs=4, insts=23
 // --------------------------------------------------------------------
-int write(string path, string name, mixed branch, mixed content) {
+int main(mixed agent, string account, string gid, string ref_time) {
     /* ---- Enhanced Pseudocode ---- */
-    if (is_undefined(content)) {
-        error("%O\n", "Argument 4 undefined.");
-    }
-    return "/daemons/filed.c"->write_content(path, name, branch, content);
+    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: _main, agent, account, gid, ref_time :));
+    return 1;
 
 }
 
@@ -49,4 +68,6 @@ int write(string path, string name, mixed branch, mixed content) {
    Successfully decoded:        2
    Unresolved/minimal:          0
    Functions without code:      0
+   Inherited programs:          1
+      - /inherit/misc/handler.c()
    ================================================================ */

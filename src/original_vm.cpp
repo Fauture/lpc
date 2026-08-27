@@ -224,6 +224,35 @@ Value addValues(const Value& a, const Value& b) {
 }
 
 Value subValues(const Value& a, const Value& b) {
+    // array - array: remove elements of b from a (vm_subValue / vm_subArray)
+    if (a.index() == 5 && b.index() == 5) {
+        auto r = std::make_shared<ArrayValue>();
+        const auto& bb = std::get<std::shared_ptr<ArrayValue>>(b)->items;
+        for (const auto& item : std::get<std::shared_ptr<ArrayValue>>(a)->items) {
+            bool found = false;
+            for (const auto& x : bb)
+                if (value_equal(item, x)) { found = true; break; }
+            if (!found) r->items.push_back(item);
+        }
+        return r;
+    }
+    // mapping - mapping/array: remove keys present in b
+    if (a.index() == 6) {
+        auto r = std::make_shared<MappingValue>();
+        const auto& aa = std::get<std::shared_ptr<MappingValue>>(a)->entries;
+        for (const auto& kv : aa) {
+            bool found = false;
+            if (b.index() == 6) {
+                for (const auto& x : std::get<std::shared_ptr<MappingValue>>(b)->entries)
+                    if (value_equal(kv.first, x.first)) { found = true; break; }
+            } else if (b.index() == 5) {
+                for (const auto& x : std::get<std::shared_ptr<ArrayValue>>(b)->items)
+                    if (value_equal(kv.first, x)) { found = true; break; }
+            }
+            if (!found) r->entries.push_back(kv);
+        }
+        return r;
+    }
     if (a.index() == 3 || b.index() == 3) return make_float(toReal(a) - toReal(b));
     return make_int(toInt(a) - toInt(b));
 }
@@ -654,17 +683,9 @@ private:
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
             if (nm == "broadcast") {
-                // Original vm_f_broadcast logs the message; object loading is
-                // done by the LPC load_all/safe_load_object/load_object path.
-                // To keep the extracted-game startup working, the very first
-                // broadcast (from the master's global code, "Driver startup")
-                // also pre-loads every object once; later broadcasts are pure
-                // log messages (preventing the infinite re-load loop).
-                static bool preloadDone = false;
-                if (!preloadDone && !searchRoot_.empty()) {
-                    preloadDone = true;
-                    handleBroadcastEfun(searchRoot_, args);
-                }
+                // Pure log message (vm_f_broadcast).  Object loading is driven
+                // by the LPC startup code (load_all_path/load_all -> load_object
+                // in the master's global code), NOT by a C++ directory walk.
                 std::string msg;
                 if (!args.empty()) msg = to_string(args[0], false);
                 if (!msg.empty()) std::cout << msg << "\n";
@@ -790,12 +811,17 @@ private:
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
             const OriginalFunction& fn = *it->second;
-            if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "get_info_by_type" || fn.name == "get_aaa_info" || fn.name == "get_my_info" || fn.name == "fetch_config_list")) {
+            bool traceMe = fn.name == "mixed_mysql_select" || fn.name == "get_info_by_type" ||
+                           fn.name == "get_aaa_info" || fn.name == "get_my_info" ||
+                           fn.name == "fetch_config_list" || fn.name == "assure_connection" ||
+                           fn.name == "mysql_select" || fn.name == "update_config" ||
+                           fn.name == "choose_one_url" || fn.name == "do_init";
+            if (std::getenv("LPCVM_TRACE") && traceMe) {
                 std::string msg = "[xret] " + fn.name + " start argc=" + std::to_string(fn.argCount) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
             }
             Value r = executeFunctionOnStack(fn);
-            if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "get_info_by_type" || fn.name == "get_aaa_info" || fn.name == "get_my_info" || fn.name == "fetch_config_list")) {
+            if (std::getenv("LPCVM_TRACE") && traceMe) {
                 std::string msg = "[xret] " + fn.name + " result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
                 std::cerr.flush();
@@ -840,7 +866,8 @@ private:
             if (std::getenv("LPCVM_TRACE")) {
                 std::string dbg;
                 for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
-                std::cerr << "[xobj] " << name << " argc=" << argCount << " args=[" << dbg << "]\n";
+                std::cerr << "[fallback] vm=" << this << " index=" << index << " name=" << name
+                          << " argc=" << argCount << " args=[" << dbg << "] stackLeft=" << stack_.size() << "\n";
             }
             return target->callFunctionByName(name, args);
         }
@@ -857,14 +884,14 @@ private:
     }
 
     Value executeFunctionFromOutside(const OriginalFunction& fn, const std::vector<Value>& args) {
+        // The whole call - pushing the arguments AND running the body - must
+        // hold this VM's execution lock.  Several OS threads can call into the
+        // same registry VM concurrently; pushing outside the lock let one
+        // thread's arguments land on another thread's stack (seen as a
+        // shifted mixed_mysql_select parameter list -> bogus cno/sql).
+        std::lock_guard<std::recursive_mutex> lock(execMutex_);
         // The original VM pushes args in reverse (param0 last, on top).
         int n = fn.argCount;
-        if (std::getenv("LPCVM_TRACE") && fn.name == "mixed_mysql_select") {
-            std::string dbg;
-            for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
-            std::cerr << "[xout] mixed_mysql_select args=[" << dbg << "] n=" << n
-                      << " stackBefore=" << stack_.size() << "\n";
-        }
         for (int i = n - 1; i >= 0; --i) {
             Value a = (i < static_cast<int>(args.size())) ? args[i] : Value(UndefinedTag{});
             pushValue(a);
@@ -877,13 +904,20 @@ private:
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
-        if (std::getenv("LPCVM_TRACE") && fn.name == "mixed_mysql_select") {
+        if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "mysql_select" ||
+                                           fn.name == "fetch_config_list" || fn.name == "update_config" ||
+                                           fn.name == "assure_connection" || fn.name == "choose_one_url" ||
+                                           fn.name == "do_init")) {
             std::string dbg;
             for (int i = 0; i < fn.argCount; ++i)
                 dbg += (i ? "," : "") + to_string(slotValue(bp - i), false);
-            std::cerr << "[xfn] vm=" << this << " mixed_mysql_select params=[" << dbg << "] bp=" << bp
+            std::string stack0;
+            if (fn.name == "fetch_config_list")
+                stack0 = stack_.size() > 0 ? to_string(stack_[0].value, false) : "<empty>";
+            std::cerr << "[xfn] vm=" << this << " " << fn.name << " params=[" << dbg << "] bp=" << bp
                       << " argNum=" << fn.argCount << " stackSize=" << stack_.size()
-                      << " frames=" << frames_.size() << "\n";
+                      << " frames=" << frames_.size()
+                      << (stack0.empty() ? "" : (" stack0=" + stack0)) << "\n";
         }
         Frame frame{&fn, bp, fn.argCount, fn.localCount};
         frames_.push_back(frame);
@@ -941,12 +975,35 @@ private:
                 if (returned_) return;
                 returnValue_ = make_int(0);
                 return;
-            case 72: // return_from_fake_fun
-            case 73: // return_from_fun
+            case 72: // return_from_fake_fun (lambda/closure return: value always popped)
                 if (!stack_.empty()) returnValue_ = pop().value;
                 else returnValue_ = make_int(0);
                 returned_ = true;
                 return;
+            case 73: { // return_from_fun
+                // Original vm_returnFromFun (0x8094978): a value-returning
+                // function leaves exactly one value on the stack (sp ==
+                // bp - args + 1); a void function must have sp == bp - args
+                // and gets a VOID value pushed by the VM - it must NEVER pop
+                // the caller's stack (that would consume the caller's locals,
+                // e.g. update_config's cno slot).  In our vector model bp is
+                // the top slot at entry, so:
+                //   void:   size == bp + 1            -> push void
+                //   valued: size == bp + 2            -> pop the return value
+                const Frame& f = frames_.back();
+                size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
+                if (stack_.size() == expectedVoid) {
+                    returnValue_ = make_int(0);   // void return value
+                } else if (stack_.size() == expectedVoid + 1 && !stack_.empty()) {
+                    returnValue_ = pop().value;
+                } else {
+                    // Stack not in canonical shape; take the top if any.
+                    if (!stack_.empty()) returnValue_ = pop().value;
+                    else returnValue_ = make_int(0);
+                }
+                returned_ = true;
+                return;
+            }
             case 59: // push_number(S)
                 pushValue(make_int(static_cast<int16_t>(in.a)));
                 break;
@@ -970,11 +1027,6 @@ private:
                 pushValue(make_int(frames_.empty() ? 0 : frames_.back().argNum));
                 break;
             case 53: // push_global_var
-                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
-                    std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
-                    if (cur == std::getenv("LPCVM_TRACE_FN"))
-                        std::cerr << "[gvar] idx=" << in.a << " value=" << to_string(sharedGlobal(in.a), false) << "\n";
-                }
                 pushValue(sharedGlobal(in.a));
                 break;
             case 61: // push_obj_var
@@ -1212,9 +1264,24 @@ private:
             case 45: // not_value
                 pushValue(make_int(isZero(pop().value) ? 1 : 0));
                 break;
-            case 79: { // sizeof
+            case 79: { // sizeof: LPC semantics (vm_sizeof 0x808f840)
+                //   string -> byte length; buffer -> length;
+                //   array/mapping -> element count; int/real/void -> 0
                 Value v = pop().value;
-                pushValue(make_int(toInt(v)));
+                switch (v.index()) {
+                case 4:
+                    pushValue(make_int(static_cast<int64_t>(std::get<std::string>(v).size())));
+                    break;
+                case 5:
+                    pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size())));
+                    break;
+                case 6:
+                    pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->entries.size())));
+                    break;
+                default:
+                    pushValue(make_int(0));
+                    break;
+                }
                 break;
             }
             case 36: { // is_type
@@ -1318,20 +1385,6 @@ private:
                 int mayNull = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int total = fromMeta ? m1 : in.b;
                 StackItem funItem = pop();
-                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
-                    std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
-                    if (cur == std::getenv("LPCVM_TRACE_FN")) {
-                        std::string fv;
-                        if (funItem.value.index() == 8) {
-                            auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
-                            fv = "closure:" + cl->functionName;
-                        } else {
-                            fv = to_string(funItem.value, false);
-                        }
-                        std::cerr << "[cfp] total=" << total << " fun=" << fv
-                                  << " stack=" << stack_.size() << "\n";
-                    }
-                }
                 std::vector<Value> args;
                 for (int i = 1; i < total && !stack_.empty(); ++i) args.push_back(pop().value);
                 Value result = make_int(0);
@@ -1633,9 +1686,12 @@ private:
             return UndefinedTag{};
         }
         if (container.index() == 4) {
+            // LPC string indexing returns the ASCII code (int), e.g.
+            // path[strlen-1] != 47 in load_all_path/load_all.
             const std::string& s = std::get<std::string>(container);
             int64_t i = toInt(key);
-            if (i >= 0 && i < static_cast<int64_t>(s.size())) return make_string(std::string(1, s[static_cast<size_t>(i)]));
+            if (i >= 0 && i < static_cast<int64_t>(s.size()))
+                return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
             return UndefinedTag{};
         }
         return UndefinedTag{};

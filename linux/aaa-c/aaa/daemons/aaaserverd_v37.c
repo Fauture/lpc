@@ -46,7 +46,7 @@ private mixed get_my_info() {
 }
 
 // --------------------------------------------------------------------
-// @code  nc=30, nargs=0, insts=30
+// @code  nc=35, nargs=0, insts=35
 // --------------------------------------------------------------------
 int stop_service() {
     /* ---- Enhanced Pseudocode ---- */
@@ -58,7 +58,9 @@ int stop_service() {
     in_service = 0;
     clean_mapping_by_value(client_agents, 10);
     loop (agent in values(client_agents)) {
-        destruct_object(agent);
+        if ((1 == is_object(agent))) {
+            destruct_object(agent);
+        }
     }  // end loop (verified)
     return 1;
 
@@ -83,7 +85,7 @@ private void do_init() {
     do {
         my_info = get_my_info();
         if ((!is_mapping(my_info))) {
-            printf("[1;31mªÒ»° AAA ≈‰÷√◊ —∂ ß∞‹£¨…‘∫Û÷ÿ ‘\n[2;37;0m");
+            printf("[1;31mªÒ»° AAA ≈‰÷√–≈œ¢ ß∞‹£¨…‘∫Û÷ÿ ‘\n[2;37;0m");
             sleep(3);
         }
     } while ((!is_mapping(my_info)));

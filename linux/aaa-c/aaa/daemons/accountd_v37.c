@@ -4,8 +4,8 @@
  * Source: /aaa/daemons/accountd.c
  * Inherits: (none)
  * Inherited programs: /feature/common/dbase.c(), /feature/daemon/register.c(), /feature/daemon/handler_module.c(), /feature/daemon/eternal_data.c()
- * Functions: 136 names, 136 code segments found
- * Strings: 389, Variables: 30
+ * Functions: 144 names, 144 code segments found
+ * Strings: 453, Variables: 30
  *********************************************************************/
 
 inherit "/feature/common/dbase.c";
@@ -25,25 +25,25 @@ inherit "/feature/daemon/eternal_data.c";
    int clean_protect_account_timer_ex;
    mapping client_seedA;
    int cur_auth_key;
-   int cur_qr_code_id;
    int fixed_city_status;
    int g_auth_method;
    /* mixed global_0; */
    /* mixed global_1; */
    /* mixed global_2; */
    /* mixed global_3; */
+   array ignore_dist_list;
+   int is_need_open_guard;
    int local_encrypt_enabled;
    int matrix_active_status;
    array matrix_list;
    int matrix_pic_enabled;
+   int merge_limit_login;
    mapping protect_account;
    mapping protect_account_ex;
    mapping protect_index;
-   mapping qr_code_list;
    int safe_tips_enbled;
    int timeout_for_choose_server;
    int timeout_for_protect_auth;
-   int timeout_qr_code;
    array vector_x;
    array vector_y;
 
@@ -53,18 +53,17 @@ inherit "/feature/daemon/eternal_data.c";
 
 private mapping activate_account(string account, string md5password, string account_ip);
 override void connection_lost(object agent);
-private void clean_qr_code_list(string qr_code);
 mixed auth_matrix_protect(string account, string ip, string dist, string auth_info, mixed &prompt, mixed &build_info);
 int check_matrix_info(mapping m);
 mixed assure_server_agent(string server);
 private string get_protect_key(string account, string ip);
-int block_account(string dist, string account, int interval, string reason, mixed &prompt);
-private void _account_login_by_qr_code(mixed agent, string account, string password, string qr_code, string encrypt_key);
+int block_account(string dist, string account, int interval, string reason, int ignore_data, mixed &prompt = 0, int recycle_privilege = 0);
 int is_under_control(mapping account_info);
 private int pwd_protect_deny_fixed_ip(string account, mapping m, mixed param, mixed dist);
-int update_account_info(mapping info, mixed fields);
+int update_account_info(mapping info, mixed fields, mixed valid_checksum);
 int get_safe_tips_status();
 int record_protect_range(string account, int range);
+mixed query_app_bind_info(string account, int format = 0);
 override void connection_disconnect(object agent);
 int get_account_matrix_status(mixed matrix_info);
 private void init_matrix();
@@ -74,23 +73,23 @@ string calc_password_new_md5(string account, string pwd);
 private void log_protect_time(string account, string branch, string protect_type, string time_desc, int cno);
 int get_account_controlled_safe_state(string account);
 void log_bad_checksum_account(string account, mapping account_info);
+mixed query_mp_device_info(string account);
 string calc_account_checksum(mapping account_info);
 private void set_protect_info_analysis_func(string type, mixed func);
 mixed calc_local_encrypt_checksum(mapping m, string le_info);
 private string calc_matrix_pwd_md5(string value1, string value2, string value3, string value4);
-int control_account(string account, int oper, string password, string permit_ip, mixed &prompt);
+int control_account(string account, int oper, string password, string permit_ip, string permit_id, mixed &prompt);
 int get_matrix_status();
 int set_active_account_status(int status);
 mixed auth_phone_protect(string account, string ip, string dist, string auth_info, mixed &prompt);
 private int pwd_protect_fetch_phone(string account, mapping &m);
+private void do_when_batch_block_account(array arr_account, string dist);
 private int pwd_protect_fetch_sm(string account, mapping &m);
 void refresh_matrix_pic(mixed agent, int index);
 string get_place_by_ip(string ip_addr);
-private void account_login(object agent, string account, string password, string mac_addr, string client_data, string passpod = "", string dist = "", int mobile_client = 0, string version = "");
+private void account_login(object agent, string account, string password, string mac_addr, string client_data, string passpod = "", string dist = "", int mobile_client = 0, string version = "", string qr_id = "");
 private int pwd_protect_fetch_matrix(string account, mapping &m);
-private void account_login_by_qr_code(mixed agent, string dist, string account, string password, string qr_code);
 int delete_protect_info(string account, mixed protect_type);
-private string make_qr_code(string dist);
 void enable_safe_tips();
 int update_protect_info(mapping m);
 private int pwd_protect_deny_fixed_city(string account, mapping m, mixed param, mixed dist);
@@ -103,6 +102,7 @@ void disable_local_encrypt();
 void enable_apex();
 private int pwd_protect_deny_sm(string account, mapping m, mixed param, mixed dist);
 int insert_safe_ctrl(mapping m);
+mixed query_phone_bind_info(string account, int format = 0);
 private void do_when_block_account(string account, string dist);
 void decode_matrix_info(mapping &m);
 void disable_apex();
@@ -115,17 +115,23 @@ private string encode_matrix_auth_text(string cookie, string pos1, string pos2, 
 private string des_local_encrypt_pos(array arr_pos, string replace_str, string seed1, string seed2);
 int update_protect_info_ex(mapping m);
 private buffer build_local_encrypt_pos_buf(array arr_pos);
-private int check_qr_code_login(mixed agent, string dist, string &account, string &password);
+void _send_antibot_question(mixed agent, string md5_value, string checksum);
 private int check_for_protect_account_ex(string account, mixed &ret);
 private void destruct();
 private void send_login_result(object agent, int result, int auth_key, string prompt);
 private void log_antibot(string ip, string account, int bot_type, mixed bot_content);
 int is_enable_matrix_info_for_gs(string account);
 private mixed decode_matrix_auth_text(string auth_text);
+mapping get_coin_info(mapping account_info);
 void set_auth_method(int _method);
+void client_auth_pic(mixed agent, string client_data);
+int batch_block_account(string dist, array arr_account, int interval, string reason, int ignore_data, mixed &prompt);
 mixed auth_sm_protect(string account, string ip, string dist, string auth_info, mixed &prompt);
-mixed auth_passpod_protect(string account, string ip, string dist, string auth_info, mixed &prompt);
+mixed auth_passpod_protect(string account, string ip, string dist, string auth_info, mixed &prompt, mapping &extra_info);
 private mixed get_value_from_matrix_text(string matrix_text, string pos);
+private void _client_auth_pic(mixed agent, string client_data);
+int get_guard_state();
+int set_guard_state(int state);
 void disable_safe_tips();
 private void clean_protect_account();
 mixed get_account_ob_by_auth_key(int auth_key);
@@ -135,10 +141,10 @@ mixed query_password_protect_info(string account);
 private int check_for_protect_account(string account, string ip, mixed &ret);
 private void _process_command(mixed func, mixed agent, string cmd, array arr);
 int is_apex_enabled();
-private void _account_login(mixed agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, int auth_verfy_code);
+private void _account_login(mixed agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, string qr_id, int auth_verfy_code);
 mixed query_account_info(string account);
+void check_client_data(mixed agent, string client_data);
 void enable_local_encrypt();
-private void get_qr_code_info(mixed agent, string dist);
 void add_coins(mapping account_info, string dist, string server, string account, int add_silver_coin, int add_gold_coin);
 mixed query_protect_info(string account, string protect_type);
 private int deny_by_pwd_protect_ex(string account, string protect_type, mixed &prompt, mixed param);
@@ -158,13 +164,15 @@ mixed calc_protect_info_checksum(mapping m);
 private string generate_auth_matrix_cookie(string account);
 buffer get_matrix_pic(array matrix);
 mixed query_safe_ctrl(string account, string protect_type);
-private void auth_all_protect(mixed agent, string account, mapping account_info);
+private void auth_all_protect(mixed agent, string account, mapping account_info, int qr_code_login = 0);
 private int pwd_protect_update_sm(string account, mapping &m);
 private int get_busy_time();
 mixed query_pwd_protect_err_checksum(mixed arg);
 private string md5_local_encrypt_pos(array arr_pos, string replace_str, string seed1, string seed2);
 private int is_account_controlled_safe(object agent, string account, string &prompt);
+private void _check_client_data(mixed agent, string client_data);
 private int check_skip_protected(mixed agent, string mac_addr, mapping account_info);
+void send_antibot_question(mixed agent, string md5_value, string checksum);
 private mixed get_protect_info_analysis_func(string type);
 int set_matrix_status(int status);
 private int get_error_times();
@@ -192,13 +200,13 @@ int get_auth_method();
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   protect_account = ([ ]);  // /aaa/daemons/accountd.c:34
-   protect_account_ex = ([ ]);  // /aaa/daemons/accountd.c:52
-   auth_key_account = ([ ]);  // /aaa/daemons/accountd.c:63
-   cur_auth_key = random(2147483647);  // /aaa/daemons/accountd.c:78
-   account_active_status = 1;  // /aaa/daemons/accountd.c:124
-   matrix_active_status = 1;  // /aaa/daemons/accountd.c:132
-   matrix_pic_enabled = 1;  // /aaa/daemons/accountd.c:5395
+   protect_account = ([ ]);  // /aaa/daemons/accountd.c:35
+   protect_account_ex = ([ ]);  // /aaa/daemons/accountd.c:53
+   auth_key_account = ([ ]);  // /aaa/daemons/accountd.c:64
+   cur_auth_key = random(2147483647);  // /aaa/daemons/accountd.c:79
+   account_active_status = 1;  // /aaa/daemons/accountd.c:121
+   matrix_active_status = 1;  // /aaa/daemons/accountd.c:129
+   matrix_pic_enabled = 1;  // /aaa/daemons/accountd.c:1859
    local_encrypt_enabled = 1;
    safe_tips_enbled = 1;
    apex_enabled = 0;
@@ -207,13 +215,13 @@ int get_auth_method();
    timeout_for_protect_auth = 60;
    aa_rule_activate_account = 1;
    aa_rule_login = 0;
-   cur_qr_code_id = 0;
-   qr_code_list = ([ ]);
-   timeout_qr_code = 60;
+   merge_limit_login = 0;
    vector_x = ({ "A", "B", "C", "D", "E", "F", "G", "H", "I" });
    vector_y = ({ "1", "2", "3", "4", "5", "6", "7", "8", "9" });
    protect_index = ([ "sm" : "201", "phone" : "202", "passpod" : "203", "matrix" : "204" ]);
+   ignore_dist_list = ({ "ÎÊµÀÒ»Çø", "ÎÊµÀ¶þÇø", "ÎÊµÀÈýÇø", "°æ±¾ÄÚ²â", "ÊÔ½£ÄÚ²â" });
    g_auth_method = 2;
+   is_need_open_guard = 1;
    fixed_city_status = 1;
 
 /* ================================================================
@@ -222,7 +230,7 @@ int get_auth_method();
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=189, nargs=3, insts=189
+// @code  nc=193, nargs=3, insts=193
 // --------------------------------------------------------------------
 private mapping activate_account(string account, string md5password, string account_ip) {
     /* ---- Enhanced Pseudocode ---- */
@@ -232,9 +240,10 @@ private mapping activate_account(string account, string md5password, string acco
     mapping ret;
 
     ret = ([ ]);
+    ret = ([ ]);
     url = "/aaa/daemons/configd.c"->get_my_info()["activate_url"];
     if (((!is_string(url)) || (strlen(url) == 0))) {
-        ret["prompt"] = "Ã»ÓÐÉè¶¨×Ô¶¯Æô¶¯·þÎñÆ÷";
+        ret["prompt"] = "Ã»ÓÐÉè¶¨×Ô¶¯¼¤»î·þÎñÆ÷";
         ret["result"] = 1;
         return ret;
     }
@@ -250,7 +259,7 @@ private mapping activate_account(string account, string md5password, string acco
     result = "/daemons/http_clientd.c"->http_get_web(url);
     if (((!is_string(result)) || (sscanf(result, "%d,%s", &result, &prompt) < 2))) {
         ret["result"] = 1;
-        ret["prompt"] = "ÕËºÅ×Ô¶¯Æô¶¯Ê§°Ü£¬ÇëÉÔºóÖØÊÔ¡£";
+        ret["prompt"] = "ÕÊºÅ×Ô¶¯¼¤»îÊ§°Ü£¬ÇëÉÔºóÖØÊÔ¡£";
         return ret;
     }
     prompt = iconv(prompt, "gbk", "utf-8");
@@ -273,33 +282,26 @@ private mapping activate_account(string account, string md5password, string acco
         break;
     }  // end switch
 
-    // --- label L0185 ---
+    // --- label L0189 ---
     return ret;
 
 }
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=43, nargs=1, insts=43
+// @code  nc=39, nargs=1, insts=39
 // --------------------------------------------------------------------
 override void connection_lost(object agent) {
     /* ---- Enhanced Pseudocode ---- */
-    if (is_string(agent->query("account"))) {
-        if ((is_string(agent->query_account()) || is_string((agent->query_account())->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(agent->query_account()), "login", "------ Á¬½ÓÖÐ¶Ï£¬µÇÈë½áÊø\n");
+    mixed account;
+
+    if (is_string(account = agent->lite_query("account"))) {
+        if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "------ Á¬½ÓÖÐ¶Ï£¬µÇÂ¼½áÊø\n");
         }
     }
     map_delete(client_seedA, agent->get_client_no());
     ::connection_lost(agent);
-
-}
-
-// --------------------------------------------------------------------
-// @code  nc=8, nargs=1, insts=8
-// --------------------------------------------------------------------
-private void clean_qr_code_list(string qr_code) {
-    /* ---- Enhanced Pseudocode ---- */
-    map_delete(qr_code_list, qr_code);
 
 }
 
@@ -421,7 +423,7 @@ mixed assure_server_agent(string server) {
     agent->set_client_no(client_no);
     agent->set_name(server);
     agent->set_cmd_module("/aaa/daemons/accountd.c");
-    agent->set_temp("ok", 1);
+    agent->lite_set_temp("ok", 1);
     set_client_attrib(client_no, ([ "type": "Internal", "size": 131000, "peek": -1 ]));
     agent->send_message(14849, 2, _server_name, make32(0));
     return agent;
@@ -440,9 +442,9 @@ private string get_protect_key(string account, string ip) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=204, nargs=5, insts=204
+// @code  nc=220, nargs=7, insts=220
 // --------------------------------------------------------------------
-int block_account(string dist, string account, int interval, string reason, mixed &prompt) {
+int block_account(string dist, string account, int interval, string reason, int ignore_data, mixed &prompt, int recycle_privilege) {
     /* ---- Enhanced Pseudocode ---- */
     mixed ti;
     int ret;
@@ -453,16 +455,19 @@ int block_account(string dist, string account, int interval, string reason, mixe
     ret = 0;
     do {
         if ((!account_info = query_account_info(account))) {
-            msg = "ÎÞ·¨»ñÈ¡ÕËºÅ×ÊÑ¶£¬¿ÉÄÜÊý¾Ý¿âÁ¬½ÓÊ§°Ü»òÕßÕËºÅ²»´æÔÚ";
+            msg = "ÎÞ·¨»ñÈ¡ÕÊºÅÐÅÏ¢£¬¿ÉÄÜÊý¾Ý¿âÁ¬½ÓÊ§°Ü»òÕßÕÊºÅ²»´æÔÚ";
             break;
         }
         if ((account_info["checksum"] != calc_account_checksum(account_info))) {
-            msg = "ÕËºÅÊý¾Ý±»ÆÆ»µ£¬ÔÝÊ±ÎÞ·¨·â±ÕÕËºÅ¡££¨Ô­Òò£º1009£©";
+            msg = "ÕÊºÅÊý¾Ý±»ÆÆ»µ£¬ÔÝÊ±ÎÞ·¨·â±ÕÕÊºÅ¡££¨Ô­Òò£º1009£©";
             break;
+        }
+        if (recycle_privilege) {
+            account_info["privilege"] = 0;
         }
         if ((-2 == interval)) {
             account_info["blocked_reason"] = reason;
-            if ((!update_account_info(account_info))) {
+            if ((!update_account_info(account_info, 0, account_info["checksum"]))) {
                 msg = "²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
             } else {
                 msg = "²Ù×÷³É¹¦¡£";
@@ -485,60 +490,34 @@ int block_account(string dist, string account, int interval, string reason, mixe
         if (((account_info["blocked_time"] != btime) || (account_info["blocked_reason"] != reason))) {
             account_info["blocked_time"] = btime;
             account_info["blocked_reason"] = reason;
-            if ((!update_account_info(account_info))) {
+            if ((!update_account_info(account_info, 0, account_info["checksum"]))) {
                 if ((!sizeof(btime))) {
-                    msg = "½â·âÕËºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
+                    msg = "½â·âÕÊºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
                 } else {
-                    msg = "·â±ÕÕËºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
+                    msg = "·â±ÕÕÊºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
                 }
                 break;
             }
         }
         if ((!sizeof(btime))) {
-            msg = "½â·âÕËºÅ²Ù×÷³É¹¦";
+            msg = "½â·âÕÊºÅ²Ù×÷³É¹¦";
         } else {
-            try {
-                do_when_block_account(account, dist);
-            } catch { /* error handled */ }
+            if ((!ignore_data)) {
+                try {
+                    do_when_block_account(account, dist);
+                } catch { /* error handled */ }
 
-            // --- label L0163 ---
-            msg = "·â±ÕÕËºÅ²Ù×÷³É¹¦";
+                // --- label L0185 ---
+            }
+            msg = "·â±ÕÕÊºÅ²Ù×÷³É¹¦";
         }
         ret = 1;
-        "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: call_other, "/aaa/daemons/vip_smsd.c", "do_when_block_account", dist, account, btime :));
+        "/daemons/threadd.c"->dispatch(random(10), (: call_other, "/aaa/daemons/vip_smsd.c", "do_when_block_account", dist, account, btime :));
     } while (0);
 
-    // --- label L0194 ---
+    // --- label L0210 ---
     prompt = msg;
     return ret;
-
-}
-
-// --------------------------------------------------------------------
-// @brief  interaction: calls other objects
-// @code  nc=72, nargs=5, insts=72
-// --------------------------------------------------------------------
-private void _account_login_by_qr_code(mixed agent, string account, string password, string qr_code, string encrypt_key) {
-    /* ---- Enhanced Pseudocode ---- */
-    int used_passpod;
-    int spec_protect;
-
-    spec_protect = 0;
-    if ((!is_object(agent))) {
-        return;
-    }
-    used_passpod = 0;
-    spec_protect = get_auth_spec_game_bits();
-    if ((((4 & (~spec_protect)) && is_mapping(query_protect_info(account, "passpod"))) && (query_protect_range(account) != 1))) {
-        used_passpod = 1;
-    }
-    if ((!is_object(agent))) {
-        return;
-    }
-    agent->set_temp("qr_code_info/account", account);
-    agent->set_temp("qr_code_info/password", password);
-    agent->set_temp("qr_code_info/encrypt_key", encrypt_key);
-    agent->send_message(4991, account, used_passpod);
 
 }
 
@@ -587,9 +566,9 @@ private int pwd_protect_deny_fixed_ip(string account, mapping m, mixed param, mi
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=133, nargs=2, insts=133
+// @code  nc=156, nargs=3, insts=156
 // --------------------------------------------------------------------
-int update_account_info(mapping info, mixed fields) {
+int update_account_info(mapping info, mixed fields, mixed valid_checksum) {
     /* ---- Enhanced Pseudocode ---- */
     mixed cno;
     mixed mks;
@@ -618,10 +597,15 @@ int update_account_info(mapping info, mixed fields) {
             arr += ({ mks[1] });
         }  // end loop (verified)
     }
-    str = (str[0..<3] + " where account = ?");
-    arr += ({ info["account"] });
+    if (is_string(valid_checksum)) {
+        str = (str[0..<3] + " where account = ? and checksum = ?");
+        arr += ({ info["account"], valid_checksum });
+    } else {
+        str = (str[0..<3] + " where account = ?");
+        arr += ({ info["account"] });
+    }
     sql_cmd = mysql_bind_parameters_arr(str, arr);
-    if (((*f_execute)(cno, sql_cmd) < 0)) {
+    if (((*f_execute)(cno, sql_cmd) <= 0)) {
         printf("update_account_info mysql error: %s\n", (*f_get_error)(cno));
         return 0;
     }
@@ -664,14 +648,49 @@ int record_protect_range(string account, int range) {
 }
 
 // --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=73, nargs=2, insts=73
+// --------------------------------------------------------------------
+mixed query_app_bind_info(string account, int format) {
+    /* ---- Enhanced Pseudocode ---- */
+    int cno;
+    mixed arr;
+    mixed sql_cmd;
+    mapping m;
+
+    cno = "/daemons/dbd.c"->assure_connection("adb");
+    if ((cno < 0)) {
+        return -1;
+    }
+    sql_cmd = mysql_bind_parameters("select * from app_bind where account = ?", account);
+    arr = mysql_select(cno, sql_cmd, 1);
+    if ((!is_array(arr))) {
+        return -1;
+    }
+    if ((sizeof(arr) < 1)) {
+        return ([ ]);
+    }
+    m = arr[0];
+    if (format) {
+        map_delete(m, "account");
+        map_delete(m, "update_time");
+        m["bind_time"] = time(m["bind_time"]);
+    }
+    return m;
+
+}
+
+// --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=40, nargs=1, insts=40
+// @code  nc=33, nargs=1, insts=33
 // --------------------------------------------------------------------
 override void connection_disconnect(object agent) {
     /* ---- Enhanced Pseudocode ---- */
-    if (is_string(agent->query("account"))) {
-        if ((is_string(agent->query("account")) || is_string((agent->query("account"))->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(agent->query("account")), "login", "------ ·þÎñÆ÷Ö÷¶¯¹Ø±ÕÁ¬½Ó£¬µÇÈë½áÊø\n");
+    mixed account;
+
+    if (is_string(account = agent->lite_query("account"))) {
+        if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "------ ·þÎñÆ÷Ö÷¶¯¹Ø±ÕÁ¬½Ó£¬µÇÂ¼½áÊø\n");
         }
     }
     ::connection_disconnect(agent);
@@ -725,15 +744,13 @@ private void init_matrix() {
 }
 
 // --------------------------------------------------------------------
-// @code  nc=111, nargs=4, insts=111
+// @code  nc=77, nargs=4, insts=77
 // --------------------------------------------------------------------
 private int pwd_protect_deny_fixed_tm(string account, mapping m, mixed param, mixed dist) {
     /* ---- Enhanced Pseudocode ---- */
-    mixed cur_time;
-    mixed fixed_tm;
     mixed tm_arr;
-    mixed start_time;
-    mixed end_time;
+    mixed fixed_tm;
+    mixed time_str;
 
     fixed_tm = m["protect_info"];
     if ((!is_string(fixed_tm))) {
@@ -743,10 +760,8 @@ private int pwd_protect_deny_fixed_tm(string account, mapping m, mixed param, mi
     if (((((!is_array(tm_arr)) || (sizeof(tm_arr) != 2)) || (sizeof(tm_arr[0]) != 4)) || (sizeof(tm_arr[1]) != 4))) {
         return 0;
     }
-    start_time = sprintf("%04d%02d%02d%s%02d", local_time()["year"], local_time()["mon"], local_time()["mday"], tm_arr[0], 0);
-    end_time = sprintf("%04d%02d%02d%s%02d", local_time()["year"], local_time()["mon"], local_time()["mday"], tm_arr[1], 59);
-    cur_time = time();
-    if (((time(start_time) >= cur_time) || (cur_time >= time(end_time)))) {
+    time_str = ctime(time(), 3)[8..11];
+    if (((time_str < tm_arr[0]) || (time_str > tm_arr[1]))) {
         return 1;
     }
     return 0;
@@ -841,6 +856,35 @@ void log_bad_checksum_account(string account, mapping account_info) {
 }
 
 // --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=60, nargs=1, insts=60
+// --------------------------------------------------------------------
+mixed query_mp_device_info(string account) {
+    /* ---- Enhanced Pseudocode ---- */
+    int cno;
+    mixed arr;
+    mixed sql_cmd;
+    mapping m;
+
+    cno = "/daemons/dbd.c"->assure_connection("adb");
+    if ((cno < 0)) {
+        return -1;
+    }
+    sql_cmd = mysql_bind_parameters("select * from mp_device where account = ?", account);
+    arr = mysql_select(cno, sql_cmd, 1);
+    if ((!is_array(arr))) {
+        return -1;
+    }
+    if ((sizeof(arr) < 1)) {
+        return ([ ]);
+    }
+    m = arr[0];
+    m["os"] = (int)m["os"];
+    return m;
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=113, nargs=1, insts=113
 // --------------------------------------------------------------------
 string calc_account_checksum(mapping account_info) {
@@ -910,10 +954,11 @@ private string calc_matrix_pwd_md5(string value1, string value2, string value3, 
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=213, nargs=5, insts=213
+// @code  nc=267, nargs=6, insts=267
 // --------------------------------------------------------------------
-int control_account(string account, int oper, string password, string permit_ip, mixed &prompt) {
+int control_account(string account, int oper, string password, string permit_ip, string permit_id, mixed &prompt) {
     /* ---- Enhanced Pseudocode ---- */
+    int privilege;
     int ret;
     string msg;
     mapping account_info;
@@ -923,31 +968,45 @@ int control_account(string account, int oper, string password, string permit_ip,
     do {
         msg = "";
         if ((!account_info = query_account_info(account))) {
-            msg = "ÎÞ·¨»ñÈ¡ÕËºÅ×ÊÑ¶£¬¿ÉÄÜÊý¾Ý¿âÁ¬½ÓÊ§°Ü»òÕßÕËºÅ²»´æÔÚ";
+            msg = "ÎÞ·¨»ñÈ¡ÕÊºÅÐÅÏ¢£¬¿ÉÄÜÊý¾Ý¿âÁ¬½ÓÊ§°Ü»òÕßÕÊºÅ²»´æÔÚ";
             break;
         }
         "/daemons/logd.c"->log_local(1, "control_account", "control", account_info["account"], "before_control", account_info["checksum"], save_string(account_info));
         if ((account_info["checksum"] != calc_account_checksum(account_info))) {
-            msg = "ÕËºÅÊý¾Ý±»ÆÆ»µ£¬ÔÝÊ±ÎÞ·¨½Ó¹ÜÕËºÅ¡££¨Ô­Òò:1009£©";
+            msg = "ÕÊºÅÊý¾Ý±»ÆÆ»µ£¬ÔÝÊ±ÎÞ·¨½Ó¹ÜÕÊºÅ¡££¨Ô­Òò:1009£©";
             break;
         }
         if ((1 == oper)) {
+            if ((is_int(privilege = atoi(account_info["privilege"])) && (privilege > 0))) {
+                msg = "GMÕÊºÅÎÞ·¨±»½Ó¹Ü¡£";
+                break;
+            }
+            if ((strlen(account_info["permit_id"]) > 0)) {
+                msg = "¸ÃÕÊºÅÓÐ»úÆ÷ID°ó¶¨·þÎñ£¬²»ÄÜ±»½Ó¹Ü¡£";
+                break;
+            }
+            if ((!strlen(permit_id))) {
+                msg = "²Ù×÷²ÎÊý´íÎó";
+                break;
+            }
             if (((strlen(account_info["org_password"]) > 0) || (strlen(account_info["org_permit_ip"]) > 0))) {
-                msg = "½Ó¹ÜÊ§°Ü£¬ÕËºÅÒÑ´¦ÓÚ±»½Ó¹ÜÖÐ";
+                msg = "½Ó¹ÜÊ§°Ü£¬ÕÊºÅÒÑ´¦ÓÚ±»½Ó¹ÜÖÐ";
                 break;
             }
             account_info["org_password"] = account_info["password"];
             account_info["org_permit_ip"] = account_info["permit_ip"];
             account_info["password"] = calc_password_new_md5(account_info["account"], password);
             account_info["permit_ip"] = permit_ip;
+            account_info["permit_id"] = permit_id;
             msg = "½Ó¹Ü³É¹¦";
         } else {
             if (((!account_info["org_password"]) || (account_info["org_password"] == ""))) {
-                msg = "ÕËºÅÎ´±»½Ó¹Ü£¬½â³ýÊ§°Ü";
+                msg = "ÕÊºÅÎ´±»½Ó¹Ü£¬½â³ýÊ§°Ü";
                 break;
             }
             account_info["password"] = account_info["org_password"];
             account_info["permit_ip"] = account_info["org_permit_ip"];
+            account_info["permit_id"] = "";
             account_info["org_password"] = "";
             account_info["org_permit_ip"] = "";
             msg = "½â³ý½Ó¹Ü³É¹¦";
@@ -959,7 +1018,7 @@ int control_account(string account, int oper, string password, string permit_ip,
         ret = 1;
     } while (0);
 
-    // --- label L0182 ---
+    // --- label L0236 ---
     prompt = msg;
     m = query_account_info(account);
     "/daemons/logd.c"->log_local(1, "control_account", "control", m["account"], "after_control", m["checksum"], save_string(m));
@@ -1046,6 +1105,33 @@ private int pwd_protect_fetch_phone(string account, mapping &m) {
 }
 
 // --------------------------------------------------------------------
+// @brief  action handler: process request
+// @code  nc=50, nargs=2, insts=50
+// --------------------------------------------------------------------
+private void do_when_batch_block_account(array arr_account, string dist) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed mks;
+    mixed agent;
+    mixed server;
+    mixed text;
+    mixed all_conns;
+
+    all_conns = "/aaa/daemons/gameserverd.c"->get_all_conns();
+    if ((sizeof(all_conns) < 1)) {
+        return;
+    }
+    text = save_string(arr_account);
+    loop (mks in all_conns) {
+        server = mks[0];
+        if ((!is_object(agent = "/aaa/daemons/accountd.c"->assure_server_agent(server)))) {
+            continue;
+        }
+        agent->send_message(9348, text);
+    }  // end loop (verified)
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=66, nargs=2, insts=66
 // --------------------------------------------------------------------
 private int pwd_protect_fetch_sm(string account, mapping &m) {
@@ -1093,7 +1179,7 @@ void refresh_matrix_pic(mixed agent, int index) {
     if ((!is_matrix_pic_enabled())) {
         return;
     }
-    if ((!agent->query_temp("matrix"))) {
+    if ((!agent->lite_query_temp("matrix"))) {
         return;
     }
     last_refresh = agent->query_temp(("last_refresh/" + index));
@@ -1101,14 +1187,14 @@ void refresh_matrix_pic(mixed agent, int index) {
         agent->send_message(8165, "Ë¢ÐÂÊ±¼ä¼ä¸ô²»ÄÜÐ¡ÓÚ3Ãë", 1);
         return;
     }
-    matrix_random = agent->query_temp("matrix_random");
+    matrix_random = agent->lite_query_temp("matrix_random");
     if ((!is_array(matrix_random))) {
         return;
     }
     if ((index >= sizeof(matrix_random))) {
         return;
     }
-    auth_text = encode_matrix_auth_text(agent->query_temp("matrix_cookie"), "", "", "");
+    auth_text = encode_matrix_auth_text(agent->lite_query_temp("matrix_cookie"), "", "", "");
     auth_pic_buf = get_matrix_pic(({ matrix_random[index] }));
     if ((!is_object(agent))) {
         return;
@@ -1147,43 +1233,52 @@ string get_place_by_ip(string ip_addr) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=182, nargs=9, insts=182
+// @code  nc=218, nargs=10, insts=218
 // --------------------------------------------------------------------
-private void account_login(object agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, int mobile_client, string version) {
+private void account_login(object agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, int mobile_client, string version, string qr_id) {
     /* ---- Enhanced Pseudocode ---- */
     mixed account_ob;
+    mixed qr_code_info;
     int i;
 
     if ((strlen(version) & 1)) {
-        agent->send_message(8165, "Äãµ±Ç°µÄÓÃ»§¶Ë°æ±¾Óë·þÎñÆ÷°æ±¾²»Æ¥Åä£¬ÎÞ·¨µÇÈëÓÎÏ·¡£\nÇë¸üÐÂµ½1.52.1211°æ±¾¡£", 1);
+        agent->send_message(8165, "Äãµ±Ç°µÄ¿Í»§¶Ë°æ±¾Óë·þÎñÆ÷°æ±¾²»Æ¥Åä£¬ÎÞ·¨µÇÂ¼ÓÎÏ·¡£\nÇë¸üÐÂµ½1.60.0905°æ±¾¡£", 1);
         agent->to_be_disconnect(2);
-        return "";
+        return;
     }
     for (i = 0; i <= (strlen(version) - 1); i++) {
         if ((!isxdigit(version[i]))) {
-            agent->send_message(8165, "Äãµ±Ç°µÄÓÃ»§¶Ë°æ±¾Óë·þÎñÆ÷°æ±¾²»Æ¥Åä£¬ÎÞ·¨µÇÈëÓÎÏ·¡£\nÇë¸üÐÂµ½1.52.1211°æ±¾¡£", 1);
+            agent->send_message(8165, "Äãµ±Ç°µÄ¿Í»§¶Ë°æ±¾Óë·þÎñÆ÷°æ±¾²»Æ¥Åä£¬ÎÞ·¨µÇÂ¼ÓÎÏ·¡£\nÇë¸üÐÂµ½1.60.0905°æ±¾¡£", 1);
             agent->to_be_disconnect(2);
             return;
         }
     }  // end loop (verified)
     version = (string)des(restore_value(((":" + version) + ":")), 1, "abcdef");
-    if (((!mobile_client) && (version != "1.52.1211"))) {
-        agent->send_message(8165, "Äãµ±Ç°µÄÓÃ»§¶Ë°æ±¾Óë·þÎñÆ÷°æ±¾²»Æ¥Åä£¬ÎÞ·¨µÇÈëÓÎÏ·¡£\nÇë¸üÐÂµ½1.52.1211°æ±¾¡£", 1);
+    if (((!mobile_client) && (version != "1.60.0905"))) {
+        agent->send_message(8165, "Äãµ±Ç°µÄ¿Í»§¶Ë°æ±¾Óë·þÎñÆ÷°æ±¾²»Æ¥Åä£¬ÎÞ·¨µÇÂ¼ÓÎÏ·¡£\nÇë¸üÐÂµ½1.60.0905°æ±¾¡£", 1);
         agent->to_be_disconnect(2);
+        return;
+    }
+    if ((!agent->lite_query_temp("antibot_answer"))) {
+        agent->to_be_disconnect(0);
         return;
     }
     account_ob = clone_object("/aaa/clone/account.c", ([ "account": account ]));
     agent->relay_agent(account_ob);
+    set_dynamic_key(account_ob, "login", query_dynamic_key(agent, "login"));
+    if (is_mapping(qr_code_info = agent->lite_query_temp("qr_code"))) {
+        account_ob->lite_set_temp("qr_code", qr_code_info);
+    }
     destruct_object(agent);
     set_client_attrib(account_ob->get_client_no(), ([ "type": "Client", "size": 4094, "peek": -1 ]));
-    account_ob->set_temp("mobile_client", mobile_client);
+    account_ob->lite_set_temp("mobile_client", mobile_client);
     if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
         "/daemons/logd.c"->assure_log_file(get_login_info_file(account));
     }
     if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-        "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("------ ÓÃ»§¶Ë´Ó%sµÇÈë\n", account_ob->get_peer_ip()));
+        "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("------ ¿Í»§¶Ë´Ó%sµÇÂ¼\n", account_ob->get_peer_ip()));
     }
-    "/daemons/threadd.c"->dispatch_service((: _account_login, account_ob, account, password, mac_addr, client_data, passpod, dist, 1 :));
+    "/daemons/threadd.c"->dispatch_service((: _account_login, account_ob, account, password, mac_addr, client_data, passpod, dist, qr_id, 1 :));
 
 }
 
@@ -1219,42 +1314,6 @@ private int pwd_protect_fetch_matrix(string account, mapping &m) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=93, nargs=5, insts=93
-// --------------------------------------------------------------------
-private void account_login_by_qr_code(mixed agent, string dist, string account, string password, string qr_code) {
-    /* ---- Enhanced Pseudocode ---- */
-    mixed client_agent;
-    mixed encrypt_key;
-
-    if ((!is_object(agent))) {
-        return;
-    }
-    if (("/aaa/daemons/configd.c"->get_global_config("qr_code_login") != "1")) {
-        return;
-    }
-    if (((!is_object(client_agent = qr_code_list[qr_code])) || client_agent->query_temp("qr_code_info/login"))) {
-        return;
-    }
-    if ((qr_code != client_agent->query_temp("qr_code_info/qr_code"))) {
-        return;
-    }
-    if ((dist != client_agent->query_temp("qr_code_info/dist"))) {
-        return;
-    }
-    if (((time() - (int)client_agent->query_temp("qr_code_info/start_time")) > timeout_qr_code)) {
-        return;
-    }
-    client_agent->set_temp("qr_code_info/login", 1);
-    encrypt_key = query_dynamic_key(agent, "login");
-    destruct_object(agent);
-    client_agent->delete_temp("destruct_callback/clean_qr_code");
-    map_delete(qr_code_list, qr_code);
-    "/daemons/threadd.c"->dispatch_service((: _account_login_by_qr_code, client_agent, account, password, qr_code, encrypt_key :));
-
-}
-
-// --------------------------------------------------------------------
-// @brief  interaction: calls other objects
 // @code  nc=52, nargs=2, insts=52
 // --------------------------------------------------------------------
 int delete_protect_info(string account, mixed protect_type) {
@@ -1276,15 +1335,6 @@ int delete_protect_info(string account, mixed protect_type) {
         return 0;
     }
     return 1;
-
-}
-
-// --------------------------------------------------------------------
-// @code  nc=22, nargs=1, insts=22
-// --------------------------------------------------------------------
-private string make_qr_code(string dist) {
-    /* ---- Enhanced Pseudocode ---- */
-    return sprintf("%s#%s", dist, save_string(md5(sprintf("%012d%05d", cur_qr_code_id++, random(100000))))[1..<2]);
 
 }
 
@@ -1378,7 +1428,7 @@ private int deny_by_pwd_protect(string account, string protect_type, mixed &prom
         return 2;
     }
     if ((calc_protect_info_checksum(m) != toupper(m["checksum"]))) {
-        prompt = "ÑéÖ¤·þÎñÆ÷Òì³££¬µÇÈëÊ§°Ü¡££¨Ô­Òò£º1015£© ";
+        prompt = "ÑéÖ¤·þÎñÆ÷Òì³££¬µÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1015£©";
         return 0;
     }
     f = query(("pwd_protect_deny_func/" + protect_type));
@@ -1403,7 +1453,7 @@ int update_matrix_info(mapping m, int encode) {
 
 // --------------------------------------------------------------------
 // @brief  predicate: boolean check
-// @code  nc=90, nargs=3, insts=90
+// @code  nc=130, nargs=3, insts=130
 // --------------------------------------------------------------------
 int is_protect_actived(string account, int protect_flag, mixed account_ob) {
     /* ---- Enhanced Pseudocode ---- */
@@ -1416,18 +1466,27 @@ int is_protect_actived(string account, int protect_flag, mixed account_ob) {
         protect_info = query_protect_info(account, "passpod");
         if (is_mapping(protect_info)) {
             protect_bits |= 4;
+            if (is_object(account_ob)) {
+                account_ob->set_temp("protects/A", 1);
+            }
         }
     }
     if ((2 & protect_flag)) {
         protect_info = query_protect_info(account, "phone");
         if (is_mapping(protect_info)) {
             protect_bits |= 2;
+            if (is_object(account_ob)) {
+                account_ob->set_temp("protects/B", 1);
+            }
         }
     }
     if ((1 & protect_flag)) {
         protect_info = query_protect_info(account, "sm");
         if (is_mapping(protect_info)) {
             protect_bits |= 1;
+            if (is_object(account_ob)) {
+                account_ob->set_temp("protects/C", 1);
+            }
         }
     }
     if ((get_matrix_status() && (8 & protect_flag))) {
@@ -1435,6 +1494,9 @@ int is_protect_actived(string account, int protect_flag, mixed account_ob) {
         matrix_status = get_account_matrix_status(protect_info);
         if ((3 == matrix_status)) {
             protect_bits |= 8;
+            if (is_object(account_ob)) {
+                account_ob->set_temp("protects/D", 1);
+            }
         }
     }
     return protect_bits;
@@ -1455,15 +1517,15 @@ int temp_block_account(string dist, string account, int interval, string reason,
     ret = 0;
     do {
         if ((interval < 0)) {
-            msg = "ÁÙÊ±·âÍ£ÕËºÅ²ÎÊýinterval±ØÐë>=0";
+            msg = "ÁÙÊ±·âÍ£ÕÊºÅ²ÎÊýinterval±ØÐë>=0";
             break;
         }
         if ((!account_info = query_account_info(account))) {
-            msg = "ÎÞ·¨»ñÈ¡ÕËºÅ×ÊÑ¶£¬¿ÉÄÜÊý¾Ý¿âÁ¬½ÓÊ§°Ü»òÕßÕËºÅ²»´æÔÚ";
+            msg = "ÎÞ·¨»ñÈ¡ÕÊºÅÐÅÏ¢£¬¿ÉÄÜÊý¾Ý¿âÁ¬½ÓÊ§°Ü»òÕßÕÊºÅ²»´æÔÚ";
             break;
         }
         if ((account_info["checksum"] != calc_account_checksum(account_info))) {
-            msg = "ÕËºÅÊý¾Ý±»ÆÆ»µ£¬ÔÝÊ±ÎÞ·¨·â±ÕÕËºÅ¡££¨Ô­Òò£º1009£©";
+            msg = "ÕÊºÅÊý¾Ý±»ÆÆ»µ£¬ÔÝÊ±ÎÞ·¨·â±ÕÕÊºÅ¡££¨Ô­Òò£º1009£©";
             break;
         }
         ti = time();
@@ -1478,17 +1540,17 @@ int temp_block_account(string dist, string account, int interval, string reason,
             account_info["temp_blocked_reason"] = reason;
             if ((!update_account_info(account_info))) {
                 if ((!sizeof(btime))) {
-                    msg = "½â³ýÁÙÊ±·âÍ£ÕËºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
+                    msg = "½â³ýÁÙÊ±·âÍ£ÕÊºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
                 } else {
-                    msg = "ÁÙÊ±·âÍ£ÕËºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
+                    msg = "ÁÙÊ±·âÍ£ÕÊºÅ²Ù×÷Ê§°Ü£¬¿ÉÄÜÊý¾Ý¿âÒì³£";
                 }
                 break;
             }
         }
         if ((!sizeof(btime))) {
-            msg = "½â³ýÁÙÊ±·âÍ£ÕËºÅ²Ù×÷³É¹¦";
+            msg = "½â³ýÁÙÊ±·âÍ£ÕÊºÅ²Ù×÷³É¹¦";
         } else {
-            msg = "ÁÙÊ±·âÍ£ÕËºÅ²Ù×÷³É¹¦";
+            msg = "ÁÙÊ±·âÍ£ÕÊºÅ²Ù×÷³É¹¦";
         }
         ret = 1;
     } while (0);
@@ -1556,7 +1618,7 @@ private int pwd_protect_deny_sm(string account, mapping m, mixed param, mixed di
     if ((!is_object(param))) {
         return 0;
     }
-    login_ip = sprintf("%s@%s", param->get_peer_ip(), param->query_temp("mac_addr"));
+    login_ip = sprintf("%s@%s", param->get_peer_ip(), param->lite_query_temp("mac_addr"));
     if ((!m["login_ip"])) {
         m["login_ip"] = login_ip;
         update_matrix_info(m);
@@ -1598,6 +1660,40 @@ int insert_safe_ctrl(mapping m) {
         return 0;
     }
     return 1;
+
+}
+
+// --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=82, nargs=2, insts=82
+// --------------------------------------------------------------------
+mixed query_phone_bind_info(string account, int format) {
+    /* ---- Enhanced Pseudocode ---- */
+    int cno;
+    mixed arr;
+    mixed sql_cmd;
+    mapping m;
+
+    cno = "/daemons/dbd.c"->assure_connection("adb");
+    if ((cno < 0)) {
+        return -1;
+    }
+    sql_cmd = mysql_bind_parameters("select * from phone_bind where account = ?", account);
+    arr = mysql_select(cno, sql_cmd, 1);
+    if ((!is_array(arr))) {
+        return -1;
+    }
+    if ((sizeof(arr) < 1)) {
+        return ([ ]);
+    }
+    m = arr[0];
+    if (format) {
+        map_delete(m, "account");
+        map_delete(m, "update_time");
+        m["bind_time"] = time(m["bind_time"]);
+        m["state"] = (int)m["state"];
+    }
+    return m;
 
 }
 
@@ -1689,33 +1785,35 @@ mixed query_local_encrypt_info(string account) {
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=46, nargs=3, insts=46
+// @code  nc=52, nargs=3, insts=52
 // --------------------------------------------------------------------
 void get_extra_block_reason_msg(int check_left_day, string real_reason, string &breason) {
     /* ---- Enhanced Pseudocode ---- */
     mixed reason_type;
     mixed reason_meno;
 
-    return;
     if ((sscanf(real_reason, "%s(%s)", &reason_type, &reason_meno) != 2)) {
         return;
     }
     switch (reason_type) {
         case "Íâ¹Ò":
-        breason = "ÄúµÄÕËºÅÉæÏÓÊ¹ÓÃÍâ¹Ò±»·â´æ£¬";
+        breason = "ÄúµÄÕÊºÅÉæÏÓÊ¹ÓÃÍâ¹Ò±»·â´æ£¬";
         break;
         case "µÁºÅ":
-        breason = "ÄúµÄÕËºÅÉæÏÓµÁºÅ±»·â´æ£¬";
+        breason = "ÄúµÄÕÊºÅÉæÏÓµÁºÅ±»·â´æ£¬";
+        break;
+        case "ÏÞÖÆµÇÂ¼":
+        breason = "ÏµÍ³ÒÑ¾­ÏÞÖÆ´ËÕÊºÅµÇÂ¼£¬";
         break;
         default:
         return;
     }  // end switch
 
-    // --- label L0030 ---
+    // --- label L0036 ---
     if ((check_left_day >= 1)) {
         breason += sprintf("½«ÓÚ#R%d#nÌìºó½â³ý·â±Õ¡£", check_left_day);
     }
-    breason += "ÈçÓÐÒìÒé£¬ÇëÇ°Íù#url¿Í·þÖÐÐÄ[http://faq.gyyx.cn/Service/ResumeSubmit.aspx]#tÉêÇë½â·â¡£";
+    breason += "ÈçÓÐÒìÒé£¬ÇëÇ°Íù#url¿Í·þÖÐÐÄ{http://faq.gyyx.cn/Service/ResumeSubmit.aspx}#tÉêÇë½â·â¡£";
 
 }
 
@@ -1827,35 +1925,42 @@ private buffer build_local_encrypt_pos_buf(array arr_pos) {
 }
 
 // --------------------------------------------------------------------
-// @brief  validator: verify data
-// @code  nc=77, nargs=4, insts=77
+// @brief  interaction: calls other objects
+// @code  nc=106, nargs=3, insts=106
 // --------------------------------------------------------------------
-private int check_qr_code_login(mixed agent, string dist, string &account, string &password) {
+void _send_antibot_question(mixed agent, string md5_value, string checksum) {
     /* ---- Enhanced Pseudocode ---- */
-    mapping qr_code_info;
+    mixed text;
+    mixed new_checksum;
 
     if ((!is_object(agent))) {
-        return 0;
+        return;
     }
-    if (("/aaa/daemons/configd.c"->get_global_config("qr_code_login") != "1")) {
-        return 0;
+    if (is_need_open_guard) {
+        if (((sizeof(md5_value) == 0) || (sizeof(checksum) == 0))) {
+            agent->to_be_disconnect(0);
+            return;
+        }
+        new_checksum = save_string(des(md5_value, 0, "uWvgwf"))[1..<2];
+        if ((new_checksum != checksum)) {
+            agent->to_be_disconnect(0);
+            return;
+        }
     }
-    if ((!is_mapping(qr_code_info = agent->query_temp("qr_code_info")))) {
-        return 0;
+    if (agent->lite_query_temp("antibot_question")) {
+        agent->to_be_disconnect(0);
+        return;
     }
-    if ((dist != qr_code_info["dist"])) {
-        return 0;
+    text = "/aaa/daemons/antibotd.c"->user_login(agent->get_client_no());
+    if ((!is_object(agent))) {
+        return;
     }
-    if ((qr_code_info["login"] != 1)) {
-        return 0;
+    if ((!is_string(text))) {
+        agent->to_be_disconnect(0);
+        return;
     }
-    qr_code_info["login"] = 2;
-    if (((time() - (int)qr_code_info["start_time"]) > timeout_qr_code)) {
-        return 0;
-    }
-    account = qr_code_info["account"];
-    password = qr_code_info["password"];
-    return 1;
+    agent->lite_set_temp("antibot_question", 1);
+    agent->send_message(6918, text, is_need_open_guard, "/aaa/daemons/qr_coded.c"->get_qr_code_status());
 
 }
 
@@ -1880,7 +1985,7 @@ private int check_for_protect_account_ex(string account, mixed &ret) {
         map_delete(protect_account, account);
         return 0;
     }
-    ret = "ÓÉÓÚÄã¶ÌÊ±¼äÄÚ¶à´Î³¢ÊÔµÇÂ¼¸ÃÕËºÅ¶ø¾ùÎ´³É¹¦½âËø£¬#R10#n·ÖÖÓÄÚ¸ÃÕËºÅ»á±»Ëø¶¨£¬ÇëÉÔºó³¢ÊÔ¡£";
+    ret = "ÓÉÓÚÄã¶ÌÊ±¼äÄÚ¶à´Î³¢ÊÔµÇÂ¼¸ÃÕÊºÅ¶ø¾ùÎ´³É¹¦½âËø£¬#R10#n·ÖÖÓÄÚ¸ÃÕÊºÅ»á±»Ëø¶¨£¬ÇëÉÔºó³¢ÊÔ¡£";
     return 1;
 
 }
@@ -1974,12 +2079,178 @@ private mixed decode_matrix_auth_text(string auth_text) {
 }
 
 // --------------------------------------------------------------------
+// @brief  accessor: retrieve value
+// @code  nc=126, nargs=1, insts=126
+// --------------------------------------------------------------------
+mapping get_coin_info(mapping account_info) {
+    /* ---- Enhanced Pseudocode ---- */
+    int ul_ti;
+    int have_pwd;
+    mapping coin_info;
+
+    coin_info = ([ "gold_coin": atoi(account_info["gold_coin"]), "silver_coin": atoi(account_info["silver_coin"]), "trade_coin": atoi(account_info["trade_coin"]), "consum_coin": atoi(account_info["consum_coin"]), "last_trade_coin": account_info["last_trade_coin"], "last_consum_coin": account_info["last_consum_coin"], "limit_trade_coin": atoi(account_info["limit_trade_coin"]) ]);
+    ul_ti = account_info["unlock_coin_password_time"];
+    if ((ul_ti != "")) {
+        ul_ti = time_desc_to_int(ul_ti, 3);
+    } else {
+        ul_ti = 0;
+    }
+    have_pwd = (is_string(account_info["coin_password"]) && (account_info["coin_password"] != ""));
+    if (((have_pwd && (ul_ti > 0)) && ((ul_ti + 604800) < time()))) {
+        account_info["unlock_coin_password_time"] = "";
+        account_info["coin_password"] = "";
+        if ("/aaa/daemons/accountd.c"->update_account_info(account_info)) {
+            have_pwd = 0;
+        }
+    }
+    coin_info["ul_ti"] = ul_ti;
+    coin_info["have_pwd"] = have_pwd;
+    return coin_info;
+
+}
+
+// --------------------------------------------------------------------
 // @brief  mutator: set property
 // @code  nc=8, nargs=1, insts=8
 // --------------------------------------------------------------------
 void set_auth_method(int _method) {
     /* ---- Enhanced Pseudocode ---- */
     g_auth_method = _method;
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=11, nargs=2, insts=11
+// --------------------------------------------------------------------
+void client_auth_pic(mixed agent, string client_data) {
+    /* ---- Enhanced Pseudocode ---- */
+    "/daemons/threadd.c"->dispatch_service((: _client_auth_pic, agent, client_data :));
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=455, nargs=6, insts=455
+// --------------------------------------------------------------------
+int batch_block_account(string dist, array arr_account, int interval, string reason, int ignore_data, mixed &prompt) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed ti;
+    mixed cno;
+    int count;
+    int i;
+    int ret;
+    mixed arr;
+    mixed new_arr_account;
+    string msg;
+    string btime;
+    mixed sql_cmd;
+    int account;
+    mapping account_info;
+    mixed info_list;
+    mixed valids;
+    mixed invalids;
+    mixed db_fails;
+
+    count = sizeof(arr_account);
+    for (i = 0; i <= (count - 1); i++) {
+        arr_account[i] = tolower(arr_account[i]);
+    }  // end loop (verified)
+    ret = 0;
+    do {
+        if ((count < 1)) {
+            msg = "Ã»ÓÐ´«ÈëÈÎºÎÒª·â±ÕµÄÕÊºÅ";
+            break;
+        }
+        if (((cno = "/daemons/dbd.c"->assure_connection("adb")) < 0)) {
+            msg = "Á¬½ÓADBÊ§°Ü";
+            break;
+        }
+        sql_cmd = sprintf("select * from account where account in (%s)", implode(allocate_array(count, "?"), ","));
+        sql_cmd = mysql_bind_parameters_arr(sql_cmd, arr_account);
+        arr = mysql_select(cno, sql_cmd, count);
+        if ((!is_array(arr))) {
+            msg = "²éÑ¯account±íÊ§°Ü";
+            break;
+        }
+        clean_array(arr, 7);
+        info_list = ([ ]);
+        valids = ([ ]);
+        invalids = ([ ]);
+        db_fails = ([ ]);
+        loop (account_info in arr) {
+            account = tolower(account_info["account"]);
+            info_list[account] = account_info;
+            if ((account_info["checksum"] != calc_account_checksum(account_info))) {
+                invalids[account] = 1;
+            } else {
+                valids[account] = 1;
+            }
+        }  // end loop (verified)
+        if ((sizeof(info_list) < 1)) {
+            msg = "Ëù´«ÕÊºÅ¾ù²»´æÔÚ";
+            break;
+        }
+        new_arr_account = keys(valids);
+        count = sizeof(new_arr_account);
+        if ((count < 1)) {
+            msg = "Ëù´«ÕÊºÅ¾ù·¢ÉúCHECKSUM´íÎó";
+            break;
+        }
+        if ((-2 == interval)) {
+            for (i = 0; i <= (count - 1); i++) {
+                account_info = info_list[new_arr_account[i]];
+                account_info["blocked_reason"] = reason;
+                if ((!update_account_info(account_info, 0, account_info["checksum"]))) {
+                    db_fails[new_arr_account[i]] = 1;
+                    new_arr_account[i] = 0;
+                }
+            }  // end loop (verified)
+            clean_array(new_arr_account, 4);
+            msg = sprintf("%s||OK:%s^NOT_EXIST:%s^BAD_MD5:%s^DB_FAIL:%s", "ÅúÁ¿¸üÐÂ·âºÅÔ­Òò³É¹¦", implode(new_arr_account, ","), implode((arr_account - keys(info_list)), ","), implode(keys(invalids), ","), implode(keys(db_fails), ","));
+            ret = 1;
+            break;
+        }
+        ti = time();
+        if ((interval < 0)) {
+            interval = 2147483647;
+        } else {
+            interval += ti;
+        }
+        if ((ti == interval)) {
+            btime = "";
+        } else {
+            btime = ctime(interval, 3);
+        }
+        for (i = 0; i <= (count - 1); i++) {
+            account_info = info_list[new_arr_account[i]];
+            account_info["blocked_time"] = btime;
+            account_info["blocked_reason"] = reason;
+            if ((!update_account_info(account_info, 0, account_info["checksum"]))) {
+                db_fails[new_arr_account[i]] = 1;
+                new_arr_account[i] = 0;
+            }
+        }  // end loop (verified)
+        clean_array(new_arr_account, 4);
+        if ((!sizeof(btime))) {
+            msg = sprintf("%s||OK:%s^NOT_EXIST:%s^BAD_MD5:%s^DB_FAIL:%s", "ÅúÁ¿½â·âÕÊºÅ²Ù×÷³É¹¦", implode(new_arr_account, ","), implode((arr_account - keys(info_list)), ","), implode(keys(invalids), ","), implode(keys(db_fails), ","));
+        } else {
+            msg = sprintf("%s||OK:%s^NOT_EXIST:%s^BAD_MD5:%s^DB_FAIL:%s", "ÅúÁ¿·â±ÕÕÊºÅ²Ù×÷³É¹¦", implode(new_arr_account, ","), implode((arr_account - keys(info_list)), ","), implode(keys(invalids), ","), implode(keys(db_fails), ","));
+            if ((!ignore_data)) {
+                try {
+                    do_when_batch_block_account(new_arr_account, dist);
+                } catch { /* error handled */ }
+
+                // --- label L0424 ---
+            }
+        }
+        ret = 1;
+        "/daemons/threadd.c"->dispatch(random(10), (: call_other, "/aaa/daemons/vip_smsd.c", "do_when_batch_block_account", dist, new_arr_account, btime :));
+    } while (0);
+
+    // --- label L0445 ---
+    prompt = msg;
+    return ret;
 
 }
 
@@ -2008,9 +2279,9 @@ mixed auth_sm_protect(string account, string ip, string dist, string auth_info, 
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=86, nargs=5, insts=86
+// @code  nc=136, nargs=6, insts=136
 // --------------------------------------------------------------------
-mixed auth_passpod_protect(string account, string ip, string dist, string auth_info, mixed &prompt) {
+mixed auth_passpod_protect(string account, string ip, string dist, string auth_info, mixed &prompt, mapping &extra_info) {
     /* ---- Enhanced Pseudocode ---- */
     mixed auth_result;
     mixed deny_prompt;
@@ -2034,15 +2305,38 @@ mixed auth_passpod_protect(string account, string ip, string dist, string auth_i
             return 0;
             case 1:
             prompt = "ÄãÊäÈëµÄÇ¬À¤ËøÃÜÂë´íÎó¡£";
+            extra_info["inc_fail"] = 1;
             return -1;
             case 3:
             prompt = "ÄãµÄÇ¬À¤ËøÒÑ¾­¹ýÆÚ£¬Çë¼°Ê±¸ü»»¡£";
             return 0;
+            case 5:
+            prompt = "ÄãµÄÃÜ±£ÒÑ±»·âÍ££¬²Ù×÷Ê§°Ü¡£";
+            return -1;
+            case 6:
+            prompt = "ÄãµÄÇ¬À¤Ëøµ±´ÎÃÜÂëÒÑÊ§Ð§£¬ÇëÉÔºóÔÙÊÔ¡£";
+            return -1;
+            case 7:
+            prompt = "µ±Ç°Ç¬À¤ËøÊäÈë´ÎÊý¹ý¶à£¬ÇëÉÔºóÔÙÊÔ¡£";
+            return -1;
             case 2:
-            cancel_pwd_protect(account, "passpod", ip, dist);
+            switch (when_return_user_not_found) {
+                case 2:
+                catch(error("User not found for passpod(account=%s)\n", account));
+
+                // --- label L0112 ---
+                break;
+                case 3:
+                cancel_pwd_protect(account, "passpod", ip, dist);
+                break;
+                default:
+                break;
+            }  // end switch
+
+            // --- label L0125 ---
             case 10:
             default:
-            prompt = "#RÇ¬À¤Ëø#nÃÜÂëÑéÖ¤Á¬½ÓÊ§°Ü¡££¨´íÎó±àºÅ£º1016£©\n#R×¢£ºÈç¹ûÄúÒÑ½â³ýÇ¬À¤Ëø£¬Ö»ÐèÒªÔÚÇ¬À¤ËøÀ¸ÊäÈëÈÎÒâ×ÖÔª¼´¿ÉÆÆ½âÑéÖ¤¡£#n";
+            prompt = "#RÇ¬À¤Ëø#nÃÜÂëÑéÖ¤Á¬½ÓÊ§°Ü¡££¨´íÎó±àºÅ£º1016£©\n#R×¢£ºÈç¹ûÄúÒÑ½â³ýÇ¬À¤Ëø£¬Ö»ÐèÒªÔÚÇ¬À¤ËøÀ¸ÊäÈëÈÎÒâ×Ö·û¼´¿ÉÆÆ½âÑéÖ¤¡£#n";
             return -1;
         }  // end switch
     }  // end switch
@@ -2051,17 +2345,16 @@ mixed auth_passpod_protect(string account, string ip, string dist, string auth_i
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=79, nargs=2, insts=79
+// @code  nc=124, nargs=2, insts=124
 // --------------------------------------------------------------------
 private mixed get_value_from_matrix_text(string matrix_text, string pos) {
     /* ---- Enhanced Pseudocode ---- */
     int pos_x;
     int pos_y;
     mixed index;
+    mixed token_size;
+    mixed arr_matrix;
 
-    if ((strlen(matrix_text) != ((sizeof(vector_x) * sizeof(vector_y)) * 2))) {
-        return "";
-    }
     if ((strlen(pos) != 2)) {
         return "";
     }
@@ -2071,7 +2364,92 @@ private mixed get_value_from_matrix_text(string matrix_text, string pos) {
         return "";
     }
     index = (((pos_x - 1) * sizeof(vector_y)) + pos_y);
-    return matrix_text[((index * 2) - 2)..((index * 2) - 1)];
+    arr_matrix = explode(matrix_text, ",");
+    token_size = sizeof(arr_matrix);
+    if ((1 == token_size)) {
+        if ((strlen(matrix_text) != ((sizeof(vector_x) * sizeof(vector_y)) * 2))) {
+            return "";
+        }
+        return matrix_text[((index * 2) - 2)..((index * 2) - 1)];
+    }
+    if ((((sizeof(vector_x) * sizeof(vector_y)) > token_size) || (((sizeof(vector_x) * sizeof(vector_y)) + 1) < token_size))) {
+        return "";
+    }
+    return arr_matrix[(index - 1)];
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=153, nargs=2, insts=153
+// --------------------------------------------------------------------
+private void _client_auth_pic(mixed agent, string client_data) {
+    /* ---- Enhanced Pseudocode ---- */
+    int login_result;
+    int client_no;
+    mixed encrypt_key;
+    string seed_A;
+    string seed_B;
+    mapping seed_map;
+
+    if ((!is_object(agent))) {
+        return;
+    }
+    client_no = agent->get_client_no();
+    if ((agent->lite_query_temp("pic_auth_result") != client_data)) {
+        login_result = 0;
+    } else {
+        login_result = 1;
+    }
+    agent->lite_delete_temp("pic_auth_result");
+    encrypt_key = (login_result ? generate_encrypt_cookie() : "");
+    if (is_apex_enabled()) {
+        seed_A = "abcdefghijklmnop";
+        seed_B = "zyxwvutsrqponmlkjihgfedcbaABCDEFGHIJKLMNOPQ";
+        if (((!is_mapping(seed_map = get_seed(seed_A, seed_B))) || (sizeof(seed_map) < 1))) {
+            return;
+        }
+        seed_A = seed_map["seed_A"];
+        seed_B = seed_map["seed_B"];
+        if (((((!is_string(seed_A)) || (strlen(seed_A) < 1)) || (!is_string(seed_B))) || (strlen(seed_B) < 1))) {
+            return;
+        }
+        client_seedA[client_no] = seed_A;
+        agent->send_message(11012, login_result, encrypt_key, seed_B);
+    } else {
+        agent->send_message(11012, login_result, encrypt_key, "");
+    }
+    if ((!login_result)) {
+        agent->to_be_disconnect(2);
+    } else {
+        set_dynamic_key(agent, "login", encrypt_key);
+        agent->lite_set_temp("antibot_answer", 1);
+        agent->to_be_connect(60);
+    }
+
+}
+
+// --------------------------------------------------------------------
+// @brief  accessor: retrieve value
+// @code  nc=6, nargs=0, insts=6
+// --------------------------------------------------------------------
+int get_guard_state() {
+    /* ---- Enhanced Pseudocode ---- */
+    return is_need_open_guard;
+
+}
+
+// --------------------------------------------------------------------
+// @brief  mutator: set property
+// @code  nc=14, nargs=1, insts=14
+// --------------------------------------------------------------------
+int set_guard_state(int state) {
+    /* ---- Enhanced Pseudocode ---- */
+    mixed pre_state;
+
+    pre_state = is_need_open_guard;
+    is_need_open_guard = state;
+    return pre_state;
 
 }
 
@@ -2227,7 +2605,7 @@ private int check_for_protect_account(string account, string ip, mixed &ret) {
         map_delete(protect_account, key);
         return 0;
     }
-    ret = sprintf("¸ÃÕËºÅ±»Ëø¶¨£¬½«ÔÚ#R%d#nÃëºó½â³ýËø¶¨¡£", delta);
+    ret = sprintf("¸ÃÕÊºÅ±»Ëø¶¨£¬½«ÔÚ#R%d#nÃëºó½â³ýËø¶¨¡£", delta);
     return 1;
 
 }
@@ -2259,9 +2637,9 @@ int is_apex_enabled() {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=179, nargs=8, insts=179
+// @code  nc=184, nargs=9, insts=184
 // --------------------------------------------------------------------
-private void _account_login(mixed agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, int auth_verfy_code) {
+private void _account_login(mixed agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, string qr_id, int auth_verfy_code) {
     /* ---- Enhanced Pseudocode ---- */
     int qr_code_login;
     mixed account_info;
@@ -2270,7 +2648,7 @@ private void _account_login(mixed agent, string account, string password, string
     mapping le_m;
     mapping le_info;
 
-    if (check_qr_code_login(agent, dist, &account, &password)) {
+    if ("/aaa/daemons/qr_coded.c"->check_qr_code_login(agent, qr_id, account)) {
         qr_code_login = 1;
     } else {
         qr_code_login = 0;
@@ -2279,11 +2657,14 @@ private void _account_login(mixed agent, string account, string password, string
     if ((!is_mapping(account_info))) {
         return;
     }
-    agent->set_temp("ok", 1);
-    agent->set_temp("mac_addr", mac_addr);
-    agent->set_temp("para_passpod", passpod);
-    agent->set_temp("para_dist", dist);
+    agent->lite_set_temp("ok", 1);
+    agent->lite_set_temp("mac_addr", mac_addr);
+    agent->lite_set_temp("para_passpod", passpod);
+    agent->lite_set_temp("para_dist", dist);
     do {
+        if (qr_code_login) {
+            break;
+        }
         if ((!local_encrypt_enabled)) {
             break;
         }
@@ -2301,20 +2682,20 @@ private void _account_login(mixed agent, string account, string password, string
             send_login_result(agent, 0, 0, "±¾µØ¼ÓÃÜÏµÍ³ÑéÖ¤Ê§°Ü¡£");
             agent->to_be_disconnect(1);
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿âÖÐ´óµµ×ÊÑ¶´íÎó\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿âÖÐ´óÎÄ¼þÐÅÏ¢´íÎó\n");
             }
             return;
         }
         arr_pos = get_random_pos(le_info["file_length"]);
         le_buf = build_local_encrypt_pos_buf(arr_pos);
         agent->send_message(5025, (le_buf + pad_buffer(le_m["file_name"])));
-        agent->set_temp("local_encrypt_pos", arr_pos);
+        agent->lite_set_temp("local_encrypt_pos", arr_pos);
         agent->to_be_disconnect(timeout_for_protect_auth);
         return;
     } while (0);
 
-    // --- label L0172 ---
-    auth_all_protect(agent, account, account_info);
+    // --- label L0176 ---
+    auth_all_protect(agent, account, account_info, qr_code_login);
 
 }
 
@@ -2336,49 +2717,21 @@ mixed query_account_info(string account) {
 }
 
 // --------------------------------------------------------------------
+// @brief  validator: verify data
+// @code  nc=11, nargs=2, insts=11
+// --------------------------------------------------------------------
+void check_client_data(mixed agent, string client_data) {
+    /* ---- Enhanced Pseudocode ---- */
+    "/daemons/threadd.c"->dispatch_service((: _check_client_data, agent, client_data :));
+
+}
+
+// --------------------------------------------------------------------
 // @code  nc=8, nargs=0, insts=8
 // --------------------------------------------------------------------
 void enable_local_encrypt() {
     /* ---- Enhanced Pseudocode ---- */
     local_encrypt_enabled = 1;
-
-}
-
-// --------------------------------------------------------------------
-// @brief  accessor: retrieve value
-// @code  nc=101, nargs=2, insts=101
-// --------------------------------------------------------------------
-private void get_qr_code_info(mixed agent, string dist) {
-    /* ---- Enhanced Pseudocode ---- */
-    int qr_code;
-
-    if ((!is_object(agent))) {
-        return;
-    }
-    if (("/aaa/daemons/configd.c"->get_global_config("qr_code_login") != "1")) {
-        agent->send_message(8165, "¸Ã¹¦ÄÜÒÑ¹Ø±Õ£¡", 1);
-        return;
-    }
-    if (is_mapping(agent->query_temp("qr_code_info"))) {
-        return;
-    }
-    if ((agent->query_temp("ok") == 1)) {
-        return;
-    }
-    if ((!agent->query_temp("antibot_answer"))) {
-        return;
-    }
-    if ((strlen(dist) < 1)) {
-        return;
-    }
-    qr_code = make_qr_code(dist);
-    agent->set_temp("qr_code_info/dist", dist);
-    agent->set_temp("qr_code_info/qr_code", qr_code);
-    agent->set_temp("qr_code_info/start_time", time());
-    agent->set_temp("destruct_callback/clean_qr_code", (: clean_qr_code_list, qr_code :));
-    qr_code_list[qr_code] = agent;
-    agent->send_message(4989, qr_code, timeout_qr_code);
-    agent->to_be_disconnect(timeout_qr_code);
 
 }
 
@@ -2476,7 +2829,7 @@ private int deny_by_pwd_protect_ex(string account, string protect_type, mixed &p
         return 2;
     }
     if ((calc_protect_info_checksum(m) != toupper(m["checksum"]))) {
-        prompt = "ÑéÖ¤·þÎñÆ÷Òì³££¬µÇÈëÊ§°Ü¡££¨Ô­Òò£º1015£© ";
+        prompt = "ÑéÖ¤·þÎñÆ÷Òì³££¬µÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1015£©";
         return 0;
     }
     f = query(("pwd_protect_deny_func/" + protect_type));
@@ -2523,7 +2876,7 @@ void disable_matrix_pic() {
 
 // --------------------------------------------------------------------
 // @brief  accessor: read property
-// @code  nc=129, nargs=2, insts=129
+// @code  nc=127, nargs=2, insts=127
 // --------------------------------------------------------------------
 mixed query_phone_auth_info(string account, int format) {
     /* ---- Enhanced Pseudocode ---- */
@@ -2534,16 +2887,17 @@ mixed query_phone_auth_info(string account, int format) {
 
     cno = "/daemons/dbd.c"->assure_connection("adb");
     if ((cno < 0)) {
-        return 0;
+        return -1;
     }
     sql_cmd = mysql_bind_parameters("select * from phone_auth where account = ?", account);
     arr = mysql_select(cno, sql_cmd, 1);
-    if (((!is_array(arr)) || (!sizeof(arr)))) {
-        return 0;
+    if ((!is_array(arr))) {
+        return -1;
     }
-    if ((!is_mapping(m = arr[0]))) {
-        return 0;
+    if ((sizeof(arr) < 1)) {
+        return ([ ]);
     }
+    m = arr[0];
     if (format) {
         map_delete(m, "account");
         map_delete(m, "update_time");
@@ -2554,7 +2908,7 @@ mixed query_phone_auth_info(string account, int format) {
                 m["bonus_info"] = restore_value(m["bonus_info"]);
             } catch { /* error handled */ }
 
-            // --- label L0104 ---
+            // --- label L0102 ---
             if (is_mapping(m["bonus_info"])) {
                 m["bonus_info"]["time"] = time(m["bonus_info"]["time"]);
             }
@@ -2596,7 +2950,7 @@ private void do_when_password_error(mixed agent, string account, mixed &ret) {
     }
     if ((protect_account[key]["bad_count"] >= err_times)) {
         protect_account[key]["time"] = ti;
-        ret = sprintf("#RÄúÒÑ¾­Á¬Ðø%d´ÎÊäÈëÃÜÂë´íÎó£¬ÎªÁË±£»¤ÕËºÅµÄ°²È«£¬%dÃëÖ®ÄÚ¸ÃÕËºÅÎÞ·¨µÇÂ¼¡£#n", err_times, busy_time);
+        ret = sprintf("#RÄúÒÑ¾­Á¬Ðø%d´ÎÊäÈëÃÜÂë´íÎó£¬ÎªÁË±£»¤ÕÊºÅµÄ°²È«£¬%dÃëÖ®ÄÚ¸ÃÕÊºÅÎÞ·¨µÇÂ¼¡£#n", err_times, busy_time);
     }
 
 }
@@ -2613,7 +2967,7 @@ private void timer_clean_client_seedA() {
 
 // --------------------------------------------------------------------
 // @brief  accessor: read property
-// @code  nc=53, nargs=1, insts=53
+// @code  nc=47, nargs=1, insts=47
 // --------------------------------------------------------------------
 mixed query_alipay_info(string account) {
     /* ---- Enhanced Pseudocode ---- */
@@ -2623,15 +2977,15 @@ mixed query_alipay_info(string account) {
 
     cno = "/daemons/dbd.c"->assure_connection("adb");
     if ((cno < 0)) {
-        return 0;
+        return -1;
     }
     sql_cmd = mysql_bind_parameters("select * from alipay_account where account = ?", account);
     arr = mysql_select(cno, sql_cmd, 1);
-    if (((!is_array(arr)) || (!sizeof(arr)))) {
-        return 0;
+    if ((!is_array(arr))) {
+        return -1;
     }
-    if ((!is_mapping(arr[0]))) {
-        return 0;
+    if ((sizeof(arr) < 1)) {
+        return ([ ]);
     }
     return arr[0];
 
@@ -2643,8 +2997,8 @@ mixed query_alipay_info(string account) {
 // --------------------------------------------------------------------
 override void process_command(object agent, string cmd, array args) {
     /* ---- Enhanced Pseudocode ---- */
-    if ((!agent->query_temp("ok"))) {
-        agent->send_message(8165, "Á¬½Ó·þÎñÆ÷´íÎó£¬ÎÞ·¨µÇÈë¡££¨Ô­Òò£º1008£©", 1);
+    if ((!agent->lite_query_temp("ok"))) {
+        agent->send_message(8165, "Á¬½Ó·þÎñÆ÷´íÎó£¬ÎÞ·¨µÇÂ¼¡££¨Ô­Òò£º1008£©", 1);
         agent->to_be_disconnect(1);
         return;
     }
@@ -2654,7 +3008,7 @@ override void process_command(object agent, string cmd, array args) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=245, nargs=4, insts=245
+// @code  nc=248, nargs=4, insts=248
 // --------------------------------------------------------------------
 private void cancel_pwd_protect(string account, string protect_type, mixed param, mixed dist) {
     /* ---- Enhanced Pseudocode ---- */
@@ -2670,6 +3024,7 @@ private void cancel_pwd_protect(string account, string protect_type, mixed param
     int month;
     mixed branch;
     mapping protect_info;
+    mapping lt_m;
 
     cno = "/daemons/dbd.c"->assure_connection("adb");
     if ((cno < 0)) {
@@ -2685,24 +3040,25 @@ private void cancel_pwd_protect(string account, string protect_type, mixed param
         ip = param;
     }
     state = protect_index[protect_type];
-    if ((!bind_time = protect_info["bind_time"])) {
-        bind_time = time_to_string();
+    if ((!strlen(bind_time = protect_info["bind_time"]))) {
+        bind_time = ctime(time(), 3);
     } else {
         start_time_this_month = get_month_zero_time(time());
         start_time_last_month = get_month_zero_time((start_time_this_month - 10));
         if ((time(bind_time) > start_time_this_month)) {
-            time_desc = ((bind_time + "-") + time_to_string());
-            branch = sprintf("%d-%02d", local_time()["year"], local_time()["mon"]);
+            time_desc = ((bind_time + "-") + ctime(time(), 3));
+            branch = ctime(time(), 2)[0..6];
             log_protect_time(account, branch, protect_type, time_desc, cno);
         } else {
-            time_desc = ((time_to_string(start_time_this_month) + "-") + time_to_string());
-            branch = sprintf("%d-%02d", local_time()["year"], local_time()["mon"]);
+            time_desc = ((ctime(start_time_this_month, 3) + "-") + ctime(time(), 3));
+            branch = ctime(time(), 2)[0..6];
             log_protect_time(account, branch, protect_type, time_desc, cno);
-            time_desc = ((time(bind_time) >= start_time_last_month) ? ((bind_time + "-") + time_to_string(start_time_this_month)) : ((time_to_string(start_time_last_month) + "-") + time_to_string(start_time_this_month)));
-            year = local_time()["year"];
-            if ((!month = (local_time()["mon"] - 1))) {
+            time_desc = ((time(bind_time) >= start_time_last_month) ? ((bind_time + "-") + ctime(start_time_this_month, 3)) : ((ctime(start_time_last_month, 3) + "-") + ctime(start_time_this_month, 3)));
+            lt_m = local_time();
+            year = lt_m["year"];
+            if ((!month = (lt_m["mon"] - 1))) {
                 month = 12;
-                year = (local_time()["year"] - 1);
+                --year;
             }
             branch = sprintf("%d-%02d", year, month);
             log_protect_time(account, branch, protect_type, time_desc, cno);
@@ -2717,7 +3073,7 @@ private void cancel_pwd_protect(string account, string protect_type, mixed param
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=118, nargs=0, insts=118
+// @code  nc=136, nargs=0, insts=136
 // --------------------------------------------------------------------
 private void create() {
     /* ---- Enhanced Pseudocode ---- */
@@ -2730,12 +3086,15 @@ private void create() {
     set_case_check(protect_account, 0);
     load_all_handlers("/aaa/daemons/account/");
     "/daemons/connectiond.c"->register_auth("cmd_l_account", (: account_login :));
+    "/daemons/connectiond.c"->register_auth("cmd_l_get_antibot_question", (: send_antibot_question :));
+    "/daemons/connectiond.c"->register_auth("cmd_l_check_user_data", (: check_client_data :));
+    "/daemons/connectiond.c"->register_auth("cmd_l_auth_pic", (: client_auth_pic :));
     "/daemons/connectiond.c"->register_ban((: check_for_ban :));
     active_config = atoi(read_ini("Account", "Disactive", INI_FILE));
     active_status = (active_config ? 0 : 1);
     set_active_account_status(active_status);
     init_matrix();
-    set_matrix_status(0);
+    set_matrix_status(1);
     set("pwd_protect_fetch_func/matrix", (: pwd_protect_fetch_matrix :));
     set("pwd_protect_fetch_func/phone", (: pwd_protect_fetch_phone :));
     set("pwd_protect_fetch_func/sm", (: pwd_protect_fetch_sm :));
@@ -2879,9 +3238,9 @@ mixed query_safe_ctrl(string account, string protect_type) {
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=509, nargs=3, insts=509
+// @code  nc=1206, nargs=4, insts=1206
 // --------------------------------------------------------------------
-private void auth_all_protect(mixed agent, string account, mapping account_info) {
+private void auth_all_protect(mixed agent, string account, mapping account_info, int qr_code_login) {
     /* ---- Enhanced Pseudocode ---- */
     int auth_key;
     int matrix_status;
@@ -2896,6 +3255,15 @@ private void auth_all_protect(mixed agent, string account, mapping account_info)
     mixed permit_id;
     mixed mac_addr;
     mapping matrix_info;
+    string deny_prompt;
+    mapping auth_ret;
+    mixed dist;
+    mixed passpod;
+    int spec_protect;
+    int privilege;
+    mapping protect_phone_info;
+    mixed protect_phone_content;
+    int password_protect_var;
     string auth_pic_buf;
 
     is_advanced_protect_method = 0;
@@ -2904,27 +3272,106 @@ private void auth_all_protect(mixed agent, string account, mapping account_info)
         return;
     }
     if ((!get_safe_tips_status())) {
-        agent->set("safe_status", 1);
+        agent->lite_set("safe_status", 1);
     }
     if ((stricmp(agent->query_account(), account) != 0)) {
         agent->to_be_disconnect(1);
         return;
     }
-    mac_addr = agent->query_temp("mac_addr");
+    mac_addr = agent->lite_query_temp("mac_addr");
     login_auth = 1;
     protect_range = query_protect_range(account);
     if ((protect_range == 1)) {
         login_auth = 0;
+    }
+    spec_protect = 0;
+    if ((!is_object(agent))) {
+        return;
+    }
+    dist = agent->lite_query_temp("para_dist");
+    if ((((((!qr_code_login) && is_int(privilege = atoi(account_info["privilege"]))) && (privilege >= 300)) && (member_array(dist, ignore_dist_list) < 0)) && ((!login_auth) || (!is_mapping(query_protect_info(account, "passpod")))))) {
+        send_login_result(agent, 0, 0, "GMÕÊºÅÎ´°ó¶¨Ç¬À¤Ëø»òÎ´ÉèÖÃµÇÂ¼Ê±ÑéÖ¤Ç¬À¤Ëø£¬ÎÞ·¨µÇÂ¼¡£");
+        agent->to_be_disconnect(2);
+        if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "GMÕÊºÅÎ´°ó¶¨Ç¬À¤Ëø»òÎ´ÉèÖÃµÇÂ¼Ê±ÑéÖ¤Ç¬À¤Ëø£¬ÎÞ·¨µÇÂ¼¡£");
+        }
+        return;
+    }
+    spec_protect = get_auth_spec_game_bits();
+    if (((((((!qr_code_login) && login_auth) && (4 & (~spec_protect))) && is_mapping(query_protect_info(account, "passpod"))) && (account_info["org_password"] == "")) && (!check_skip_protected(agent, mac_addr, account_info)))) {
+        if ((deny_by_pwd_protect(account, "passpod", &deny_prompt) < 2)) {
+            send_login_result(agent, 6, 0, "¸ÃÕÊºÅ°ó¶¨µÄ#RÇ¬À¤Ëø#nÒÑ¾­¹ÒÊ§£¬ÎÞ·¨µÇÂ¼ÓÎÏ·¡£");
+            agent->to_be_disconnect(2);
+            return;
+        }
+        passpod = agent->lite_query_temp("para_passpod");
+        auth_ret = "/aaa/daemons/passpodd.c"->auth_passpod(account, passpod);
+        if ((!is_object(agent))) {
+            return;
+        }
+        switch (auth_ret["result"]) {
+            case 0:
+            break;
+            case 1:
+            prompt = "ÄãÊäÈëµÄÇ¬À¤ËøÃÜÂë´íÎó¡£";
+            do_when_password_error(agent, account, &prompt);
+            send_login_result(agent, 6, 0, prompt);
+            agent->to_be_disconnect(2);
+            return;
+            case 3:
+            agent->send_message(8165, "ÄãµÄÇ¬À¤ËøÒÑ¾­¹ýÆÚ£¬Çë¼°Ê±¸ü»»¡£", 1);
+            break;
+            case 2:
+            switch (when_return_user_not_found) {
+                case 2:
+                catch(error("User not found for passpod(account=%s)\n", account));
+
+                // --- label L0281 ---
+                break;
+                case 3:
+                cancel_pwd_protect(account, "passpod", agent, dist);
+                break;
+                default:
+                break;
+            }  // end switch
+
+            // --- label L0294 ---
+            break;
+            case 5:
+            send_login_result(agent, 6, 0, "ÄãµÄÃÜ±£ÒÑ±»·âÍ££¬²Ù×÷Ê§°Ü¡£");
+            agent->to_be_disconnect(2);
+            return;
+            case 6:
+            send_login_result(agent, 6, 0, "ÄãµÄÇ¬À¤Ëøµ±´ÎÃÜÂëÒÑÊ§Ð§£¬ÇëÉÔºóÔÙÊÔ¡£");
+            agent->to_be_disconnect(2);
+            return;
+            case 7:
+            send_login_result(agent, 6, 0, "µ±Ç°Ç¬À¤ËøÊäÈë´ÎÊý¹ý¶à£¬ÇëÉÔºóÔÙÊÔ¡£");
+            agent->to_be_disconnect(2);
+            return;
+            case 10:
+            default:
+            send_login_result(agent, 6, 0, "#RÇ¬À¤Ëø#nÃÜÂëÑéÖ¤Á¬½ÓÊ§°Ü¡££¨´íÎó±àºÅ£º1016£©\n#R×¢£ºÈç¹ûÄúÒÑ½â³ýÇ¬À¤Ëø£¬Ö»ÐèÒªÔÚÇ¬À¤ËøÀ¸ÊäÈëÈÎÒâ×Ö·û¼´¿ÉÆÆ½âÑéÖ¤¡£#n");
+            agent->to_be_disconnect(2);
+            return;
+        }  // end switch
+
+        // --- label L0349 ---
+        if ((!is_object(agent))) {
+            return;
+        }
+        agent->lite_set("passpod_type", auth_ret["passpod_type"]);
+        is_advanced_protect_method = 1;
     }
     permit_ip = account_info["permit_ip"];
     if (is_apex_enabled()) {
         permit_ip = trim((string)permit_ip);
     }
     if (((permit_ip != "") && (!check_for_permit(permit_ip, agent->get_peer_ip(), ",;/")))) {
-        send_login_result(agent, 0, 0, "¶Ô²»Æð£¬ÓÉÓÚÄúÉêÇëÁËIPËø¶¨·þÎñ£¬µ±Ç°µÇÈëÊÜµ½ÏÞÖÆ£¡");
+        send_login_result(agent, 0, 0, "¶Ô²»Æð£¬ÓÉÓÚÄúÉêÇëÁËIP°ó¶¨·þÎñ£¬µ±Ç°µÇÂ¼ÊÜµ½ÏÞÖÆ£¡");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "µÇÈëIPºÍÉèÖÃµÄËø¶¨IP²»Ò»ÖÂ£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "µÇÂ¼IPºÍÉèÖÃµÄ°ó¶¨IP²»Ò»ÖÂ£¬µÇÂ¼Ê§°Ü\n");
         }
         return;
     }
@@ -2933,14 +3380,92 @@ private void auth_all_protect(mixed agent, string account, mapping account_info)
         permit_id = trim((string)permit_id);
     }
     if (((permit_id != "") && (!check_for_permit(permit_id, mac_addr, ",;/")))) {
-        send_login_result(agent, 0, 0, "¶Ô²»Æð£¬ÓÉÓÚÄúÉêÇëÁË»úÆ÷IDËø¶¨·þÎñ£¬µ±Ç°µÇÈëÊÜµ½ÏÞÖÆ£¡");
+        send_login_result(agent, 0, 0, "¶Ô²»Æð£¬ÓÉÓÚÄúÉêÇëÁË»úÆ÷ID°ó¶¨·þÎñ£¬µ±Ç°µÇÂ¼ÊÜµ½ÏÞÖÆ£¡");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "µÇÈë»úÆ÷MACÎ»Ö·ºÍËø¶¨MACÎ»Ö·²»Ò»ÖÂ£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "µÇÂ¼»úÆ÷MACµØÖ·ºÍ°ó¶¨MACµØÖ·²»Ò»ÖÂ£¬µÇÂ¼Ê§°Ü\n");
         }
         return;
     }
-    if (((((!login_auth) || (!get_matrix_status())) || is_under_control(account_info)) || check_skip_protected(agent, mac_addr, account_info))) {
+    password_protect_var = 0;
+    if ((((!qr_code_login) && login_auth) && (2 & (~spec_protect)))) {
+        do {
+            protect_phone_content = "/aaa/daemons/configd.c"->get_global_config("protect_phone");
+            if (((!is_string(protect_phone_content)) || (!sizeof(protect_phone_content)))) {
+                deny_prompt = "#RÄãµÄÕÊºÅÒÑ¾­°ó¶¨ÁËµç»°ÃÜ±££¬Ðè½â³ýËø¶¨ºó²ÅÄÜµÇÂ¼ÓÎÏ·£¬Çë²¦´òµç»°#n#Y400-811-0495¡¢400-811-0507#n#RÈçµç»°Ã¦Çë³¢ÊÔ²¦´ò#n#Y0531-6677-3523#n#R#R½â³ýËø¶¨£¬Ò²¿É±à¼­¶ÌÐÅ#n#Y¡°1¡±#n#R·¢ËÍµ½#n#Y18954164801#n#R½âËø¡£#n";
+                break;
+            }
+            try {
+                protect_phone_info = restore_value(protect_phone_content);
+            } catch { /* error handled */ }
+
+            // --- label L0529 ---
+            if (((!is_mapping(protect_phone_info)) || (!sizeof(protect_phone_info)))) {
+                deny_prompt = "#RÄãµÄÕÊºÅÒÑ¾­°ó¶¨ÁËµç»°ÃÜ±££¬Ðè½â³ýËø¶¨ºó²ÅÄÜµÇÂ¼ÓÎÏ·£¬Çë²¦´òµç»°#n#Y400-811-0495¡¢400-811-0507#n#RÈçµç»°Ã¦Çë³¢ÊÔ²¦´ò#n#Y0531-6677-3523#n#R#R½â³ýËø¶¨£¬Ò²¿É±à¼­¶ÌÐÅ#n#Y¡°1¡±#n#R·¢ËÍµ½#n#Y18954164801#n#R½âËø¡£#n";
+                break;
+            }
+            if (((!is_string(deny_prompt = protect_phone_info["tip"])) || (!sizeof(deny_prompt)))) {
+                deny_prompt = "#RÄãµÄÕÊºÅÒÑ¾­°ó¶¨ÁËµç»°ÃÜ±££¬Ðè½â³ýËø¶¨ºó²ÅÄÜµÇÂ¼ÓÎÏ·£¬Çë²¦´òµç»°#n#Y400-811-0495¡¢400-811-0507#n#RÈçµç»°Ã¦Çë³¢ÊÔ²¦´ò#n#Y0531-6677-3523#n#R#R½â³ýËø¶¨£¬Ò²¿É±à¼­¶ÌÐÅ#n#Y¡°1¡±#n#R·¢ËÍµ½#n#Y18954164801#n#R½âËø¡£#n";
+                break;
+            }
+        } while (0);
+
+        // --- label L0567 ---
+        password_protect_var = deny_by_pwd_protect(account, "phone", &deny_prompt, agent, dist);
+        if ((((password_protect_var < 2) && (account_info["org_password"] == "")) && (!check_skip_protected(agent, mac_addr, account_info)))) {
+            if (is_object(agent)) {
+                agent->send_message(8165, deny_prompt, 1);
+                agent->to_be_disconnect(5);
+            }
+            if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕÊºÅ°ó¶¨µç»°ÃÜ±££¬½ûÖ¹µÇÂ¼¡£");
+            }
+            if ((!is_mapping(protect_account_ex[account]))) {
+                protect_account_ex[account] = ([ ]);
+            }
+            if (((time() - (int)protect_account_ex[account]["first_time"]) > 600)) {
+                protect_account_ex[account]["first_time"] = time();
+                protect_account_ex[account]["times"] = 1;
+                protect_account_ex[account]["update_time"] = time();
+            } else {
+                ++protect_account_ex[account]["times"];
+                protect_account_ex[account]["update_time"] = time();
+            }
+            return;
+        }
+        if ((password_protect_var == 3)) {
+            is_advanced_protect_method = 1;
+        }
+    }
+    if ((((!qr_code_login) && login_auth) && (1 & (~spec_protect)))) {
+        deny_prompt = "#RÄãµÄÕÊºÅÒÑ¾­°ó¶¨ÁË¶ÌÐÅÃÜ±££¬Ðè½â³ýËø¶¨ºó²ÅÄÜµÇÂ¼ÓÎÏ·£¬ÈçÄãÊÇÒÆ¶¯ÓÃ»§£¬Çë·¢ËÍ#Y8801#Rµ½#Y106653661280#R½â³ýËø¶¨£¬ÈçÄãÊÇÁªÍ¨ÓÃ»§£¬Çë·¢ËÍ#Y8801#Rµ½#Y106688881280#R½â³ýËø¶¨¡£";
+        password_protect_var = deny_by_pwd_protect(account, "sm", &deny_prompt, agent, dist);
+        if ((((password_protect_var < 2) && (account_info["org_password"] == "")) && (!check_skip_protected(agent, mac_addr, account_info)))) {
+            if (is_object(agent)) {
+                agent->send_message(8165, deny_prompt, 1);
+                agent->to_be_disconnect(5);
+            }
+            if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕÊºÅ°ó¶¨¶ÌÐÅÃÜ±££¬½ûÖ¹µÇÂ¼¡£");
+            }
+            if ((!is_mapping(protect_account_ex[account]))) {
+                protect_account_ex[account] = ([ ]);
+            }
+            if (((time() - (int)protect_account_ex[account]["first_time"]) > 600)) {
+                protect_account_ex[account]["first_time"] = time();
+                protect_account_ex[account]["times"] = 1;
+                protect_account_ex[account]["update_time"] = time();
+            } else {
+                ++protect_account_ex[account]["times"];
+                protect_account_ex[account]["update_time"] = time();
+            }
+            return;
+        }
+        if ((password_protect_var == 3)) {
+            is_advanced_protect_method = 1;
+        }
+    }
+    if (((((qr_code_login || (!login_auth)) || (!get_matrix_status())) || is_under_control(account_info)) || check_skip_protected(agent, mac_addr, account_info))) {
         matrix_status = 2;
     } else {
         matrix_info = query_matrix_info(account);
@@ -2950,22 +3475,22 @@ private void auth_all_protect(mixed agent, string account, mapping account_info)
         return;
     }
     if ((matrix_status == 1)) {
-        send_login_result(agent, 0, 0, "ÕËºÅµÇÈëÊ§°Ü¡££¨Ô­Òò£º1014£©");
+        send_login_result(agent, 0, 0, "ÕÊºÅµÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1014£©");
         agent->to_be_disconnect(2);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÎÞ·¨È·ÈÏÊÇ·ñËø¶¨±£ÃÜ¿¨£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÎÞ·¨È·ÈÏÊÇ·ñ°ó¶¨ÃÜ±£¿¨£¬µÇÂ¼Ê§°Ü\n");
         }
         return;
     }
     agent->replace_entire_dbase((account_info << agent->query_entire_dbase()));
-    agent->set("protect_range", protect_range);
+    agent->lite_set("protect_range", protect_range);
     if ((matrix_status == 2)) {
         do {
             if (is_under_control(account_info)) {
                 break;
             }
             if (is_advanced_protect_method) {
-                agent->set("safe_status", 1);
+                agent->lite_set("safe_status", 1);
                 break;
             }
             if (is_account_controlled_safe(agent, account, &prompt)) {
@@ -2980,30 +3505,30 @@ private void auth_all_protect(mixed agent, string account, mapping account_info)
             }
         } while (0);
 
-        // --- label L0329 ---
+        // --- label L1026 ---
         if ((!is_object(agent))) {
             return;
         }
         auth_key = generate_auth_key();
-        agent->set("auth_key", auth_key);
+        agent->lite_set("auth_key", auth_key);
         send_login_result(agent, (aa_rule_login ? 7 : 1), auth_key, "");
         clean_mapping_by_value(auth_key_account, 10);
         auth_key_account[auth_key] = agent;
         do_when_password_correct(agent, account);
         agent->to_be_disconnect(timeout_for_choose_server);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("µÇÈë³É¹¦£¬·¢ËÍ AUTH_KEY:%d\n", auth_key));
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("µÇÂ¼³É¹¦£¬·¢ËÍ AUTH_KEY:%d\n", auth_key));
         }
         return;
     }
-    agent->set("safe_status", 1);
+    agent->lite_set("safe_status", 1);
     matrix_cookie = generate_auth_matrix_cookie(account);
     matrix_random = generate_random_matrix(agent, 3, matrix_info["used_matrix"]);
-    agent->set_temp("matrix_cookie", matrix_cookie);
-    agent->set_temp("matrix_random", matrix_random);
-    agent->set_temp("matrix", 1);
+    agent->lite_set_temp("matrix_cookie", matrix_cookie);
+    agent->lite_set_temp("matrix_random", matrix_random);
+    agent->lite_set_temp("matrix", 1);
     auth_pic_buf = "";
-    if ((is_matrix_pic_enabled() && (!agent->query_temp("mobile_client")))) {
+    if ((is_matrix_pic_enabled() && (!agent->lite_query_temp("mobile_client")))) {
         auth_text = encode_matrix_auth_text(matrix_cookie, "", "", "");
         auth_pic_buf = get_matrix_pic(matrix_random);
     } else {
@@ -3012,7 +3537,7 @@ private void auth_all_protect(mixed agent, string account, mapping account_info)
     agent->send_message(4987, auth_text, auth_pic_buf, 0);
     agent->to_be_disconnect(timeout_for_protect_auth);
     if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-        "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "È·ÈÏËø¶¨ÁË±£ÃÜ¿¨£¬µÈ´ýÑéÖ¤±£ÃÜÃÜÂë\n");
+        "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "È·ÈÏ°ó¶¨ÁËÃÜ±£¿¨£¬µÈ´ýÑéÖ¤ÃÜ±£ÃÜÂë\n");
     }
 
 }
@@ -3151,6 +3676,79 @@ private int is_account_controlled_safe(object agent, string account, string &pro
 }
 
 // --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=228, nargs=2, insts=228
+// --------------------------------------------------------------------
+private void _check_client_data(mixed agent, string client_data) {
+    /* ---- Enhanced Pseudocode ---- */
+    int result;
+    int bot_type;
+    int client_no;
+    mixed text;
+    mixed pic_buf;
+    mixed bot_content;
+    int login_result;
+    mixed encrypt_key;
+    string seed_A;
+    string seed_B;
+    mapping seed_map;
+
+    if ((!is_object(agent))) {
+        return;
+    }
+    client_no = agent->get_client_no();
+    if ((!agent->lite_query_temp("antibot_question"))) {
+        agent->to_be_disconnect(0);
+        return;
+    }
+    bot_type = "/aaa/daemons/antibotd.c"->user_check_data(client_no, client_data, &bot_content);
+    if ((!is_object(agent))) {
+        return;
+    }
+    result = "/aaa/daemons/antibotd.c"->get_check_result(bot_type);
+    do {
+        login_result = ((result != 1) ? 0 : 1);
+        if (((result < 0) && "/aaa/daemons/picd.c"->get_pic(&text, &pic_buf))) {
+            agent->lite_set_temp("pic_auth_result", text);
+            agent->send_message(6920, pic_buf);
+            agent->to_be_disconnect(timeout_for_protect_auth);
+            break;
+        }
+        encrypt_key = (login_result ? generate_encrypt_cookie() : "");
+        if (is_apex_enabled()) {
+            seed_A = "abcdefghijklmnop";
+            seed_B = "zyxwvutsrqponmlkjihgfedcbaABCDEFGHIJKLMNOPQ";
+            if (((!is_mapping(seed_map = get_seed(seed_A, seed_B))) || (sizeof(seed_map) < 1))) {
+                break;
+            }
+            seed_A = seed_map["seed_A"];
+            seed_B = seed_map["seed_B"];
+            if (((((!is_string(seed_A)) || (strlen(seed_A) < 1)) || (!is_string(seed_B))) || (strlen(seed_B) < 1))) {
+                break;
+            }
+            client_seedA[client_no] = seed_A;
+            agent->send_message(11012, login_result, encrypt_key, seed_B);
+        } else {
+            agent->send_message(11012, login_result, encrypt_key, "");
+        }
+        if ((!login_result)) {
+            agent->to_be_disconnect(2);
+        } else {
+            set_dynamic_key(agent, "login", encrypt_key);
+            agent->lite_set_temp("antibot_answer", 1);
+            agent->to_be_connect(60);
+        }
+    } while (0);
+
+    // --- label L0207 ---
+    if ((bot_type > 0)) {
+        agent->lite_set_temp("bot_type", bot_type);
+        log_antibot(agent->get_peer_ip(), "", bot_type, bot_content);
+    }
+
+}
+
+// --------------------------------------------------------------------
 // @brief  validator: verify data
 // @code  nc=70, nargs=3, insts=70
 // --------------------------------------------------------------------
@@ -3178,6 +3776,16 @@ private int check_skip_protected(mixed agent, string mac_addr, mapping account_i
         return 0;
     }
     return 1;
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=12, nargs=3, insts=12
+// --------------------------------------------------------------------
+void send_antibot_question(mixed agent, string md5_value, string checksum) {
+    /* ---- Enhanced Pseudocode ---- */
+    "/daemons/threadd.c"->dispatch_service((: _send_antibot_question, agent, md5_value, checksum :));
 
 }
 
@@ -3304,7 +3912,7 @@ private mixed _generate_random_matrix(int count, mixed filters, mixed &prompt, m
         }
         left_matrix = (matrix_list - filters);
         if ((sizeof(left_matrix) < 1)) {
-            prompt = "¸Ã¾ØÕóÃÜ±£¿¨ÉÏµÄÎ»Ö·ÒÑ¾­È«²¿±»Ê¹ÓÃ¹ýÁË£¬¼ÌÐøÊ¹ÓÃÔòÎÞ·¨È·±£°²È«ÐÔ£¬ÇëµÇÂ¼#B#urlhttp://www.gyyx.cn/UserCenter/JZMB/JzmbBind.aspx#t#nÖØÐÂ°ó¶¨ÃÜ±£¿¨£¬ÈçÐèÒª°ó¶¨ÍêÈ«Ãâ·ÑµÄµç×Ó°æ¾ØÕóÃÜ±££¬ÇëµÇÂ¼#B#urlhttp://www.gyyx.cn/UserCenter/JZMB/EjzmbBind.aspx#t#n";
+            prompt = "¸Ã¾ØÕóÃÜ±£¿¨ÉÏµÄµØÖ·ÒÑ¾­È«²¿±»Ê¹ÓÃ¹ýÁË£¬¼ÌÐøÊ¹ÓÃÔòÎÞ·¨È·±£°²È«ÐÔ£¬ÇëµÇÂ¼#B#urlhttp://www.gyyx.cn/UserCenter/JZMB/JzmbBind.aspx#t#nÖØÐÂ°ó¶¨ÃÜ±£¿¨£¬ÈçÐèÒª°ó¶¨ÍêÈ«Ãâ·ÑµÄµç×Ó°æ¾ØÕóÃÜ±££¬ÇëµÇÂ¼#B#urlhttp://www.gyyx.cn/UserCenter/JZMB/EjzmbBind.aspx#t#n";
             break;
         }
         if ((sizeof(filters) < 50)) {
@@ -3374,7 +3982,7 @@ private int pwd_protect_update_matrix(string account, mapping &m) {
 
 // --------------------------------------------------------------------
 // @brief  validator: verify data
-// @code  nc=910, nargs=8, insts=910
+// @code  nc=1112, nargs=8, insts=1112
 // --------------------------------------------------------------------
 private mixed check_account_info(mixed agent, string account, string password, string mac_addr, string client_data, string passpod, string dist, int qr_code_login) {
     /* ---- Enhanced Pseudocode ---- */
@@ -3383,6 +3991,7 @@ private mixed check_account_info(mixed agent, string account, string password, s
     int btime;
     int client_no;
     int activate_result;
+    mixed limit_info;
     mixed md5password;
     mixed sql_cmd;
     string prompt;
@@ -3393,8 +4002,12 @@ private mixed check_account_info(mixed agent, string account, string password, s
     int encrypt_key;
     mixed activate_prompt;
     string aa_url;
+    mixed limit_str;
     mapping activate_ret;
     mapping account_info;
+    int bot_type;
+    int result;
+    mixed bot_content;
     mixed seed_A;
     mixed new_pwd;
     int check_block_day;
@@ -3407,12 +4020,30 @@ private mixed check_account_info(mixed agent, string account, string password, s
         return 0;
     }
     client_no = agent->get_client_no();
+    bot_type = "/aaa/daemons/antibotd.c"->user_check_data(agent->get_client_no(), client_data, &bot_content);
+    if ((!is_object(agent))) {
+        map_delete(client_seedA, client_no);
+        return 0;
+    }
+    result = "/aaa/daemons/antibotd.c"->get_check_result(bot_type);
+    if ((bot_type > 0)) {
+        log_antibot(agent->get_peer_ip(), account, bot_type, bot_content);
+        if ((!is_object(agent))) {
+            map_delete(client_seedA, client_no);
+            return 0;
+        }
+    }
+    if ((result == 0)) {
+        map_delete(client_seedA, client_no);
+        agent->to_be_disconnect(1);
+        return 0;
+    }
     if (check_for_protect_account(account, agent->get_peer_ip(), &prompt)) {
         map_delete(client_seedA, client_no);
         send_login_result(agent, 0, 0, prompt);
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¸ÃÕËºÅÒÑ±»ÔÝÊ±½ûÖ¹´Ó¸ÃIPµÇÈë\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¸ÃÕÊºÅÒÑ±»ÔÝÊ±½ûÖ¹´Ó¸ÃIPµÇÂ¼\n");
         }
         return 0;
     }
@@ -3421,17 +4052,17 @@ private mixed check_account_info(mixed agent, string account, string password, s
         send_login_result(agent, 0, 0, prompt);
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¸ÃÕËºÅÔÚ10·ÖÖÓÄÚÖØ¸´5´Î½«Í¬Ò»ÕËºÅÃÜÂëÊäÈëÕýÈ·£¬µ«¶¼Ã»ÓÐ³É¹¦Íê³Éµç»°£¨¶ÌÐÅ£©ÃÜ±£½âËø£¬±»½ûÖ¹µÇÂ¼¡£");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¸ÃÕÊºÅÔÚ10·ÖÖÓÄÚÖØ¸´5´Î½«Í¬Ò»ÕÊºÅÃÜÂëÊäÈëÕýÈ·£¬µ«¶¼Ã»ÓÐ³É¹¦Íê³Éµç»°£¨¶ÌÐÅ£©ÃÜ±£½âËø£¬±»½ûÖ¹µÇÂ¼¡£");
         }
         return 0;
     }
     if (((cno = "/daemons/dbd.c"->assure_connection("adb")) == -1)) {
         map_delete(client_seedA, client_no);
         printf("[1;31mÁ¬½Ó ADB Êý¾Ý¿âÊ§°Ü\n[2;37;0m");
-        send_login_result(agent, 0, 0, "ÕËºÅµÇÈëÊ§°Ü¡££¨Ô­Òò£º1001£©");
+        send_login_result(agent, 0, 0, "ÕÊºÅµÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1001£©");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Á¬½Ó ADB Êý¾Ý¿âÊ§°Ü£¬ÔÝÊ±ÎÞ·¨Ìá¹©µÇÈë·þÎñ\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Á¬½Ó ADB Êý¾Ý¿âÊ§°Ü£¬ÔÝÊ±ÎÞ·¨Ìá¹©µÇÂ¼·þÎñ\n");
         }
         return 0;
     }
@@ -3441,6 +4072,7 @@ private mixed check_account_info(mixed agent, string account, string password, s
         return 0;
     }
     encrypt_key = 0;
+    encrypt_key = query_dynamic_key(agent, "login");
     password = get_raw_password(("!*" + password), encrypt_key);
     if (((is_apex_enabled() && is_mapping(account_info)) && (_check_client_apex_status(account_info, password) == 1))) {
         seed_A = client_seedA[client_no];
@@ -3451,8 +4083,16 @@ private mixed check_account_info(mixed agent, string account, string password, s
     map_delete(client_seedA, client_no);
     md5password = password;
     if (((!is_mapping(account_info)) && get_active_account_status())) {
+        if (qr_code_login) {
+            send_login_result(agent, 0, 0, "ÄúµÄÕÊºÅÔÚ´ËÇø×éÉÐÎ´¼¤»î£¬³õ´ÎµÇÂ¼ÐèÊ¹ÓÃÔ­ÊäÈëÕÊºÅÃÜÂë·½Ê½½øÐÐµÇÂ¼¡£");
+            agent->to_be_disconnect(1);
+            if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Î´¼¤»îÕÊºÅ²»ÄÜ½øÐÐ¶þÎ¬ÂëµÇÂ¼£¬µÇÂ¼Ê§°Ü\n");
+            }
+            return 0;
+        }
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿â²»´æÔÚ¸ÃÕËºÅ£¬³¢ÊÔ×Ô¶¯Æô¶¯\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿â²»´æÔÚ¸ÃÕÊºÅ£¬³¢ÊÔ×Ô¶¯¼¤»î\n");
         }
         activate_ret = activate_account(account, md5password, agent->get_peer_ip());
         activate_result = activate_ret["result"];
@@ -3475,61 +4115,61 @@ private mixed check_account_info(mixed agent, string account, string password, s
             send_login_result(agent, 3, 0, activate_prompt);
             agent->to_be_disconnect(1);
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕËºÅÃÜÂë²»Æ¥Åä£¬µÇÈëÊ§°Ü\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕÊºÅÃÜÂë²»Æ¥Åä£¬µÇÂ¼Ê§°Ü\n");
             }
             return 0;
             case 3:
             if ((!is_string(aa_url = "/aaa/daemons/configd.c"->get_global_config("aa_url")))) {
                 aa_url = "http://account.gyyx.cn/gameAdult/AdultValidate.aspx";
             }
-            send_login_result(agent, 0, 0, sprintf("#RÄúµÄ×¢²á×ÊÁÏÎ´Í¨¹ý·À³ÁÃÔÑéÖ¤£¬½«±»ÄÉÈë·À³ÁÃÔÏµÍ³£¬ÎÞ·¨½øÈëÓÎÏ·¡£Çëµã»÷#n#Y#urlÕâÀï[%s]#t#n#R²¹ÌîÕýÈ·×ÊÑ¶¡£#n", aa_url));
+            send_login_result(agent, 0, 0, sprintf("#RÄúµÄ×¢²á×ÊÁÏÎ´Í¨¹ý·À³ÁÃÔÑéÖ¤£¬½«±»ÄÉÈë·À³ÁÃÔÏµÍ³£¬ÎÞ·¨½øÈëÓÎÏ·¡£Çëµã»÷#n#Y#urlÕâÀï{%s}#t#n#R²¹ÌîÕýÈ·ÐÅÏ¢¡£#n", aa_url));
             agent->to_be_disconnect(5);
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "×Ô¶¯Æô¶¯Ã»ÓÐÍ¨¹ý·À³ÁÃÔÑéÖ¤£¬µÇÂ¼Ê§°Ü");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "×Ô¶¯¼¤»îÃ»ÓÐÍ¨¹ý·À³ÁÃÔÑéÖ¤£¬µÇÂ¼Ê§°Ü");
             }
             return 0;
             case 1:
             send_login_result(agent, 0, 0, activate_prompt);
             agent->to_be_disconnect(1);
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "×Ô¶¯Æô¶¯²»³É¹¦£¬µÇÈëÊ§°Ü\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "×Ô¶¯¼¤»î²»³É¹¦£¬µÇÂ¼Ê§°Ü\n");
             }
             return 0;
             default:
         }  // end switch
 
-        // --- label L0426 ---
+        // --- label L0535 ---
         account_info = query_account_info(account);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "×Ô¶¯Æô¶¯Íê³É\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "×Ô¶¯¼¤»îÍê³É\n");
         }
-        if ((!is_undefined(account_info["active_path"]))) {
+        if ((is_mapping(account_info) && (strlen(account_info["active_path"]) < 1))) {
             account_info["active_path"] = 1;
+            update_account_info(account_info);
         }
-        update_account_info(account_info);
         if ((!is_object(agent))) {
             return 0;
         }
     }
     if ((!is_mapping(account_info))) {
-        send_login_result(agent, 0, 0, "ÕËºÅµÇÈëÊ§°Ü¡££¨Ô­Òò£º1007£©");
+        send_login_result(agent, 0, 0, "ÕÊºÅµÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1007£©");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿â²»´æÔÚ¸ÃÕËºÅ£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿â²»´æÔÚ¸ÃÕÊºÅ£¬µÇÂ¼Ê§°Ü\n");
         }
         return 0;
     }
     if ((account_info["checksum"] != calc_account_checksum(account_info))) {
-        send_login_result(agent, 0, 0, "ÕËºÅµÇÈëÊ§°Ü¡££¨Ô­Òò£º1009£©");
+        send_login_result(agent, 0, 0, "ÕÊºÅµÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1009£©");
         agent->to_be_disconnect(1);
         log_bad_checksum_account(account, account_info);
         return 0;
     }
     if (((!is_under_control(account_info)) && (account_info["locked"] == "1"))) {
-        send_login_result(agent, 5, 0, "¸ÃÕËºÅÒÑ±»Ëø¶¨£¬ÇëÏÈµÇÈëåÐÒ£»áÔ±ÖÐÐÄ½â³ýËø¶¨£¡£¨Ô­Òò£º1012£©");
+        send_login_result(agent, 5, 0, "¸ÃÕÊºÅÒÑ±»Ëø¶¨£¬ÇëÏÈµÇÂ¼¹âÓîÓÎÏ·ÉçÇø½â³ýËø¶¨£¡£¨Ô­Òò£º1012£©");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕËºÅ´¦ÓÚËø¶¨×´Ì¬£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕÊºÅ´¦ÓÚËø¶¨×´Ì¬£¬µÇÂ¼Ê§°Ü\n");
         }
         return 0;
     }
@@ -3539,14 +4179,14 @@ private mixed check_account_info(mixed agent, string account, string password, s
         btime = trim((string)btime);
     }
     real_reason = account_info["blocked_reason"];
-    breason = "ÔËÓªÖÐ±»·â±ÕµÄÕËºÅ";
+    breason = "ÔËÓªÖÐ±»·â±ÕµÄÕÊºÅ";
     if (is_undefined(btime = time_desc_to_int(btime, 3))) {
-        breason = "ÔËÓªÖÐ±»·â±ÕµÄÕËºÅ¡££¨Ô­Òò£º1010£©";
+        breason = "ÔËÓªÖÐ±»·â±ÕµÄÕÊºÅ¡££¨Ô­Òò£º1010£©";
         get_extra_block_reason_msg(check_block_day, real_reason, &breason);
         send_login_result(agent, 4, 0, breason);
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("¸ÃÕËºÅ±»·â£¬½ûÖ¹µÇÈë£¬Ô­Òò£º%O\n", "block_time×Ö¶Î¸ñÊ½´íÎó"));
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("¸ÃÕÊºÅ±»·â£¬½ûÖ¹µÇÂ¼£¬Ô­Òò£º%O\n", "block_time×Ö¶Î¸ñÊ½´íÎó"));
         }
         return 0;
     }
@@ -3556,7 +4196,7 @@ private mixed check_account_info(mixed agent, string account, string password, s
             left_deny_day = (left_deny_time / 86400);
             left_deny_day = ((left_deny_time % 86400) ? (left_deny_day + 1) : left_deny_day);
             check_block_day = left_deny_day;
-            breason = sprintf("ÓªÔËÖÐ±»·â±ÕµÄÕËºÅ£¬½«ÓÚ#R%d#nÌìºó½â³ý·â±Õ¡£", left_deny_day);
+            breason = sprintf("ÔËÓªÖÐ±»·â±ÕµÄÕÊºÅ£¬½«ÓÚ#R%d#nÌìºó½â³ý·â±Õ¡£", left_deny_day);
         }
         if ((sscanf(real_reason, "need_prompt:%s", &need_prompt) == 1)) {
             breason = need_prompt;
@@ -3565,7 +4205,7 @@ private mixed check_account_info(mixed agent, string account, string password, s
         send_login_result(agent, 4, 0, breason);
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("¸ÃÕËºÅ±»·â£¬½ûÖ¹µÇÈë£¬Ô­Òò£º%O\n", real_reason));
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", sprintf("¸ÃÕÊºÅ±»·â£¬½ûÖ¹µÇÂ¼£¬Ô­Òò£º%O\n", real_reason));
         }
         return 0;
     }
@@ -3577,7 +4217,7 @@ private mixed check_account_info(mixed agent, string account, string password, s
         update_account_info(account_info);
         ti = ctime(time(), 3);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "³¬¹ý·âºÅÊ±¼ä£¬¸ø¸ÃÕËºÅ½â·â\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "³¬¹ý·âºÅÊ±¼ä£¬¸ø¸ÃÕÊºÅ½â·â\n");
         }
         sql_cmd = mysql_bind_parameters("insert into acc_log(ip, time,account, dist, type, msg, memo) values(?, ?, ?, ?, ?, ?, ?)", ip, ti, account, btime, "auto_unlock_account", "·âºÅÊ±¼äÒÑµ½£¬×Ô¶¯½âËø", "");
         (*f_execute)(cno, sql_cmd);
@@ -3585,18 +4225,29 @@ private mixed check_account_info(mixed agent, string account, string password, s
             return 0;
         }
     }
-    new_md5password = calc_password_new_md5(account_info["account"], md5password);
-    if ((stricmp(account_info["password"], new_md5password) != 0)) {
-        prompt = "ÕËºÅºÍÃÜÂë²»Æ¥Åä£¡";
-        if ((stricmp(account_info["org_password"], new_md5password) == 0)) {
-            send_login_result(agent, 3, 0, "¶Ô²»Æð£¬¹ÜÀíÈËÔ±ÕýÔÚ¶ÔÄãµÄÕËºÅ½øÐÐ²Ù×÷£¬ÔÝÊ±ÎÞ·¨µÇÈë¡£");
-        } else {
-            do_when_password_error(agent, account, &prompt);
-            send_login_result(agent, 3, 0, prompt);
+    if ((!qr_code_login)) {
+        new_md5password = calc_password_new_md5(account_info["account"], md5password);
+        printf("pass = %s \n", new_md5password);
+        if ((stricmp(account_info["password"], new_md5password) != 0)) {
+            prompt = "ÕÊºÅºÍÃÜÂë²»Æ¥Åä£¡";
+            if ((stricmp(account_info["org_password"], new_md5password) == 0)) {
+                send_login_result(agent, 3, 0, "¶Ô²»Æð£¬¹ÜÀíÈËÔ±ÕýÔÚ¶ÔÄãµÄÕÊºÅ½øÐÐ²Ù×÷£¬ÔÝÊ±ÎÞ·¨µÇÂ¼¡£");
+            } else {
+                do_when_password_error(agent, account, &prompt);
+                send_login_result(agent, 3, 0, prompt);
+            }
+            agent->to_be_disconnect(1);
+            if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕÊºÅÃÜÂë²»Æ¥Åä£¬µÇÂ¼Ê§°Ü\n");
+            }
+            return 0;
         }
-        agent->to_be_disconnect(1);
+    }
+    if (((((merge_limit_login && is_string(limit_str = "/aaa/daemons/configd.c"->get_global_config("merge_limit_login"))) && is_array(limit_info = restore_value(limit_str))) && is_string(account_info["last_login_time"])) && (time_desc_to_int(account_info["last_login_time"], 3) < (time_desc_to_int(limit_info[0], 3) - (int)limit_info[1])))) {
+        send_login_result(agent, 0, 0, sprintf("ÄãµÄÕÊºÅÕýÔÚ½øÐÐÊý¾Ý»¥Í¨´¦Àí£¬ÐèÉÔºó²ÅÄÜ½øÐÐµÇÂ¼£¬Ô¤¼Æ¿ÉÒÔµÇÂ¼Ê±¼äÎª£º%s", (string)limit_info[2]));
+        agent->to_be_disconnect(5);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÕËºÅÃÜÂë²»Æ¥Åä£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "µ±Ç°ÕÊºÅÕýÔÚºÏ·þÖÐ£¬½ûÖ¹µÇÂ¼¡£\n");
         }
         return 0;
     }
@@ -3664,7 +4315,7 @@ private int pwd_protect_deny_phone(string account, mapping m, mixed param, mixed
     if ((!is_object(param))) {
         return 0;
     }
-    login_ip = sprintf("%s@%s", param->get_peer_ip(), param->query_temp("mac_addr"));
+    login_ip = sprintf("%s@%s", param->get_peer_ip(), param->lite_query_temp("mac_addr"));
     if ((!m["login_ip"])) {
         m["login_ip"] = login_ip;
         update_protect_info(m);
@@ -3734,12 +4385,12 @@ void auth_local_encrypt(mixed agent, string account, string auth_text) {
             break;
         }
         le_info = restore_value(le_map["local_encrypt_info"]);
-        arr_pos = agent->query_temp("local_encrypt_pos");
+        arr_pos = agent->lite_query_temp("local_encrypt_pos");
         if (((!is_mapping(le_info)) || (!is_array(arr_pos)))) {
-            send_login_result(agent, 0, 0, "±¾µØÔ¿³×µµÑéÖ¤Ê§°Ü£¬ÇëÈ·¶¨ÃÜÔ¿µµÎ»ÖÃÊÇ·ñÕýÈ·¡£");
+            send_login_result(agent, 0, 0, "±¾µØÔ¿³×ÎÄ¼þÑéÖ¤Ê§°Ü£¬ÇëÈ·¶¨ÃÜÔ¿ÎÄ¼þÎ»ÖÃÊÇ·ñÕýÈ·¡£");
             agent->to_be_disconnect(1);
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "´óµµ¼ÓÃÜÑéÖ¤Ê§°Ü");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "´óÎÄ¼þ¼ÓÃÜÑéÖ¤Ê§°Ü");
             }
             return;
         }
@@ -3750,37 +4401,37 @@ void auth_local_encrypt(mixed agent, string account, string auth_text) {
         replace_str = le_info["replace_str"];
         if ((encrypt_type == 1)) {
             if ((auth_text != des_local_encrypt_pos(arr_pos, replace_str, seed1, seed2))) {
-                send_login_result(agent, 0, 0, "±¾µØÔ¿³×µµÑéÖ¤Ê§°Ü£¬ÇëÈ·¶¨ÃÜÔ¿µµÎ»ÖÃÊÇ·ñÕýÈ·¡£");
+                send_login_result(agent, 0, 0, "±¾µØÔ¿³×ÎÄ¼þÑéÖ¤Ê§°Ü£¬ÇëÈ·¶¨ÃÜÔ¿ÎÄ¼þÎ»ÖÃÊÇ·ñÕýÈ·¡£");
                 agent->to_be_disconnect(1);
                 if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                    "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "´óµµ¼ÓÃÜÑéÖ¤Ê§°Ü");
+                    "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "´óÎÄ¼þ¼ÓÃÜÑéÖ¤Ê§°Ü");
                 }
                 return;
             }
-            agent->set("local_encrypt", 1);
+            agent->lite_set("local_encrypt", 1);
             break;
         }
         if ((auth_text == md5_local_encrypt_pos(arr_pos, replace_str, seed1, seed2))) {
-            agent->set("local_encrypt", 1);
+            agent->lite_set("local_encrypt", 1);
             break;
         }
-        send_login_result(agent, 0, 0, "±¾µØÔ¿³×µµÑéÖ¤Ê§°Ü£¬ÇëÈ·¶¨ÃÜÔ¿µµÎ»ÖÃÊÇ·ñÕýÈ·¡£");
+        send_login_result(agent, 0, 0, "±¾µØÔ¿³×ÎÄ¼þÑéÖ¤Ê§°Ü£¬ÇëÈ·¶¨ÃÜÔ¿ÎÄ¼þÎ»ÖÃÊÇ·ñÕýÈ·¡£");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "´óµµ¼ÓÃÜÑéÖ¤Ê§°Ü");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "´óÎÄ¼þ¼ÓÃÜÑéÖ¤Ê§°Ü");
         }
         return;
     } while (0);
 
     // --- label L0231 ---
-    if ((agent->query("local_encrypt") == 1)) {
-        agent->set("safe_status", 1);
+    if ((agent->lite_query("local_encrypt") == 1)) {
+        agent->lite_set("safe_status", 1);
     }
     if ((!is_mapping(account_info = query_account_info(account)))) {
-        send_login_result(agent, 0, 0, "ÕËºÅµÇÈëÊ§°Ü¡££¨Ô­Òò£º1007£©");
+        send_login_result(agent, 0, 0, "ÕÊºÅµÇÂ¼Ê§°Ü¡££¨Ô­Òò£º1007£©");
         agent->to_be_disconnect(1);
         if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿â²»´æÔÚ¸ÃÕËºÅ£¬µÇÈëÊ§°Ü\n");
+            "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿â²»´æÔÚ¸ÃÕÊºÅ£¬µÇÂ¼Ê§°Ü\n");
         }
         return;
     }
@@ -3844,11 +4495,11 @@ private array generate_random_matrix(mixed agent, int count, mixed filters) {
         return ({});
     }
     if ((!get_safe_tips_status())) {
-        agent->set("safe_status", 1);
+        agent->lite_set("safe_status", 1);
     }
     matrix = _generate_random_matrix(count, filters, &prompt, &is_out);
     if (is_out) {
-        agent->set("safe_status", 2);
+        agent->lite_set("safe_status", 2);
         agent->send_message(8165, prompt, 1);
     }
     return matrix;
@@ -3891,30 +4542,30 @@ void auth_matrix(mixed agent, string account, string auth_text) {
         if ((stricmp(agent->query_account(), account) != 0)) {
             break;
         }
-        if ((!agent->query_temp("matrix"))) {
+        if ((!agent->lite_query_temp("matrix"))) {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÓÃ»§¶ËÔÚÎ´Í¨¹ýÆÕÍ¨ÃÜÂëÑéÖ¤Çé¿öÏÂ£¬Ö±½Ó·¢ËÍ±£ÃÜÃÜÂëÑéÖ¤ÇëÇó£¬·Ç·¨£¬µÇÈëÊ§°Ü---1\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¿Í»§¶ËÔÚÎ´Í¨¹ýÆÕÍ¨ÃÜÂëÑéÖ¤Çé¿öÏÂ£¬Ö±½Ó·¢ËÍÃÜ±£ÃÜÂëÑéÖ¤ÇëÇó£¬·Ç·¨£¬µÇÂ¼Ê§°Ü---1\n");
             }
             break;
         }
-        agent->delete_temp("matrix");
-        matrix_random = agent->query_temp("matrix_random");
+        agent->lite_delete_temp("matrix");
+        matrix_random = agent->lite_query_temp("matrix_random");
         if (((!is_array(matrix_random)) || (sizeof(matrix_random) != 3))) {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÓÃ»§¶ËÔÚÎ´Í¨¹ýÆÕÍ¨ÃÜÂëÑéÖ¤Çé¿öÏÂ£¬Ö±½Ó·¢ËÍ±£ÃÜÃÜÂëÑéÖ¤ÇëÇó£¬·Ç·¨£¬µÇÈëÊ§°Ü---2\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¿Í»§¶ËÔÚÎ´Í¨¹ýÆÕÍ¨ÃÜÂëÑéÖ¤Çé¿öÏÂ£¬Ö±½Ó·¢ËÍÃÜ±£ÃÜÂëÑéÖ¤ÇëÇó£¬·Ç·¨£¬µÇÂ¼Ê§°Ü---2\n");
             }
             break;
         }
         m = decode_matrix_auth_text(auth_text);
         if ((!is_mapping(m))) {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÓÃ»§¶ËÊäÈëµÄ±£ÃÜÑéÖ¤×ÖÔª·Ç·¨£¬µÇÈëÊ§°Ü\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¿Í»§¶ËÊäÈëµÄÃÜ±£ÑéÖ¤×Ö·û·Ç·¨£¬µÇÂ¼Ê§°Ü\n");
             }
             break;
         }
-        if ((m["matrix_cookie"] != agent->query_temp("matrix_cookie"))) {
+        if ((m["matrix_cookie"] != agent->lite_query_temp("matrix_cookie"))) {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÓÃ»§¶ËÊäÈëµÄ±£ÃÜÑéÖ¤COOKIE·Ç·¨£¬µÇÈëÊ§°Ü\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¿Í»§¶ËÊäÈëµÄÃÜ±£ÑéÖ¤COOKIE·Ç·¨£¬µÇÂ¼Ê§°Ü\n");
             }
             break;
         }
@@ -3927,9 +4578,9 @@ void auth_matrix(mixed agent, string account, string auth_text) {
         }
         if ((1 == matrix_status)) {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿âÔ­Òò£¬ÎÞ·¨¶ÔÓÃ»§¶ËÊäÈë½øÐÐÑéÖ¤£¬µÇÈëÊ§°Ü");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Êý¾Ý¿âÔ­Òò£¬ÎÞ·¨¶Ô¿Í»§¶ËÊäÈë½øÐÐÑéÖ¤£¬µÇÂ¼Ê§°Ü");
             }
-            reason = "ÑéÖ¤·þÎñÆ÷Òì³££¬µÇÈëÊ§°Ü£¨1013£©¡£";
+            reason = "ÑéÖ¤·þÎñÆ÷Òì³££¬µÇÂ¼Ê§°Ü£¨1013£©¡£";
             break;
         }
         if ((2 != matrix_status)) {
@@ -3940,9 +4591,9 @@ void auth_matrix(mixed agent, string account, string auth_text) {
             value_3 = get_value_from_matrix_text(matrix_text, matrix_random[2]);
             if ((calc_matrix_pwd_md5(value_1, value_2, value_3, m["matrix_cookie"]) != m["MD5"])) {
                 if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                    "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÓÃ»§¶ËÊäÈëµÄ±£ÃÜÃÜÂëºÍÊý¾Ý¿âÖÐµÄ²»Æ¥Åä£¬µÇÈëÊ§°Ü\n");
+                    "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "¿Í»§¶ËÊäÈëµÄÃÜ±£ÃÜÂëºÍÊý¾Ý¿âÖÐµÄ²»Æ¥Åä£¬µÇÂ¼Ê§°Ü\n");
                 }
-                reason = "ÄãÊäÈëµÄ±£ÃÜ¿¨ÃÜÂë´íÎó£¬µÇÈëÊ§°Ü¡£";
+                reason = "ÄãÊäÈëµÄÃÜ±£¿¨ÃÜÂë´íÎó£¬µÇÂ¼Ê§°Ü¡£";
                 do_when_password_error(agent, account, &reason);
                 break;
             }
@@ -3959,18 +4610,18 @@ void auth_matrix(mixed agent, string account, string auth_text) {
             return;
         }
         auth_key = generate_auth_key();
-        agent->set("auth_key", auth_key);
+        agent->lite_set("auth_key", auth_key);
         send_login_result(agent, (aa_rule_login ? 7 : 1), auth_key, "");
         clean_mapping_by_value(auth_key_account, 10);
         auth_key_account[auth_key] = agent;
         agent->to_be_disconnect(timeout_for_choose_server);
         if ((2 == matrix_status)) {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Î´Æô¶¯±£ÃÜ»úÖÆ£¬ÎÞÐèÑéÖ¤£¬µÇÈë³É¹¦\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "Î´¼¤»îÃÜ±£»úÖÆ£¬ÎÞÐèÑéÖ¤£¬µÇÂ¼³É¹¦\n");
             }
         } else {
             if ((is_string(account) || is_string(account->query_temp("login_info/account")))) {
-                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "±£ÃÜÃÜÂëÑéÖ¤Í¨¹ý£¬µÇÈë³É¹¦\n");
+                "/daemons/logd.c"->log_login_info(get_login_info_file(account), "login", "ÃÜ±£ÃÜÂëÑéÖ¤Í¨¹ý£¬µÇÂ¼³É¹¦\n");
             }
         }
         return;
@@ -4043,9 +4694,9 @@ int get_auth_method() {
 /* ================================================================
    DECOMPILATION SUMMARY
    ================================================================
-   Total function names:        136
-   Code segments found:         136
-   Successfully decoded:        136
+   Total function names:        144
+   Code segments found:         144
+   Successfully decoded:        144
    Unresolved/minimal:          0
    Functions without code:      2
    Inherited programs:          4

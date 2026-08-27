@@ -18,7 +18,7 @@
 
 void add_failed_times(int times = 1);
 int get_failed_times();
-private void create(mapping m);
+private void create(mapping m = ([ ]));
 
 /* ================================================================
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
@@ -36,7 +36,6 @@ private void create(mapping m);
 void add_failed_times(int times) {
     /* ---- Enhanced Pseudocode ---- */
     failed_times += times;
-    return 1;
 
 }
 

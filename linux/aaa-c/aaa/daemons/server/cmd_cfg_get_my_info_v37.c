@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 1 names, 1 code segments found
- * Strings: 19, Variables: 0
+ * Strings: 20, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -22,7 +22,7 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=336, nargs=3, insts=336
+// @code  nc=353, nargs=3, insts=353
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
@@ -44,11 +44,11 @@ void main(object agent, int type, string name) {
     if (((!is_int(info["port"])) || (!is_int(info["id"])))) {
         bad = 1;
     }
-    if ((((!bad) && (((type == 5) || (type == 7)) || (type == 4))) && ((!is_string(info["dist"])) && (info["dist"] == "")))) {
+    if ((((!bad) && (((((type == 5) || (type == 18)) || (type == 7)) || (type == 4)) || (type == 19))) && ((!is_string(info["dist"])) && (info["dist"] == "")))) {
         bad = 1;
     }
     if (bad) {
-        printf("[1;31m[config] ·þÎñÆ÷ %s È±ÉÙ»ù±¾ÅäÖÃ×ÊÑ¶\n[2;37;0m", name);
+        printf("[1;31m[config] ·þÎñÆ÷ %s È±ÉÙ»ù±¾ÅäÖÃÐÅÏ¢\n[2;37;0m", name);
         return;
     }
     dist = (string)info["dist"];
@@ -60,7 +60,7 @@ void main(object agent, int type, string name) {
     settings = ({});
     got_settings = ({});
     loop (mks in info) {
-        if (((((((((((mks[0] == "memo") || (mks[0] == "name")) || (mks[0] == "ip")) || (mks[0] == "alias")) || (mks[0] == "port")) || (mks[0] == "dist")) || (mks[0] == "server")) || (mks[0] == "ccs")) || (mks[0] == "dba")) || (mks[0] == "spa"))) {
+        if ((((((((((((mks[0] == "memo") || (mks[0] == "name")) || (mks[0] == "ip")) || (mks[0] == "alias")) || (mks[0] == "port")) || (mks[0] == "dist")) || (mks[0] == "server")) || (mks[0] == "ccs")) || (mks[0] == "dba")) || (mks[0] == "ldba")) || (mks[0] == "spa"))) {
             continue;
         }
         got_settings += ({ mks[0] });

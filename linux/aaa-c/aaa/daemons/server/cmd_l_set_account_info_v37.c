@@ -5,17 +5,29 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 9, Variables: 0
+ * Strings: 10, Variables: 2
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
 
 /* ================================================================
+   Global/Object Variables
+   ================================================================ */
+   array forbid_fields;
+   /* mixed global_0; */
+
+/* ================================================================
    FORWARD DECLARATIONS
    ================================================================ */
 
-private void _main(string account, string key, string value);
-void main(object agent, string account, string key, string value);
+private void _main(string account, string text);
+void main(object agent, string account, string text);
+
+/* ================================================================
+   GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
+   ================================================================ */
+
+   forbid_fields = ({ "account", "gold_coin", "silver_coin" });
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -23,31 +35,49 @@ void main(object agent, string account, string key, string value);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=46, nargs=3, insts=46
+// @code  nc=82, nargs=2, insts=82
 // --------------------------------------------------------------------
-private void _main(string account, string key, string value) {
+private void _main(string account, string text) {
     /* ---- Enhanced Pseudocode ---- */
+    mixed fields;
+    int field;
+    mixed para;
     mixed account_info;
 
-    if ((((key == "account") || (key == "gold_coin")) || (key == "silver_coin"))) {
-        printf("This module can't be used to add coin.");
+    try {
+        para = restore_value(text);
+    } catch { /* error handled */ }
+
+    // --- label L0012 ---
+    if ((0 || (!is_mapping(para)))) {
+        return;
+    }
+    fields = keys(para);
+    if ((sizeof((forbid_fields - fields)) != sizeof(forbid_fields))) {
+        printf("Including forbid field to update.\n");
         return;
     }
     if ((!is_mapping(account_info = "/aaa/daemons/accountd.c"->query_account_info(account)))) {
         return;
     }
-    account_info[key] = value;
-    "/aaa/daemons/accountd.c"->update_account_info(account_info, ({ key }));
+    if ((sizeof((fields - keys(account_info))) > 0)) {
+        printf("Including invalid field to update.\n");
+        return;
+    }
+    loop (field in fields) {
+        account_info[field] = para[field];
+    }  // end loop (verified)
+    "/aaa/daemons/accountd.c"->update_account_info(account_info, fields);
 
 }
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=20, nargs=4, insts=20
+// @code  nc=19, nargs=3, insts=19
 // --------------------------------------------------------------------
-void main(object agent, string account, string key, string value) {
+void main(object agent, string account, string text) {
     /* ---- Enhanced Pseudocode ---- */
-    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: _main, account, key, value :));
+    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: _main, account, text :));
 
 }
 

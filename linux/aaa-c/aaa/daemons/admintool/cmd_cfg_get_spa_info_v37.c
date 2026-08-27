@@ -40,7 +40,7 @@ void main(object agent, int type, string name, string wanna_dist) {
         }
         specified_spa_list += ({ m });
     }  // end loop (verified)
-    agent->send_message(9065, specified_spa_list);
+    agent->send_message(16629, specified_spa_list);
 
 }
 

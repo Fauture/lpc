@@ -37,19 +37,19 @@ private void lock_account(mixed agent, string account) {
         return;
     }
     state = "0";
-    msg = "锁定账号失败。";
+    msg = "锁定帐号失败。";
     do {
         account_info = "/aaa/daemons/accountd.c"->query_account_info(account);
         if ((!is_mapping(account_info))) {
             break;
         }
         if ((account_info["checksum"] != "/aaa/daemons/accountd.c"->calc_account_checksum(account_info))) {
-            msg = "锁定账号失败（原因：1009）。";
+            msg = "锁定帐号失败（原因：1009）。";
             break;
         }
         if ((account_info["locked"] == "1")) {
             state = "1";
-            msg = "该账号已经处于锁定状态，不需要再次锁定。";
+            msg = "该帐号已经处于锁定状态，不需要再次锁定。";
             break;
         }
         account_info["locked"] = "1";
@@ -57,7 +57,7 @@ private void lock_account(mixed agent, string account) {
             break;
         }
         state = "1";
-        msg = "账号锁定成功，下次登入前请先登入逍遥会员中心解除锁定。";
+        msg = "帐号锁定成功，下次登录前请先登录光宇游戏社区解除锁定。";
     } while (0);
 
     // --- label L0082 ---

@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 4 names, 4 code segments found
- * Strings: 35, Variables: 3
+ * Strings: 39, Variables: 3
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -30,7 +30,7 @@ void main(object agent, string dist, string server, string gid, string account, 
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   log_timeout = 15;  // /aaa/daemons/server/cmd_l_precost_coin.c:262
+   log_timeout = 15;  // /aaa/daemons/server/cmd_l_precost_coin.c:271
    log_timeout_status = 1;
 
 /* ================================================================
@@ -39,7 +39,7 @@ void main(object agent, string dist, string server, string gid, string account, 
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=199, nargs=14, insts=199
+// @code  nc=229, nargs=14, insts=229
 // --------------------------------------------------------------------
 int precost_coin(int cno, string gid, string account, string server, string dist, int cost, string para1, string para2, string coin_password, string coin_type, string type, mixed &result, mapping account_info, mixed fields) {
     /* ---- Enhanced Pseudocode ---- */
@@ -67,9 +67,14 @@ int precost_coin(int cno, string gid, string account, string server, string dist
         gold_coin = atoi(account_info["gold_coin"]);
         silver_coin = atoi(account_info["silver_coin"]);
         total_coin = (gold_coin + silver_coin);
-        if ((type == "coin_trade")) {
+        if (((type == "coin_trade") || (type == "hongbhxxt"))) {
             limit_trade_coin = atoi(account_info["limit_trade_coin"]);
             gold_coin -= limit_trade_coin;
+            silver_coin -= limit_trade_coin;
+            total_coin -= limit_trade_coin;
+        }
+        if (((type == "tanxss") || (type == "wendcbg"))) {
+            limit_trade_coin = atoi(account_info["limit_trade_coin"]);
             silver_coin -= limit_trade_coin;
             total_coin -= limit_trade_coin;
         }
@@ -99,7 +104,7 @@ int precost_coin(int cno, string gid, string account, string server, string dist
         ret = 1;
     } while (0);
 
-    // --- label L0187 ---
+    // --- label L0217 ---
     result = ([ "result": ret ]);
     return (ret == 1);
 
@@ -173,11 +178,11 @@ private void _main_thread(mixed agent, string dist, string server, string gid, s
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=57, nargs=13, insts=57
+// @code  nc=63, nargs=13, insts=63
 // --------------------------------------------------------------------
 void main(object agent, string dist, string server, string gid, string account, int cost, string para1, string para2, string coin_password, string coin_type, string type, int send_time, int prc_cookie) {
     /* ---- Enhanced Pseudocode ---- */
-    if ("/aaa/daemons/account_transactiond.c"->is_precost_locked(account)) {
+    if (("/aaa/daemons/account_transactiond.c"->is_precost_locked(account) || "/aaa/daemons/account_transactiond.c"->is_cost_fail_times_full(account))) {
         agent->send_message(25463, gid, account, "", 2, para1, para2, coin_password, send_time, prc_cookie);
         return;
     }

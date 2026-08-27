@@ -48,7 +48,7 @@ private mixed get_files(string file_path, string suffix = ".txt");
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   all_errors = ([ ]);  // /daemons/sorterrord.c:1088
+   all_errors = ([ ]);  // /daemons/sorterrord.c:1089
    g_log_mode = 0;
 
 /* ================================================================
@@ -67,8 +67,8 @@ private void save_error_info(string new_file_name, mapping one_error, array org_
     mixed str_stack;
 
     func_num = 0;
-    str_error = (("\n出错原因  : " + one_error["err_reason"]) + "\n");
-    str_object = (("出错对象  : " + one_error["err_object"]) + "\n");
+    str_error = (("\n出错原因  :" + one_error["err_reason"]) + "\n");
+    str_object = (("出错对象  :" + one_error["err_object"]) + "\n");
     str_stack = replace_string(one_error["stack"], "()", "() -> ");
     log_file(new_file_name, (str_error + str_object));
     log_file(new_file_name, (("\n调用栈的顺序:\n" + str_stack) + "\n调用栈:\n"));
@@ -85,7 +85,7 @@ private void save_error_info(string new_file_name, mapping one_error, array org_
         log_file(new_file_name, "参数：\n");
         log_file(new_file_name, implode(temp[3], "\n"));
         log_file(new_file_name, "\n");
-        log_file(new_file_name, "变数：\n");
+        log_file(new_file_name, "变量：\n");
         log_file(new_file_name, implode(temp[4], "\n"));
         log_file(new_file_name, "\n");
     }  // end loop (verified)
@@ -434,13 +434,13 @@ private void destruct() {
         sleep(0.1);
     }  // end loop (verified)
     delete_queue(errorQ);
-    "/daemons/scheduled.c"->delete_scheme("统计服务器报错资讯");
+    "/daemons/scheduled.c"->delete_scheme("统计服务器报错信息");
 
 }
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=127, nargs=0, insts=127
+// @code  nc=136, nargs=0, insts=136
 // --------------------------------------------------------------------
 private void do_init() {
     /* ---- Enhanced Pseudocode ---- */
@@ -471,7 +471,7 @@ private void do_init() {
         }
         flag = 0;
         loop (server in log_servers) {
-            if (((((stricmp(server, _server_name) == 0) || (0 && ("GS*" == toupper(server)))) || (0 && ("CCS*" == toupper(server)))) || (0 && ("SPA*" == toupper(server))))) {
+            if ((((((stricmp(server, _server_name) == 0) || (0 && ("GS*" == toupper(server)))) || (0 && ("GS*" == toupper(server)))) || (0 && ("CCS*" == toupper(server)))) || (0 && ("SPA*" == toupper(server))))) {
                 flag = 1;
                 break;
             }
@@ -481,7 +481,7 @@ private void do_init() {
         }
     } while (0);
 
-    // --- label L0107 ---
+    // --- label L0116 ---
     if ((!is_int(log_mode = config_m["log_mode"]))) {
         log_mode = 1;
     }
@@ -526,7 +526,7 @@ private string get_new_file_name(string file_name) {
 int stop_log_schedule() {
     /* ---- Enhanced Pseudocode ---- */
     g_log_mode = 0;
-    return "/daemons/scheduled.c"->delete_scheme("统计服务器报错资讯");
+    return "/daemons/scheduled.c"->delete_scheme("统计服务器报错信息");
 
 }
 
@@ -558,7 +558,7 @@ int start_log_schedule() {
     }  // end switch
 
     // --- label L0056 ---
-    "/daemons/scheduled.c"->create_scheme("统计服务器报错资讯", (: sort_error, "/aaa/log/" :), start_time, time_setting, 1);
+    "/daemons/scheduled.c"->create_scheme("统计服务器报错信息", (: sort_error, "/aaa/log/" :), start_time, time_setting, 1);
     return 1;
 
 }

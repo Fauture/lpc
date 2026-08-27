@@ -4,7 +4,7 @@
  * Source: /daemons/log_server_startup_shutdownd.c
  * Inherits: (none)
  * Functions: 1 names, 1 code segments found
- * Strings: 11, Variables: 1
+ * Strings: 12, Variables: 1
  *********************************************************************/
 
 /* ================================================================
@@ -22,7 +22,7 @@ void record_log(string action, string period);
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   server_names = ([ 7 : "ccs", 9 : "spa", 5 : "gs" ]);
+   server_names = ([ 7 : "ccs", 9 : "spa", 5 : "gs", 18 : "xgs" ]);
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -46,7 +46,7 @@ void record_log(string action, string period) {
     if (("/daemons/filed.c"->get_dba_client_no() < 1)) {
         return;
     }
-    "/daemons/filed.c"->log_to_db("important_log", 1, server_names[2], action, para1, "1.52.1211", address, current_path);
+    "/daemons/filed.c"->log_to_db("important_log", 1, server_names[2], action, para1, "1.60.0912", address, current_path);
 
 }
 

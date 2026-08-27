@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 11, Variables: 0
+ * Strings: 14, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -14,8 +14,8 @@ inherit "/inherit/misc/handler.c";
    FORWARD DECLARATIONS
    ================================================================ */
 
-int add_coupon(mixed agent, string dist, string account, string gid, string type, string para);
-void main(mixed agent, string dist, string account, string gid, string type, string para);
+int add_coupon(mixed agent, string dist, string account, string gid, string type, int cost_once, string para, string expired_time = "");
+void main(mixed agent, string dist, string account, string gid, string type, int cost_once, string para);
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -23,33 +23,35 @@ void main(mixed agent, string dist, string account, string gid, string type, str
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=104, nargs=6, insts=104
+// @code  nc=123, nargs=8, insts=123
 // --------------------------------------------------------------------
-int add_coupon(mixed agent, string dist, string account, string gid, string type, string para) {
+int add_coupon(mixed agent, string dist, string account, string gid, string type, int cost_once, string para, string expired_time) {
     /* ---- Enhanced Pseudocode ---- */
     mixed cno;
     mixed sql_cmd;
     mixed checksum;
+    mixed cur_ti;
 
     cno = "/daemons/dbd.c"->assure_connection("adb");
     if ((-1 == cno)) {
-        catch(error("Failed to connect adb! %s, %s, %s, %s\n", account, gid, type, para));
+        catch(error("Failed to connect adb! %s, %s, %s, %s, %s\n", account, gid, type, para, expired_time));
 
-        // --- label L0025 ---
+        // --- label L0028 ---
         return 0;
     }
     if ((!strlen(type))) {
-        catch(error("Type is lost! %s, %s, %s, %s\n", account, gid, type, para));
+        catch(error("Type is lost! %s, %s, %s, %s, %s\n", account, gid, type, para, expired_time));
 
-        // --- label L0045 ---
+        // --- label L0049 ---
         return 0;
     }
-    checksum = save_string(md5(sprintf("%s$%s$%d$%s", account, type, 0, "201004")))[1..<2];
-    sql_cmd = mysql_bind_parameters("insert into encourage  (account,  encourage_type, dist, used, checksum, insert_time )  values(?, ?, ?, ?, ?, ?) ", account, type, dist, 0, checksum, ctime(time(), 3));
+    checksum = save_string(md5(iconv(sprintf("%s$%s$%d$%s", account, type, 0, "201004"), "utf-8", "GBK")))[1..<2];
+    cur_ti = ctime(time(), 3);
+    sql_cmd = mysql_bind_parameters("insert into encourage  (account,  encourage_type, order_id, dist, used, checksum, insert_time, expired_time, memo)  select ?, ?, concat(?, lpad(floor(100000 * rand()), 5, '0')), ?, ?, ?, ?, ?, ? ", account, type, cur_ti, dist, 0, checksum, cur_ti, expired_time, (cost_once ? (string)cost_once : ""));
     if (((*f_execute)(cno, sql_cmd) < 0)) {
         catch(error("Failed to insert into encourage! %s, %s, %s, %s\n", account, gid, type, para));
 
-        // --- label L0096 ---
+        // --- label L0115 ---
         return 0;
     }
     return 1;
@@ -58,11 +60,11 @@ int add_coupon(mixed agent, string dist, string account, string gid, string type
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=23, nargs=6, insts=23
+// @code  nc=24, nargs=7, insts=24
 // --------------------------------------------------------------------
-void main(mixed agent, string dist, string account, string gid, string type, string para) {
+void main(mixed agent, string dist, string account, string gid, string type, int cost_once, string para) {
     /* ---- Enhanced Pseudocode ---- */
-    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: add_coupon, agent, dist, account, gid, type, para :));
+    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: add_coupon, agent, dist, account, gid, type, cost_once, para :));
 
 }
 

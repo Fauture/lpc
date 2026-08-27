@@ -29,7 +29,7 @@ private void echo_daemon() {
     set_as_daemon();
     while (1) {
         loop (client_no in get_all_client_no()) {
-            send_to_client(client_no, 4274, make32(tick()));
+            send_to_client(client_no, 8402, make32(tick()));
         }  // end loop (verified)
         sleep(10);
     }  // end loop (verified)

@@ -38,7 +38,7 @@ private void daemon();
 
 // --------------------------------------------------------------------
 // @brief  accessor: retrieve value
-// @code  nc=74, nargs=1, insts=74
+// @code  nc=80, nargs=1, insts=80
 // --------------------------------------------------------------------
 private mixed get_ip_by_domain(string domain_name) {
     /* ---- Enhanced Pseudocode ---- */
@@ -50,7 +50,7 @@ private mixed get_ip_by_domain(string domain_name) {
             return;
         }
         domain_list[domain_name] = ([ "time": time(), "inets": inets ]);
-        return;
+        return inettoa(inets[random(sizeof(inets))]);
     }
     if (((time() - (int)m["time"]) > resolve_interval)) {
         m["time"] = time();

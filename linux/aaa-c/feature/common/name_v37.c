@@ -56,15 +56,21 @@ void set_name(string name) {
    DECLARED FUNCTIONS (no bytecode - likely inherited or forward decl)
    ================================================================ */
 /*
+   mixed lite_query(string path);  // inherited from parent or forward declaration
    void replace_entire_dbase(mapping new_dbase);  // inherited from parent or forward declaration
+   void lite_delete(string path);  // inherited from parent or forward declaration
    void delete_temp(string path);  // inherited from parent or forward declaration
+   void lite_delete_temp(string path);  // inherited from parent or forward declaration
    mixed add(string path, mixed val);  // inherited from parent or forward declaration
    mixed set_temp(string path, mixed val);  // inherited from parent or forward declaration
    mixed set(string path, mixed val);  // inherited from parent or forward declaration
+   mixed lite_query_temp(string path);  // inherited from parent or forward declaration
    mixed add_temp(string path, mixed val);  // inherited from parent or forward declaration
+   mixed lite_set_temp(string path, mixed val);  // inherited from parent or forward declaration
    mapping query_entire_dbase();  // inherited from parent or forward declaration
    mapping query_entire_temp_dbase();  // inherited from parent or forward declaration
    mixed query(string path, mixed raw);  // inherited from parent or forward declaration
+   mixed lite_set(string path, mixed val);  // inherited from parent or forward declaration
    mixed query_temp(string path);  // inherited from parent or forward declaration
    void delete(string path);  // inherited from parent or forward declaration
 */
@@ -76,7 +82,7 @@ void set_name(string name) {
    Code segments found:         3
    Successfully decoded:        3
    Unresolved/minimal:          0
-   Functions without code:      11
+   Functions without code:      17
 
    Note: Functions without code are usually inherited from the
    parent object (), forward declarations, or

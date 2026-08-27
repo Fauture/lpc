@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /inherit/misc/handler.c()
  * Functions: 2 names, 2 code segments found
- * Strings: 17, Variables: 0
+ * Strings: 19, Variables: 0
  *********************************************************************/
 
 inherit "/inherit/misc/handler.c";
@@ -23,7 +23,7 @@ void main(object agent, string dist, string gid, string account, string encourag
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=206, nargs=10, insts=206
+// @code  nc=212, nargs=10, insts=212
 // --------------------------------------------------------------------
 private void cost_coupon(mixed agent, string dist, string gid, string account, string encourage_type, string type, string cookie, string para, int clean_lock, int coupon_result) {
     /* ---- Enhanced Pseudocode ---- */
@@ -71,14 +71,14 @@ private void cost_coupon(mixed agent, string dist, string gid, string account, s
 
     // --- label L0103 ---
     if ((2 == used_flag)) {
-        checksum = save_string(md5(sprintf("%s$%s$%s$%s", encourage["account"], encourage["encourage_type"], (string)used_flag, "201004")))[1..<2];
+        checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s", encourage["account"], encourage["encourage_type"], (string)used_flag, "201004"), "utf-8", "GBK")))[1..<2];
         sql_cmd = mysql_bind_parameters("update encourage set used=?, locked=?, checksum=? where id = ?", used_flag, 0, checksum, id);
         if (((*f_execute)(cno, sql_cmd) <= 0)) {
             return;
         }
         return;
     }
-    checksum = save_string(md5(sprintf("%s$%s$%s$%s", encourage["account"], encourage["encourage_type"], (string)used_flag, "201004")))[1..<2];
+    checksum = save_string(md5(iconv(sprintf("%s$%s$%s$%s", encourage["account"], encourage["encourage_type"], (string)used_flag, "201004"), "utf-8", "GBK")))[1..<2];
     sql_cmd = mysql_bind_parameters("update encourage set used=?, checksum=?  where id=? ", used_flag, checksum, id);
     if (((*f_execute)(cno, sql_cmd) <= 0)) {
         return;

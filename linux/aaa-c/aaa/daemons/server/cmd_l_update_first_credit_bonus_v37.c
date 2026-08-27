@@ -73,7 +73,7 @@ private mixed get_bonus_type(string encourage_type, int start_time, int first_cr
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=87, nargs=8, insts=87
+// @code  nc=88, nargs=8, insts=88
 // --------------------------------------------------------------------
 private void update_first_credit_bonus(mixed agent, string dist, string account, string gid, int start_time, int end_time, int first_create_time, string encourage_type) {
     /* ---- Enhanced Pseudocode ---- */
@@ -91,7 +91,7 @@ private void update_first_credit_bonus(mixed agent, string dist, string account,
     }
     if (("has_credit" == result["desc"])) {
         if (is_string(type = get_bonus_type(encourage_type, start_time, first_create_time, result["credit_info"]))) {
-            ret = "/aaa/daemons/server/cmd_l_add_encourage_coupon.c"->add_coupon(agent, dist, account, gid, type, "");
+            ret = "/aaa/daemons/server/cmd_l_add_encourage_coupon.c"->add_coupon(agent, dist, account, gid, type, 0, "");
             if (ret) {
                 result["desc"] = "has_bonus";
             }

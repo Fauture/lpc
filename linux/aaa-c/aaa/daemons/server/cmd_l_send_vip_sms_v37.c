@@ -14,8 +14,8 @@ inherit "/inherit/misc/handler.c";
    FORWARD DECLARATIONS
    ================================================================ */
 
-private void _main(mixed agent, string dist, string gid, string account, string sms_type, string sms_code, string ti, string cookie, string para);
-int main(mixed agent, string dist, string gid, string account, string sms_type, string sms_code, string ti, string cookie, string para);
+private void _main(mixed agent, string dist, string gid, string account, string auth_type, string sms_type, string sms_code, string ti, string cookie, string para);
+int main(mixed agent, string dist, string gid, string account, string auth_type, string sms_type, string sms_code, string ti, string cookie, string para);
 
 /* ================================================================
    FUNCTION DEFINITIONS
@@ -23,21 +23,21 @@ int main(mixed agent, string dist, string gid, string account, string sms_type, 
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=17, nargs=9, insts=17
+// @code  nc=18, nargs=10, insts=18
 // --------------------------------------------------------------------
-private void _main(mixed agent, string dist, string gid, string account, string sms_type, string sms_code, string ti, string cookie, string para) {
+private void _main(mixed agent, string dist, string gid, string account, string auth_type, string sms_type, string sms_code, string ti, string cookie, string para) {
     /* ---- Enhanced Pseudocode ---- */
-    "/aaa/daemons/vip_smsd.c"->send_vip_sms(agent, dist, gid, account, sms_type, sms_code, ti, cookie, para);
+    "/aaa/daemons/vip_smsd.c"->send_vip_sms(agent, dist, gid, account, auth_type, sms_type, sms_code, ti, cookie, para);
 
 }
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=28, nargs=9, insts=28
+// @code  nc=29, nargs=10, insts=29
 // --------------------------------------------------------------------
-int main(mixed agent, string dist, string gid, string account, string sms_type, string sms_code, string ti, string cookie, string para) {
+int main(mixed agent, string dist, string gid, string account, string auth_type, string sms_type, string sms_code, string ti, string cookie, string para) {
     /* ---- Enhanced Pseudocode ---- */
-    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: _main, agent, dist, gid, account, sms_type, sms_code, ti, cookie, para :));
+    "/daemons/threadd.c"->dispatch_comm_service((sizeof(account) ? account[0] : 0), (: _main, agent, dist, gid, account, auth_type, sms_type, sms_code, ti, cookie, para :));
     return 1;
 
 }

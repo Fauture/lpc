@@ -32,7 +32,7 @@ private void auth_admintool(mixed agent, string account, string password, string
 
     info = ([ ]);
     ret = "/aaa/daemons/admintoold.c"->auth_admintool(agent, account, password, mac_addr, &info);
-    agent->send_message(9986, ret, info["privilege"], info["prompt"], cookie, account, "", 0);
+    agent->send_message(16631, ret, info["privilege"], info["prompt"], cookie, account, "", 0);
 
 }
 

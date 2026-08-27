@@ -32,7 +32,7 @@ private void _main(mixed agent, string action, string map_para, string cookie) {
     mixed ret;
 
     if (((!is_object(find_object("/aaa/daemons/ecardd.c"))) || (!"/aaa/daemons/ecardd.c"->is_config_ok()))) {
-        printf("[1;31mECARD_DÄ£×éÎ´ÔØÈë³É¹¦£¬»òÉĞÎ´ÅäÖÃÍ×µ±¡£Ôİ²»´¦Àí±¾´ÎÇëÇó¡£\n[2;37;0m");
+        printf("[1;31mECARD_DÄ£¿éÎ´¼ÓÔØ³É¹¦£¬»òÉĞÎ´ÅäÖÃÍ×µ±¡£Ôİ²»´¦Àí±¾´ÎÇëÇó¡£\n[2;37;0m");
         return;
     }
     if (((!is_object(agent)) || (!is_mapping(m = restore_value(map_para))))) {

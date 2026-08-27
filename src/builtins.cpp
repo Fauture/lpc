@@ -1000,6 +1000,29 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::vector<Value> rest(args.begin() + 1, args.end());
         return make_string(formatLpc(as_string(args[0]), rest));
     }
+    if (name == "replace_string") {
+        // replace_string(str, from, to) - replace ALL occurrences.
+        if (args.size() >= 3) {
+            std::string s = as_string(args[0]);
+            std::string from = as_string(args[1]);
+            std::string to = as_string(args[2]);
+            if (from.empty()) return make_string(s);
+            std::string out;
+            size_t pos = 0;
+            for (;;) {
+                size_t p = s.find(from, pos);
+                if (p == std::string::npos) {
+                    out += s.substr(pos);
+                    break;
+                }
+                out += s.substr(pos, p - pos);
+                out += to;
+                pos = p + from.size();
+            }
+            return make_string(out);
+        }
+        return make_string("");
+    }
     if (name == "atoi") {
         if (args.empty()) return make_int(0);
         const Value& v = args[0];
@@ -1161,6 +1184,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         auto arr = std::make_shared<ArrayValue>();
         if (args.empty()) return arr;
         std::string pattern = as_string(args[0]);
+        // Original vm_f_get_dir: flag 0 -> plain names; flag 1/2 -> per entry
+        // [name, size, mtime] where directories have size -2 (used by
+        // get_sub_dirs_ex/load_all_path to recurse into subdirectories).
+        int flag = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        auto pushEntry = [&](const std::string& name, const fs::path& full) {
+            if (flag) {
+                auto item = std::make_shared<ArrayValue>();
+                item->items.push_back(make_string(name));
+                std::error_code ec2;
+                if (fs::is_directory(full, ec2)) {
+                    item->items.push_back(make_int(-2));
+                } else {
+                    item->items.push_back(make_int(static_cast<int64_t>(fs::file_size(full, ec2))));
+                }
+                auto ft = fs::last_write_time(full, ec2);
+                item->items.push_back(make_int(static_cast<int64_t>(ft.time_since_epoch().count() / 10000000)));
+                arr->items.push_back(item);
+            } else {
+                arr->items.push_back(make_string(name));
+            }
+        };
         if (pattern.find('*') != std::string::npos) {
             size_t slash = pattern.find_last_of('/');
             std::string dirPart = slash == std::string::npos ? "" : pattern.substr(0, slash);
@@ -1170,13 +1214,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (!fs::exists(dir, ec)) return arr;
             std::vector<std::string> names;
             for (auto& p : fs::directory_iterator(dir, ec)) {
-                if (!p.is_regular_file()) continue;
                 std::string name = p.path().filename().string();
                 if (pat == "*") names.push_back(name);
                 else if (hasSuffix(name, pat.substr(1))) names.push_back(name);
             }
             std::sort(names.begin(), names.end());
-            for (auto& n : names) arr->items.push_back(make_string(n));
+            for (auto& n : names) pushEntry(n, dir / n);
             return arr;
         }
         fs::path dir = resolveVfsPath(pattern);
@@ -1184,10 +1227,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!fs::exists(dir, ec)) return arr;
         std::vector<std::string> names;
         for (auto& p : fs::directory_iterator(dir, ec)) {
-            if (p.is_regular_file()) names.push_back(p.path().filename().string());
+            names.push_back(p.path().filename().string());
         }
         std::sort(names.begin(), names.end());
-        for (auto& n : names) arr->items.push_back(make_string(n));
+        for (auto& n : names) pushEntry(n, dir / n);
         return arr;
     }
     if (name == "get_sub_dirs_ex") {
@@ -1589,9 +1632,6 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "read_ini") {
         // read_ini(section, key, file) - read one value from an INI file.
-        if (args.size() >= 2 && as_string(args[0]) == "Me" && as_string(args[1]) == "Name") {
-            return make_string("aaa_2017");
-        }
         if (args.size() >= 3) {
             std::string section = as_string(args[0]);
             std::string key = as_string(args[1]);

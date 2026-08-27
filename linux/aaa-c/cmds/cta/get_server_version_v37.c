@@ -25,7 +25,7 @@ int main(int client_no, mapping paras);
 // --------------------------------------------------------------------
 private void _main(int client_no, mapping paras) {
     /* ---- Enhanced Pseudocode ---- */
-    paras["version"] = "1.52.1211";
+    paras["version"] = "1.60.0912";
     "/daemons/ctad.c"->send_to_cta(client_no, paras);
 
 }

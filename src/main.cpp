@@ -261,7 +261,8 @@ int startSimpleTcpServer(int port) {
 }
 
 int runPakOriginal(const std::string& path) {
-    // Use the already-extracted structure provided by the user.
+    // The user-provided extracted tree (linux/aaa - bak) is the current game
+    // version; it is already unpacked, no pak handling here.
     std::string root = "linux/aaa - bak";
     std::error_code ec;
     if (!fs::exists(root, ec)) {

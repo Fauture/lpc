@@ -22,7 +22,7 @@ void main(object agent, int type, string name);
 
 // --------------------------------------------------------------------
 // @brief  interaction: calls other objects
-// @code  nc=154, nargs=3, insts=154
+// @code  nc=169, nargs=3, insts=169
 // --------------------------------------------------------------------
 void main(object agent, int type, string name) {
     /* ---- Enhanced Pseudocode ---- */
@@ -33,7 +33,7 @@ void main(object agent, int type, string name) {
     mixed tmp2;
     mixed mks;
 
-    if (((((type == 5) || (type == 7)) || (type == 4)) || (type == 16))) {
+    if (((((((type == 5) || (type == 18)) || (type == 7)) || (type == 4)) || (type == 19)) || (type == 16))) {
         server_list = "/aaa/daemons/configd.c"->get_server_list_by_dist(agent->query("dist"));
     } else {
         server_list = "/aaa/daemons/configd.c"->get_server_list();
@@ -50,7 +50,7 @@ void main(object agent, int type, string name) {
         tmp1 += pad_buffer(mks[1]["id"]);
         tmp2 += pad_buffer(mks[1]["enable"]);
     }  // end loop (verified)
-    if (((type == 5) || (type == 7))) {
+    if ((((type == 5) || (type == 18)) || (type == 7))) {
         send_to_client(agent->get_client_no(), ((buf + tmp1) + tmp2));
     } else {
         agent->send_message(17247, values(server_list));

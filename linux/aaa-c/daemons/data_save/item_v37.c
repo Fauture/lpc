@@ -5,7 +5,7 @@
  * Inherits: (none)
  * Inherited programs: /feature/common/dbase.c()
  * Functions: 6 names, 6 code segments found
- * Strings: 227, Variables: 4
+ * Strings: 236, Variables: 4
  *********************************************************************/
 
 inherit "/feature/common/dbase.c";
@@ -33,7 +33,7 @@ private void create();
    GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
    ================================================================ */
 
-   org_key_map = ([ ]);  // /daemons/data_save/item.c:299
+   org_key_map = ([ ]);  // /daemons/data_save/item.c:308
    new_key_map = ([ ]);
 
 /* ================================================================
@@ -127,7 +127,7 @@ mixed convert_to_memory_mapping(mapping &save_mapping) {
 
 // --------------------------------------------------------------------
 // @brief  constructor: initialize object state
-// @code  nc=906, nargs=0, insts=906
+// @code  nc=942, nargs=0, insts=942
 // --------------------------------------------------------------------
 private void create() {
     /* ---- Enhanced Pseudocode ---- */
@@ -356,6 +356,15 @@ private void create() {
     set_convert_key("religion_convert_end_time", 304);
     set_convert_key("base_dodge", 305);
     set_convert_key("stun_impr", 306);
+    set_convert_key("org_owner", 307);
+    set_convert_key("own_ti", 308);
+    set_convert_key("origin", 309);
+    set_convert_key("last_exchange_owner", 310);
+    set_convert_key("last_exchange_time", 311);
+    set_convert_key("rec_intimacy", 312);
+    set_convert_key("prop_basic", 313);
+    set_convert_key("prop_extra", 314);
+    set_convert_key("prop_basic_cp", 315);
 
 }
 
