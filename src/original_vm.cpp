@@ -377,6 +377,8 @@ struct ObjectRegistry {
     const OriginalObject* masterObj = nullptr;
 };
 ObjectRegistry& objectRegistry();
+// Forward declaration (defined below the class; used by the VM internals).
+std::recursive_mutex& registryMutex();
 std::vector<PendingThread>& pendingThreads();
 std::mutex& pendingThreadsMutex();
 std::vector<PendingThread>& postInitFuncs();
@@ -456,7 +458,7 @@ public:
     }
 
     int runInit() {
-
+        std::lock_guard<std::recursive_mutex> lock(execMutex_);
         try {
             execute(obj_.globalCode, obj_.globalMeta);
             callCreate();
@@ -516,6 +518,14 @@ public:
     }
 
 private:
+    // The original driver is a single-threaded program: one global program and
+    // cooperatively scheduled lightweight threads.  We model threads with real
+    // OS threads, so a shared VM (the registry copies used for cross-object
+    // calls, e.g. the "<main>" copy) can be entered concurrently by several
+    // threads.  Serialize execution per VM with a recursive mutex (recursive
+    // because one VM's execute() may re-enter itself through closures/calls).
+    mutable std::recursive_mutex execMutex_;
+
     const OriginalObject& obj_;
     std::string searchRoot_;
     std::vector<StackItem> stack_;
@@ -675,6 +685,7 @@ private:
                 std::vector<Value> objVarsSnapshot;
                 {
                     auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     for (auto& kv : reg.vms) {
                         if (&kv.second->object() == owner) {
                             objVarsSnapshot = kv.second->objVars();
@@ -746,6 +757,7 @@ private:
                     std::vector<Value> objVarsSnapshot;
                     {
                         auto& reg = objectRegistry();
+                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
                         for (auto& kv : reg.vms) {
                             if (&kv.second->object() == owner) {
                                 objVarsSnapshot = kv.second->objVars();
@@ -793,20 +805,44 @@ private:
         // Cross-object function table fallback (inherited/global functions).
         // The arguments are still on this stack: transfer them to the callee.
         int argCount = flags & 0x3F;
-        for (auto& kv : objectRegistry().vms) {
-            std::string name = kv.second->functionNameByIndex(index);
-            if (!name.empty()) {
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
-                std::vector<Value> args;
-                for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
-                if (std::getenv("LPCVM_TRACE")) {
-                    std::string dbg;
-                    for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
-                    std::cerr << "[xobj] " << name << " argc=" << argCount << " args=[" << dbg << "]\n";
-                }
-                return kv.second->callFunctionByName(name, args);
+        auto& reg = objectRegistry();
+        // Global functions (mysql_select, mixed_mysql_select, load_all, ...)
+        // live in the driver's master program (start_aaa).  Resolve them in
+        // the master VM FIRST: several daemon objects embed their own copies
+        // of the same global function indexes (e.g. a sqlite variant of
+        // mixed_mysql_select), and picking an arbitrary VM runs the wrong
+        // bytecode (seen as "sql=0" / immediate return from the wrapper).
+        std::shared_ptr<OriginalVm> target;
+        std::string name;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            std::string key = searchRoot_.empty() ? "<main>" : searchRoot_ + "/<main>";
+            auto mit = reg.vms.find(key);
+            if (mit != reg.vms.end()) {
+                name = mit->second->functionNameByIndex(index);
+                if (!name.empty()) target = mit->second;
             }
+            if (!target) {
+                for (auto& kv : reg.vms) {
+                    name = kv.second->functionNameByIndex(index);
+                    if (!name.empty()) {
+                        target = kv.second;
+                        break;
+                    }
+                }
+            }
+        }
+        if (target) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
+            std::vector<Value> args;
+            for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
+            if (std::getenv("LPCVM_TRACE")) {
+                std::string dbg;
+                for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
+                std::cerr << "[xobj] " << name << " argc=" << argCount << " args=[" << dbg << "]\n";
+            }
+            return target->callFunctionByName(name, args);
         }
         // Some global function indices refer to builtin efuns (e.g. the telnet
         // helpers). The low 6 bits of the flags carry the argument count.
@@ -823,6 +859,12 @@ private:
     Value executeFunctionFromOutside(const OriginalFunction& fn, const std::vector<Value>& args) {
         // The original VM pushes args in reverse (param0 last, on top).
         int n = fn.argCount;
+        if (std::getenv("LPCVM_TRACE") && fn.name == "mixed_mysql_select") {
+            std::string dbg;
+            for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
+            std::cerr << "[xout] mixed_mysql_select args=[" << dbg << "] n=" << n
+                      << " stackBefore=" << stack_.size() << "\n";
+        }
         for (int i = n - 1; i >= 0; --i) {
             Value a = (i < static_cast<int>(args.size())) ? args[i] : Value(UndefinedTag{});
             pushValue(a);
@@ -831,9 +873,18 @@ private:
     }
 
     Value executeFunctionOnStack(const OriginalFunction& fn) {
+        std::lock_guard<std::recursive_mutex> lock(execMutex_);
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
+        if (std::getenv("LPCVM_TRACE") && fn.name == "mixed_mysql_select") {
+            std::string dbg;
+            for (int i = 0; i < fn.argCount; ++i)
+                dbg += (i ? "," : "") + to_string(slotValue(bp - i), false);
+            std::cerr << "[xfn] vm=" << this << " mixed_mysql_select params=[" << dbg << "] bp=" << bp
+                      << " argNum=" << fn.argCount << " stackSize=" << stack_.size()
+                      << " frames=" << frames_.size() << "\n";
+        }
         Frame frame{&fn, bp, fn.argCount, fn.localCount};
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
@@ -870,7 +921,7 @@ private:
             if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
                 std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
                 if (cur == std::getenv("LPCVM_TRACE_FN"))
-                    std::cerr << "[fn] " << cur << " ip=" << (ip - 1) << " op=" << in.op
+                    std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (ip - 1) << " op=" << in.op
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
             if (++stepCounter_ > 20000000) return;
@@ -919,6 +970,11 @@ private:
                 pushValue(make_int(frames_.empty() ? 0 : frames_.back().argNum));
                 break;
             case 53: // push_global_var
+                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
+                    std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                    if (cur == std::getenv("LPCVM_TRACE_FN"))
+                        std::cerr << "[gvar] idx=" << in.a << " value=" << to_string(sharedGlobal(in.a), false) << "\n";
+                }
                 pushValue(sharedGlobal(in.a));
                 break;
             case 61: // push_obj_var
@@ -1259,6 +1315,20 @@ private:
                 int mayNull = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int total = fromMeta ? m1 : in.b;
                 StackItem funItem = pop();
+                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
+                    std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                    if (cur == std::getenv("LPCVM_TRACE_FN")) {
+                        std::string fv;
+                        if (funItem.value.index() == 8) {
+                            auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
+                            fv = "closure:" + cl->functionName;
+                        } else {
+                            fv = to_string(funItem.value, false);
+                        }
+                        std::cerr << "[cfp] total=" << total << " fun=" << fv
+                                  << " stack=" << stack_.size() << "\n";
+                    }
+                }
                 std::vector<Value> args;
                 for (int i = 1; i < total && !stack_.empty(); ++i) args.push_back(pop().value);
                 Value result = make_int(0);
@@ -1602,6 +1672,14 @@ ObjectRegistry& objectRegistry() {
     return reg;
 }
 
+// Guards the registry maps (vms/objects/initialized...).  Registry entries are
+// inserted while objects load (possibly from several OS threads) and scanned by
+// cross-object call resolution; a recursive mutex keeps those consistent.
+std::recursive_mutex& registryMutex() {
+    static std::recursive_mutex m;
+    return m;
+}
+
 std::vector<PendingThread>& pendingThreads() {
     static std::vector<PendingThread> threads;
     return threads;
@@ -1619,6 +1697,7 @@ std::mutex& pendingThreadsMutex() {
 bool isObjectInitialized(const OriginalObject* obj) {
     if (!obj) return false;
     auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
     auto it = reg.initializedObj.find(obj);
     if (it != reg.initializedObj.end()) return true;
     for (auto& kv : reg.initialized) {
@@ -1632,6 +1711,7 @@ bool isObjectInitialized(const OriginalObject* obj) {
 bool isMasterObject(const OriginalObject* obj) {
     if (!obj) return false;
     auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
     if (reg.masterObj == obj) return true;
     for (auto& kv : reg.vms) {
         if (kv.first.find("<main>") != std::string::npos && &kv.second->object() == obj)
@@ -1680,19 +1760,27 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
             if (hasSuffix(virt, ".o")) virt = virt.substr(0, virt.size() - 2) + ".c";
             std::cout << "Load: " << virt << "... OK\n";
             std::string full = searchRoot + "/" + rel;
-            if (reg.vms.find(full) == reg.vms.end()) {
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[load] " << full << "\n";
-                try {
-                    auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(full));
-                    auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                if (reg.vms.find(full) != reg.vms.end()) continue;
+            }
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[load] " << full << "\n";
+            try {
+                auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(full));
+                auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+                {
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     reg.objects[full] = objPtr;
                     reg.vms[full] = vmPtr;
-                    vmPtr->runInit();
-                    reg.initialized[full] = true;
-                } catch (const std::exception& e) {
-                    std::cout << "Load: " << virt << "... FAILED: " << e.what() << "\n";
                 }
+                vmPtr->runInit();
+                {
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    reg.initialized[full] = true;
+                }
+            } catch (const std::exception& e) {
+                std::cout << "Load: " << virt << "... FAILED: " << e.what() << "\n";
             }
         }
     }
@@ -1721,19 +1809,30 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
         std::error_code ec;
         if (!std::filesystem::exists(c, ec)) continue;
         auto& reg = objectRegistry();
-        auto it = reg.vms.find(c);
-        if (it != reg.vms.end()) {
-            return it->second->callFunctionByName(funName, args);
+        std::shared_ptr<OriginalVm> existing;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            auto it = reg.vms.find(c);
+            if (it != reg.vms.end()) existing = it->second;
+        }
+        if (existing) {
+            return existing->callFunctionByName(funName, args);
         }
         try {
             auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
             auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
-            reg.objects[c] = objPtr;
-            reg.vms[c] = vmPtr;
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                reg.objects[c] = objPtr;
+                reg.vms[c] = vmPtr;
+            }
             // A freshly loaded object must run its global initializer and
             // create() exactly like the broadcast loader does.
             vmPtr->runInit();
-            reg.initialized[c] = true;
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                reg.initialized[c] = true;
+            }
             return vmPtr->callFunctionByName(funName, args);
         } catch (...) {
         }
@@ -1770,6 +1869,7 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
                 // thread VM gets the initialized instance variables instead.
                 {
                     auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     for (auto& kv : reg.vms) {
                         if (&kv.second->object() == copy.obj) {
                             auto& src = kv.second->objVars();
@@ -1814,6 +1914,7 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
     // used by the running VM, so thread closures created from it share state.
     {
         auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
         std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
         if (reg.vms.find(key) == reg.vms.end()) {
             auto objPtr = std::make_shared<OriginalObject>(obj);
@@ -1825,6 +1926,7 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
     vm.run();
     {
         auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
         std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
         reg.initialized[key] = true;
         // The local vm ran the init on the caller's obj (not the registry
@@ -1856,15 +1958,23 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
         std::error_code ec;
         if (!std::filesystem::exists(c, ec)) continue;
         auto& reg = objectRegistry();
-        auto it = reg.vms.find(c);
-        if (it != reg.vms.end()) return 1;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            if (reg.vms.find(c) != reg.vms.end()) return 1;
+        }
         try {
             auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
             auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
-            reg.objects[c] = objPtr;
-            reg.vms[c] = vmPtr;
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                reg.objects[c] = objPtr;
+                reg.vms[c] = vmPtr;
+            }
             vmPtr->runInit();
-            reg.initialized[c] = true;
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                reg.initialized[c] = true;
+            }
             return 1;
         } catch (...) {
             return 0;
@@ -1879,6 +1989,7 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
     auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
     for (auto& kv : reg.vms) {
         std::string key = kv.first;
         // registry keys are real paths like "linux/aaa - bak/aaa/daemons/x.o";
@@ -1896,10 +2007,15 @@ Value callOriginalObjectFunction(const std::string& oPath, const std::string& fu
 Value callMasterProgramFunction(const std::string& funName, const std::vector<Value>& args,
                                 const std::string& searchRoot) {
     auto& reg = objectRegistry();
-    std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
-    auto it = reg.vms.find(key);
-    if (it == reg.vms.end()) return make_int(0);
-    return it->second->callFunctionByName(funName, args);
+    std::shared_ptr<OriginalVm> target;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
+        auto it = reg.vms.find(key);
+        if (it != reg.vms.end()) target = it->second;
+    }
+    if (!target) return make_int(0);
+    return target->callFunctionByName(funName, args);
 }
 
 void drainPendingOriginalThreads(const std::string& searchRoot) {
@@ -1929,6 +2045,7 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
                 // copy the initialized instance variables instead.
                 {
                     auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     for (auto& kv : reg.vms) {
                         if (&kv.second->object() == copy.obj) {
                             auto& src = kv.second->objVars();

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -105,16 +107,22 @@ void simpleDbSave(const std::string& path) {
     for (auto& kv : simpleDb()) out << kv.first << '=' << kv.second << '\n';
 }
 
-// Cursor positions for mysql result sets (keyed by the array instance).
+// Result-set state for the mysql_* efun family. The original driver keeps one
+// cursor + current record per result handle (the array returned by
+// mysql_query); we mirror that with maps keyed by the array instance so
+// concurrent LPC threads (configd update daemon, aaaserverd do_init, ...)
+// cannot clobber each other's current record.
 std::unordered_map<const void*, int>& mysqlCursor() {
     static std::unordered_map<const void*, int> cursors;
     return cursors;
 }
-
-// The record published by the most recent mysql_fetch_record.
-Value& mysqlCurrentRecord() {
-    static Value rec = make_int(0);
-    return rec;
+std::unordered_map<const void*, Value>& mysqlRecords() {
+    static std::unordered_map<const void*, Value> recs;
+    return recs;
+}
+std::mutex& mysqlStateMutex() {
+    static std::mutex m;
+    return m;
 }
 
 std::string vfsRoot() {
@@ -520,8 +528,315 @@ Value regexpMatch(const std::string& str, const std::string& pattern) {
 
 } // namespace mini_regex
 
+// ---------------------------------------------------------------------------
+// In-memory SQL dump database (linux/new_sql/*.sql, Navicat dumps). The real
+// server keeps MySQL on a separate host; we never open a network connection
+// to it. Dumps are parsed once into memory tables:
+//   CREATE TABLE `t` ( `c1` type ..., `c2` ... ) ENGINE=...;
+//   INSERT INTO `t` VALUES ('a', 1, null), ('b', 2, 'x');
+// Only adb.sql carries data rows in this tree; the other dumps are schema.
+// ---------------------------------------------------------------------------
+struct SqlCol {
+    std::string name;
+    bool numeric = false;
+};
+struct SqlTable {
+    std::vector<SqlCol> cols;
+    std::vector<std::vector<Value>> rows;
+};
+
+static std::unordered_map<std::string, SqlTable>& sqlDb() {
+    static std::unordered_map<std::string, SqlTable> db;
+    return db;
+}
+static std::mutex& sqlDbMutex() {
+    static std::mutex m;
+    return m;
+}
+
+static std::string sqlLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+static std::string sqlTrim(const std::string& s) {
+    size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return std::string();
+    size_t e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+}
+static bool sqlIsWord(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
+}
+
+// Find the matching ')' for the '(' at `start`, ignoring backtick-quoted
+// identifiers, single-quoted strings (with '' escapes) and nesting.
+static size_t sqlFindParenEnd(const std::string& s, size_t start) {
+    int depth = 0;
+    bool inBq = false, inSq = false;
+    for (size_t k = start; k < s.size(); ++k) {
+        char c = s[k];
+        if (inSq) {
+            if (c == '\'') {
+                if (k + 1 < s.size() && s[k + 1] == '\'') ++k;
+                else inSq = false;
+            }
+            continue;
+        }
+        if (inBq) {
+            if (c == '`') inBq = false;
+            continue;
+        }
+        if (c == '\'') inSq = true;
+        else if (c == '`') inBq = true;
+        else if (c == '(') ++depth;
+        else if (c == ')') {
+            if (--depth == 0) return k;
+        }
+    }
+    return std::string::npos;
+}
+
+// Split [begin,end) on top-level commas (depth 0, outside quotes/backticks).
+static std::vector<std::string> sqlSplitTop(const std::string& s, size_t begin, size_t end) {
+    std::vector<std::string> out;
+    size_t seg = begin;
+    int depth = 0;
+    bool inBq = false, inSq = false;
+    for (size_t k = begin; k < end; ++k) {
+        char c = s[k];
+        if (inSq) {
+            if (c == '\'') {
+                if (k + 1 < end && s[k + 1] == '\'') ++k;
+                else inSq = false;
+            }
+            continue;
+        }
+        if (inBq) {
+            if (c == '`') inBq = false;
+            continue;
+        }
+        if (c == '\'') inSq = true;
+        else if (c == '`') inBq = true;
+        else if (c == '(') ++depth;
+        else if (c == ')') --depth;
+        else if (c == ',' && depth == 0) {
+            out.push_back(s.substr(seg, k - seg));
+            seg = k + 1;
+        }
+    }
+    out.push_back(s.substr(seg, end - seg));
+    return out;
+}
+
+static bool sqlTypeNumeric(const std::string& ty) {
+    std::string t = sqlLower(sqlTrim(ty));
+    static const char* nums[] = {"tinyint", "smallint", "mediumint", "bigint", "int",
+                                 "integer", "float",    "double",    "decimal", "numeric",
+                                 "real",    "bit",      "year"};
+    for (const char* n : nums)
+        if (t.compare(0, std::strlen(n), n) == 0) return true;
+    return false;
+}
+
+// Convert one raw value token (as written in the dump) into a Value.
+// Numeric columns become ints even when Navicat quotes them ('8001').
+static Value sqlValue(const std::string& raw, bool numeric) {
+    std::string t = sqlTrim(raw);
+    if (t.empty()) return numeric ? make_int(0) : make_string("");
+    std::string low = sqlLower(t);
+    if (low == "null" || low == "default") return numeric ? make_int(0) : make_string("");
+    if (t.front() == '\'') {
+        std::string out;
+        for (size_t k = 1; k + 1 < t.size(); ++k) {
+            if (t[k] == '\'' && k + 1 < t.size() && t[k + 1] == '\'') {
+                out += '\'';
+                ++k;
+            } else {
+                out += t[k];
+            }
+        }
+        if (numeric) {
+            char* end = nullptr;
+            long long v = std::strtoll(out.c_str(), &end, 10);
+            if (end && *end == '\0' && !out.empty()) return make_int(v);
+        }
+        return make_string(out);
+    }
+    if (numeric) {
+        char* end = nullptr;
+        long long v = std::strtoll(t.c_str(), &end, 10);
+        if (end && *end == '\0' && !t.empty()) return make_int(v);
+    }
+    return make_string(t);
+}
+
+static void sqlLoadFile(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string s = ss.str();
+    const size_t n = s.size();
+    size_t i = 0;
+    while (i < n) {
+        // Skip comments and string literals so keywords inside them don't match.
+        if (s[i] == '-' && i + 1 < n && s[i + 1] == '-') {  // -- line comment
+            while (i < n && s[i] != '\n') ++i;
+            continue;
+        }
+        if (s[i] == '#' && (i == 0 || s[i - 1] == '\n')) {  // # line comment
+            while (i < n && s[i] != '\n') ++i;
+            continue;
+        }
+        if (s[i] == '/' && i + 1 < n && s[i + 1] == '*') {  // /* block comment */
+            i += 2;
+            while (i + 1 < n && !(s[i] == '*' && s[i + 1] == '/')) ++i;
+            i += 2;
+            continue;
+        }
+        if (s[i] == '\'') {  // string literal
+            ++i;
+            while (i < n) {
+                if (s[i] == '\'') {
+                    if (i + 1 < n && s[i + 1] == '\'') {
+                        i += 2;
+                        continue;
+                    }
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+        // CREATE TABLE `name` ( ... )
+        if (i + 11 < n && sqlLower(s.substr(i, 12)) == "create table") {
+            size_t j = i + 12;
+            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
+            std::string name;
+            if (j < n && s[j] == '`') {
+                ++j;
+                while (j < n && s[j] != '`') name += s[j++];
+                if (j < n) ++j;
+            } else {
+                while (j < n && sqlIsWord(s[j])) name += s[j++];
+            }
+            while (j < n && s[j] != '(') ++j;
+            if (j < n) {
+                size_t end = sqlFindParenEnd(s, j);
+                if (end != std::string::npos) {
+                    SqlTable t;
+                    for (const std::string& piece : sqlSplitTop(s, j + 1, end)) {
+                        std::string pc = sqlTrim(piece);
+                        if (pc.empty()) continue;
+                        if (pc[0] == '`') {
+                            size_t e2 = pc.find('`', 1);
+                            if (e2 != std::string::npos) {
+                                SqlCol c;
+                                c.name = pc.substr(1, e2 - 1);
+                                std::string rest = sqlTrim(pc.substr(e2 + 1));
+                                c.numeric = sqlTypeNumeric(rest.substr(0, rest.find_first_of(" \t\r\n(")));
+                                t.cols.push_back(std::move(c));
+                            }
+                        }
+                        // PRIMARY KEY / KEY / UNIQUE / CONSTRAINT ... lines are skipped.
+                    }
+                    if (!t.cols.empty()) {
+                        // First definition wins so adb.sql (which carries the
+                        // data rows) is not clobbered by an empty schema later.
+                        sqlDb().emplace(sqlLower(name), std::move(t));
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        // INSERT INTO `name` VALUES (...),(...);
+        if (i + 10 < n && sqlLower(s.substr(i, 11)) == "insert into") {
+            size_t j = i + 11;
+            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
+            std::string name;
+            if (j < n && s[j] == '`') {
+                ++j;
+                while (j < n && s[j] != '`') name += s[j++];
+                if (j < n) ++j;
+            } else {
+                while (j < n && sqlIsWord(s[j])) name += s[j++];
+            }
+            while (j + 5 < n && sqlLower(s.substr(j, 6)) != "values") ++j;  // skip optional column list
+            if (j + 5 >= n) {
+                i = n;
+                break;
+            }
+            j += 6;
+            auto it = sqlDb().find(sqlLower(name));
+            if (it == sqlDb().end()) {
+                i = j;
+                continue;
+            }
+            while (j < n) {
+                while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
+                if (j >= n || s[j] != '(') break;
+                size_t end = sqlFindParenEnd(s, j);
+                if (end == std::string::npos) break;
+                const auto& cols = it->second.cols;
+                auto parts = sqlSplitTop(s, j + 1, end);
+                std::vector<Value> row;
+                row.reserve(parts.size());
+                for (size_t k = 0; k < parts.size(); ++k)
+                    row.push_back(sqlValue(parts[k], k < cols.size() && cols[k].numeric));
+                it->second.rows.push_back(std::move(row));
+                j = end + 1;
+                while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
+                if (j < n && s[j] == ',') {
+                    ++j;
+                    continue;
+                }
+                break;  // expect ';' or end of statement
+            }
+            i = j;
+            continue;
+        }
+        ++i;
+    }
+}
+
+static void sqlLoadAll() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::lock_guard<std::mutex> lk(sqlDbMutex());
+        for (const char* f : {"adb.sql", "mdb.sql", "ldb.sql", "ddb.sql"}) {
+            sqlLoadFile(fs::path("linux/new_sql") / f);
+            sqlLoadFile(fs::path("new_sql") / f);
+        }
+        if (std::getenv("LPCVM_TRACE")) {
+            std::cerr << "[sql] loaded " << sqlDb().size() << " tables\n";
+            for (const auto& kv : sqlDb())
+                std::cerr << "  " << kv.first << ": cols=" << kv.second.cols.size()
+                          << " rows=" << kv.second.rows.size() << "\n";
+        }
+    });
+}
+
 Value simpleDbSelect(const std::string& table) {
     auto arr = std::make_shared<ArrayValue>();
+    sqlLoadAll();
+    {
+        std::lock_guard<std::mutex> lk(sqlDbMutex());
+        auto it = sqlDb().find(sqlLower(table));
+        if (it != sqlDb().end()) {
+            const SqlTable& t = it->second;
+            for (const auto& row : t.rows) {
+                auto mp = std::make_shared<MappingValue>();
+                for (size_t i = 0; i < t.cols.size() && i < row.size(); ++i)
+                    mp->entries.emplace_back(make_string(t.cols[i].name), row[i]);
+                arr->items.push_back(mp);
+            }
+            return arr;
+        }
+    }
+    // Fallback: local CSV stub for tables not present in the SQL dumps.
     fs::path dir(simpleDbDir());
     std::error_code ec;
     fs::create_directories(dir, ec);
@@ -676,6 +991,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_string("");
         std::vector<Value> rest(args.begin() + 1, args.end());
         return make_string(formatLpc(as_string(args[0]), rest));
+    }
+    if (name == "atoi") {
+        if (args.empty()) return make_int(0);
+        const Value& v = args[0];
+        if (v.index() == 2) return v;
+        if (v.index() == 4) {
+            try { return make_int(static_cast<int64_t>(std::stoll(sqlTrim(std::get<std::string>(v))))); }
+            catch (...) { return make_int(0); }
+        }
+        return make_int(0);
+    }
+    if (name == "atof") {
+        if (args.empty()) return make_float(0);
+        const Value& v = args[0];
+        if (v.index() == 3) return v;
+        if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
+        if (v.index() == 4) {
+            try { return make_float(std::stod(sqlTrim(std::get<std::string>(v)))); }
+            catch (...) { return make_float(0); }
+        }
+        return make_float(0);
     }
     if (name == "sizeof" || name == "size") {
         if (args.empty()) return make_int(0);
@@ -978,9 +1314,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 Value r = simpleDbSelect(table);
                 if (r.index() == 5) {
                     auto arr = std::get<std::shared_ptr<ArrayValue>>(r);
-                    mysqlCursor()[arr.get()] = -1;   // before the first record
+                    {
+                        std::lock_guard<std::mutex> lk(mysqlStateMutex());
+                        mysqlCursor()[arr.get()] = -1;   // before the first record
+                        mysqlRecords()[arr.get()] = make_int(0);
+                    }
                     if (std::getenv("LPCVM_TRACE"))
-                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size() << "\n";
+                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
+                                  << " ptr=" << arr.get() << "\n";
                 }
                 return r;
             }
@@ -988,8 +1329,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_array();
     }
     if (name == "mysql_num_records") {
-        if (!args.empty() && args[0].index() == 5)
-            return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(args[0])->items.size()));
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_num_records] ptr=" << arr.get() << " size=" << arr->items.size() << "\n";
+            return make_int(static_cast<int64_t>(arr->items.size()));
+        }
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[mysql_num_records] NOT-ARRAY index=" << (args.empty() ? -1 : static_cast<int>(args[0].index())) << "\n";
         return make_int(0);
     }
     if (name == "mysql_fetch_record") {
@@ -997,23 +1344,39 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // Returns 0 while a record is available, nonzero past the end.
         if (!args.empty() && args[0].index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-            int& cur = mysqlCursor()[arr.get()];
-            ++cur;
-            if (cur < static_cast<int>(arr->items.size())) {
-                mysqlCurrentRecord() = arr->items[static_cast<size_t>(cur)];
-                return make_int(0);
+            int cur;
+            {
+                std::lock_guard<std::mutex> lk(mysqlStateMutex());
+                cur = ++mysqlCursor()[arr.get()];
+                if (cur < static_cast<int>(arr->items.size()))
+                    mysqlRecords()[arr.get()] = arr->items[static_cast<size_t>(cur)];
+                else
+                    mysqlRecords()[arr.get()] = make_int(0);
             }
-            mysqlCurrentRecord() = make_int(0);
-            return make_int(1);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_fetch_record] ptr=" << arr.get() << " cur=" << cur
+                          << " size=" << arr->items.size() << "\n";
+            return cur < static_cast<int>(arr->items.size()) ? make_int(0) : make_int(1);
         }
         return make_int(1);
     }
     if (name == "mysql_this_record") {
-        // The record published by the last mysql_fetch_record call.
-        return mysqlCurrentRecord();
+        // The current record of THIS result set (published by fetch_record).
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+            std::lock_guard<std::mutex> lk(mysqlStateMutex());
+            auto it = mysqlRecords().find(arr.get());
+            if (it != mysqlRecords().end()) return it->second;
+        }
+        return make_int(0);
     }
     if (name == "mysql_finalize") {
-        if (!args.empty() && args[0].index() == 5) mysqlCursor().erase(std::get<std::shared_ptr<ArrayValue>>(args[0]).get());
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+            std::lock_guard<std::mutex> lk(mysqlStateMutex());
+            mysqlCursor().erase(arr.get());
+            mysqlRecords().erase(arr.get());
+        }
         return make_int(1);
     }
     if (name == "mysql_field_value" || name == "mysql_field_name") {
