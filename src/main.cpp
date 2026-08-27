@@ -282,7 +282,7 @@ int runPakOriginal(const std::string& path) {
               << " globalNodes=" << obj.globalCode.size() << "\n";
     int rc = lpc::runOriginalObject(obj, std::cout, root);
     std::cout.flush();
-    std::cerr << "[pak] runOriginalObject returned rc=" << rc << "\n";
+
     if (rc != 0) return rc;
     // Keep the driver alive so LPC-started services (telnet_on) keep running.
     for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
