@@ -3,6 +3,7 @@
 
 #include "o_loader.h"
 #include "original_vm.h"
+#include "mysql_client.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -123,6 +125,50 @@ std::unordered_map<const void*, Value>& mysqlRecords() {
 std::mutex& mysqlStateMutex() {
     static std::mutex m;
     return m;
+}
+
+// Real MySQL connections, keyed by the small integer handle (cno) that
+// mysql_connect returns to the LPC side (dbd's assure_connection stores it
+// and passes it back to mysql_query/mysql_execute).  Each connection is
+// serialized internally, so concurrent LPC threads are safe.
+struct MysqlHandle {
+    std::shared_ptr<MysqlClient> client;  // null when offline (fallback)
+    std::string db;
+    std::shared_ptr<std::mutex> mu = std::make_shared<std::mutex>();  // per-connection lock
+};
+std::map<int, MysqlHandle>& mysqlHandles() {
+    static std::map<int, MysqlHandle> m;
+    return m;
+}
+std::mutex& mysqlHandlesMutex() {
+    static std::mutex m;
+    return m;
+}
+int nextMysqlCno() {
+    static std::atomic<int> n{1};
+    return n++;
+}
+
+// Execute a query against the live MySQL server.  Returns true and fills
+// out on success (result set or affected rows); false when the server
+// rejected the statement (error filled) or the connection is unusable.
+bool mysqlExecReal(int cno, const std::string& sql, MysqlClient::Result& out, std::string& error) {
+    std::shared_ptr<MysqlClient> client;
+    std::shared_ptr<std::mutex> mu;
+    {
+        std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+        auto it = mysqlHandles().find(cno);
+        if (it != mysqlHandles().end()) {
+            client = it->second.client;
+            mu = it->second.mu;
+        }
+    }
+    if (!client || !client->isConnected()) {
+        error = "no live connection for cno " + std::to_string(cno);
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(*mu);
+    return client->execute(sql, out, error);
 }
 
 std::string vfsRoot() {
@@ -1254,13 +1300,81 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::cout << "Service started on port " << port << "\n";
         return make_int(1);
     }
-    if (name == "mysql_connect") return make_int(1);
-    if (name == "mysql_is_connected") return make_int(1);
-    if (name == "mysql_disconnect" || name == "mysql_close_db") return make_int(1);
+    if (name == "mysql_connect") {
+        // mysql_connect(host, user, password, database) -> cno (>=1) or -1.
+        // The game (dbd's assure_connection) passes host from aaa.ini, which
+        // load_db_config rewrites to "port : host" when the port is set.
+        if (args.size() >= 4) {
+            std::string hostArg = as_string(args[0]);
+            std::string user = as_string(args[1]);
+            std::string pass = as_string(args[2]);
+            std::string db = as_string(args[3]);
+            std::string host;
+            int port = 3306;
+            parseMysqlHost(hostArg, host, port);
+            // dbd's assure_connection pings every 60s and may call
+            // mysql_connect again; reuse an existing connection for the same
+            // target instead of opening a new one each time.
+            std::string key = host + ":" + std::to_string(port) + ":" + user + ":" + db;
+            {
+                std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+                for (auto& kv : mysqlHandles()) {
+                    if (kv.second.db == key && kv.second.client && kv.second.client->isConnected()) {
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[mysql_connect] reuse cno=" << kv.first << " for " << key << "\n";
+                        return make_int(kv.first);
+                    }
+                }
+            }
+            auto client = std::make_shared<MysqlClient>();
+            std::string err;
+            int cno = nextMysqlCno();
+            bool ok = client->connect(host, port, user, pass, db, err);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_connect] host=" << host << ":" << port << " db=" << db
+                          << " user=" << user << " ok=" << ok
+                          << (ok ? "" : (" err=" + err)) << " cno=" << cno << "\n";
+            if (!ok) {
+                // Keep an offline handle so the game's connection flow
+                // proceeds; queries fall back to the in-memory dump tables.
+                std::cerr << "[mysql] connect to " << host << ":" << port << "/" << db
+                          << " failed: " << err << " (using in-memory tables)\n";
+            }
+            {
+                std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+                mysqlHandles()[cno] = MysqlHandle{ok ? client : nullptr, key};
+            }
+            return make_int(cno);
+        }
+        return make_int(-1);
+    }
+    if (name == "mysql_is_connected") {
+        if (!args.empty()) {
+            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(static_cast<int>(as_int(args[0])));
+            if (it != mysqlHandles().end() && it->second.client && it->second.client->isConnected())
+                return make_int(1);
+        }
+        return make_int(0);
+    }
+    if (name == "mysql_disconnect" || name == "mysql_close_db") {
+        if (!args.empty()) {
+            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(static_cast<int>(as_int(args[0])));
+            if (it != mysqlHandles().end()) {
+                if (it->second.client) it->second.client->close();
+                mysqlHandles().erase(it);
+            }
+        }
+        return make_int(1);
+    }
     if (name == "mysql_select_db" || name == "mysql_set_auto_commit") return make_int(1);
     if (name == "mysql_query") {
-        // Return a result handle (array of row mappings) for a SELECT.
+        // mysql_query(cno, sql) -> result handle (array of row mappings) for
+        // SELECT; the game's mixed_mysql_select iterates it with
+        // mysql_num_records/mysql_fetch_record/mysql_this_record.
         if (args.size() >= 2) {
+            int cno = static_cast<int>(as_int(args[0]));
             std::string sql = as_string(args[1]);
             std::string table;
             size_t p = sql.find("from ");
@@ -1271,11 +1385,26 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 table = rest.substr(0, e);
             }
             if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[mysql_query] sql=" << sql << " table=" << table << "\n";
-            if (!table.empty()) {
-                Value r = simpleDbSelect(table);
-                if (r.index() == 5) {
-                    auto arr = std::get<std::shared_ptr<ArrayValue>>(r);
+                std::cerr << "[mysql_query] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
+            MysqlClient::Result res;
+            std::string err;
+            if (mysqlExecReal(cno, sql, res, err)) {
+                if (res.hasResultSet) {
+                    auto arr = std::make_shared<ArrayValue>();
+                    for (const auto& row : res.rows) {
+                        auto mp = std::make_shared<MappingValue>();
+                        for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
+                            const auto& cell = row[i];
+                            if (cell.isNull) {
+                                mp->entries.emplace_back(make_string(res.cols[i]), make_string(""));
+                            } else if (cell.isNumber) {
+                                mp->entries.emplace_back(make_string(res.cols[i]), make_int(cell.num));
+                            } else {
+                                mp->entries.emplace_back(make_string(res.cols[i]), make_string(cell.str));
+                            }
+                        }
+                        arr->items.push_back(mp);
+                    }
                     {
                         std::lock_guard<std::mutex> lk(mysqlStateMutex());
                         mysqlCursor()[arr.get()] = -1;   // before the first record
@@ -1283,7 +1412,28 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     }
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
-                                  << " ptr=" << arr.get() << "\n";
+                                  << " ptr=" << arr.get() << " (live)\n";
+                    return arr;
+                }
+                // Non-SELECT via mysql_query (game mostly uses mysql_execute
+                // for writes): surface affected rows as a plain int.
+                return make_int(static_cast<int64_t>(res.affectedRows));
+            }
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_query] error: " << err << " -> in-memory fallback\n";
+            // Fall back to the in-memory dump tables (offline or SQL error).
+            if (!table.empty()) {
+                Value r = simpleDbSelect(table);
+                if (r.index() == 5) {
+                    auto arr = std::get<std::shared_ptr<ArrayValue>>(r);
+                    {
+                        std::lock_guard<std::mutex> lk(mysqlStateMutex());
+                        mysqlCursor()[arr.get()] = -1;
+                        mysqlRecords()[arr.get()] = make_int(0);
+                    }
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
+                                  << " ptr=" << arr.get() << " (memory)\n";
                 }
                 return r;
             }
@@ -1354,8 +1504,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         name == "mysql_num_fields" || name == "mysql_int_field" ||
         name == "mysql_get_insert_id") return make_int(0);
     if (name == "mysql_execute") {
-        // Run a query against the local CSV-backed database.
+        // mysql_execute(cno, sql) - run a statement (usually a write) on the
+        // live MySQL server; returns affected rows.
         if (args.size() >= 2) {
+            int cno = static_cast<int>(as_int(args[0]));
             std::string sql = as_string(args[1]);
             std::string table;
             size_t p = sql.find("from ");
@@ -1366,10 +1518,32 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 table = rest.substr(0, e);
             }
             if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[mysql_execute] sql=" << sql << " table=" << table << "\n";
-            if (!table.empty()) return simpleDbSelect(table);
+                std::cerr << "[mysql_execute] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
+            MysqlClient::Result res;
+            std::string err;
+            if (mysqlExecReal(cno, sql, res, err)) {
+                if (res.hasResultSet) {
+                    // SELECT via execute: return the rows as an array.
+                    auto arr = std::make_shared<ArrayValue>();
+                    for (const auto& row : res.rows) {
+                        auto mp = std::make_shared<MappingValue>();
+                        for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
+                            const auto& cell = row[i];
+                            if (cell.isNull) mp->entries.emplace_back(make_string(res.cols[i]), make_string(""));
+                            else if (cell.isNumber) mp->entries.emplace_back(make_string(res.cols[i]), make_int(cell.num));
+                            else mp->entries.emplace_back(make_string(res.cols[i]), make_string(cell.str));
+                        }
+                        arr->items.push_back(mp);
+                    }
+                    return arr;
+                }
+                return make_int(static_cast<int64_t>(res.affectedRows));
+            }
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mysql_execute] error: " << err << "\n";
+            return make_int(0);
         }
-        return make_array();
+        return make_int(0);
     }
     if (name == "mysql_bind_parameters") {
         if (args.empty()) return make_int(0);
@@ -1377,6 +1551,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "mysql_select") {
         if (args.size() < 2) return make_array();
+        int cno = static_cast<int>(as_int(args[0]));
         std::string sql = as_string(args[1]);
         std::string table;
         size_t p = sql.find("from ");
@@ -1385,6 +1560,22 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
             size_t e = rest.find_first_of(" ;`");
             table = rest.substr(0, e);
+        }
+        MysqlClient::Result res;
+        std::string err;
+        if (mysqlExecReal(cno, sql, res, err) && res.hasResultSet) {
+            auto arr = std::make_shared<ArrayValue>();
+            for (const auto& row : res.rows) {
+                auto mp = std::make_shared<MappingValue>();
+                for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
+                    const auto& cell = row[i];
+                    if (cell.isNull) mp->entries.emplace_back(make_string(res.cols[i]), make_string(""));
+                    else if (cell.isNumber) mp->entries.emplace_back(make_string(res.cols[i]), make_int(cell.num));
+                    else mp->entries.emplace_back(make_string(res.cols[i]), make_string(cell.str));
+                }
+                arr->items.push_back(mp);
+            }
+            return arr;
         }
         if (table.empty()) return make_array();
         return simpleDbSelect(table);

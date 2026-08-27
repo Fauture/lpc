@@ -1067,13 +1067,16 @@ private:
                 break;
             }
             case 24: { // create_mapping
+                // The compiler pushes (value, key) pairs (see dbd's
+                // load_db_config: push Host, push "host", ...).  We pop them
+                // reversed and pair them back as (key, value).
                 uint32_t count = in.a;
                 std::vector<Value> items;
                 for (uint32_t i = 0; i < count && !stack_.empty(); ++i) items.push_back(pop().value);
                 std::reverse(items.begin(), items.end());
                 auto mp = std::make_shared<MappingValue>();
                 for (size_t i = 0; i + 1 < items.size(); i += 2)
-                    mp->entries.emplace_back(items[i], items[i + 1]);
+                    mp->entries.emplace_back(items[i + 1], items[i]);
                 pushValue(mp);
                 break;
             }
