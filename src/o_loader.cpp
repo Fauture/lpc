@@ -210,12 +210,20 @@ OriginalObject loadOriginalObject(const std::string& path) {
         uint16_t maxConstitution = r.u16();
         uint32_t inheritCount = r.u32();
         for (uint32_t i = 0; i < inheritCount; ++i) {
-            r.tempString();
-            std::vector<uint8_t> inh = r.bytes(12);
-            if (i == 0 && inh.size() >= 4) {
-                // 6 u16: baseConsOffset, baseFunOffset, baseVarOffset, ...
-                obj.baseFunOffset = static_cast<int16_t>(inh[2] | (inh[3] << 8));
+            OriginalInherit inh;
+            inh.path = r.tempString();
+            std::vector<uint8_t> raw = r.bytes(12);
+            // 6 u16 (matches vm_loadBinaryInherit):
+            //   baseConsititutionOffset, baseFunOffset, baseVarOffset,
+            //   expectedSubConsititutionNo, expectedFunctionNo, expectedVariableNo
+            if (raw.size() >= 4) {
+                inh.baseFunOffset = static_cast<int16_t>(raw[2] | (raw[3] << 8));
             }
+            if (i == 0 && raw.size() >= 4) {
+                // Legacy field kept for compatibility.
+                obj.baseFunOffset = static_cast<int16_t>(raw[2] | (raw[3] << 8));
+            }
+            obj.inherits.push_back(std::move(inh));
         }
         (void)maxConstitution;
     }

@@ -20,6 +20,12 @@ struct OriginalFunction {
     std::vector<uint8_t> metaData;
 };
 
+struct OriginalInherit {
+    std::string path;       // e.g. "/feature/daemon/register.c"
+    int baseFunOffset = 0;  // inherited functions are mapped to
+                            // baseFunOffset + <function index in the parent>
+};
+
 struct OriginalObject {
     uint32_t magic = 0;
     uint32_t version = 0;
@@ -31,6 +37,7 @@ struct OriginalObject {
     std::vector<OriginalFunction> functions;
     std::vector<OriginalInsn> globalCode;
     std::vector<uint8_t> globalMeta;
+    std::vector<OriginalInherit> inherits;
 };
 
 OriginalObject loadOriginalObject(const std::string& path);

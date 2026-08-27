@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -18,6 +19,7 @@
 
 #include "builtins.h"
 #include "efun_table.h"
+#include "o_loader.h"
 #include "value.h"
 
 namespace fs = std::filesystem;
@@ -452,6 +454,7 @@ public:
         for (const auto& fn : obj.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
         }
+        mergeInheritedFunctions();
     }
 
     const OriginalObject& object() const { return obj_; }
@@ -561,6 +564,7 @@ private:
     std::vector<Value> objVars_;    // per-object instance variables
     std::vector<Frame> frames_;
     std::map<int, const OriginalFunction*> funcsByIndex_;
+    std::vector<std::shared_ptr<OriginalFunction>> inheritedFuncs_;  // owned copies of merged parents
     int lastOp_ = -1;
     size_t lastIp_ = 0;
     int stepCounter_ = 0;
@@ -578,6 +582,59 @@ private:
         for (const auto& fn : obj_.functions)
             if (fn.name == name && fn.index >= 0) return &fn;
         return nullptr;
+    }
+
+    // Merge inherited functions into this object's function table.  The
+    // compiler assigns each inherit a baseFunOffset (from the INHERITS table)
+    // and indexes inherited functions as baseFunOffset + <function index in the
+    // parent program>.  The parent may itself inherit other programs, so the
+    // merge walks the inherit chain recursively.  (Verified against
+    // vm_loadBinaryInherit at 0x80a2b58 in the original driver.)
+    void mergeInheritedFunctions() {
+        std::map<std::string, const OriginalObject*> loaded;
+        std::function<void(const OriginalObject&, const std::string&)> walk;
+        walk = [&](const OriginalObject& parent, const std::string& root) {
+                for (const auto& inh : parent.inherits) {
+                    std::string rel = inh.path;
+                    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+                    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+                    std::string cand = root.empty() ? rel : root + "/" + rel;
+                    std::error_code ec;
+                    if (!std::filesystem::exists(cand, ec)) {
+                        // Try without the leading "aaa/" component (some inherit
+                        // paths mix "/feature/..." which live at the root).
+                        if (rel.compare(0, 4, "aaa/") == 0) {
+                            std::string alt = root.empty() ? rel.substr(4) : root + "/" + rel.substr(4);
+                            if (std::filesystem::exists(alt, ec)) cand = alt;
+                        }
+                    }
+                    std::shared_ptr<OriginalObject> parentObj;
+                    auto lit = loaded.find(cand);
+                    if (lit != loaded.end()) {
+                        parentObj = std::shared_ptr<OriginalObject>(
+                            const_cast<OriginalObject*>(lit->second), [](OriginalObject*) {});
+                    } else {
+                        try {
+                            parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
+                        } catch (...) {
+                            continue;   // missing inherited file: nothing to merge
+                        }
+                        loaded[cand] = parentObj.get();
+                    }
+                    // Parent's own inheritance comes first (its function indexes
+                    // already include them), then the parent's functions.
+                    walk(*parentObj, root);
+                    for (const auto& fn : parentObj->functions) {
+                        if (fn.index < 0) continue;
+                        int childIndex = inh.baseFunOffset + fn.index;
+                        if (funcsByIndex_.find(childIndex) == funcsByIndex_.end()) {
+                            inheritedFuncs_.push_back(std::make_shared<OriginalFunction>(fn));
+                            funcsByIndex_[childIndex] = inheritedFuncs_.back().get();
+                        }
+                    }
+                }
+            };
+        walk(obj_, searchRoot_);
     }
 
     // ---- stack primitives (top = back of vector) ----
