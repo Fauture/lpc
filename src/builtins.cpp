@@ -344,10 +344,6 @@ bool hasSuffix(const std::string& s, const std::string& suffix) {
     return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-std::string simpleDbDir() {
-    return "lpcvm_db";
-}
-
 // ---------------------------------------------------------------------------
 // Minimal regex for the patterns the game uses (char classes, '*', '+', '?',
 // '.', '^', '$', groups, '|').  Returns matched group ranges as
@@ -833,45 +829,11 @@ Value simpleDbSelect(const std::string& table) {
                     mp->entries.emplace_back(make_string(t.cols[i].name), row[i]);
                 arr->items.push_back(mp);
             }
-            return arr;
         }
     }
-    // Fallback: local CSV stub for tables not present in the SQL dumps.
-    fs::path dir(simpleDbDir());
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-    fs::path file = dir / (table + ".csv");
-    if (!fs::exists(file, ec)) {
-        if (table == "aaa") {
-            std::ofstream f(file);
-            f << "id,aaa,name,port,password,enable\n";
-            f << "aaa_2017,aaa_2017,aaa_2017,7001,123456,1\n";
-        }
-    }
-    std::ifstream in(file);
-    if (!in) return arr;
-    std::string headerLine;
-    if (!std::getline(in, headerLine)) return arr;
-    std::vector<std::string> cols;
-    std::stringstream ss(headerLine);
-    std::string col;
-    while (std::getline(ss, col, ',')) cols.push_back(col);
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty()) continue;
-        std::stringstream ls(line);
-        std::vector<std::string> vals;
-        std::string v;
-        while (std::getline(ls, v, ',')) vals.push_back(v);
-        auto mp = std::make_shared<MappingValue>();
-        for (size_t i = 0; i < cols.size() && i < vals.size(); ++i) {
-            std::string key = cols[i];
-            std::string val = vals[i];
-            if (key == "port" || key == "enable") mp->entries.emplace_back(make_string(key), make_int(std::atoll(val.c_str())));
-            else mp->entries.emplace_back(make_string(key), make_string(val));
-        }
-        arr->items.push_back(mp);
-    }
+    // Tables not present in the SQL dumps return an empty result set.  (The
+    // old local-CSV stub produced fabricated columns that did not match the
+    // real schema, so it has been removed.)
     return arr;
 }
 
