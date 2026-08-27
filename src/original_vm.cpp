@@ -591,50 +591,48 @@ private:
     // merge walks the inherit chain recursively.  (Verified against
     // vm_loadBinaryInherit at 0x80a2b58 in the original driver.)
     void mergeInheritedFunctions() {
-        std::map<std::string, const OriginalObject*> loaded;
-        std::function<void(const OriginalObject&, const std::string&)> walk;
-        walk = [&](const OriginalObject& parent, const std::string& root) {
-                for (const auto& inh : parent.inherits) {
-                    std::string rel = inh.path;
-                    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
-                    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-                    std::string cand = root.empty() ? rel : root + "/" + rel;
-                    std::error_code ec;
-                    if (!std::filesystem::exists(cand, ec)) {
-                        // Try without the leading "aaa/" component (some inherit
-                        // paths mix "/feature/..." which live at the root).
-                        if (rel.compare(0, 4, "aaa/") == 0) {
-                            std::string alt = root.empty() ? rel.substr(4) : root + "/" + rel.substr(4);
-                            if (std::filesystem::exists(alt, ec)) cand = alt;
-                        }
+        // Resolve an inherit path (a mudlib-relative virtual path like
+        // "/feature/daemon/register.c") to a real file the same way every
+        // other virtual path is resolved (see resolveVfsPath).
+        auto resolveInheritFile = [this](const std::string& vpath) -> std::string {
+            std::string rel = vpath;
+            if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+            if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+            return searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+        };
+        std::map<std::string, std::shared_ptr<OriginalObject>> loaded;
+        std::function<void(const OriginalObject&)> walk;
+        walk = [&](const OriginalObject& parent) {
+            for (const auto& inh : parent.inherits) {
+                std::string cand = resolveInheritFile(inh.path);
+                std::error_code ec;
+                if (!std::filesystem::exists(cand, ec)) continue;   // missing file: nothing to merge
+                std::shared_ptr<OriginalObject> parentObj;
+                auto lit = loaded.find(cand);
+                if (lit != loaded.end()) {
+                    parentObj = lit->second;
+                } else {
+                    try {
+                        parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
+                    } catch (...) {
+                        continue;   // failed to load the inherited file
                     }
-                    std::shared_ptr<OriginalObject> parentObj;
-                    auto lit = loaded.find(cand);
-                    if (lit != loaded.end()) {
-                        parentObj = std::shared_ptr<OriginalObject>(
-                            const_cast<OriginalObject*>(lit->second), [](OriginalObject*) {});
-                    } else {
-                        try {
-                            parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
-                        } catch (...) {
-                            continue;   // missing inherited file: nothing to merge
-                        }
-                        loaded[cand] = parentObj.get();
-                    }
-                    // Parent's own inheritance comes first (its function indexes
-                    // already include them), then the parent's functions.
-                    walk(*parentObj, root);
-                    for (const auto& fn : parentObj->functions) {
-                        if (fn.index < 0) continue;
-                        int childIndex = inh.baseFunOffset + fn.index;
-                        if (funcsByIndex_.find(childIndex) == funcsByIndex_.end()) {
-                            inheritedFuncs_.push_back(std::make_shared<OriginalFunction>(fn));
-                            funcsByIndex_[childIndex] = inheritedFuncs_.back().get();
-                        }
+                    loaded[cand] = parentObj;
+                }
+                // Parent's own inheritance comes first (its function indexes
+                // already include them), then the parent's functions.
+                walk(*parentObj);
+                for (const auto& fn : parentObj->functions) {
+                    if (fn.index < 0) continue;
+                    int childIndex = inh.baseFunOffset + fn.index;
+                    if (funcsByIndex_.find(childIndex) == funcsByIndex_.end()) {
+                        inheritedFuncs_.push_back(std::make_shared<OriginalFunction>(fn));
+                        funcsByIndex_[childIndex] = inheritedFuncs_.back().get();
                     }
                 }
-            };
-        walk(obj_, searchRoot_);
+            }
+        };
+        walk(obj_);
     }
 
     // ---- stack primitives (top = back of vector) ----
