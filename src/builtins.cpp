@@ -640,7 +640,53 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "wait_event" || name == "send_to_queue") return make_int(1);
     if (name == "get_thread_id") return make_int(-1);
-    if (name == "time" || name == "time_desc") return make_int(0);
+    if (name == "time" || name == "time_desc")
+        return make_int(static_cast<int64_t>(std::time(nullptr)));
+    if (name == "local_time") {
+        // local_time([t]) -> ({hour,min,sec,wday,ch_wday,mday,yday,mon,year})
+        std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        auto mp = std::make_shared<MappingValue>();
+        auto add = [&](const char* k, int64_t v) { mp->entries.emplace_back(make_string(k), make_int(v)); };
+        add("hour", tm.tm_hour);
+        add("min", tm.tm_min);
+        add("sec", tm.tm_sec);
+        add("wday", tm.tm_wday);
+        add("ch_wday", tm.tm_wday == 0 ? 7 : tm.tm_wday);
+        add("mday", tm.tm_mday);
+        add("yday", tm.tm_yday);
+        add("mon", tm.tm_mon + 1);
+        add("year", tm.tm_year + 1900);
+        return mp;
+    }
+    if (name == "mktime") {
+        // mktime(mapping) - build an epoch value from a {year,mon,day,hour,min,sec} map.
+        if (!args.empty() && args[0].index() == 6) {
+            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+            auto get = [&](const char* k, int def) -> int {
+                for (auto& kv : mp->entries) {
+                    if (kv.first.index() == 4 && std::get<std::string>(kv.first) == k)
+                        return static_cast<int>(as_int(kv.second));
+                }
+                return def;
+            };
+            std::tm t{};
+            t.tm_year = get("year", 1970) - 1900;
+            t.tm_mon = get("mon", 1) - 1;
+            t.tm_mday = get("mday", get("day", 1));
+            t.tm_hour = get("hour", 0);
+            t.tm_min = get("min", 0);
+            t.tm_sec = get("sec", 0);
+            std::time_t result = std::mktime(&t);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[mktime] year=" << t.tm_year + 1900 << " mon=" << t.tm_mon + 1
+                          << " mday=" << t.tm_mday << " hour=" << t.tm_hour
+                          << " -> " << static_cast<int64_t>(result) << "\n";
+            return make_int(static_cast<int64_t>(result));
+        }
+        return make_int(0);
+    }
     if (name == "create_thread" || name == "create_queue" || name == "create_event") return make_int(1);
     if (name == "delete_queue" || name == "delete_event") return make_int(1);
     if (name == "raise_event") return make_int(1);

@@ -618,6 +618,36 @@ private:
                 postInitFuncs().push_back({&obj_, cl->functionName, cl->boundArgs});
                 return make_int(1);
             }
+            if (nm == "set_timer" && args.size() >= 3) {
+                // set_timer(timeout, id, function) - run the function once after
+                // timeout seconds (the game re-registers repeating timers itself).
+                const Value& fn = args[2];
+                std::string fnName;
+                std::vector<Value> bound;
+                if (fn.index() == 8) {
+                    auto cl = std::get<std::shared_ptr<ClosureValue>>(fn);
+                    fnName = cl->functionName;
+                    bound = cl->boundArgs;
+                } else if (fn.index() == 4) {
+                    fnName = std::get<std::string>(fn);
+                }
+                if (!fnName.empty()) {
+                    int64_t timeout = std::max<int64_t>(1, toInt(args[0]));
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[timer] schedule " << fnName << " in " << timeout << "s\n";
+                    auto objPtr = std::make_shared<OriginalObject>(obj_);
+                    std::thread([objPtr, fnName, bound, timeout]() {
+                        if (timeout > 0)
+                            std::this_thread::sleep_for(std::chrono::seconds(timeout));
+                        try {
+                            OriginalVm vm(*objPtr);
+                            vm.callFunctionByName(fnName, bound);
+                        } catch (...) {
+                        }
+                    }).detach();
+                    return make_int(1);
+                }
+            }
             return call_builtin(nullptr, nm, args);
         }
         return make_int(0);
@@ -988,13 +1018,15 @@ private:
             }
             case 67: { // query_member
                 Value key = pop().value;
-                Value container = pop().value;
+                StackItem c = pop();
+                Value container = c.isRef ? deref(c) : c.value;
                 pushValue(queryMemberValue(container, key));
                 break;
             }
             case 68: { // query_member_ptr
                 Value key = pop().value;
-                Value container = pop().value;
+                StackItem c = pop();
+                Value container = c.isRef ? deref(c) : c.value;
                 push(makeMemberRef(container, key));
                 break;
             }
@@ -1062,7 +1094,19 @@ private:
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
                     const OriginalFunction* fn = findFunction(cl->functionName);
-                    if (fn) result = executeFunctionFromOutside(*fn, all);
+                    if (fn) {
+                        result = executeFunctionFromOutside(*fn, all);
+                    } else {
+                        // The closure may reference a builtin efun (e.g. the
+                        // mysql_connect closure created by find_function).
+                        const auto& names = efunNameTable();
+                        for (size_t i = 0; i < names.size(); ++i) {
+                            if (names[i] == cl->functionName) {
+                                result = callEfun(static_cast<int>(i), static_cast<int>(all.size()));
+                                break;
+                            }
+                        }
+                    }
                 } else if (funItem.value.index() == 4) {
                     const std::string& fnName = std::get<std::string>(funItem.value);
                     const OriginalFunction* fn = findFunction(fnName);
@@ -1432,13 +1476,19 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
 void runPendingOriginalThreads(const std::string& searchRoot) {
     auto& threads = pendingThreads();
     if (std::getenv("LPCVM_TRACE")) std::cerr << "[orig] pending threads=" << threads.size() << "\n";
+    // Run each thread concurrently so a long-running loop (e.g. a service loop)
+    // does not block the other threads.
+    std::vector<std::thread> workers;
     for (auto& th : threads) {
-        try {
-            OriginalVm vm(*th.obj, searchRoot);
-            vm.callFunctionByName(th.fun, th.args);
-        } catch (...) {
-        }
+        workers.emplace_back([&th, searchRoot]() {
+            try {
+                OriginalVm vm(*th.obj, searchRoot);
+                vm.callFunctionByName(th.fun, th.args);
+            } catch (...) {
+            }
+        });
     }
+    for (auto& w : workers) w.detach();
     threads.clear();
 }
 
