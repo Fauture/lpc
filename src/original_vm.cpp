@@ -602,11 +602,15 @@ private:
     }
 
     // Read the value a slot ref / global ref / obj ref / member ref points to.
+    // Follow ref-to-ref chains (a ref slot that itself holds a ref, e.g. a
+    // callee writing through an argument that is a reference to the caller's
+    // local).
     Value deref(const StackItem& ref) const {
         if (ref.slotIndex >= 0) {
-            if (static_cast<size_t>(ref.slotIndex) < stack_.size())
-                return stack_[ref.slotIndex].value;
-            return make_int(0);
+            if (static_cast<size_t>(ref.slotIndex) >= stack_.size()) return make_int(0);
+            const StackItem& it = stack_[ref.slotIndex];
+            if (it.isRef) return deref(it);
+            return it.value;
         }
         if (ref.globalIndex >= 0) {
             return sharedGlobal(ref.globalIndex);
@@ -629,22 +633,51 @@ private:
         return make_int(0);
     }
 
-    void writeThrough(const StackItem& ref, const Value& v) {
-        if (ref.slotIndex >= 0) {
-            if (static_cast<size_t>(ref.slotIndex) < stack_.size()) stack_[ref.slotIndex].value = v;
-        } else if (ref.globalIndex >= 0) {
-            sharedGlobal(ref.globalIndex) = v;
-        } else if (ref.objIndex >= 0) {
-            if (static_cast<size_t>(ref.objIndex) < objVars_.size()) objVars_[ref.objIndex] = v;
-        } else if (ref.arr) {
-            int64_t i = toInt(ref.key);
-            auto& items = ref.arr->items;
-            if (i >= 0 && i < static_cast<int64_t>(items.size())) items[static_cast<size_t>(i)] = v;
-        } else if (ref.map) {
-            for (auto& kv : ref.map->entries) {
-                if (value_equal(kv.first, ref.key)) { kv.second = v; return; }
+    // Follow a ref chain to its ultimate target StackItem (the innermost
+    // non-ref slot).  Used by writeThrough so an assignment to a reference
+    // argument updates the caller's variable, not the ref slot itself.
+    // Returns the LAST ref item in the chain (or the input ref itself), i.e.
+    // the item whose slotIndex/globalIndex/objIndex/arr/map identifies the
+    // final destination slot.  A plain value slot has slotIndex == -1, so
+    // writeThrough must NOT be pointed at it.
+    const StackItem* followRefChain(const StackItem& ref) const {
+        const StackItem* cur = &ref;
+        int guard = 0;
+        while (cur->isRef && guard++ < 64) {
+            if (cur->slotIndex >= 0) {
+                if (static_cast<size_t>(cur->slotIndex) >= stack_.size()) return cur;
+                const StackItem& next = stack_[static_cast<size_t>(cur->slotIndex)];
+                if (next.isRef) {
+                    cur = &next;   // ref-to-ref: keep walking
+                } else {
+                    return cur;    // target is a plain value slot: stop here
+                }
+            } else {
+                return cur;        // global / obj / member ref: terminal destination
             }
-            ref.map->entries.emplace_back(ref.key, v);
+        }
+        return cur;
+    }
+
+    void writeThrough(const StackItem& ref, const Value& v) {
+        const StackItem* target = followRefChain(ref);
+        if (!target) return;
+        if (target->slotIndex >= 0) {
+            if (static_cast<size_t>(target->slotIndex) < stack_.size())
+                stack_[static_cast<size_t>(target->slotIndex)].value = v;
+        } else if (target->globalIndex >= 0) {
+            sharedGlobal(target->globalIndex) = v;
+        } else if (target->objIndex >= 0) {
+            if (static_cast<size_t>(target->objIndex) < objVars_.size()) objVars_[target->objIndex] = v;
+        } else if (target->arr) {
+            int64_t i = toInt(target->key);
+            auto& items = target->arr->items;
+            if (i >= 0 && i < static_cast<int64_t>(items.size())) items[static_cast<size_t>(i)] = v;
+        } else if (target->map) {
+            for (auto& kv : target->map->entries) {
+                if (value_equal(kv.first, target->key)) { kv.second = v; return; }
+            }
+            target->map->entries.emplace_back(target->key, v);
         }
     }
 
@@ -691,17 +724,47 @@ private:
                 if (!msg.empty()) std::cout << msg << "\n";
                 return make_int(1);
             }
-            if (nm == "create_thread" && args.size() >= 2 && args[1].index() == 8) {
-                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+            if (nm == "create_thread") {
+                if (std::getenv("LPCVM_TRACE")) {
+                    std::string dbg;
+                    for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
+                    std::cerr << "[cthread] args=[" << dbg << "] argc=" << args.size() << "\n";
+                }
+                // Original vm_f_create_thread (0x80ecbc0):
+                //   arg0 = thread name (string) or mapping with
+                //          name/stack_size/fun_context_size/catch_context_size,
+                //   arg1 = the function to run, found via vm_findFunction(1,..)
+                //          - a closure, or a string function name resolved in
+                //            the CURRENT object (e.g. "daemon")
+                //   arg2+ = arguments passed to the spawned function.
+                std::string funName;
+                std::vector<Value> threadArgs;
+                const OriginalObject* owner = nullptr;
+                if (args.size() >= 2) {
+                    if (args[1].index() == 8) {
+                        auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+                        funName = cl->functionName;
+                        threadArgs = cl->boundArgs;
+                        owner = cl->owner ? cl->owner : &obj_;
+                    } else if (args[1].index() == 4) {
+                        funName = std::get<std::string>(args[1]);
+                        for (size_t i = 2; i < args.size(); ++i) threadArgs.push_back(args[i]);
+                        owner = &obj_;
+                    }
+                } else if (args.size() == 1 && args[0].index() == 8) {
+                    auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
+                    funName = cl->functionName;
+                    threadArgs = cl->boundArgs;
+                    owner = cl->owner ? cl->owner : &obj_;
+                }
+                if (funName.empty()) return make_int(0);
                 if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[cthread] fun=" << cl->functionName
-                              << " bound=" << cl->boundArgs.size() << "\n";
+                    std::cerr << "[cthread] fun=" << funName << " args=" << threadArgs.size() << "\n";
                 // The original driver spawns the process immediately; the new
                 // process shares the creator object's context (globals are
                 // process-wide, instance vars are copied from the initialized
-                // object).  Queue it too so startup threads are drained in a
-                // second batch by runPendingOriginalThreads.
-                const OriginalObject* owner = cl->owner ? cl->owner : &obj_;
+                // object).
+                if (!owner) owner = &obj_;
                 auto objPtr = std::make_shared<OriginalObject>(*owner);
                 std::vector<Value> objVarsSnapshot;
                 {
@@ -714,26 +777,30 @@ private:
                         }
                     }
                 }
-                std::string funName = cl->functionName;
-                std::vector<Value> boundArgs = cl->boundArgs;
                 std::string root = searchRoot_;
                 bool isTelnetThread = funName == "telnet_daemon" || funName == "buildin_telnet_daemon";
                 int telnetCno = -1;
-                if (isTelnetThread && !boundArgs.empty() && boundArgs[0].index() == 2) {
-                    telnetCno = static_cast<int>(std::get<int64_t>(boundArgs[0]));
+                if (isTelnetThread && !threadArgs.empty() && threadArgs[0].index() == 2) {
+                    telnetCno = static_cast<int>(std::get<int64_t>(threadArgs[0]));
                 }
-                std::thread([objPtr, funName, boundArgs, root, isTelnetThread, telnetCno,
+                std::thread([objPtr, funName, threadArgs, root, isTelnetThread, telnetCno,
                              objVarsSnapshot = std::move(objVarsSnapshot)]() {
                     if (isTelnetThread && telnetCno >= 0)
                         setThreadTelnetClient(telnetCno);
                     if (std::getenv("LPCVM_TRACE"))
-                        std::cerr << "[thread] run " << funName << " args=" << boundArgs.size() << "\n";
+                        std::cerr << "[thread] run " << funName << " args=" << threadArgs.size() << "\n";
                     try {
                         OriginalVm vm(*objPtr, root);
                         auto& dst = vm.objVars();
                         if (dst.size() < objVarsSnapshot.size()) dst.resize(objVarsSnapshot.size());
                         for (size_t i = 0; i < objVarsSnapshot.size(); ++i) dst[i] = objVarsSnapshot[i];
-                        vm.callFunctionByName(funName, boundArgs);
+                        vm.callFunctionByName(funName, threadArgs);
+                    } catch (const TelnetClosedError&) {
+                        // Client disconnected: end the daemon thread quietly
+                        // (matches the original driver killing the pended
+                        // process on session close).
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[thread] " << funName << " client closed\n";
                     } catch (const std::exception& e) {
                         std::cerr << "[thread] " << funName << " error: " << e.what() << "\n";
                     } catch (...) {
@@ -742,7 +809,7 @@ private:
                     setThreadTelnetClient(-1);
                 }).detach();
                 return make_int(1);
-            }
+            }  // nm == "create_thread"
             if (nm == "register_post_init" && args.size() >= 1 && args[0].index() == 8) {
                 auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
                 postInitFuncs().push_back({&obj_, cl->functionName, cl->boundArgs});
@@ -1484,8 +1551,10 @@ private:
                 StackItem varRef = pop();
                 int number = static_cast<int>(toInt(typeV));
                 if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[loop] init varNo=" << varNo << " slot=" << slot
+                    std::cerr << "[loop] init fn=" << (frames_.empty() ? "<global>" : frames_.back().fn->name)
+                              << " varNo=" << varNo << " slot=" << slot
                               << " typeV=" << number << " second.type=" << second.index()
+                              << " second=" << to_string(second, false)
                               << " varRef.isRef=" << varRef.isRef << " varSlot=" << varRef.slotIndex << "\n";
                 auto ctrl = std::make_shared<LoopCtrl>();
                 ctrl->slotOfVar = varRef.slotIndex >= 0 ? varRef.slotIndex : slot;
@@ -1877,24 +1946,13 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
         if (existing) {
             return existing->callFunctionByName(funName, args);
         }
-        try {
-            auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
-            auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
-            {
-                std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                reg.objects[c] = objPtr;
-                reg.vms[c] = vmPtr;
-            }
-            // A freshly loaded object must run its global initializer and
-            // create() exactly like the broadcast loader does.
-            vmPtr->runInit();
-            {
-                std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                reg.initialized[c] = true;
-            }
-            return vmPtr->callFunctionByName(funName, args);
-        } catch (...) {
-        }
+        // The original driver does NOT auto-load objects on call_other: an
+        // unloaded target raises "Object is not found (when call in function)."
+        // (vm_callInOtherFun).  Loading on demand here broke startup ordering
+        // (e.g. connectiond's create -> main -> THREAD_D->dispatch_service
+        // pulled threadd.c in early, before the daemons pass reached it).
+        // Only objects loaded by load_object/safe_load_object are callable.
+        return make_int(0);
     }
     return make_int(0);
 }

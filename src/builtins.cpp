@@ -4,6 +4,8 @@
 #include "o_loader.h"
 #include "original_vm.h"
 #include "mysql_client.h"
+#include "pak_loader.h"
+#include "lzss.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -20,6 +22,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -208,6 +211,7 @@ struct TelnetClient {
     bool nativeProcess = false;
     bool enabled = false;
     bool isInternal = false;
+    bool eof = false;          // remote end closed the socket
     int peek = 0;
     std::string id;            // telnet_config id (account)
     std::string recvBuf;       // partial-line input buffer
@@ -289,6 +293,7 @@ std::string telnetReadLine(int cno) {
         }
         int n = recv(cl->sock, buf, sizeof(buf), 0);
         if (n <= 0) {
+            cl->eof = true;
             // EOF / error: deliver what we have, then let the caller close.
             if (!cl->recvBuf.empty()) {
                 std::string line = cl->recvBuf;
@@ -384,6 +389,82 @@ std::string resolveVfsPath(const std::string& p) {
     std::string path = p;
     if (!path.empty() && path.front() == '/') path.erase(path.begin());
     return vfsRoot() + "/" + path;
+}
+
+// Read the bytes of a virtual path, with the same fallbacks the original
+// driver uses:
+//   - /aaa/etc/<file>            -> <root>/aaa/etc/<file>, then linux/etc/<file>
+//   - /aaa/pack_data/<pak>/<f>   -> entry <f> inside the real <pak> file
+//                                   (searched under <root>/aaa/pack_data and
+//                                   linux/aaa/aaa/pack_data)
+//   - anything else              -> plain vfs path
+std::string readVfsFile(const std::string& vpath) {
+    std::error_code ec;
+    fs::path plain = resolveVfsPath(vpath);
+    if (fs::is_regular_file(plain, ec)) {
+        std::ifstream in(plain, std::ios::binary);
+        if (in) {
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            return ss.str();
+        }
+    }
+    // /aaa/etc/<file> fallback: the real etc dir next to the game root.
+    if (vpath.rfind("/aaa/etc/", 0) == 0) {
+        std::string name = vpath.substr(10);
+        fs::path alt = "linux/etc/" + name;
+        if (fs::is_regular_file(alt, ec)) {
+            std::ifstream in(alt, std::ios::binary);
+            if (in) {
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                return ss.str();
+            }
+        }
+    }
+    // /aaa/pack_data/<pak>/<entry> fallback: read from the real pak file.
+    static const std::string pakPrefix = "/aaa/pack_data/";
+    if (vpath.rfind(pakPrefix, 0) == 0) {
+        std::string rest = vpath.substr(pakPrefix.size());
+        size_t slash = rest.find('/');
+        if (slash != std::string::npos) {
+            std::string pakName = rest.substr(0, slash);
+            std::string entry = rest.substr(slash + 1);
+            std::vector<std::string> candidates = {
+                vfsRoot() + "/aaa/pack_data/" + pakName,
+                "linux/aaa/aaa/pack_data/" + pakName,
+                vfsRoot() + "/pack_data/" + pakName,
+            };
+            for (const auto& pakPath : candidates) {
+                if (!fs::is_regular_file(pakPath, ec)) continue;
+                try {
+                    lpc::PakFile pak = lpc::loadPak(pakPath);
+                    const lpc::PakEntry* e = lpc::findPakEntry(pak, entry);
+                    if (!e || e->isDir) continue;
+                    std::ifstream in(pakPath, std::ios::binary);
+                    if (!in) continue;
+                    in.seekg(0, std::ios::end);
+                    std::streamoff len = in.tellg();
+                    in.seekg(0, std::ios::beg);
+                    std::vector<uint8_t> data(static_cast<size_t>(len));
+                    if (len > 0) in.read(reinterpret_cast<char*>(data.data()), len);
+                    if (static_cast<size_t>(e->offset) + e->compSize > data.size()) continue;
+                    std::vector<uint8_t> src(data.begin() + e->offset,
+                                             data.begin() + e->offset + e->compSize);
+                    std::vector<uint8_t> out;
+                    if (lzssDecompress(src, e->origSize, out)) {
+                        return std::string(out.begin(), out.end());
+                    }
+                    if (e->compSize == e->origSize) {
+                        return std::string(src.begin(), src.end());
+                    }
+                } catch (...) {
+                    continue;
+                }
+            }
+        }
+    }
+    return "";
 }
 
 bool hasSuffix(const std::string& s, const std::string& suffix) {
@@ -1255,14 +1336,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "safe_load_object" || name == "load_object") {
         // The driver-side object loader: load + initialize the object and
         // register it so find_object / cross-object calls can reach it.
+        // The "Load: ... OK" line is printed by the LPC safe_load_object
+        // wrapper itself; do not duplicate it here.
         if (args.empty()) return make_int(0);
         std::string vpath = normalizeSlashes(as_string(args[0]));
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[load_object] " << vpath << "\n";
         int ok = loadObjectIntoRegistry(vpath, vfsRoot());
-        std::string disp = vpath;
-        if (hasSuffix(disp, ".o")) disp = disp.substr(0, disp.size() - 2) + ".c";
-        std::cout << "Load: " << disp << (ok ? "... OK\n" : "... Failed\n");
         return make_int(ok);
     }
     if (name == "find_object") {
@@ -1287,11 +1367,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "read_file") {
         if (args.empty()) return make_string("");
-        std::ifstream in(resolveVfsPath(as_string(args[0])));
-        if (!in) return make_string("");
-        std::ostringstream ss;
-        ss << in.rdbuf();
-        return make_string(ss.str());
+        std::string content = readVfsFile(as_string(args[0]));
+        // mode "b" (buffer): the original returns a buffer; we represent
+        // buffers as byte strings so is_string() sees a string and slicing
+        // works.  Content is already raw bytes.
+        return make_string(content);
     }
     if (name == "write_file") {
         if (args.size() >= 2) {
@@ -1749,10 +1829,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     // ---- telnet efuns ----
     if (name == "input_string") {
         // input_string() - block until the current thread's telnet client
-        // sends a line.  Returns the line (without CR/LF).
+        // sends a line.  Returns the line (without CR/LF).  When the remote
+        // side disconnects, the original driver kills the pended process;
+        // we terminate the daemon thread the same way (TelnetClosedError).
         int cno = threadTelnetClient();
         if (cno < 0 || !findTelnetClient(cno)) return Value(UndefinedTag{});
-        return make_string(telnetReadLine(cno));
+        std::string line = telnetReadLine(cno);
+        TelnetClient* cl = findTelnetClient(cno);
+        if (cl && cl->eof) {
+            closeTelnetClient(cno);
+            setThreadTelnetClient(-1);
+            throw TelnetClosedError("telnet client closed");
+        }
+        return make_string(line);
     }
     if (name == "close_telnet") {
         if (!args.empty()) closeTelnetClient(static_cast<int>(as_int(args[0])));
@@ -1987,7 +2076,42 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
-    if (name == "wait_event" || name == "send_to_queue") return make_int(1);
+    if (name == "wait_event" || name == "send_to_queue") {
+        // Original vm_f_wait_event (0x80f097c) blocks the process until an
+        // event fires or the timeout (arg 3, seconds; -1 = forever) expires.
+        // Our event queue is a stub that never fires: emulate the blocking
+        // wait so daemon service loops (which call wait_event in a tight
+        // loop) do not spin at 100% CPU.  Positive timeouts sleep for real
+        // (capped); 0/-1/absent poll at a low cadence.
+        double secs = -1.0;
+        if (args.size() >= 4) {
+            const Value& t = args[3];
+            if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
+            else if (t.index() == 3) secs = std::get<double>(t);
+        }
+        int64_t ms = 100;  // minimum poll interval
+        if (secs > 0.0) {
+            if (secs > 60.0) secs = 60.0;
+            ms = static_cast<int64_t>(secs * 1000.0);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return make_int(0);
+    }
+    if (name == "receive_from_queue" || name == "receive_from_queue_ex") {
+        // Queue is a stub; the daemon loop is:
+        //   msg = receive_from_queue(...)
+        //   if (msg == 0) goto loop;     // "if" jumps on non-zero result of
+        //                                // (msg==0) comparison, i.e. loops when
+        //                                // the call returned a non-zero value
+        //   ... dispatch msg ...
+        // Sleeping briefly (like the original blocking queue read) prevents a
+        // 100% CPU service loop, and returning non-zero keeps the loop running
+        // instead of falling into the "Bad message" branch.
+        int timeout = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        if (timeout <= 0 || timeout > 200) timeout = 100;  // ms
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
+        return make_int(1);
+    }
     if (name == "get_thread_id") return make_int(-1);
     if (name == "time" || name == "time_desc")
         return make_int(static_cast<int64_t>(std::time(nullptr)));
@@ -2048,7 +2172,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "create_thread" || name == "create_queue" || name == "create_event") return make_int(1);
+    if (name == "create_queue" || name == "create_event") {
+        // The original vm_f_create_queue allocates a queue object and returns
+        // its unique qid (threadd stores these in an array and passes them to
+        // each service daemon, which prints "THREAD_D.service(%d)...").  A
+        // plain incrementing counter keeps the ids distinct so every daemon
+        // gets its own service number instead of 1 for all.
+        static std::atomic<int64_t> queueSeq{0};
+        return make_int(queueSeq.fetch_add(1, std::memory_order_relaxed));
+    }
     if (name == "delete_queue" || name == "delete_event") return make_int(1);
     if (name == "raise_event") return make_int(1);
     if (name == "restore_value") {
@@ -2061,6 +2193,93 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return v;
     }
     if (name == "error") return make_int(0);
+    // ---- LPC value helpers the game uses (verified against the original
+    // driver's handlers in IDA) ----
+    if (name == "random") {
+        // vm_f_random (0x80d9d9c): builds a 31-bit random from three rand()
+        // calls, then:
+        //   random(n)      -> n <= 0 ? 0 : rand31 % n
+        //   random(a, b)   -> a + rand31 % (b - a + 1) (args swapped if a > b)
+        //   random()       -> raw 31-bit value
+        static std::mt19937 rng(static_cast<uint32_t>(std::time(nullptr)) ^
+                                std::random_device{}());
+        auto rand31 = [&]() -> int64_t {
+            // Original builds a 32-bit value from three 15-bit rand() draws:
+            //   v3 = ((r0 & 0x7FFF) >> 13) | (4 * (r1 & 0x7FFF)) | (r2 << 17)
+            uint32_t r0 = static_cast<uint32_t>(rng()) & 0x7FFFu;
+            uint32_t r1 = static_cast<uint32_t>(rng()) & 0x7FFFu;
+            uint32_t r2 = static_cast<uint32_t>(rng()) & 0x7FFFu;
+            uint32_t v = ((r0 & 0x7FFFu) >> 13) | (4u * (r1 & 0x7FFFu)) | (r2 << 17);
+            return static_cast<int64_t>(v & 0x7FFFFFFFu);
+        };
+        if (args.size() >= 2) {
+            int64_t a = as_int(args[0]), b = as_int(args[1]);
+            if (a > b) std::swap(a, b);
+            int64_t range = b - a + 1;
+            if (range <= 0) return make_int(a);
+            return make_int(a + rand31() % range);
+        }
+        if (args.size() == 1) {
+            int64_t n = as_int(args[0]);
+            if (n <= 0) return make_int(0);
+            return make_int(rand31() % n);
+        }
+        return make_int(rand31());
+    }
+    if (name == "allocate_buffer") {
+        // vm_f_allocate_buffer (0x80d444c): buffer of n zero bytes.
+        int64_t n = args.empty() ? 0 : as_int(args[0]);
+        if (n < 0) n = 0;
+        return make_string(std::string(static_cast<size_t>(n), '\0'));
+    }
+    if (name == "is_buffer") {
+        // Buffers are represented as byte strings; distinguish them from text
+        // by checking for embedded NUL bytes.
+        if (!args.empty() && args[0].index() == 4) {
+            const std::string& s = std::get<std::string>(args[0]);
+            return make_int(s.find('\0') != std::string::npos ? 1 : 0);
+        }
+        return make_int(0);
+    }
+    if (name == "save_string") {
+        // vm_f_save_string (0x80db0d0) -> vm_saveValueToString: the LPC "save"
+        // ASCII form.  The game uses save_string(buf)[1..<2] to strip the
+        // surrounding quotes, so produce a quoted string for strings/buffers
+        // and plain text for ints.
+        if (args.empty()) return make_string("0");
+        const Value& v = args[0];
+        switch (v.index()) {
+        case 2: return make_string(std::to_string(std::get<int64_t>(v)));
+        case 3: {
+            double d = std::get<double>(v);
+            std::ostringstream ss;
+            ss << d;
+            return make_string(ss.str());
+        }
+        case 4: {
+            std::string out = "\"";
+            for (char c : std::get<std::string>(v)) {
+                if (c == '\\' || c == '"') { out += '\\'; out += c; }
+                else if (c == '\n') out += "\\n";
+                else if (c == '\r') out += "\\r";
+                else if (c == '\t') out += "\\t";
+                else out += c;
+            }
+            out += '"';
+            return make_string(out);
+        }
+        default:
+            return make_string(to_string(v, false));
+        }
+    }
+    if (name == "iconv") {
+        // vm_f_iconv (0x817af00): converts between encodings.  The game calls
+        // iconv(str, "utf-8", "gb2312") when generating captcha pictures.  A
+        // full GB2312<->UTF-8 conversion is out of scope here; pass the input
+        // through so the rest of the pipeline (verigen_*) still runs.
+        if (args.empty()) return make_string("");
+        return args[0];
+    }
     // Unknown efuns silently return 0 to keep restored scripts running.
     return make_int(0);
 }

@@ -44,11 +44,14 @@ bool looksLikeNameAt(const std::vector<uint8_t>& data, size_t base) {
     return any;
 }
 
-std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableOff, bool rootFormat = false) {
+std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableOff, bool rootFormat = false,
+                                 size_t maxEntries = 0) {
     std::vector<PakEntry> entries;
     const size_t entrySize = 0x40;
     int consecutiveInvalid = 0;
-    for (size_t off = tableOff; off + entrySize <= data.size(); off += entrySize) {
+    size_t scanned = 0;
+    for (size_t off = tableOff; off + entrySize <= data.size(); off += entrySize, ++scanned) {
+        if (maxEntries && scanned >= maxEntries) break;
         uint32_t type, childOff, compSize, origSize;
         size_t nameBase;
         if (rootFormat) {
@@ -59,14 +62,18 @@ std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableO
             compSize = rd32(data, off + 0x38);
             origSize = rd32(data, off + 0x3C);
         } else {
-            // Subdirectory/file entries: type at +0, child at +4, name at +0x14.
+            // Subdirectory/file entries (Fm_Catalog_T): nAttrib at +0, nOffset
+            // at +4, nSize at +8, nOrgSize at +0xC, name at +0x14.
             nameBase = off + 0x14;
             type = rd32(data, off);
             childOff = rd32(data, off + 4);
             compSize = rd32(data, off + 8);
             origSize = rd32(data, off + 12);
         }
-        bool valid = (type <= 1) && looksLikeNameAt(data, nameBase) && childOff < data.size();
+        // Validity: a printable name and an in-range offset.  nAttrib may carry
+        // flags (bit31 = stored raw, bit0 = directory), so it is NOT limited to
+        // 0/1; dir is decided by bit0 only (matches fm_readCatalog).
+        bool valid = looksLikeNameAt(data, nameBase) && childOff < data.size();
         if (!valid && rootFormat) {
             // Some pak roots mix in file-format entries (e.g. start_aaa.o).
             type = rd32(data, off);
@@ -74,7 +81,7 @@ std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableO
             compSize = rd32(data, off + 8);
             origSize = rd32(data, off + 12);
             nameBase = off + 0x14;
-            valid = (type <= 1) && looksLikeNameAt(data, nameBase) && childOff < data.size();
+            valid = looksLikeNameAt(data, nameBase) && childOff < data.size();
         }
         if (!valid) {
             if (++consecutiveInvalid >= 2) break;
@@ -83,12 +90,14 @@ std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableO
         consecutiveInvalid = 0;
         PakEntry e;
         for (size_t i = nameBase; i < nameBase + 32 && i < data.size() && data[i]; ++i) e.name.push_back(static_cast<char>(data[i]));
-        e.isDir = (type == 1);
+        e.isDir = (type & 1) != 0;
         e.offset = childOff;
         e.compSize = compSize;
         e.origSize = origSize;
         if (e.isDir) {
-            e.children = parseTable(data, childOff, false);
+            // For directories nSize (compSize) holds the child table's byte
+            // size; fm_readCatalog iterates nSize>>6 entries.
+            e.children = parseTable(data, childOff, false, e.compSize / 0x40);
         }
         entries.push_back(std::move(e));
     }
@@ -105,8 +114,10 @@ void extractEntry(const std::vector<uint8_t>& pakData, const PakEntry& e, const 
     if (e.offset + e.compSize > pakData.size()) throw std::runtime_error("pak entry out of range: " + e.name);
     std::vector<uint8_t> src(pakData.begin() + e.offset, pakData.begin() + e.offset + e.compSize);
     std::vector<uint8_t> out;
+    // Original fm_unpack: if (nAttrib & 0x80000001) raw copy, else LZSS.
     if (!lzssDecompress(src, e.origSize, out)) {
-        // Some entries may be stored uncompressed; fall back to raw copy.
+        // Some entries are stored uncompressed (nAttrib bit31); fall back to
+        // raw copy when the sizes match.
         if (e.compSize == e.origSize) out = src;
         else throw std::runtime_error("failed to decompress pak entry: " + e.name);
     }
@@ -121,9 +132,15 @@ PakFile loadPak(const std::string& path) {
     std::vector<uint8_t> data = readFileBytes(path);
     if (data.size() < 0x190 || rd32(data, 0) != 0x11223344)
         throw std::runtime_error("bad pak magic");
-    // Header is 16 bytes; root directory entries start at 0x10 in file format.
+    // Header is 16 bytes: nSign, nRootDirSize (byte size of the root table),
+    // unused1, unused2.  Root directory entries start at 0x10; the table holds
+    // nRootDirSize/0x40 entries (matches fm_readCatalog's v7 = nRootDirSize>>6).
     PakFile pak;
-    pak.root = parseTable(data, 0x10, false);
+    uint32_t rootDirSize = rd32(data, 4);
+    if (rootDirSize >= 0x10 && rootDirSize <= data.size() - 0x10)
+        pak.root = parseTable(data, 0x10, false, rootDirSize / 0x40);
+    else
+        pak.root = parseTable(data, 0x10, false);
     return pak;
 }
 
@@ -132,7 +149,10 @@ bool extractPak(const std::string& pakPath, const std::string& outputDir) {
     if (data.size() < 0x190 || rd32(data, 0) != 0x11223344)
         throw std::runtime_error("bad pak magic");
     fs::create_directories(outputDir);
-    auto entries = parseTable(data, 0x10, false);
+    uint32_t rootDirSize = rd32(data, 4);
+    auto entries = (rootDirSize >= 0x10 && rootDirSize <= data.size() - 0x10)
+                       ? parseTable(data, 0x10, false, rootDirSize / 0x40)
+                       : parseTable(data, 0x10, false);
     for (const auto& e : entries) extractEntry(data, e, outputDir);
     return true;
 }

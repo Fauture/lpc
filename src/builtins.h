@@ -1,4 +1,5 @@
 #pragma once
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,14 @@
 namespace lpc {
 
 class Interpreter;
+
+// Thrown by input_string() when the serving telnet client has disconnected.
+// The original driver kills the pended process when the session closes; the
+// VM thread runner catches this quietly and ends the daemon thread instead of
+// letting the LPC while(1) shell loop spin on repeated EOF.
+struct TelnetClosedError : std::runtime_error {
+    explicit TelnetClosedError(const std::string& m) : std::runtime_error(m) {}
+};
 
 Value call_builtin(Interpreter* interp, const std::string& name, const std::vector<Value>& args);
 
