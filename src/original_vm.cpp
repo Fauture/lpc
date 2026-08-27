@@ -610,6 +610,9 @@ private:
             if (nm == "broadcast" && !searchRoot_.empty()) return handleBroadcastEfun(searchRoot_, args);
             if (nm == "create_thread" && args.size() >= 2 && args[1].index() == 8) {
                 auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[cthread] fun=" << cl->functionName
+                              << " bound=" << cl->boundArgs.size() << "\n";
                 pendingThreads().push_back({&obj_, cl->functionName, cl->boundArgs});
                 return make_int(static_cast<int64_t>(pendingThreads().size()));
             }
@@ -839,6 +842,9 @@ private:
             }
             case 23: { // create_function_value (bound count = par8 & 0x3F)
                 auto it = funcsByIndex_.find(in.a);
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[cfv] index=" << in.a << " found=" << (it != funcsByIndex_.end())
+                              << (it != funcsByIndex_.end() ? " name=" + it->second->name : "") << "\n";
                 if (it != funcsByIndex_.end()) {
                     std::vector<Value> bound;
                     int boundCount = in.b & 0x3F;
@@ -1446,6 +1452,9 @@ bool hasSuffix(const std::string& s, const std::string& suffix) {
 
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args) {
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[call_other] " << objectPath << " -> " << funName
+                  << " args=" << args.size() << "\n";
     if (searchRoot.empty() || objectPath.empty()) return make_int(0);
     std::string rel = objectPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
@@ -1480,10 +1489,13 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
     // does not block the other threads.
     std::vector<std::thread> workers;
     for (auto& th : threads) {
-        workers.emplace_back([&th, searchRoot]() {
+        PendingThread copy = th;   // capture by value; the vector is cleared below
+        workers.emplace_back([copy, searchRoot]() {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
             try {
-                OriginalVm vm(*th.obj, searchRoot);
-                vm.callFunctionByName(th.fun, th.args);
+                OriginalVm vm(*copy.obj, searchRoot);
+                vm.callFunctionByName(copy.fun, copy.args);
             } catch (...) {
             }
         });

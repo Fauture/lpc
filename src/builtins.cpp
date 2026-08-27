@@ -1,4 +1,5 @@
 #include "builtins.h"
+#include "efun_table.h"
 
 #include "o_loader.h"
 #include "original_vm.h"
@@ -326,6 +327,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
     if (name == "destruct_object" || name == "to_be_disconnect" || name == "is_clone") return name == "is_clone" ? make_int(0) : make_int(1);
     if (name == "register_daemon_data" || name == "dispatch_service" || name == "send_to_cta") return make_int(1);
+    if (name == "find_function") {
+        // Return a function value for a builtin efun (the game uses this to
+        // build the mysql_connect closure in find_mysql_func).
+        if (args.empty()) return make_int(0);
+        std::string fnName = as_string(args[0]);
+        const auto& names = efunNameTable();
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (names[i] == fnName) return make_closure(fnName, {});
+        }
+        return make_int(0);
+    }
     if (name == "expand_macro") {
         if (!args.empty() && args[0].index() == 4) {
             const std::string& key = std::get<std::string>(args[0]);
@@ -484,6 +496,25 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(1);
     }
     if (name == "mysql_connect") return make_int(1);
+    if (name == "mysql_is_connected") return make_int(1);
+    if (name == "mysql_disconnect" || name == "mysql_close_db") return make_int(1);
+    if (name == "mysql_select_db" || name == "mysql_set_auto_commit") return make_int(1);
+    if (name == "mysql_execute") {
+        // Run a query against the local CSV-backed database.
+        if (args.size() >= 2) {
+            std::string sql = as_string(args[1]);
+            std::string table;
+            size_t p = sql.find("from ");
+            if (p != std::string::npos) {
+                std::string rest = sql.substr(p + 5);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
+                size_t e = rest.find_first_of(" ;`");
+                table = rest.substr(0, e);
+            }
+            if (!table.empty()) return simpleDbSelect(table);
+        }
+        return make_array();
+    }
     if (name == "mysql_bind_parameters") {
         if (args.empty()) return make_int(0);
         return args[0];
