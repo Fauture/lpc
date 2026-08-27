@@ -9,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -367,6 +368,7 @@ struct ObjectRegistry {
 };
 ObjectRegistry& objectRegistry();
 std::vector<PendingThread>& pendingThreads();
+std::mutex& pendingThreadsMutex();
 std::vector<PendingThread>& postInitFuncs();
 void runPendingOriginalThreads(const std::string& searchRoot);
 void runPostInitFunctions(const std::string& searchRoot);
@@ -628,7 +630,10 @@ private:
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[cthread] fun=" << cl->functionName
                               << " bound=" << cl->boundArgs.size() << "\n";
-                pendingThreads().push_back({&obj_, cl->functionName, cl->boundArgs});
+                {
+                    std::lock_guard<std::mutex> lk(pendingThreadsMutex());
+                    pendingThreads().push_back({&obj_, cl->functionName, cl->boundArgs});
+                }
                 return make_int(static_cast<int64_t>(pendingThreads().size()));
             }
             if (nm == "register_post_init" && args.size() >= 1 && args[0].index() == 8) {
@@ -1442,6 +1447,11 @@ std::vector<PendingThread>& pendingThreads() {
     return threads;
 }
 
+std::mutex& pendingThreadsMutex() {
+    static std::mutex m;
+    return m;
+}
+
 std::vector<PendingThread>& postInitFuncs() {
     static std::vector<PendingThread> funcs;
     return funcs;
@@ -1542,29 +1552,42 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
 }
 
 void runPendingOriginalThreads(const std::string& searchRoot) {
-    auto& threads = pendingThreads();
-    if (std::getenv("LPCVM_TRACE")) std::cerr << "[orig] pending threads=" << threads.size() << "\n";
+    std::vector<PendingThread> snapshot;
+    {
+        std::lock_guard<std::mutex> lk(pendingThreadsMutex());
+        snapshot.swap(pendingThreads());
+    }
+    if (std::getenv("LPCVM_TRACE")) std::cerr << "[orig] pending threads=" << snapshot.size() << "\n";
     // Run each thread concurrently so a long-running loop (e.g. a service loop)
     // does not block the other threads.
     std::vector<std::thread> workers;
-    for (auto& th : threads) {
+    for (auto& th : snapshot) {
         PendingThread copy = th;   // capture by value; the vector is cleared below
         workers.emplace_back([copy, searchRoot]() {
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
+            // A telnet daemon thread serves one client; tell the builtins layer
+            // which client it is so input_string()/printf route to the socket.
+            bool isTelnet = copy.fun == "telnet_daemon" || copy.fun == "buildin_telnet_daemon";
+            if (isTelnet && !copy.args.empty() && copy.args[0].index() == 2) {
+                setThreadTelnetClient(static_cast<int>(std::get<int64_t>(copy.args[0])));
+            }
             try {
                 OriginalVm vm(*copy.obj, searchRoot);
-                vm.runInit();   // the global initializer + create() must run first
+                // Telnet daemons rely on the shared global program state that the
+                // main VM already initialized; re-running runInit would re-execute
+                // the whole startup (broadcast load etc.) for every connection.
+                if (!isTelnet) vm.runInit();
                 vm.callFunctionByName(copy.fun, copy.args);
             } catch (const std::exception& e) {
                 std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";
             } catch (...) {
                 std::cerr << "[thread] " << copy.fun << " error: unknown\n";
             }
+            setThreadTelnetClient(-1);
         });
     }
     for (auto& w : workers) w.detach();
-    threads.clear();
 }
 
 void runPostInitFunctions(const std::string& searchRoot) {
@@ -1610,6 +1633,51 @@ int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRo
 Value callOriginalObjectFunction(const std::string& oPath, const std::string& funName,
                                  const std::vector<Value>& args, const std::string& searchRoot) {
     return tryCallOtherObject(searchRoot, oPath, funName, args);
+}
+
+Value callMasterProgramFunction(const std::string& funName, const std::vector<Value>& args,
+                                const std::string& searchRoot) {
+    auto& reg = objectRegistry();
+    std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
+    auto it = reg.vms.find(key);
+    if (it == reg.vms.end()) return make_int(0);
+    return it->second->callFunctionByName(funName, args);
+}
+
+void drainPendingOriginalThreads(const std::string& searchRoot) {
+    // Snapshot the queue under the lock, then run outside it so the spawned
+    // threads (which may themselves create_thread) can enqueue freely.
+    std::vector<PendingThread> snapshot;
+    {
+        std::lock_guard<std::mutex> lk(pendingThreadsMutex());
+        snapshot.swap(pendingThreads());
+    }
+    if (snapshot.empty()) return;
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[orig] runtime pending threads=" << snapshot.size() << "\n";
+    std::vector<std::thread> workers;
+    for (auto& th : snapshot) {
+        PendingThread copy = th;
+        workers.emplace_back([copy, searchRoot]() {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
+            bool isTelnet = copy.fun == "telnet_daemon" || copy.fun == "buildin_telnet_daemon";
+            if (isTelnet && !copy.args.empty() && copy.args[0].index() == 2) {
+                setThreadTelnetClient(static_cast<int>(std::get<int64_t>(copy.args[0])));
+            }
+            try {
+                OriginalVm vm(*copy.obj, searchRoot);
+                if (!isTelnet) vm.runInit();
+                vm.callFunctionByName(copy.fun, copy.args);
+            } catch (const std::exception& e) {
+                std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";
+            } catch (...) {
+                std::cerr << "[thread] " << copy.fun << " error: unknown\n";
+            }
+            setThreadTelnetClient(-1);
+        });
+    }
+    for (auto& w : workers) w.detach();
 }
 
 } // namespace lpc

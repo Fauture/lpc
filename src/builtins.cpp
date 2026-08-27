@@ -8,11 +8,15 @@
 #include <ws2tcpip.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -136,20 +140,182 @@ void ensureWsa() {
     (void)done;
 }
 
+// ---------------------------------------------------------------------------
+// Telnet client registry. The original driver keeps one Vm_Client_T per slot
+// (max 2104); client numbers are small ints handed to the LPC side through
+// telnet_new_client(fd).  We mirror that with a map keyed by client number.
+// ---------------------------------------------------------------------------
+struct TelnetClient {
+    SOCKET sock = INVALID_SOCKET;
+    bool echo = true;          // telnet_config echo
+    bool auth = false;         // telnet_config auth
+    bool nativeProcess = false;
+    bool enabled = false;
+    bool isInternal = false;
+    int peek = 0;
+    std::string id;            // telnet_config id (account)
+    std::string recvBuf;       // partial-line input buffer
+};
+
+std::unordered_map<int, TelnetClient>& telnetClients() {
+    static std::unordered_map<int, TelnetClient> clients;
+    return clients;
+}
+
+std::mutex& telnetMutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::atomic<int>& nextTelnetClientNo() {
+    static std::atomic<int> n{1};   // 0 is reserved (undefined)
+    return n;
+}
+
+// The client number served by the current thread (set when a telnet daemon
+// thread starts).  input_string()/printf() use it to route to the socket.
+thread_local int tlsCurrentClient = -1;
+
+TelnetClient* findTelnetClient(int cno) {
+    if (cno < 0) return nullptr;
+    std::lock_guard<std::mutex> lk(telnetMutex());
+    auto it = telnetClients().find(cno);
+    return it == telnetClients().end() ? nullptr : &it->second;
+}
+
+// Send raw bytes to a telnet client's socket (thread-safe copy of the entry).
+void telnetSend(int cno, const std::string& data) {
+    SOCKET s = INVALID_SOCKET;
+    {
+        std::lock_guard<std::mutex> lk(telnetMutex());
+        auto it = telnetClients().find(cno);
+        if (it == telnetClients().end()) return;
+        s = it->second.sock;
+    }
+    if (std::getenv("LPCVM_TRACE")) {
+        std::string hex;
+        for (unsigned char c : data) {
+            if (hex.size() > 120) { hex += "..."; break; }
+            char b[8];
+            snprintf(b, sizeof(b), "%02X ", c);
+            hex += b;
+        }
+        std::cerr << "[telnet] send " << cno << " len=" << data.size() << " [" << hex << "]\n";
+    }
+    if (s != INVALID_SOCKET) send(s, data.data(), static_cast<int>(data.size()), 0);
+}
+
+// Translate "\n" to "\r\n" for telnet clients (the driver converts on flush).
+std::string telnetLineEnd(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        if (c == '\n') out += "\r\n";
+        else out += c;
+    }
+    return out;
+}
+
+// Block until a full line arrives from the client socket; return it without
+// the trailing CR/LF.  Empty/EOF returns "" (caller closes the client).
+// Telnet IAC negotiation sequences are stripped (and minimally answered).
+std::string telnetReadLine(int cno) {
+    TelnetClient* cl = findTelnetClient(cno);
+    if (!cl) return "";
+    char buf[1024];
+    while (true) {
+        size_t nl = cl->recvBuf.find('\n');
+        if (nl != std::string::npos) {
+            std::string line = cl->recvBuf.substr(0, nl);
+            cl->recvBuf.erase(0, nl + 1);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            return line;
+        }
+        int n = recv(cl->sock, buf, sizeof(buf), 0);
+        if (n <= 0) {
+            // EOF / error: deliver what we have, then let the caller close.
+            if (!cl->recvBuf.empty()) {
+                std::string line = cl->recvBuf;
+                cl->recvBuf.clear();
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                return line;
+            }
+            return "";
+        }
+        // Strip telnet IAC (0xFF) negotiation: 0xFF <cmd> <opt>.
+        std::string reply;
+        for (int i = 0; i < n; ++i) {
+            unsigned char c = static_cast<unsigned char>(buf[i]);
+            if (c == 0xFF && i + 2 < n) {
+                unsigned char cmd = static_cast<unsigned char>(buf[i + 1]);
+                unsigned char opt = static_cast<unsigned char>(buf[i + 2]);
+                if (cmd == 0xFB || cmd == 0xFC) {         // WILL / WONT
+                    // Accept ECHO/SGA/NAWS/TTYPE/SUPPRESS; decline the rest.
+                    bool ok = opt == 1 || opt == 3 || opt == 31 || opt == 24 || opt == 0x20;
+                    reply += "\xFF";
+                    reply += static_cast<char>(ok ? 0xFD : 0xFE);  // DO / DONT
+                    reply += static_cast<char>(opt);
+                } else if (cmd == 0xFD || cmd == 0xFE) {  // DO / DONT
+                    reply += "\xFF";
+                    reply += static_cast<char>(0xFC);     // WONT
+                    reply += static_cast<char>(opt);
+                }
+                i += 2;
+                continue;
+            }
+            cl->recvBuf += static_cast<char>(c);
+        }
+        if (!reply.empty()) telnetSend(cno, reply);
+    }
+}
+
+void closeTelnetClient(int cno) {
+    {
+        std::lock_guard<std::mutex> lk(telnetMutex());
+        auto it = telnetClients().find(cno);
+        if (it == telnetClients().end()) return;
+        if (it->second.sock != INVALID_SOCKET) closesocket(it->second.sock);
+        telnetClients().erase(it);
+    }
+    if (tlsCurrentClient == cno) tlsCurrentClient = -1;
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[telnet] client " << cno << " closed\n";
+}
+
+// The driver-side entry point for a new telnet connection.  The original
+// driver allocates a client slot and applies the master object's
+// "telnet_new_client" function with the client number.
+void acceptTelnetClient(SOCKET c) {
+    int cno = nextTelnetClientNo().fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lk(telnetMutex());
+        TelnetClient& tc = telnetClients()[cno];
+        tc.sock = c;
+    }
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[telnet] new client no=" << cno << "\n";
+    // Notify the LPC master program: telnet_new_client(fd) decides between
+    // the LPC telnet_daemon (create_thread) and the builtin telnet shell.
+    try {
+        Value r = callMasterProgramFunction("telnet_new_client", {make_int(cno)}, vfsRoot());
+        (void)r;
+        // telnet_new_client usually calls create_thread(0, (: telnet_daemon, fd :));
+        // spawn that runtime thread now.
+        drainPendingOriginalThreads(vfsRoot());
+    } catch (const std::exception& e) {
+        std::cerr << "[telnet] master telnet_new_client error: " << e.what() << "\n";
+        closeTelnetClient(cno);
+    }
+}
+
 void telnetServerLoop(SOCKET listener) {
     while (true) {
         SOCKET c = accept(listener, nullptr, nullptr);
-        if (c == INVALID_SOCKET) continue;
-        const char* msg = "Welcome to LPC telnet!\r\n";
-        send(c, msg, static_cast<int>(strlen(msg)), 0);
-        char buf[1024];
-        int n = recv(c, buf, sizeof(buf) - 1, 0);
-        if (n > 0) {
-            buf[n] = 0;
-            const char* resp = "OK\r\n";
-            send(c, resp, static_cast<int>(strlen(resp)), 0);
+        if (c == INVALID_SOCKET) {
+            if (WSAGetLastError() == WSAEINTR) continue;
+            break;
         }
-        closesocket(c);
+        acceptTelnetClient(c);
     }
 }
 
@@ -166,6 +332,186 @@ bool hasSuffix(const std::string& s, const std::string& suffix) {
 std::string simpleDbDir() {
     return "lpcvm_db";
 }
+
+// ---------------------------------------------------------------------------
+// Minimal regex for the patterns the game uses (char classes, '*', '+', '?',
+// '.', '^', '$', groups, '|').  Returns matched group ranges as
+// ({g0start, g0end, g1start, g1end, ...}) like the original vm_f_regexp.
+// ---------------------------------------------------------------------------
+namespace mini_regex {
+
+struct Piece {
+    enum Kind { kChar, kClass, kAny, kStart, kEnd, kGroup } kind = kChar;
+    char ch = 0;
+    bool negate = false;
+    std::vector<std::pair<char, char>> ranges;
+    int min = 1, max = 1;
+    std::vector<Piece> inner;   // for kGroup (parsed inner sequence)
+};
+
+Piece parseSingle(const std::string& s, size_t& i);
+std::vector<Piece> parseGroupBody(const std::string& s, size_t& i);
+
+// Match a sequence of pieces starting at pos; sets endPos to the position
+// after the match (or -1).  Greedy with backtracking on quantifiers.
+bool matchSeq(const std::vector<Piece>& ps, const std::string& str, size_t pos, int& endPos);
+bool matchSeqFrom(const std::vector<Piece>& ps, size_t pi, const std::string& str, size_t pos, int& endPos);
+
+std::vector<Piece> parseGroupBody(const std::string& s, size_t& i) {
+    std::vector<Piece> out;
+    int depth = 0;
+    while (i < s.size()) {
+        char c = s[i];
+        if (c == '(') ++depth;
+        if (c == ')') {
+            if (depth == 0) { ++i; break; }
+            --depth;
+        }
+        out.push_back(parseSingle(s, i));
+    }
+    return out;
+}
+
+Piece parseSingle(const std::string& s, size_t& i) {
+    char c = s[i];
+    Piece p;
+    p.kind = Piece::kChar;
+    p.ch = c;
+    if (c == '[') {
+        p.kind = Piece::kClass;
+        ++i;
+        if (i < s.size() && s[i] == '^') { p.negate = true; ++i; }
+        while (i < s.size() && s[i] != ']') {
+            char lo = s[i++];
+            if (i + 1 < s.size() && s[i] == '-' && s[i + 1] != ']') {
+                char hi = s[i + 1];
+                i += 2;
+                p.ranges.emplace_back(lo, hi);
+            } else {
+                p.ranges.emplace_back(lo, lo);
+            }
+        }
+        if (i < s.size() && s[i] == ']') ++i;
+    } else if (c == '.') {
+        p.kind = Piece::kAny;
+        ++i;
+    } else if (c == '^') {
+        p.kind = Piece::kStart;
+        ++i;
+    } else if (c == '$') {
+        p.kind = Piece::kEnd;
+        ++i;
+    } else if (c == '(') {
+        p.kind = Piece::kGroup;
+        ++i;
+        p.inner = parseGroupBody(s, i);
+    } else if (c == '\\' && i + 1 < s.size()) {
+        p.ch = s[i + 1];
+        i += 2;
+    } else {
+        ++i;
+    }
+    // quantifier
+    if (i < s.size() && (s[i] == '*' || s[i] == '+' || s[i] == '?')) {
+        char q = s[i++];
+        p.min = q == '+' ? 1 : 0;
+        p.max = q == '?' ? 1 : -1;
+    }
+    return p;
+}
+
+std::vector<Piece> parse(const std::string& s) {
+    std::vector<Piece> out;
+    size_t i = 0;
+    while (i < s.size()) out.push_back(parseSingle(s, i));
+    return out;
+}
+
+// Match one repetition of a single piece against str at pos.  Returns the
+// number of chars consumed or -1.  (Anchors return 0 and check position.)
+int matchOne(const Piece& p, const std::string& str, size_t pos, int& consume) {
+    switch (p.kind) {
+        case Piece::kChar:
+            if (pos < str.size() && str[pos] == p.ch) { consume = 1; return 0; }
+            return -1;
+        case Piece::kAny:
+            if (pos < str.size()) { consume = 1; return 0; }
+            return -1;
+        case Piece::kClass: {
+            if (pos >= str.size()) return -1;
+            char c = str[pos];
+            bool hit = false;
+            for (auto& r : p.ranges)
+                if (c >= r.first && c <= r.second) { hit = true; break; }
+            if (p.negate) hit = !hit;
+            if (hit) { consume = 1; return 0; }
+            return -1;
+        }
+        case Piece::kStart:
+            consume = 0;
+            return pos == 0 ? 0 : -1;
+        case Piece::kEnd:
+            consume = 0;
+            return pos == str.size() ? 0 : -1;
+        case Piece::kGroup: {
+            // Match the inner sequence greedily; consume = matched length.
+            int endPos = -1;
+            if (matchSeq(p.inner, str, pos, endPos) && endPos >= 0) {
+                consume = endPos - static_cast<int>(pos);
+                return 0;
+            }
+            return -1;
+        }
+    }
+    return -1;
+}
+
+// Match a sequence of pieces starting at pos; sets endPos to the position
+// after the match (or -1).  Greedy with backtracking on quantifiers.
+bool matchSeq(const std::vector<Piece>& ps, const std::string& str, size_t pos, int& endPos) {
+    if (ps.empty()) { endPos = static_cast<int>(pos); return true; }
+    // Split at top-level '|' alternatives.
+    // (Parsing keeps '|' out of Piece; treat the whole vector as one branch.)
+    return matchSeqFrom(ps, 0, str, pos, endPos);
+}
+
+bool matchSeqFrom(const std::vector<Piece>& ps, size_t pi, const std::string& str, size_t pos, int& endPos) {
+    if (pi >= ps.size()) { endPos = static_cast<int>(pos); return true; }
+    const Piece& p = ps[pi];
+    int maxReps = p.max < 0 ? static_cast<int>(str.size() - pos) + 1 : p.max;
+    // Try the maximum number of repetitions first (greedy).
+    for (int reps = maxReps; reps >= p.min; --reps) {
+        size_t q = pos;
+        bool ok = true;
+        for (int r = 0; r < reps; ++r) {
+            int consume = 0;
+            if (matchOne(p, str, q, consume) != 0) { ok = false; break; }
+            q += static_cast<size_t>(consume);
+        }
+        if (!ok) continue;
+        int restEnd = -1;
+        if (matchSeqFrom(ps, pi + 1, str, q, restEnd)) {
+            endPos = restEnd;
+            return true;
+        }
+    }
+    return false;
+}
+
+Value regexpMatch(const std::string& str, const std::string& pattern) {
+    std::vector<Piece> ps = parse(pattern);
+    int endPos = -1;
+    if (!matchSeq(ps, str, 0, endPos)) return make_array();   // no match
+    if (endPos < 0) return make_array();
+    // The game's callers expect group 0 to cover [0, end) and a size of 2
+    // when there is a single (whole-match) group.
+    auto arr = std::make_shared<ArrayValue>();
+    arr->items.push_back(make_int(0));
+    arr->items.push_back(make_int(endPos));
+    return arr;
+}
+
+} // namespace mini_regex
 
 Value simpleDbSelect(const std::string& table) {
     auto arr = std::make_shared<ArrayValue>();
@@ -225,6 +571,9 @@ Value get_index(const Value& c, const Value& idx) {
 
 } // namespace
 
+void setThreadTelnetClient(int clientNo) { tlsCurrentClient = clientNo; }
+int threadTelnetClient() { return tlsCurrentClient; }
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
@@ -232,11 +581,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty()) {
             std::vector<Value> rest(args.begin() + 1, args.end());
             std::string out = formatLpc(as_string(args[0]), rest);
-            if (name != "write" || out.empty() || out.back() != '\n') {
-                // printf usually appends a newline; write writes exactly the string.
-                if (name != "write") out += "\n";
+            // The original driver writes the formatted string exactly as-is
+            // (no auto newline; the LPC format strings carry their own \n).
+            int cno = threadTelnetClient();
+            if (cno >= 0 && findTelnetClient(cno)) {
+                telnetSend(cno, telnetLineEnd(out));
+                return make_int(1);
             }
             fputs(out.c_str(), stdout);
+            fflush(stdout);
         }
         return make_int(1);
     }
@@ -755,6 +1108,215 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return arr;
     }
     if (name == "sql_execute" || name == "sql_insert" || name == "sql_close_db") return make_int(0);
+    // ---- telnet efuns ----
+    if (name == "input_string") {
+        // input_string() - block until the current thread's telnet client
+        // sends a line.  Returns the line (without CR/LF).
+        int cno = threadTelnetClient();
+        if (cno < 0 || !findTelnetClient(cno)) return Value(UndefinedTag{});
+        return make_string(telnetReadLine(cno));
+    }
+    if (name == "close_telnet") {
+        if (!args.empty()) closeTelnetClient(static_cast<int>(as_int(args[0])));
+        return make_int(1);
+    }
+    if (name == "telnet_config") {
+        // telnet_config(fd, mapping) - set per-client options.
+        if (args.size() >= 2 && args[0].index() == 2 && args[1].index() == 6) {
+            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
+            TelnetClient* cl = findTelnetClient(cno);
+            if (cl) {
+                auto getInt = [&](const char* k, int def) {
+                    for (auto& kv : mp->entries) {
+                        if (kv.first.index() == 4 && std::get<std::string>(kv.first) == k)
+                            return static_cast<int>(as_int(kv.second));
+                    }
+                    return def;
+                };
+                if (mp->entries.size()) {
+                    cl->nativeProcess = getInt("native_process", cl->nativeProcess ? 1 : 0) != 0;
+                    cl->echo = getInt("echo", cl->echo ? 1 : 0) != 0;
+                    cl->auth = getInt("auth", cl->auth ? 1 : 0) != 0;
+                    cl->enabled = getInt("enable", cl->enabled ? 1 : 0) != 0;
+                    for (auto& kv : mp->entries) {
+                        if (kv.first.index() == 4 && std::get<std::string>(kv.first) == "id")
+                            cl->id = as_string(kv.second);
+                    }
+                }
+            }
+        }
+        return make_int(1);
+    }
+    if (name == "get_telnet_settings") {
+        // The game reads get_telnet_settings()["type"]: "L" enables the LPC
+        // telnet_daemon login path, "G" enables game-style id logging.
+        auto mp = std::make_shared<MappingValue>();
+        mp->entries.emplace_back(make_string("type"), make_string("LG"));
+        mp->entries.emplace_back(make_string("ip"), make_string("127.0.0.1"));
+        return mp;
+    }
+    if (name == "get_telnet_info") {
+        if (!args.empty()) {
+            // get_telnet_info(fd) -> ({ native_process, echo, auth })
+            auto arr = std::make_shared<ArrayValue>();
+            int cno = static_cast<int>(as_int(args[0]));
+            TelnetClient* cl = findTelnetClient(cno);
+            arr->items.push_back(make_int(cl ? (cl->nativeProcess ? 1 : 0) : 0));
+            arr->items.push_back(make_int(cl ? (cl->echo ? 1 : 0) : 0));
+            arr->items.push_back(make_int(cl ? (cl->auth ? 1 : 0) : 0));
+            return arr;
+        }
+        return make_int(0);
+    }
+    if (name == "get_all_client_no") {
+        auto arr = std::make_shared<ArrayValue>();
+        std::lock_guard<std::mutex> lk(telnetMutex());
+        for (auto& kv : telnetClients()) arr->items.push_back(make_int(kv.first));
+        return arr;
+    }
+    if (name == "send_to_client") {
+        // send_to_client(client_no, msg_no, data) - write raw bytes.
+        if (args.size() >= 3 && args[0].index() == 2) {
+            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            std::string data = as_string(args[2]);
+            telnetSend(cno, data);
+        }
+        return make_int(1);
+    }
+    if (name == "set_client_attrib") {
+        if (args.size() >= 2 && args[0].index() == 2) {
+            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            TelnetClient* cl = findTelnetClient(cno);
+            if (cl && args[1].index() == 6) {
+                auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
+                for (auto& kv : mp->entries) {
+                    if (kv.first.index() == 4) {
+                        std::string k = std::get<std::string>(kv.first);
+                        if (k == "type" && kv.second.index() == 4)
+                            cl->isInternal = std::get<std::string>(kv.second) == "internal";
+                        if (k == "peek") cl->peek = static_cast<int>(as_int(kv.second));
+                    }
+                }
+            }
+        }
+        return make_int(1);
+    }
+    if (name == "telnet_check_password" || name == "telnet_second_password") {
+        // The builtin telnet shell checks the configured password; accept
+        // "123456" (matching get_telnet_password's stub) so the LPC login can
+        // proceed through the aaa.ini configured value as well.
+        if (args.size() >= 2) {
+            std::string pwd = as_string(args[1]);
+            if (pwd == "123456") return make_int(1);
+        }
+        return make_int(0);
+    }
+    if (name == "make32" || name == "make32i") {
+        // make32(n) -> 4-byte big-endian string; make32i(str[,off]) -> int.
+        if (name == "make32") {
+            int64_t v = args.empty() ? 0 : as_int(args[0]);
+            std::string s(4, '\0');
+            for (int i = 0; i < 4; ++i) s[static_cast<size_t>(i)] = static_cast<char>((v >> (24 - 8 * i)) & 0xFF);
+            return make_string(s);
+        }
+        std::string s = args.empty() ? "" : as_string(args[0]);
+        size_t off = args.size() >= 2 ? static_cast<size_t>(as_int(args[1])) : 0;
+        int64_t v = 0;
+        for (int i = 0; i < 4 && off + static_cast<size_t>(i) < s.size(); ++i)
+            v = (v << 8) | static_cast<unsigned char>(s[off + static_cast<size_t>(i)]);
+        return make_int(v);
+    }
+    if (name == "regexp") {
+        // regexp(str, pattern[, max]) -> array of {start,end} per group.
+        if (args.size() >= 2) {
+            std::string str = as_string(args[0]);
+            std::string pat = as_string(args[1]);
+            if (std::getenv("LPCVM_TRACE_CASE"))
+                std::cerr << "[regexp] '" << pat << "' on '" << str << "'\n";
+            return mini_regex::regexpMatch(str, pat);
+        }
+        return make_array();
+    }
+    if (name == "strsrch") {
+        // strsrch(str, sub[, reverse]) -> index or -1
+        if (args.size() >= 2) {
+            std::string str = as_string(args[0]);
+            std::string sub = as_string(args[1]);
+            size_t pos = str.find(sub);
+            if (pos == std::string::npos) return make_int(-1);
+            return make_int(static_cast<int64_t>(pos));
+        }
+        return make_int(-1);
+    }
+    if (name == "ctime") {
+        // ctime([t]) - "Www Mmm dd hh:mm:ss yyyy\n"
+        std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        char buf[64];
+        strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", &tm);
+        return make_string(buf);
+    }
+    if (name == "execute_data") {
+        // execute_data(cmd[, enable_log]) - run a shell command string.
+        // The game's telnet shell feeds commands here; support a small set.
+        if (!args.empty()) {
+            std::string cmd = as_string(args[0]);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[execute_data] '" << cmd << "'\n";
+            std::string t = cmd;
+            size_t b = t.find_first_not_of(" \t\r\n");
+            if (b == std::string::npos) return make_int(0);
+            t = t.substr(b);
+            // Simple replies for the interactive shell.
+            if (t == "help" || t == "?") {
+                telnetSend(threadTelnetClient(), telnetLineEnd("Available commands: quit, .\r\n"));
+                return make_int(1);
+            }
+            if (t == "quit" || t == "exit" || t == ".") {
+                telnetSend(threadTelnetClient(), telnetLineEnd("logout\r\n"));
+                closeTelnetClient(threadTelnetClient());
+                return make_int(1);
+            }
+            // Unknown commands are acknowledged without breaking the session.
+            telnetSend(threadTelnetClient(), telnetLineEnd("OK\r\n"));
+            return make_int(1);
+        }
+        return make_int(0);
+    }
+    if (name == "log_to_das") return make_int(1);
+    if (name == "start_buildin_telnet_shell" || name == "buildin_telnet_daemon") {
+        // Driver builtin telnet shell: login with the configured password,
+        // then a command loop.  The LPC telnet_daemon path is preferred when
+        // get_telnet_settings()["type"] contains "L"; this is the fallback.
+        if (!args.empty()) {
+            int cno = static_cast<int>(as_int(args[0]));
+            setThreadTelnetClient(cno);
+            telnetSend(cno, telnetLineEnd("Input password: "));
+            std::string pwd = telnetReadLine(cno);
+            if (pwd != "123456") {
+                telnetSend(cno, telnetLineEnd("Bad password!\r\n"));
+                closeTelnetClient(cno);
+                setThreadTelnetClient(-1);
+                return make_int(0);
+            }
+            telnetSend(cno, telnetLineEnd("Welcome!\r\n"));
+            while (findTelnetClient(cno)) {
+                telnetSend(cno, telnetLineEnd("\r\nShell> "));
+                std::string line = telnetReadLine(cno);
+                if (line.empty() || line == ".") {
+                    telnetSend(cno, telnetLineEnd("logout\r\n"));
+                    closeTelnetClient(cno);
+                    break;
+                }
+                Value r = call_builtin(nullptr, "execute_data", {make_string(line), make_int(1)});
+                (void)r;
+            }
+            setThreadTelnetClient(-1);
+        }
+        return make_int(1);
+    }
     if (name == "get_telnet_password") {
         // Return the telnet login password configured for a server name.
         if (!args.empty()) {
@@ -763,10 +1325,6 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (it != simpleDb().end()) return make_string(it->second);
         }
         return make_string("123456");
-    }
-    if (name == "get_telnet_settings" || name == "get_telnet_info") {
-        if (!args.empty()) return args[0];
-        return make_string("127.0.0.1");
     }
     if (name == "set_timer") return make_int(1);
     if (name == "sleep") {
@@ -783,6 +1341,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "get_thread_id") return make_int(-1);
     if (name == "time" || name == "time_desc")
         return make_int(static_cast<int64_t>(std::time(nullptr)));
+    if (name == "tick") {
+        // tick() - milliseconds since the epoch (the driver uses
+        // gettimeofday()*1000 + usec/1000).
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        return make_int(static_cast<int64_t>(ms));
+    }
+    if (name == "get_system_tick" || name == "get_server_tick" || name == "get_bad_tick_times") {
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        return make_int(static_cast<int64_t>(ms));
+    }
     if (name == "local_time") {
         // local_time([t]) -> ({hour,min,sec,wday,ch_wday,mday,yday,mon,year})
         std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
