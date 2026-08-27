@@ -510,11 +510,95 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "read_ini") {
-        // Minimal INI reader for the AAA driver startup.
+        // read_ini(section, key, file) - read one value from an INI file.
         if (args.size() >= 2 && as_string(args[0]) == "Me" && as_string(args[1]) == "Name") {
             return make_string("aaa_2017");
         }
+        if (args.size() >= 3) {
+            std::string section = as_string(args[0]);
+            std::string key = as_string(args[1]);
+            std::string path = resolveVfsPath(as_string(args[2]));
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[read_ini] section=" << section << " key=" << key
+                          << " file=" << as_string(args[2]) << " -> " << path << "\n";
+            std::ifstream in(path);
+            if (in) {
+                std::string cur;
+                std::string line;
+                auto trim = [](const std::string& s) {
+                    size_t b = s.find_first_not_of(" \t\r\n");
+                    if (b == std::string::npos) return std::string();
+                    size_t e = s.find_last_not_of(" \t\r\n");
+                    return s.substr(b, e - b + 1);
+                };
+                while (std::getline(in, line)) {
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    size_t s = line.find_first_not_of(" \t");
+                    if (s == std::string::npos) continue;
+                    if (line[s] == '#' || line[s] == ';') continue;
+                    if (line[s] == '[') {
+                        size_t e = line.find(']', s);
+                        if (e == std::string::npos) continue;
+                        cur = trim(line.substr(s + 1, e - s - 1));
+                        continue;
+                    }
+                    if (cur != section) continue;
+                    size_t eq = line.find('=', s);
+                    if (eq == std::string::npos) continue;
+                    if (trim(line.substr(s, eq - s)) == key)
+                        return make_string(trim(line.substr(eq + 1)));
+                }
+            } else {
+                std::cout << "read_ini: cannot open " << path << "\n";
+            }
+        }
         return make_string("");
+    }
+    if (name == "get_raw_password") {
+        // The original driver hashes the raw password; keep the plain text so the
+        // stub sql backend can use it directly.
+        if (!args.empty()) return args[0];
+        return make_string("");
+    }
+    if (name == "read_whole_ini") {
+        // Parse an INI file into { section : { key : value } }.
+        if (args.empty()) return make_int(0);
+        std::string path = resolveVfsPath(as_string(args[0]));
+        std::ifstream in(path);
+        if (!in) {
+            std::cout << "read_whole_ini: cannot open " << path << "\n";
+            return make_int(0);
+        }
+        auto root = std::make_shared<MappingValue>();
+        std::shared_ptr<MappingValue> cur;
+        std::string line;
+        auto trim = [](const std::string& s) {
+            size_t b = s.find_first_not_of(" \t\r\n");
+            if (b == std::string::npos) return std::string();
+            size_t e = s.find_last_not_of(" \t\r\n");
+            return s.substr(b, e - b + 1);
+        };
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t s = line.find_first_not_of(" \t");
+            if (s == std::string::npos) continue;
+            if (line[s] == '#' || line[s] == ';' || line[s] == '/') continue;
+            if (line[s] == '[') {
+                size_t e = line.find(']', s);
+                if (e == std::string::npos) continue;
+                std::string sec = trim(line.substr(s + 1, e - s - 1));
+                cur = std::make_shared<MappingValue>();
+                root->entries.emplace_back(make_string(sec), cur);
+                continue;
+            }
+            if (!cur) continue;
+            size_t eq = line.find('=', s);
+            if (eq == std::string::npos) continue;
+            std::string key = trim(line.substr(s, eq - s));
+            std::string val = trim(line.substr(eq + 1));
+            cur->entries.emplace_back(make_string(key), make_string(val));
+        }
+        return root;
     }
     if (name == "db_open") {
         if (!args.empty()) simpleDbLoad(as_string(args[0]));
@@ -544,7 +628,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return arr;
     }
     if (name == "sql_execute" || name == "sql_insert" || name == "sql_close_db") return make_int(0);
-    if (name == "sleep" || name == "wait_event" || name == "send_to_queue") return make_int(1);
+    if (name == "sleep") {
+        // The driver's sleep() takes seconds and suspends the calling thread.
+        int64_t secs = args.empty() ? 0 : as_int(args[0]);
+        if (secs > 0) {
+            std::chrono::seconds d(secs);
+            if (secs > 60) d = std::chrono::seconds(60);   // keep startup responsive
+            std::this_thread::sleep_for(d);
+        }
+        return make_int(1);
+    }
+    if (name == "wait_event" || name == "send_to_queue") return make_int(1);
     if (name == "get_thread_id") return make_int(-1);
     if (name == "time" || name == "time_desc") return make_int(0);
     if (name == "create_thread" || name == "create_queue" || name == "create_event") return make_int(1);
