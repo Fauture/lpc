@@ -378,6 +378,11 @@ struct Frame {
     int bp = 0;                       // stack index of arg0 (param0 = top)
     int argNum = 0;
     int localCount = 0;
+    // Loop control blocks.  The original VM keeps a loop's control value in a
+    // local slot, but expression-stack pops can descend into the local region
+    // in this interpreter (the prologue of load_comm_desc does); storing the
+    // control separately keeps foreach loops from losing their state.
+    std::map<int, std::shared_ptr<LoopCtrl>> loops;
 };
 
 // ---------------------------------------------------------------------------
@@ -1013,7 +1018,10 @@ private:
         // shifted mixed_mysql_select parameter list -> bogus cno/sql).
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
         // The original VM pushes args in reverse (param0 last, on top).
+        // For a zero-arg function the stack top would be -1; reserve one slot
+        // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
         int n = fn.argCount;
+        if (n == 0) pushValue(UndefinedTag{});   // frame slot for bp
         for (int i = n - 1; i >= 0; --i) {
             Value a = (i < static_cast<int>(args.size())) ? args[i] : Value(UndefinedTag{});
             pushValue(a);
@@ -1026,7 +1034,11 @@ private:
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
-        if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "mysql_select" ||
+        if (std::getenv("LPCVM_TRACE") && (fn.name == "load_comm_desc" || fn.name == "load_file_dependence")) {
+            std::cerr << "[xfn] " << fn.name << " bp=" << bp << " argc=" << fn.argCount
+                      << " argsPassed=" << fn.argCount << " stackSize=" << stack_.size()
+                      << " localCount=" << fn.localCount << " frames=" << frames_.size() << "\n";
+        } else if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "mysql_select" ||
                                            fn.name == "fetch_config_list" || fn.name == "update_config" ||
                                            fn.name == "assure_connection" || fn.name == "choose_one_url" ||
                                            fn.name == "do_init")) {
@@ -1056,7 +1068,9 @@ private:
             throw;
         }
         Value result = returnValue_;
-        int newSize = bp - fn.argCount + 1;
+        // For zero-arg calls we pushed one placeholder frame slot; remove it
+        // with the frame (otherwise it leaks on every external 0-arg call).
+        int newSize = bp - fn.argCount + 1 - (fn.argCount == 0 ? 1 : 0);
         if (newSize < 0) newSize = 0;
         stack_.resize(static_cast<size_t>(newSize));
         frames_.pop_back();
@@ -1458,6 +1472,35 @@ private:
             case 6: { // call_in_efun
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
+                const auto& names = efunNameTable();
+                if (efun >= 0 && static_cast<size_t>(efun) < names.size() && names[efun] == "sscanf") {
+                    // sscanf(input, fmt, &a, &b, ...): the output arguments are
+                    // references on the stack.  Parse, write each conversion
+                    // back through its reference, push the match count.
+                    if (argc >= 2) {
+                        auto strOf = [&](const StackItem& r) -> std::string {
+                            Value v = r.isRef ? deref(r) : r.value;
+                            if (v.index() == 4) return std::get<std::string>(v);
+                            return to_string(v, false);
+                        };
+                        // Pop all args (top of stack = last argument pushed =
+                        // args[0]).  args[0] = input, args[1] = format, the
+                        // rest are reference outputs.
+                        std::vector<StackItem> refs;
+                        for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                        std::string input = strOf(refs[0]);
+                        std::string fmtStr = strOf(refs[1]);
+                        std::vector<Value> outs;
+                        int n = lpcSscanf(input, fmtStr, outs);
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[sscanf] input=[" << input.substr(0, 30) << "] fmt=[" << fmtStr
+                                      << "] n=" << n << " outs=" << outs.size() << "\n";
+                        for (size_t i = 0; i + 2 < refs.size() && i < outs.size(); ++i)
+                            writeThrough(refs[i + 2], outs[i]);
+                        pushValue(make_int(n));
+                        break;
+                    }
+                }
                 pushValue(callEfun(efun, argc));
                 break;
             }
@@ -1566,7 +1609,12 @@ private:
                 break;
             case 27: { // enter_function
                 const Frame& f = frames_.back();
+                if (std::getenv("LPCVM_TRACE") && (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc"))
+                    std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
+                              << " stackBefore=" << stack_.size() << "\n";
                 for (int i = 0; i < f.localCount; ++i) pushValue(UndefinedTag{});
+                if (std::getenv("LPCVM_TRACE") && (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc"))
+                    std::cerr << "[enter] " << f.fn->name << " stackAfter=" << stack_.size() << "\n";
                 break;
             }
             case 15: { // check_args_num
@@ -1632,7 +1680,9 @@ private:
                 if (slot >= 0 && static_cast<size_t>(slot) < stack_.size())
                     stack_[static_cast<size_t>(slot)].value = ctrl;
                 else if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size() << "\n";
+                    std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size()
+                              << " fn=" << (frames_.empty() ? "<global>" : frames_.back().fn->name)
+                              << " bp=" << (frames_.empty() ? -999 : frames_.back().bp) << "\n";
                 break;
             }
             case 18: { // cond_jmp_for_loop
@@ -1738,8 +1788,12 @@ private:
     // ------------------------------------------------------------------
     void loopStep(size_t& ip, int ctrlSlot, int breakOffset, int continueOffset) {
         if (ctrlSlot < 0 || static_cast<size_t>(ctrlSlot) >= stack_.size()) {
-            if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[loop] ctrl slot out of range: " << ctrlSlot << " size=" << stack_.size() << "\n";
+            if (std::getenv("LPCVM_TRACE")) {
+                std::string fn = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                std::cerr << "[loop] ctrl slot out of range: " << ctrlSlot << " size=" << stack_.size()
+                          << " fn=" << fn << " bp=" << (frames_.empty() ? -1 : frames_.back().bp)
+                          << " localCount=" << (frames_.empty() ? -1 : frames_.back().localCount) << "\n";
+            }
             return;
         }
         StackItem& slotItem = stack_[static_cast<size_t>(ctrlSlot)];
@@ -1770,6 +1824,9 @@ private:
                           << " break=" << breakOffset << " cont=" << continueOffset << "\n";
             if (iter < c->arr->items.size()) {
                 setVar(c->arr->items[iter]);
+                if (std::getenv("LPCVM_TRACE") && iter == 0)
+                    std::cerr << "[loop] 901 setVar slot=" << c->slotOfVar << " val="
+                              << to_string(c->arr->items[iter], false).substr(0, 20) << "\n";
                 ip += continueOffset;
             } else {
                 ip += breakOffset;

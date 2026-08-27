@@ -19,6 +19,13 @@ struct TelnetClosedError : std::runtime_error {
 
 Value call_builtin(Interpreter* interp, const std::string& name, const std::vector<Value>& args);
 
+// vm_interSscanf (0x8109908): C-style sscanf.  Parses input against fmt,
+// appends one output Value per conversion (in order) to `out`, and returns the
+// number of successful conversions.  Supports %s %d %u %x %c %f %* (suppress)
+// and literal/whitespace matching.  The caller writes each output back into the
+// corresponding reference argument.
+int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Value>& out);
+
 // Telnet client plumbing shared with the VM thread runner (original_vm.cpp).
 // The daemon thread that serves one telnet connection registers itself with
 // its client number so input_string()/printf() route to the right socket.

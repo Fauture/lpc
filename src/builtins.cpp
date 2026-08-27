@@ -1098,6 +1098,102 @@ int startDriverTelnet(int port) {
     return 1;
 }
 
+int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Value>& out) {
+    // C-style sscanf over std::string, mirroring vm_interSscanf (0x8109908).
+    // Conversions: %s %d %u %x %c %f, * suppression, literal matching,
+    // whitespace skipping.  Output values are appended in conversion order.
+    const char* s = input.c_str();
+    const char* f = fmt.c_str();
+    int matches = 0;
+    auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; };
+    auto skipWs = [&]() { while (*s && isSpace(*s)) ++s; };
+    while (*f) {
+        if (isSpace(*f)) {          // whitespace in format: skip input ws
+            skipWs();
+            while (isSpace(*f)) ++f;
+            continue;
+        }
+        if (*f != '%') {            // literal match
+            if (*s != *f) break;
+            ++s; ++f;
+            continue;
+        }
+        ++f;                        // past '%'
+        if (*f == '%') {            // literal '%'
+            if (*s != '%') break;
+            ++s; ++f;
+            continue;
+        }
+        bool suppress = false;
+        if (*f == '*') { suppress = true; ++f; }
+        char conv = *f++;
+        skipWs();
+        switch (conv) {
+        case 's': {
+            // %s normally matches up to whitespace.  When the format has a
+            // literal character right after %s (e.g. "[%s]"), the original
+            // vm_interSscanf matches %s up to that literal (LABEL_24 path), so
+            // "[Client_user]" yields "Client_user", not "Client_user]".
+            const char* stop = nullptr;
+            if (*f && !isSpace(*f) && *f != '%') stop = f;
+            const char* start = s;
+            while (*s && !isSpace(*s) && (!stop || *s != *stop)) ++s;
+            if (s == start && !*start) goto done;
+            if (!suppress) out.push_back(make_string(std::string(start, static_cast<size_t>(s - start))));
+            ++matches;
+            break;
+        }
+        case 'd': {
+            char* end = nullptr;
+            long long v = std::strtoll(s, &end, 10);
+            if (end == s) goto done;
+            s = end;
+            if (!suppress) out.push_back(make_int(static_cast<int64_t>(v)));
+            ++matches;
+            break;
+        }
+        case 'u': {
+            char* end = nullptr;
+            unsigned long long v = std::strtoull(s, &end, 10);
+            if (end == s) goto done;
+            s = end;
+            if (!suppress) out.push_back(make_int(static_cast<int64_t>(v)));
+            ++matches;
+            break;
+        }
+        case 'x': {
+            char* end = nullptr;
+            unsigned long long v = std::strtoull(s, &end, 16);
+            if (end == s) goto done;
+            s = end;
+            if (!suppress) out.push_back(make_int(static_cast<int64_t>(v)));
+            ++matches;
+            break;
+        }
+        case 'c': {
+            if (!*s) goto done;
+            if (!suppress) out.push_back(make_int(static_cast<unsigned char>(*s)));
+            ++s;
+            ++matches;
+            break;
+        }
+        case 'f': {
+            char* end = nullptr;
+            double v = std::strtod(s, &end);
+            if (end == s) goto done;
+            s = end;
+            if (!suppress) out.push_back(make_float(v));
+            ++matches;
+            break;
+        }
+        default:
+            goto done;   // unsupported conversion: stop
+        }
+    }
+done:
+    return matches;
+}
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
@@ -1105,6 +1201,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty()) {
             std::vector<Value> rest(args.begin() + 1, args.end());
             std::string out = formatLpc(as_string(args[0]), rest);
+            if (std::getenv("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
+                std::cerr << "[printf-badline] out=[" << out.substr(0, 80) << "]\n";
             // The original driver writes the formatted string exactly as-is
             // (no auto newline; the LPC format strings carry their own \n).
             int cno = threadTelnetClient();
@@ -1219,9 +1317,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(-1);
     }
     if (name == "explode") {
-        if (args.size() < 2) return make_array();
+        // vm_f_explode (0x80d5c68): explode(str) splits on "\n" by default;
+        // explode(str, sep) splits on the given separator.  Empty separator
+        // splits into individual characters.
         auto arr = std::make_shared<ArrayValue>();
-        std::string s = as_string(args[0]), sep = as_string(args[1]);
+        if (args.empty()) return arr;
+        std::string s = as_string(args[0]);
+        std::string sep = args.size() >= 2 ? as_string(args[1]) : "\n";
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[explode] len=" << s.size() << " sep=" << (args.size() >= 2 ? "explicit" : "newline")
+                      << " first8=[" << s.substr(0, 8) << "]\n";
         if (sep.empty()) {
             for (char c : s) arr->items.push_back(make_string(std::string(1, c)));
             return arr;
@@ -1235,6 +1340,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             }
             arr->items.push_back(make_string(s.substr(start, p - start)));
             start = p + sep.size();
+        }
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE")) {
+            std::string dbg;
+            for (size_t i = 0; i < arr->items.size() && i < 4; ++i) {
+                if (!dbg.empty()) dbg += "|";
+                const std::string& e = std::get<std::string>(arr->items[i]);
+                dbg += "[" + e.substr(0, 12) + "]";
+            }
+            std::string hex0;
+            if (!arr->items.empty()) {
+                const std::string& e0 = std::get<std::string>(arr->items[0]);
+                char b[8];
+                for (size_t k = 0; k < e0.size() && k < 8; ++k) { snprintf(b, sizeof(b), "%02X ", (unsigned char)e0[k]); hex0 += b; }
+            }
+            std::cerr << "[explode] n=" << arr->items.size() << " first=[" << dbg << "] elem0hex=" << hex0 << "\n";
         }
         return arr;
     }
@@ -1296,10 +1416,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "trim") {
         if (args.empty()) return make_string("");
         std::string s = as_string(args[0]);
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[trim] in=[" << s.substr(0, 16) << "] len=" << s.size() << "\n";
         size_t b = s.find_first_not_of(" \t\r\n");
-        if (b == std::string::npos) return make_string("");
+        if (b == std::string::npos) {
+            if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+                std::cerr << "[trim] -> empty\n";
+            return make_string("");
+        }
         size_t e = s.find_last_not_of(" \t\r\n");
-        return make_string(s.substr(b, e - b + 1));
+        std::string r = s.substr(b, e - b + 1);
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[trim] -> [" << r.substr(0, 16) << "]\n";
+        return make_string(r);
     }
     if (name == "relinquish") return make_int(1);
     if (name == "get_dir_ex" || name == "get_dir") {
@@ -1408,7 +1537,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "read_file") {
         if (args.empty()) return make_string("");
-        std::string content = readVfsFile(as_string(args[0]));
+        std::string vpath = as_string(args[0]);
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[read_file] path=" << vpath << "\n";
+        std::string content = readVfsFile(vpath);
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[read_file] -> " << content.size() << " bytes, head=["
+                      << content.substr(0, 20) << "]\n";
         // mode "b" (buffer): the original returns a buffer; we represent
         // buffers as byte strings so is_string() sees a string and slicing
         // works.  Content is already raw bytes.
