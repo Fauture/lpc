@@ -100,6 +100,11 @@ struct ClosureValue {
     // later (which would pick the OVERRIDING copy - accountd's own
     // process_command - and loop forever).  -1 = resolve by name only.
     int funcIndex = -1;
+    // Exact function captured at closure-creation time.  call_fun_ptr invokes
+    // THIS function directly, so a closure made by object A (merged index n)
+    // still runs A's function when invoked from object B's VM (B's own index n
+    // is a different function).  Null when only funcIndex/name are known.
+    const struct OriginalFunction* func = nullptr;
     std::vector<Value> boundArgs;
     // Object that owns this closure (the program whose bytecode created it).
     // When the closure is invoked from another VM (e.g. the master's post_init

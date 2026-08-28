@@ -292,7 +292,21 @@ Value modValues(const Value& a, const Value& b) {
     int64_t d = toInt(b);
     return make_int(d == 0 ? 0 : toInt(a) % d);
 }
-Value lshValues(const Value& a, const Value& b) { return make_int(toInt(a) << (toInt(b) & 63)); }
+Value lshValues(const Value& a, const Value& b) {
+    // vm_lshValue (0x808df54): mapping << mapping is a MERGE
+    // (vm_concatMapping(dest=a, src=b)) - the left mapping absorbs the right's
+    // keys, the right overriding on conflict.  accountd does
+    //   account_info << agent->query_entire_dbase()
+    // to fold the current dbase into the freshly loaded account_info.
+    if (a.index() == 6 && b.index() == 6) {
+        auto left = std::get<std::shared_ptr<MappingValue>>(a);
+        auto right = std::get<std::shared_ptr<MappingValue>>(b);
+        auto result = std::make_shared<MappingValue>(*left);
+        for (const auto& kv : right->items()) result->insert(kv.first, kv.second);
+        return result;
+    }
+    return make_int(toInt(a) << (toInt(b) & 63));
+}
 Value rshValues(const Value& a, const Value& b) { return make_int(toInt(a) >> (toInt(b) & 63)); }
 Value andValues(const Value& a, const Value& b) { return make_int(toInt(a) & toInt(b)); }
 Value orValues(const Value& a, const Value& b) { return make_int(toInt(a) | toInt(b)); }
@@ -508,6 +522,23 @@ std::vector<Value>& sharedGlobalVars() {
     return g;
 }
 
+// The master program's (start_aaa) global function table, shared across every
+// object.  call_in_user_fun bit7 / create_function_value bit7 / call_fun_ptr
+// all resolve global function indices against THIS table, because vm_callInUserFun
+// reads vm_pGlobalProgram->pFunctions[index] regardless of the calling object.
+// Each entry carries its own strings (the master's string table) and 0
+// varOffset/funOffset so it can be executed inline on any VM's stack.
+std::unordered_map<int, std::shared_ptr<OriginalFunction>>& sharedMasterFunctions() {
+    static std::unordered_map<int, std::shared_ptr<OriginalFunction>> m;
+    return m;
+}
+
+const OriginalFunction* findMasterFunction(int index) {
+    auto& m = sharedMasterFunctions();
+    auto it = m.find(index);
+    return it == m.end() ? nullptr : it->second.get();
+}
+
 Value& sharedGlobal(int index) {
     auto& g = sharedGlobalVars();
     if (static_cast<size_t>(index) >= g.size()) g.resize(static_cast<size_t>(index) + 1);
@@ -560,6 +591,10 @@ public:
                       << " fn=" << name << " args=" << args.size()
                       << " thisObj=" << thisObjectName_ << " a0=["
                       << (args.empty() ? "" : to_string(args[0], false).substr(0, 40)) << "]\n";
+        if (std::getenv("LPCVM_TRACE") && (name == "register_entry" || name == "query_entry"))
+            std::cerr << "[reg] callFunctionByName vm=" << this << " obj=" << objName_
+                      << " fn=" << name << " args=" << args.size() << " a0=["
+                      << (args.empty() ? "" : to_string(args[0], false).substr(0, 50)) << "]\n";
         if (const OriginalFunction* fn = findFunctionAny(name)) {
             if (std::getenv("LPCVM_TRACE") && name == "lite_query_temp")
                 std::cerr << "[lqt] found idx=" << fn->index << " code=" << fn->code.size()
@@ -581,6 +616,13 @@ public:
         if (std::getenv("LPCVM_TRACE") && name == "account_login")
             std::cerr << "[cfv-miss] account_login NOT FOUND on obj=" << objName_ << "\n";
         return make_int(0);
+    }
+
+    // Run a specific function pointer on THIS VM (with this VM's object vars).
+    // Used by call_fun_ptr to run a closure's captured function on its owner VM.
+    Value callFunctionPointer(const OriginalFunction* fn, const std::vector<Value>& args) {
+        if (!fn) return make_int(0);
+        return executeFunctionFromOutside(*fn, args);
     }
 
     Value callFunctionByIndex(int index) {
@@ -981,6 +1023,64 @@ private:
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
+            if (nm == "object_name" && args.empty()) {
+                // vm_f_object_name with no argument returns the CURRENT
+                // object's path (vm_currentContext->thisObject).  handler.c's
+                // create() calls object_name() then explode("/") and takes
+                // segment[1]; for that to yield the command name the name must
+                // be "/<basename>", so return "/" + the file's basename.
+                std::string n = thisObjectName_;
+                if (n == "<this>" || n.empty()) n = objName_;
+                size_t slash = n.find_last_of('/');
+                std::string base = slash == std::string::npos ? n : n.substr(slash + 1);
+                std::string res = "/" + base;
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[obj-name] this=" << thisObjectName_ << " -> " << res << "\n";
+                return make_string(res);
+            }
+            if (nm == "call_other_arg" && args.size() >= 3) {
+                // vm_f_call_other_arg (0x80f5afc): call_other(ob, fun,
+                // para_list...) where para_list is an ARRAY expanded into
+                // individual arguments (handler_module's process_command calls
+                // call_other_arg(entry, "main", [agent, ...cmdargs])).  The
+                // array is the LAST argument; the caller passes ob + fun.
+                auto& reg0 = objectRegistry();
+                const Value& obv = args[0];
+                const Value& funv = args[1];
+                const Value& listv = args[2];
+                std::string funName = funv.index() == 4 ? std::get<std::string>(funv) : "";
+                std::vector<Value> callArgs;
+                if (listv.index() == 5) {
+                    auto arr = std::get<std::shared_ptr<ArrayValue>>(listv);
+                    callArgs = arr->items;
+                } else {
+                    for (size_t i = 2; i < args.size(); ++i) callArgs.push_back(args[i]);
+                }
+                if (obv.index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(obv);
+                    std::string path = ov->programName;
+                    if (path == "<this>" || path == "." || path.empty()) {
+                        if (ov->owner) {
+                            std::shared_ptr<OriginalVm> ownerVm;
+                            {
+                                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                                for (auto& kv : reg0.vms) {
+                                    if (&kv.second->object() == ov->owner) { ownerVm = kv.second; break; }
+                                }
+                            }
+                            if (ownerVm) return ownerVm->callFunctionByName(funName, callArgs);
+                        }
+                        return callFunctionByName(funName, callArgs);
+                    }
+                    return tryCallOtherObject(searchRoot_, path, funName, callArgs);
+                }
+                if (obv.index() == 4) {
+                    std::string path = std::get<std::string>(obv);
+                    if (path.empty() || path == "<this>" || path == ".") return callFunctionByName(funName, callArgs);
+                    return tryCallOtherObject(searchRoot_, path, funName, callArgs);
+                }
+                return make_int(0);
+            }
             if (nm == "is_clone" && args.empty()) {
                 // vm_f_is_clone (0x80f7900) with no argument inspects the
                 // CURRENT object (vm_currentContext->thisObject) and returns
@@ -1015,6 +1115,7 @@ private:
                         auto cl = std::make_shared<ClosureValue>();
                         cl->functionName = src->functionName;
                         cl->funcIndex = src->funcIndex;
+                        cl->func = src->func;
                         cl->owner = src->owner;
                         cl->boundArgs = src->boundArgs;
                         for (const auto& b : bind) cl->boundArgs.push_back(b);
@@ -1027,6 +1128,7 @@ private:
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
                             cl->funcIndex = fn->index;
+                            cl->func = fn;
                             cl->owner = &obj_;
                             return makeBound(cl);
                         }
@@ -1042,12 +1144,16 @@ private:
                                 masterObj = &mit->second->object();
                             }
                         }
-                        if (master && masterObj && masterObj != &obj_ &&
-                            master->findFunctionAny(fname)) {
-                            auto cl = std::make_shared<ClosureValue>();
-                            cl->functionName = fname;
-                            cl->owner = masterObj;
-                            return makeBound(cl);
+                        if (master && masterObj && masterObj != &obj_) {
+                            const OriginalFunction* mfn = master->findFunctionAny(fname);
+                            if (mfn) {
+                                auto cl = std::make_shared<ClosureValue>();
+                                cl->functionName = fname;
+                                cl->funcIndex = mfn->index;
+                                cl->func = mfn;
+                                cl->owner = masterObj;
+                                return makeBound(cl);
+                            }
                         }
                         const auto& efn = efunNameTable();
                         for (size_t i = 0; i < efn.size(); ++i)
@@ -1060,6 +1166,7 @@ private:
                     auto cl = std::make_shared<ClosureValue>();
                     cl->functionName = src->functionName;
                     cl->funcIndex = src->funcIndex;
+                    cl->func = src->func;
                     cl->owner = src->owner;
                     cl->boundArgs = src->boundArgs;
                     for (size_t i = 1; i < args.size(); ++i)
@@ -1076,6 +1183,8 @@ private:
                         if (const OriginalFunction* fn = findFunctionAny(fname)) {
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
+                            cl->funcIndex = fn->index;
+                            cl->func = fn;
                             cl->owner = &obj_;
                             return bindClosure(cl);
                         }
@@ -1091,12 +1200,16 @@ private:
                                 masterObj = &mit->second->object();
                             }
                         }
-                        if (master && masterObj && masterObj != &obj_ &&
-                            master->findFunctionAny(fname)) {
-                            auto cl = std::make_shared<ClosureValue>();
-                            cl->functionName = fname;
-                            cl->owner = masterObj;
-                            return bindClosure(cl);
+                        if (master && masterObj && masterObj != &obj_) {
+                            const OriginalFunction* mfn = master->findFunctionAny(fname);
+                            if (mfn) {
+                                auto cl = std::make_shared<ClosureValue>();
+                                cl->functionName = fname;
+                                cl->funcIndex = mfn->index;
+                                cl->func = mfn;
+                                cl->owner = masterObj;
+                                return bindClosure(cl);
+                            }
                         }
                         const auto& efn = efunNameTable();
                         for (size_t i = 0; i < efn.size(); ++i)
@@ -1323,6 +1436,27 @@ private:
     }
 
     Value callUserFunction(int index, int flags) {
+        // vm_callInUserFun (0x8094080): bit 7 of the flags selects the driver's
+        // GLOBAL program (start_aaa) function table, NOT this object's table.
+        // vm_callInUserFunBody then runs that function INLINE on the current
+        // stack/process (thisObject=NULL, consititution = the global program's),
+        // so it never switches object and never takes another VM's execution
+        // lock.  The old path forwarded it to the master VM as a cross-object
+        // call, which deadlocked account_login (game thread -> accountd
+        // execMutex_) against _check_client_data (threadd thread -> accountd
+        // execMutex_ -> master execMutex_ for set_dynamic_key).
+        if (flags & 0x80) {
+            if (const OriginalFunction* gfn = findMasterFunction(index)) {
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[gfn] inline global fn=" << gfn->name << " idx=" << index
+                              << " argc=" << (flags & 0x3F) << " vm=" << this
+                              << " obj=" << objName_ << "\n";
+                return executeFunctionOnStack(*gfn, false, flags & 0x3F);
+            }
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[gfn] global fn idx=" << index << " NOT FOUND in master\n";
+            return make_int(0);
+        }
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
             const OriginalFunction& fn = *it->second;
@@ -1431,11 +1565,18 @@ private:
         // same registry VM concurrently; pushing outside the lock let one
         // thread's arguments land on another thread's stack (seen as a
         // shifted mixed_mysql_select parameter list -> bogus cno/sql).
-        if (std::getenv("LPCVM_TRACE") && fn.name == "account_login")
-            std::cerr << "[cfv-lock] account_login trying execMutex_ obj=" << objName_ << "\n";
+        bool diag = std::getenv("LPCVM_TRACE") != nullptr;
+        bool diagMe = diag && (objName_ == "<obj>" || objName_ == "/aaa/daemons/accountd.o" ||
+                               objName_ == "/clone/misc/unauthed_agent.o" ||
+                               fn.name == "account_login" || fn.name == "set_dynamic_key" ||
+                               fn.name == "mysql_select" || fn.name == "_check_client_data");
+        if (diagMe)
+            std::cerr << "[lock] TRY obj=" << objName_ << " fn=" << fn.name
+                      << " t=" << std::this_thread::get_id() << "\n";
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
-        if (std::getenv("LPCVM_TRACE") && fn.name == "account_login")
-            std::cerr << "[cfv-lock] account_login GOT execMutex_\n";
+        if (diagMe)
+            std::cerr << "[lock] GOT obj=" << objName_ << " fn=" << fn.name
+                      << " t=" << std::this_thread::get_id() << "\n";
         return executeFunctionFromOutsideLocked(fn, args);
     }
 
@@ -1469,6 +1610,27 @@ private:
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
+        if (std::getenv("LPCVM_TRACE") && (fn.name == "register_entry" || fn.name == "query_entry")) {
+            std::string dbg;
+            for (int i = 0; i < fn.argCount; ++i)
+                dbg += (i ? "," : "") + to_string(slotValue(bp - i), false);
+            std::cerr << "[reg] exec " << fn.name << " obj=" << objName_ << " varOff=" << fn.varOffset
+                      << " params=[" << dbg << "] stackSize=" << stack_.size() << "\n";
+            // dump the entry table (obj var at the register.c constitution)
+            int tableVar = fn.varOffset;  // register.c var 0
+            if (static_cast<size_t>(tableVar) < objVars_->size()) {
+                const Value& tv = (*objVars_)[static_cast<size_t>(tableVar)];
+                std::string keys;
+                if (tv.index() == 6) {
+                    for (auto& kv : std::get<std::shared_ptr<MappingValue>>(tv)->items()) {
+                        if (!keys.empty()) keys += ",";
+                        keys += to_string(kv.first, false);
+                    }
+                }
+                std::cerr << "[reg]   table var" << tableVar << " type=" << tv.index()
+                          << " keys=[" << keys.substr(0, 120) << "]\n";
+            }
+        }
         if (std::getenv("LPCVM_TRACE") && (fn.name == "load_comm_desc" || fn.name == "load_file_dependence")) {
             std::cerr << "[xfn] " << fn.name << " bp=" << bp << " argc=" << fn.argCount
                       << " argsPassed=" << fn.argCount << " stackSize=" << stack_.size()
@@ -1699,19 +1861,39 @@ private:
                 break;
             }
             case 23: { // create_function_value (bound count = par8 & 0x3F)
-                auto it = funcsByIndex_.find(in.a);
+                // bit7 (0x80) selects the GLOBAL program's function table, just
+                // like call_in_user_fun; the index must resolve against the
+                // master program, not this object's merged table.
+                const OriginalFunction* fn = nullptr;
+                if (in.b & 0x80) fn = findMasterFunction(in.a);
+                else {
+                    auto it = funcsByIndex_.find(in.a);
+                    if (it != funcsByIndex_.end()) fn = it->second;
+                }
                 if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[cfv] index=" << in.a << " found=" << (it != funcsByIndex_.end())
-                              << (it != funcsByIndex_.end() ? " name=" + it->second->name : "") << "\n";
-                if (it != funcsByIndex_.end()) {
+                    std::cerr << "[cfv] index=" << in.a << " global=" << ((in.b & 0x80) != 0)
+                              << " found=" << (fn != nullptr)
+                              << (fn ? " name=" + fn->name : "") << "\n";
+                if (fn) {
                     std::vector<Value> bound;
                     int boundCount = in.b & 0x3F;
                     for (int i = 0; i < boundCount && !stack_.empty(); ++i) bound.push_back(pop().value);
+                    if (std::getenv("LPCVM_TRACE") && fn->name == "process_command" &&
+                        (in.a == 32 || in.a == 153)) {
+                        std::string dbg;
+                        for (size_t k = 0; k < bound.size(); ++k)
+                            dbg += (k ? " | " : "") + to_string(bound[k], false).substr(0, 40);
+                        std::cerr << "[cfv-create] " << fn->name << " idx=" << in.a
+                                  << " bind=" << boundCount << " cur="
+                                  << (frames_.empty() ? "<global>" : frames_.back().fn->name)
+                                  << " vals=[" << dbg << "]\n";
+                    }
                     auto cl = std::make_shared<ClosureValue>();
-                    cl->functionName = it->second->name;
-                    cl->funcIndex = in.a;   // merged index of the exact function
+                    cl->functionName = fn->name;
+                    cl->funcIndex = in.a;   // global/merged index of the exact function
+                    cl->func = fn;          // exact function: invoke directly
                     cl->boundArgs = bound;
-                    cl->owner = &obj_;
+                    cl->owner = (in.b & 0x80) ? objectRegistry().masterObj : &obj_;
                     pushValue(cl);
                 } else {
                     pushValue(make_int(0));
@@ -2197,7 +2379,7 @@ private:
                             }
                             if (ownerVm) {
                                 if (std::getenv("LPCVM_TRACE"))
-                                    std::cerr << "[obj-this] "<this>" owner-resolve -> "
+                                    std::cerr << "[obj-this] owner-resolve -> "
                                               << ownerVm->object().sourceName << "\n";
                                 if (funName.empty()) {
                                     result = ownerVm->callFunctionByIndex(funIndex);
@@ -2237,6 +2419,8 @@ private:
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
                     const OriginalFunction* fn = nullptr;
+                    const OriginalObject* master = objectRegistry().masterObj;
+                    bool sameOwner = (cl->owner == nullptr) || (cl->owner == &obj_) || (cl->owner == master);
                     // Prefer the function captured at closure-creation time:
                     // create_function_value(n) binds the EXACT merged function
                     // at index n.  Re-resolving by name later can pick a
@@ -2244,23 +2428,29 @@ private:
                     // handler_module's process_command (merged 32) vs
                     // accountd's own process_command (153) - which changed the
                     // dispatch target and caused an infinite re-dispatch loop.
-                    if (cl->funcIndex >= 0) {
+                    if (cl->func && sameOwner) {
+                        // global function (owner = master) or same-object:
+                        // run inline on THIS VM's stack/obj vars.
+                        fn = cl->func;
+                    } else if (cl->funcIndex >= 0 && !cl->func) {
+                        // legacy closure without a func pointer
                         auto fit = funcsByIndex_.find(cl->funcIndex);
                         if (fit != funcsByIndex_.end()) {
                             fn = fit->second;
-                            if (std::getenv("LPCVM_TRACE"))
-                                std::cerr << "[cfv] closure by-index " << cl->functionName
-                                          << " idx=" << cl->funcIndex
-                                          << " -> " << (fn ? fn->name : "?") << "\n";
+                        } else if (const OriginalFunction* gfn = findMasterFunction(cl->funcIndex)) {
+                            fn = gfn;
                         }
                     }
-                    if (!fn) fn = findFunctionAny(cl->functionName);
+                    if (std::getenv("LPCVM_TRACE") && cl->funcIndex >= 0)
+                        std::cerr << "[cfv] closure by-index " << cl->functionName
+                                  << " idx=" << cl->funcIndex
+                                  << " -> " << (fn ? fn->name : "?") << "\n";
                     if (fn) {
                         result = executeFunctionFromOutside(*fn, all);
                     } else if (cl->owner && cl->owner != &obj_) {
                         // The closure was created by another object (e.g. the
                         // master's post_init loop calling a daemon's do_init):
-                        // resolve the function in the owner's VM.
+                        // run it on the OWNER's VM with the owner's object vars.
                         auto& reg = objectRegistry();
                         std::shared_ptr<OriginalVm> ownerVm;
                         {
@@ -2279,7 +2469,11 @@ private:
                             if (std::getenv("LPCVM_TRACE"))
                                 std::cerr << "[cfv] calling " << cl->functionName << " on " << ownerVm->object().sourceName
                                           << " args=" << all.size() << "\n";
-                            result = ownerVm->callFunctionByName(cl->functionName, all);
+                            // Use the captured function pointer when available so
+                            // an overloaded name (process_command) resolves to the
+                            // exact function the closure was bound to.
+                            if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
+                            else result = ownerVm->callFunctionByName(cl->functionName, all);
                         }
                     } else {
                         // The closure may reference a builtin efun (e.g. the
@@ -2359,11 +2553,11 @@ private:
                         args.push_back(stack_[static_cast<size_t>(f.bp - i)]);
                     stack_.resize(static_cast<size_t>(f.bp - f.argNum + 1));
                     // Parameter layout is [paramN ... param1, param0(top)]: the
-                    // defaults (pushed by the compiler in param order param1,
-                    // param2, ...) must be laid down REVERSED so that param1's
-                    // default ends up directly below param0.
-                    for (auto it = defaults.rbegin(); it != defaults.rend(); ++it)
-                        stack_.push_back(*it);
+                    // compiler pushes the default-value block in REVERSE param
+                    // order (paramN's default first, param1's default last),
+                    // so they land in order param1..paramN when copied down
+                    // as-is below the caller's real arguments.
+                    for (auto& d : defaults) stack_.push_back(d);
                     for (auto& a : args) stack_.push_back(a);
                     f.argNum += defaultPushed;
                     f.bp = static_cast<int>(stack_.size()) - 1;
@@ -2970,6 +3164,26 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
             // mark the registered copy initialized after vm.run() below
         }
     }
+    {
+        auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        // Set BEFORE vm.run(): the master's own init code calls global
+        // functions (call_in_user_fun bit7), which resolve against this object.
+        reg.masterObj = &obj;
+    }
+    {
+        auto& m = sharedMasterFunctions();
+        if (m.empty()) {
+            for (const auto& fn : obj.functions) {
+                if (fn.index < 0 || fn.code.empty()) continue;
+                auto cp = std::make_shared<OriginalFunction>(fn);
+                cp->strings = obj.strings;
+                cp->varOffset = 0;
+                cp->funOffset = 0;
+                m[fn.index] = cp;
+            }
+        }
+    }
     vm.run();
     {
         auto& reg = objectRegistry();
@@ -2979,7 +3193,6 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
         // copy); mark that instance too so master-object thread closures
         // (daemon/echo_daemon) don't re-run the whole driver startup.
         reg.initializedObj[&obj] = true;
-        reg.masterObj = &obj;
     }
     runPendingOriginalThreads(searchRoot);
     out << "Original .o VM finished.\n";
@@ -3075,7 +3288,8 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
     return make_int(0);
 }
 
-Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot) {
+Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot,
+                            const std::vector<Value>& createArgs) {
     // vm_f_clone_object (0x80f8eac): look up the loaded template, clone it
     // (fresh instance variables), run its create() initializer and return the
     // new object.  Clones are registered under "clone:<rel>#<seq>" so later
@@ -3143,7 +3357,9 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // initializer code (initOrderList constitutions -> initCodeSegment)
         // THEN create() - clone instances must have their instance variables
         // (tmp_dbase etc.) initialized exactly like the original.
-        vmPtr->runInit();
+        // createArgs (e.g. clone_object(path, (["account": account])) in
+        // account_login) become create()'s arguments.
+        vmPtr->runInit(createArgs);
     } catch (const std::exception& e) {
         std::cerr << "[clone] " << cloneKey << " create error: " << e.what() << "\n";
     } catch (...) {

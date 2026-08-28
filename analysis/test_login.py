@@ -82,8 +82,14 @@ def main():
     # string dist, int8 network_type.
     try:
         import struct as _st
-        auth_key = _st.unpack('>I', d[14:18])[0] if len(d) >= 18 else 0
-        print("auth_key=%d" % auth_key)
+        # msg_l_auth body = int32 result + int32 auth_key + string2 msg.
+        # Header is 12 bytes, so auth_key lives at d[16:20] (NOT d[14:18],
+        # which straddles the result tail and auth_key head).
+        _hdr = 12
+        _msgLen = _st.unpack('>H', d[8:10])[0] if len(d) >= 10 else 0
+        _body = d[_hdr:_hdr + _msgLen - 2]
+        auth_key = _st.unpack('>i', _body[4:8])[0] if len(_body) >= 8 else 0
+        print("result=%d auth_key=%d" % (_st.unpack('>i', _body[0:4])[0] if len(_body) >= 4 else -1, auth_key))
         body4 = pstr(account) + struct.pack('>i', auth_key) + pstr(dist) + bytes([0])
         print("get_server_list body len:", len(body4))
         s.sendall(make_packet(0x3354, body4))

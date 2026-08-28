@@ -25,6 +25,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -1627,17 +1628,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(r ? 1 : 0);
     }
     if (name == "clone_object") {
-        // vm_f_clone_object (0x80f8eac): clone_object(path) clones a loaded
-        // template object into a fresh instance and returns it; 0 on failure.
+        // vm_f_clone_object (0x80f8eac): clone_object(path, createArgs...) clones
+        // a loaded template object into a fresh instance, passing the remaining
+        // arguments to its create(), and returns it; 0 on failure.
         if (args.empty()) return make_int(0);
         std::string path = as_string(args[0]);
         if (path.empty()) return make_int(0);
+        std::vector<Value> createArgs;
+        for (size_t i = 1; i < args.size(); ++i) createArgs.push_back(args[i]);
         // NOTE: do NOT call masterSearchRoot() here - it takes the registry
         // lock and the caller (a connectiond daemon VM) may already be inside
         // a cross-object call that holds it, deadlocking on another thread.
         // The clone registry lookup uses suffix matching on the object path
         // and does not need the search root.
-        return lpc::cloneObjectInRegistry(path, "");
+        return lpc::cloneObjectInRegistry(path, "", createArgs);
     }
     if (name == "is_object") return make_int(!args.empty() && args[0].index() == 7 ? 1 : 0);
     if (name == "to_int" || name == "to_number") return args.empty() ? make_int(0) : make_int(as_int(args[0]));
@@ -1731,6 +1735,60 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             for (int64_t i = 0; i < n; ++i) arr->items.push_back(make_int(0));
         }
         return arr;
+    }
+    if (name == "express_set" || name == "express_add" || name == "express_delete") {
+        // vm_f_express_set (0x80d61bc) / express_add / express_delete: operate
+        // on a MAPPING value: express_set(mapping, path, value) inserts
+        // mapping[path] = value (path may be "a/b/c" for nested sections,
+        // vm_setPathInMapping); express_add adds numerically; express_delete
+        // removes the key.
+        if (args.size() >= 3) {
+            // mapping may be args[0] or args[1] (push order differs per efun);
+            // key is the other non-mapping leading arg, value is args[2].
+            size_t mpIdx = args[0].index() == 6 ? 0 : (args[1].index() == 6 ? 1 : size_t(-1));
+            if (mpIdx != size_t(-1)) {
+                auto mp = std::get<std::shared_ptr<MappingValue>>(args[mpIdx]);
+                size_t keyIdx = mpIdx == 0 ? 1 : 0;
+                if (name == "express_set") {
+                    mp->insert(args[keyIdx], args[2]);
+                } else if (name == "express_add") {
+                    Value* hit = mp->find(args[keyIdx]);
+                    Value nv = !hit ? args[2] : make_int(as_int(*hit) + as_int(args[2]));
+                    mp->insert(args[keyIdx], nv);
+                } else if (name == "express_delete") {
+                    mp->erase(args[keyIdx]);
+                }
+                return make_int(1);
+            }
+        }
+        return make_int(0);
+    }
+    if (name == "express_query") {
+        // vm_f_express_query (0x80d6124): express_query(mapping, path) ->
+        // mapping[path], or undefined when absent.
+        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_MEMBER"))
+            std::cerr << "[expr-q] type=" << (args.empty() ? -1 : static_cast<int>(args[0].index()))
+                      << " key=" << (args.size() >= 2 ? as_string(args[1]).substr(0, 24) : "") << "\n";
+        if (args.size() >= 2) {
+            // The compiler's push order differs per efun; the mapping may be
+            // args[0] or args[1].  Accept either.
+            const Value* mpv = nullptr;
+            const Value* keyv = nullptr;
+            if (args[0].index() == 6) { mpv = &args[0]; keyv = &args[1]; }
+            else if (args[1].index() == 6) { mpv = &args[1]; keyv = &args[0]; }
+            if (mpv) {
+                auto mp = std::get<std::shared_ptr<MappingValue>>(*mpv);
+                const Value* hit = mp->find(*keyv);
+                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_MEMBER")) {
+                    std::cerr << "[expr-q] key=" << (keyv ? as_string(*keyv).substr(0, 32) : "?")
+                              << " size=" << mp->items().size()
+                              << " hit=" << (hit ? "YES" : "NO")
+                              << (hit ? " val=" + to_string(*hit, false).substr(0, 40) : "") << "\n";
+                }
+                if (hit) return *hit;
+            }
+        }
+        return UndefinedTag{};
     }
     if (name == "query_temp" || name == "query") return make_int(0);
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
@@ -2038,6 +2096,74 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             int64_t msgNo = as_int(args[0]);
             Value values = (args.size() >= 2) ? args[1] : Value(UndefinedTag{});
             return make_string(lpc::pktPadInterface(static_cast<uint16_t>(msgNo), values));
+        }
+        return make_string("");
+    }
+    if (name == "pkt_pad_buffer") {
+        // vm_f_pkt_pad_buffer (0x80e2428): serialize each argument per
+        // vm_pktPadVariable's value-type encoding and concatenate:
+        //   int  -> u16 big-endian
+        //   float-> 4 raw bytes
+        //   string/buffer -> u8 length + bytes (max 255)
+        //   array-> each element padded recursively (no implicit count)
+        //   undefined/null -> 2 zero bytes
+        std::string out;
+        std::function<void(const Value&)> pad = [&](const Value& v) {
+            switch (v.index()) {
+            case 2: {
+                uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
+                out.push_back(static_cast<char>((u >> 8) & 0xFF));
+                out.push_back(static_cast<char>(u & 0xFF));
+                break;
+            }
+            case 3: {
+                float f = static_cast<float>(std::get<double>(v));
+                uint32_t u = 0;
+                std::memcpy(&u, &f, 4);
+                for (int k = 0; k < 4; ++k) out.push_back(static_cast<char>((u >> (8 * k)) & 0xFF));
+                break;
+            }
+            case 4: {
+                const std::string& s = std::get<std::string>(v);
+                size_t n = s.size();
+                if (n > 255) n = 255;
+                out.push_back(static_cast<char>(n));
+                out.append(s.data(), n);
+                break;
+            }
+            case 5: {
+                auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+                for (const auto& e : arr->items) pad(e);
+                break;
+            }
+            default:
+                out.push_back(0);
+                out.push_back(0);
+                break;
+            }
+        };
+        for (const auto& a : args) pad(a);
+        return make_string(out);
+    }
+    if (name == "pkt_pad_field") {
+        // pkt_pad_field(field_type, value): encode one named-type field.  Used
+        // rarely; fall back to the same value-type encoding as pkt_pad_buffer.
+        if (args.size() >= 2) {
+            std::string out;
+            std::function<void(const Value&)> pad = [&](const Value& v) {
+                if (v.index() == 2) {
+                    uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
+                    out.push_back(static_cast<char>((u >> 8) & 0xFF));
+                    out.push_back(static_cast<char>(u & 0xFF));
+                } else if (v.index() == 4) {
+                    const std::string& s = std::get<std::string>(v);
+                    size_t n = s.size(); if (n > 255) n = 255;
+                    out.push_back(static_cast<char>(n));
+                    out.append(s.data(), n);
+                } else { out.push_back(0); out.push_back(0); }
+            };
+            pad(args[1]);
+            return make_string(out);
         }
         return make_string("");
     }
