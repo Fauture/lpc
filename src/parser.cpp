@@ -44,7 +44,20 @@ Token Parser::expect(Tok k, const std::string& what) {
 }
 std::string Parser::parseType() {
     if (!atType()) throw std::runtime_error("expected type at line " + std::to_string(cur().line));
-    return advance().text;
+    std::string t = advance().text;
+    // LPC array shorthand: int*, string*, ... (also `int *` with space)
+    while (at(Tok::Star) || at(Tok::LBracket)) {
+        if (match(Tok::Star)) {
+            if (t != "array") t += "*";
+            continue;
+        }
+        // old-style `int [n]` or `int []`
+        advance();
+        if (match(Tok::Number)) { /* dimension size, ignored */ }
+        expect(Tok::RBracket, "']'");
+        t += "*";
+    }
+    return t;
 }
 std::vector<std::string> Parser::parseModifiers() {
     std::vector<std::string> mods;
@@ -103,10 +116,30 @@ Program Parser::parseProgram() {
                 prog.functions.push_back(std::move(fn));
                 continue;
             }
-            // Global variable declaration: type name [, name]* ;
+            // Global variable declaration: type name [= init] [, name [= init]]* ;
             while (true) {
                 std::string name = expect(Tok::Ident, "global variable name").text;
+                ExprPtr init;
+                if (match(Tok::Assign)) init = parseAssignment();
                 prog.globalVars.emplace_back(name, type);
+                if (init) {
+                    // Treat the initializer as a top-level assignment so the
+                    // global runs during program load, like the original
+                    // driver's init code segment.
+                    auto lhs = std::make_shared<Expr>();
+                    lhs->kind = Expr::Kind::Ident;
+                    lhs->line = init->line;
+                    lhs->text = name;
+                    auto st = std::make_shared<Expr>();
+                    st->kind = Expr::Kind::Assign;
+                    st->line = init->line;
+                    st->op = "=";
+                    st->lhs = lhs;
+                    st->rhs = init;
+                    prog.globalBody.push_back(std::make_shared<Stmt>(
+                        Stmt{Stmt::Kind::Expr, init->line, st, {}, "", {}, nullptr,
+                             nullptr, nullptr, nullptr, nullptr, "", {}, {}, false}));
+                }
                 if (!match(Tok::Comma)) break;
                 if (atType()) type = parseType();
             }
@@ -589,6 +622,7 @@ StmtPtr Parser::parseStatement() {
     if (at(Tok::KwDo)) return parseDoWhile();
     if (at(Tok::KwFor)) return parseFor();
     if (at(Tok::KwLoop)) return parseLoop();
+    if (at(Tok::KwForeach)) return parseForeach();
     if (at(Tok::KwSwitch)) return parseSwitch();
     if (at(Tok::KwReturn)) return parseReturn();
     if (at(Tok::KwTry)) return parseTryCatch();
@@ -709,6 +743,21 @@ StmtPtr Parser::parseFor() {
         es->expr = parseExpression();
         s->incStmt = es;
     }
+    expect(Tok::RParen, "')'");
+    s->thenStmt = parseStatement();
+    return s;
+}
+
+StmtPtr Parser::parseForeach() {
+    // foreach (x in expr) stmt  — identical shape to v37 `loop (x in expr)`.
+    expect(Tok::KwForeach, "'foreach'");
+    expect(Tok::LParen, "'('");
+    auto s = std::make_shared<Stmt>();
+    s->kind = Stmt::Kind::Loop;
+    s->line = cur().line;
+    s->loopVar = expect(Tok::Ident, "loop variable").text;
+    expect(Tok::KwIn, "'in'");
+    s->cond = parseExpression();
     expect(Tok::RParen, "')'");
     s->thenStmt = parseStatement();
     return s;

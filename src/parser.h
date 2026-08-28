@@ -56,6 +56,7 @@ private:
     StmtPtr parseWhile();
     StmtPtr parseDoWhile();
     StmtPtr parseFor();
+    StmtPtr parseForeach();
     StmtPtr parseLoop();
     StmtPtr parseSwitch();
     StmtPtr parseReturn();

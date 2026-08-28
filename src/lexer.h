@@ -14,7 +14,7 @@ enum class Tok {
     Eq, Ne, Lt, Gt, Le, Ge,
     AndAnd, OrOr, Not, BitAnd, BitOr, BitXor, BitNot, Shl, Shr,
     Dot, Ellipsis, EllipsisLt, DollarLess,
-    KwIf, KwElse, KwWhile, KwDo, KwFor, KwLoop, KwIn, KwSwitch, KwCase, KwDefault,
+    KwIf, KwElse, KwWhile, KwDo, KwFor, KwForeach, KwLoop, KwIn, KwSwitch, KwCase, KwDefault,
     KwBreak, KwContinue, KwReturn, KwCatch, KwTry, KwInherit,
     KwUndefined, KwNil, KwNew, KwTrue, KwFalse,
     KwVoid, KwInt, KwFloat, KwString, KwMixed, KwArray, KwMapping, KwObject, KwBuffer, KwFunction,

@@ -41,6 +41,12 @@ void Lexer::skipSpaceAndComments() {
         char c = peek();
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
             get();
+        } else if (static_cast<unsigned char>(c) == 0xEF &&
+                   pos_ + 2 < src_.size() &&
+                   static_cast<unsigned char>(src_[pos_ + 1]) == 0xBB &&
+                   static_cast<unsigned char>(src_[pos_ + 2]) == 0xBF) {
+            // UTF-8 BOM at the start of the file
+            get(); get(); get();
         } else if (c == '/' && peek(1) == '/') {
             while (pos_ < src_.size() && peek() != '\n') get();
         } else if (c == '/' && peek(1) == '*') {
@@ -190,6 +196,7 @@ std::vector<Token> Lexer::tokenize() {
             static const struct { const char* name; Tok tok; } kw[] = {
                 {"if", Tok::KwIf}, {"else", Tok::KwElse}, {"while", Tok::KwWhile}, {"do", Tok::KwDo},
                 {"for", Tok::KwFor}, {"loop", Tok::KwLoop}, {"in", Tok::KwIn},
+                {"foreach", Tok::KwForeach},
                 {"switch", Tok::KwSwitch}, {"case", Tok::KwCase}, {"default", Tok::KwDefault},
                 {"break", Tok::KwBreak}, {"continue", Tok::KwContinue}, {"return", Tok::KwReturn},
                 {"catch", Tok::KwCatch}, {"try", Tok::KwTry}, {"inherit", Tok::KwInherit}, {"undefined", Tok::KwUndefined},

@@ -398,6 +398,14 @@ Value Interpreter::evalBinary(const std::string& op, const Value& a, const Value
     if (op == "&&") return make_int(is_truthy(a) && is_truthy(b) ? 1 : 0);
     if (op == "||") return make_int(is_truthy(a) || is_truthy(b) ? 1 : 0);
     if (op == "+") {
+        if (a.index() == 5 && b.index() == 5) {
+            // LPC array concatenation: a + b
+            auto arr = std::make_shared<ArrayValue>();
+            arr->items = std::get<std::shared_ptr<ArrayValue>>(a)->items;
+            const auto& bv = std::get<std::shared_ptr<ArrayValue>>(b)->items;
+            arr->items.insert(arr->items.end(), bv.begin(), bv.end());
+            return arr;
+        }
         if (a.index() == 4 || b.index() == 4) return make_string(as_string(a) + as_string(b));
         if (a.index() == 3 || b.index() == 3) return make_float(as_float(a) + as_float(b));
         return make_int(as_int(a) + as_int(b));

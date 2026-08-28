@@ -1,12 +1,15 @@
 #include "original_vm.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -500,8 +503,8 @@ class OriginalVm {
 public:
     explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
         : obj_(obj), searchRoot_(std::move(searchRoot)) {
-        objVars_.resize(obj.globalVarCount);
-        for (auto& g : objVars_) g = make_int(0);
+        objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj.globalVarCount));
+        for (auto& g : *objVars_) g = make_int(0);
         for (const auto& fn : obj.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
         }
@@ -515,7 +518,11 @@ public:
         if (it == funcsByIndex_.end()) return "";
         return it->second->name;
     }
-    std::vector<Value>& objVars() { return objVars_; }
+    std::vector<Value>& objVars() { return *objVars_; }
+    // Point this VM's instance-variable storage at another VM's (original
+    // create_thread semantics: the thread shares the creator's thisObject,
+    // so writes to instance vars are visible to other threads/callers).
+    void shareObjVars(OriginalVm* other) { objVars_ = other->objVars_; }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
         for (const auto& fn : obj_.functions) {
@@ -614,7 +621,7 @@ private:
     std::string objName_;
     std::string searchRoot_;
     std::vector<StackItem> stack_;
-    std::vector<Value> objVars_;    // per-object instance variables
+    std::shared_ptr<std::vector<Value>> objVars_;  // per-object instance variables (shared across threads of the same object)
     std::vector<Frame> frames_;
     std::map<int, const OriginalFunction*> funcsByIndex_;
     std::vector<std::shared_ptr<OriginalFunction>> inheritedFuncs_;  // owned copies of merged parents
@@ -733,7 +740,7 @@ private:
             return sharedGlobal(ref.globalIndex);
         }
         if (ref.objIndex >= 0) {
-            if (static_cast<size_t>(ref.objIndex) < objVars_.size()) return objVars_[ref.objIndex];
+            if (static_cast<size_t>(ref.objIndex) < objVars_->size()) return (*objVars_)[ref.objIndex];
             return make_int(0);
         }
         if (ref.arr) {
@@ -785,7 +792,7 @@ private:
         } else if (target->globalIndex >= 0) {
             sharedGlobal(target->globalIndex) = v;
         } else if (target->objIndex >= 0) {
-            if (static_cast<size_t>(target->objIndex) < objVars_.size()) objVars_[target->objIndex] = v;
+            if (static_cast<size_t>(target->objIndex) < objVars_->size()) (*objVars_)[target->objIndex] = v;
         } else if (target->arr) {
             int64_t i = toInt(target->key);
             auto& items = target->arr->items;
@@ -943,17 +950,72 @@ private:
                 if (isTelnetThread && !threadArgs.empty() && threadArgs[0].index() == 2) {
                     telnetCno = static_cast<int>(std::get<int64_t>(threadArgs[0]));
                 }
-                std::thread([objPtr, funName, threadArgs, root, isTelnetThread, telnetCno,
+                // configd's update_config_daemon performs the first config load
+                // (aaa/ccs/... tables from MySQL).  In the original driver the
+                // cooperative scheduler ran it before the master's post_init(),
+                // so do_init callbacks always saw populated config.  Our real
+                // threads can finish update_config AFTER post_init starts,
+                // making do_init's "等待取回数据" retry loop print (it only
+                // prints while MySQL data is not yet fetched).  Synchronously
+                // run the FIRST update_config() on the owner's shared VM here
+                // so the data is fetched before post_init - the daemon thread
+                // still re-runs update_config() every 180s as usual, so this
+                // does not change the loop semantics, only the ordering.
+                if (funName == "update_config_daemon") {
+                    std::shared_ptr<OriginalVm> ownerVm;
+                    {
+                        auto& reg = objectRegistry();
+                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                        for (auto& kv : reg.vms) {
+                            if (&kv.second->object() == owner) { ownerVm = kv.second; break; }
+                        }
+                    }
+                    if (ownerVm) {
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[config] sync first update_config before post_init\n";
+                        try {
+                            ownerVm->callFunctionByName("update_config", {});
+                        } catch (const std::exception& e) {
+                            std::cerr << "[config] sync update_config error: " << e.what() << "\n";
+                        } catch (...) {
+                        }
+                    }
+                }
+                std::thread([objPtr, owner, funName, threadArgs, root, isTelnetThread, telnetCno,
                              objVarsSnapshot = std::move(objVarsSnapshot)]() {
                     if (isTelnetThread && telnetCno >= 0)
                         setThreadTelnetClient(telnetCno);
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[thread] run " << funName << " args=" << threadArgs.size() << "\n";
+                    // The original driver's create_thread shares the creator's
+                    // thisObject: the new PCB runs on the same object, so
+                    // instance variables (configd's config_list, etc.) are
+                    // shared with the creator and with other threads of the
+                    // same object.  Each process still has its OWN stack /
+                    // frame context, so we run on a fresh VM whose objVars
+                    // SHARE the owner's objVars storage instead of copying.
                     try {
                         OriginalVm vm(*objPtr, root);
-                        auto& dst = vm.objVars();
-                        if (dst.size() < objVarsSnapshot.size()) dst.resize(objVarsSnapshot.size());
-                        for (size_t i = 0; i < objVarsSnapshot.size(); ++i) dst[i] = objVarsSnapshot[i];
+                        // Share the owner's instance-variable storage: point
+                        // this VM's objVars at the registry owner's vector so
+                        // update_config() writes are visible to get_my_info()
+                        // callers (post_init do_init etc.).
+                        {
+                            auto& reg = objectRegistry();
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            for (auto& kv : reg.vms) {
+                                if (&kv.second->object() == owner) {
+                                    vm.shareObjVars(kv.second.get());
+                                    break;
+                                }
+                            }
+                        }
+                        // First update_config_daemon iteration populates the
+                        // shared config tables; post_init's do_init callbacks
+                        // wait for that data with their own retry loops
+                        // (while(!is_mapping) sleep(3)) exactly like the
+                        // original driver - they only keep printing when the
+                        // MySQL data cannot be fetched, not due to a race.
                         vm.callFunctionByName(funName, threadArgs);
                     } catch (const TelnetClosedError&) {
                         // Client disconnected: end the daemon thread quietly
@@ -1288,7 +1350,7 @@ private:
                 pushValue(sharedGlobal(in.a));
                 break;
             case 61: // push_obj_var
-                if (in.a < objVars_.size()) pushValue(objVars_[in.a]);
+                if (in.a < objVars_->size()) pushValue((*objVars_)[in.a]);
                 else pushValue(make_int(0));
                 break;
             case 54: // push_global_vptr
@@ -1325,7 +1387,7 @@ private:
                 sharedGlobal(in.a) = pop().value;
                 break;
             case 78: // set_obj_var
-                if (in.a < objVars_.size()) objVars_[in.a] = pop().value;
+                if (in.a < objVars_->size()) (*objVars_)[in.a] = pop().value;
                 else pop();
                 break;
             case 77: // set_local_var
@@ -2240,14 +2302,22 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             auto it = reg.vms.find(c);
             if (it != reg.vms.end()) existing = it->second;
         }
-        if (existing) return existing->callFunctionByName(funName, args);
+        if (existing) {
+            if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
+                std::cerr << "[call_other] -> " << c << " (exact)\n";
+            return existing->callFunctionByName(funName, args);
+        }
     }
     // Suffix match (covers registry keys stored with a different root, e.g.
     // absolute pak paths) - mirrors findObjectInRegistry's resolution.
     {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
         for (auto& kv : reg.vms) {
-            if (hasSuffix(kv.first, rel)) return kv.second->callFunctionByName(funName, args);
+            if (hasSuffix(kv.first, rel)) {
+                if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
+                    std::cerr << "[call_other] -> " << kv.first << " (suffix)\n";
+                return kv.second->callFunctionByName(funName, args);
+            }
         }
     }
     // The original driver does NOT auto-load objects on call_other: an

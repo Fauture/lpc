@@ -1,4 +1,4 @@
-﻿#include "builtins.h"
+#include "builtins.h"
 #include "efun_table.h"
 
 #include "o_loader.h"
@@ -1978,8 +1978,59 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "mysql_bind_parameters") {
+        // vm_f_mysql_bind_parameters (0x81703b0): replace every '?' in the
+        // statement with the next parameter, formatting per type:
+        //   undefined/null -> '' (empty quoted string)
+        //   int            -> %d  (no quotes)
+        //   float          -> %g  (no quotes)
+        //   string         -> 'escaped' (single quotes, mysql escaping)
+        // The result is a new SQL string (not a prepared statement).
         if (args.empty()) return make_int(0);
-        return args[0];
+        std::string sql = as_string(args[0]);
+        std::string out;
+        out.reserve(sql.size() + 32);
+        size_t param = 1;  // args[0] is the statement
+        for (size_t i = 0; i < sql.size(); ++i) {
+            char c = sql[i];
+            if (c != '?') {
+                out += c;
+                continue;
+            }
+            if (param >= args.size()) {
+                // Too few parameters: keep the placeholder (original errors).
+                out += c;
+                continue;
+            }
+            const Value& p = args[param++];
+            switch (p.index()) {
+            case 2:  // int
+                out += std::to_string(std::get<int64_t>(p));
+                break;
+            case 3: {  // float
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%g", std::get<double>(p));
+                out += buf;
+                break;
+            }
+            case 4: {  // string, single-quoted with escaping
+                const std::string& s = std::get<std::string>(p);
+                out += '\'';
+                for (char sc : s) {
+                    if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
+                        sc == '\0' || sc == '\x1a' || sc == '"') {
+                        out += '\\';
+                    }
+                    out += sc;
+                }
+                out += '\'';
+                break;
+            }
+            default:  // undefined / null / others -> empty quoted string
+                out += "''";
+                break;
+            }
+        }
+        return make_string(out);
     }
     if (name == "mysql_select") {
         if (args.size() < 2) return make_array();
