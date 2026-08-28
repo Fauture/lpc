@@ -318,22 +318,39 @@ int runPakOriginal(const std::string& path) {
         return 1;
     }
     std::string absPak = fs::absolute(fs::path(path)).string();
-    std::string prefix = "/aaa/pack_data/" + fs::path(path).filename().string();
+    std::string pakFile = fs::path(path).filename().string();
+
+    // Per-project profile (runaaa vs rundba).  The boot object, the extracted
+    // .o tree, the run directory and the pak mount prefix all differ.
+    std::string objPrefix = "aaa";
+    std::string bootRel = "aaa/start_aaa.o";
+    std::string vfsRoot = "linux/aaa - bak";
+    std::string dataRoot = "linux/aaa";
+    std::string etcDir = "linux/etc";
+    if (pakFile.find("dba") != std::string::npos) {
+        objPrefix = "dba";
+        bootRel = "dba/start_dba.o";
+        vfsRoot = "linux/dba/pack_data/lib_dba32";
+        dataRoot = "linux";
+        etcDir = "linux/dba/pack_data/etc";
+    }
+    std::string pakPrefix = "/" + objPrefix + "/pack_data/";
+    std::string prefix = pakPrefix + pakFile;
+    lpc::setVfsProfile(vfsRoot, dataRoot, etcDir, pakPrefix, objPrefix);
     lpc::setPakMount(absPak, prefix);
 
-    // Boot object: <pak>/aaa/start_aaa.o (runaaa -e argument).
+    // Boot object: <pak>/<objPrefix>/start_<objPrefix>.o (runaaa/rundba -e).
     lpc::OriginalObject obj;
     std::vector<uint8_t> bootBytes;
-    bool fromPak = lpc::pakReadFile(prefix + "/aaa/start_aaa.o", bootBytes);
+    bool fromPak = lpc::pakReadFile(prefix + "/" + bootRel, bootBytes);
     if (fromPak) {
         obj = lpc::loadOriginalObjectFromBytes(bootBytes);
-        std::cout << "Loaded boot object from pak: " << prefix << "/aaa/start_aaa.o\n";
+        std::cout << "Loaded boot object from pak: " << prefix << "/" << bootRel << "\n";
     } else {
-        std::string root = "linux/aaa - bak";
-        std::string oPath = root + "/aaa/start_aaa.o";
+        std::string oPath = vfsRoot + "/" + bootRel;
         if (!fs::exists(oPath, ec)) {
-            std::cerr << "Missing boot object (pak has no aaa/start_aaa.o and no "
-                      << oPath << ")\n";
+            std::cerr << "Missing boot object (pak has no " << bootRel
+                      << " and no " << oPath << ")\n";
             return 1;
         }
         obj = lpc::loadOriginalObject(oPath);
@@ -344,7 +361,7 @@ int runPakOriginal(const std::string& path) {
               << " globalNodes=" << obj.globalCode.size() << "\n";
     // The extracted tree stays as the fallback data root (it mirrors the pak
     // contents for any path the pak itself cannot serve).
-    std::string root = "linux/aaa - bak";
+    std::string root = vfsRoot;
     int rc = lpc::runOriginalObject(obj, std::cout, root);
     std::cout.flush();
 

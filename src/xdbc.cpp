@@ -29,6 +29,14 @@ std::string asStr(const Value& v) {
     default: return "";
     }
 }
+void ensureWsa() {
+    static bool done = [] {
+        WSADATA wsa{};
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        return true;
+    }();
+    (void)done;
+}
 int64_t toInt64(const Value& v) {
     switch (v.index()) {
     case 2: return std::get<int64_t>(v);
@@ -38,6 +46,7 @@ int64_t toInt64(const Value& v) {
     }
 }
 uintptr_t realTcpConnect(const std::string& host, int port) {
+    ensureWsa();
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return 0;
     sockaddr_in addr{};
@@ -280,6 +289,15 @@ std::string saveValueAscii(const Value& v) {
         return "U";
     case 8:
         return "U";
+    case 10: {
+        // buffer -> ":HEX:"
+        const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+        static const char* hex = "0123456789ABCDEF";
+        std::string out = ":";
+        for (unsigned char c : s) { out += hex[c >> 4]; out += hex[c & 0xF]; }
+        out += ":";
+        return out;
+    }
     default:
         return "0";
     }
@@ -803,6 +821,15 @@ bool xdbcSocketExists(int fd) {
     std::lock_guard<std::mutex> lk(socketsMutex());
     auto it = socketTable().find(fd);
     return it != socketTable().end() && it->second.used;
+}
+
+uintptr_t xdbcDetachSocket(int fd) {
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used) return 0;
+    uintptr_t s = it->second.realSock;
+    socketTable().erase(it);
+    return s;
 }
 
 } // namespace lpc

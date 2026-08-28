@@ -19,6 +19,18 @@ struct TelnetClosedError : std::runtime_error {
 
 Value call_builtin(Interpreter* interp, const std::string& name, const std::vector<Value>& args);
 
+// Select the per-project path profile used by vfsRoot()/dataRoot()/etcRoot()
+// and the virtual-path resolution inside read_file/read_ini/load_object.
+// Called by runPakOriginal() from the pak path before running the master.
+// Empty fields keep the current value.
+void setVfsProfile(const std::string& vfsRoot, const std::string& dataRoot,
+                   const std::string& etcDir, const std::string& pakPrefix,
+                   const std::string& objPrefix);
+
+// The active project's object prefix ("aaa" or "dba").  Used by the object
+// loader to try "<objPrefix>/x" and "x" variants of a virtual path.
+std::string vfsObjPrefix();
+
 // vm_interSscanf (0x8109908): C-style sscanf.  Parses input against fmt,
 // appends one output Value per conversion (in order) to `out`, and returns the
 // number of successful conversions.  Supports %s %d %u %x %c %f %* (suppress)
@@ -56,5 +68,12 @@ int64_t queueResolveId(const Value& v);
 // Block until an element is available or timeoutMs elapses (timeoutMs < 0 =
 // forever).  Returns the element; `ok` is false on timeout / missing queue.
 Value queueReceive(int64_t qid, int timeoutMs, bool& ok);
+// True when no function closure is currently in flight on a driver queue (all
+// dispatched services have been received AND invoked to completion).  The game
+// accept thread polls this before feeding a packet so a dispatched
+// _check_client_data finishes its lite_set_temp("antibot_answer") before the
+// client's next packet is dispatched (preserves the original cooperative
+// scheduler's reply-then-cleanup ordering).
+bool serviceQueueIdle();
 
 } // namespace lpc

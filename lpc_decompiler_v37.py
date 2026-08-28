@@ -463,6 +463,10 @@ def extract_default_args(insts, min_arg, nargs, str_table):
             fv = struct.unpack('<f', struct.pack('<i', raw))[0]
             s = ("%.6f" % fv).rstrip('0').rstrip('.')
             vals.append(s if s else "0")
+        elif an == 22 and p16 == 0:  # new_array(elems=0) -> ({ })
+            vals.append("({ })")
+        elif an == 24 and p16 == 0:  # new_mapping(pairs=0) -> ([ ])
+            vals.append("([ ])")
         # an == 71 (resort) and other non-push opcodes: skip
         i += 1
     for j, v in enumerate(vals):
@@ -3709,9 +3713,23 @@ class PseudoGenV37:
             _k = ni + 1
             while _ins is not None and _k < len(_ins) and _ins[_k][0] in (0, 29, 46):
                 _k += 1
-            if (_ins is not None and _k < len(_ins)
-                    and _ins[_k][0] not in (50, 51)):
-                if _ins[_k][0] in (5, 6, 7, 8, 36, 45):
+            _next_an = _ins[_k][0] if (_ins is not None and _k < len(_ins)) else None
+            _next_p16 = _ins[_k][1] if (_ins is not None and _k < len(_ins) and len(_ins[_k]) > 1) else 0
+            _next_p8 = _ins[_k][2] if (_ins is not None and _k < len(_ins) and len(_ins[_k]) > 2) else 0
+            # Some opcodes do NOT consume the assigned value even though they
+            # are not pop/pop_n. For example `new_func` with no captured args
+            # pushes a fresh closure without touching the assignment result.
+            # If we inline such an assignment and a later pop_n discards the
+            # expression, the whole assignment is lost from the output.
+            _assignment_consumed = _next_an not in (50, 51)
+            if _next_an == 23 and (_next_p8 & 0x3F) == 0:
+                _assignment_consumed = False
+            elif _next_an == 22 and _next_p16 == 0:
+                _assignment_consumed = False
+            elif _next_an == 24 and _next_p16 == 0:
+                _assignment_consumed = False
+            if (_ins is not None and _k < len(_ins) and _assignment_consumed):
+                if _next_an in (5, 6, 7, 8, 36, 45):
                     self._push("%s = %s" % (var, val))
                 else:
                     self._push("(%s = %s)" % (var, val))

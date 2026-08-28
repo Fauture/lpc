@@ -304,6 +304,11 @@ std::vector<std::pair<Value, Value>> MappingValue::items() const {
 Value make_int(int64_t v) { return v; }
 Value make_float(double v) { return v; }
 Value make_string(std::string s) { return std::move(s); }
+Value make_buffer(std::string data) {
+    auto b = std::make_shared<BufferValue>();
+    b->data = std::move(data);
+    return b;
+}
 Value make_array() { return std::make_shared<ArrayValue>(); }
 Value make_mapping() { return std::make_shared<MappingValue>(); }
 Value make_object(std::string programName) {
@@ -335,6 +340,8 @@ std::string value_type_name(const Value& v) {
     case 6: return "mapping";
     case 7: return "object";
     case 8: return "function";
+    case 9: return "loop";
+    case 10: return "buffer";
     default: return "unknown";
     }
 }
@@ -405,6 +412,14 @@ std::string to_string(const Value& v, bool quote_strings) {
         out += ")>";
         return out;
     }
+    case 10: {
+        const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+        static const char* hex = "0123456789ABCDEF";
+        std::string out = ":";
+        for (unsigned char c : s) { out += hex[c >> 4]; out += hex[c & 0xF]; }
+        out += ":";
+        return out;
+    }
     default: return "<?>";
     }
 }
@@ -420,6 +435,7 @@ bool is_truthy(const Value& v) {
     case 6: return !std::get<std::shared_ptr<MappingValue>>(v)->empty();
     case 7: return true;
     case 8: return true;
+    case 10: return !std::get<std::shared_ptr<BufferValue>>(v)->data.empty();
     default: return false;
     }
 }
@@ -470,6 +486,8 @@ bool value_equal(const Value& a, const Value& b) {
             if (!value_equal(ca.boundArgs[i], cb.boundArgs[i])) return false;
         return true;
     }
+    case 10: return std::get<std::shared_ptr<BufferValue>>(a)->data ==
+                     std::get<std::shared_ptr<BufferValue>>(b)->data;
     default: return false;
     }
 }

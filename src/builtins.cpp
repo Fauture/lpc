@@ -165,6 +165,10 @@ QueueRegistry& queueRegistry() {
     return r;
 }
 
+// Number of function closures currently dispatched on a queue but not yet
+// fully invoked (see queueSend/queueReceive).  serviceQueueIdle() reads it.
+static std::atomic<int64_t> g_pendingServices{0};
+
 // Resolve a queue reference: an int is a qid directly; a string is a queue
 // name registered by create_queue (vm_lookupPendObject path).  Returns -1 if
 // unknown.
@@ -181,11 +185,46 @@ int64_t resolveQidLocked(const Value& v) {
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Per-project path profile (vfsRoot/dataRoot/etcRoot/pak mount prefix).
+// Selected once in runPakOriginal() from the pak path (aaa vs dba).
+// ---------------------------------------------------------------------------
+struct VfsProfile {
+    std::string vfsRoot = "linux/aaa - bak";   // extracted .o tree root
+    std::string dataRoot = "linux/aaa";        // run/data directory (ini, pak)
+    std::string etcDir = "linux/etc";          // unpacked etc directory
+    std::string pakPrefix = "/aaa/pack_data/"; // virtual pak mount prefix
+    std::string objPrefix = "aaa";             // "/<objPrefix>/..." object prefix
+};
+VfsProfile& vfsProfile() {
+    static VfsProfile p;
+    return p;
+}
+
+void setVfsProfile(const std::string& vfsRoot, const std::string& dataRoot,
+                   const std::string& etcDir, const std::string& pakPrefix,
+                   const std::string& objPrefix) {
+    VfsProfile& p = vfsProfile();
+    if (!vfsRoot.empty()) p.vfsRoot = vfsRoot;
+    if (!dataRoot.empty()) p.dataRoot = dataRoot;
+    if (!etcDir.empty()) p.etcDir = etcDir;
+    if (!pakPrefix.empty()) p.pakPrefix = pakPrefix;
+    if (!objPrefix.empty()) p.objPrefix = objPrefix;
+}
+
+std::string vfsObjPrefix() {
+    return vfsProfile().objPrefix;
+}
+
 // Public queue-reference resolver (used by the efun wrappers in this file and
 // by the VM's call_in_efun path in original_vm.cpp).
 int64_t queueResolveId(const Value& v) {
     std::lock_guard<std::mutex> lk(queueRegistry().mtx);
     return resolveQidLocked(v);
+}
+
+bool serviceQueueIdle() {
+    return g_pendingServices.load(std::memory_order_acquire) == 0;
 }
 
 int64_t queueCreate(int64_t qid, const std::string& name) {
@@ -206,6 +245,7 @@ bool queueSend(int64_t qid, const Value& v) {
         q = it->second;
         q->items.push_back(v);
     }
+    if (v.index() == 8) g_pendingServices.fetch_add(1, std::memory_order_acq_rel);
     reg.cv.notify_all();
     return true;
 }
@@ -224,6 +264,14 @@ void queueDelete(int64_t qid) {
 Value queueReceive(int64_t qid, int timeoutMs, bool& ok) {
     auto& reg = queueRegistry();
     ok = false;
+    // The daemon loop is receive -> invoke -> receive -> ...  A receive that
+    // follows a closure receive means that closure was invoked to completion,
+    // so release its in-flight count now.
+    static thread_local bool prevWasClosure = false;
+    if (prevWasClosure) {
+        g_pendingServices.fetch_sub(1, std::memory_order_acq_rel);
+        prevWasClosure = false;
+    }
     std::shared_ptr<DriverQueue> q;
     {
         std::lock_guard<std::mutex> lk(reg.mtx);
@@ -233,6 +281,7 @@ Value queueReceive(int64_t qid, int timeoutMs, bool& ok) {
         if (!q->items.empty()) {
             Value v = std::move(q->items.front());
             q->items.pop_front();
+            if (v.index() == 8) prevWasClosure = true;
             ok = true;
             return v;
         }
@@ -251,6 +300,7 @@ Value queueReceive(int64_t qid, int timeoutMs, bool& ok) {
     if (q->destroyed) return make_int(0);
     Value v = std::move(q->items.front());
     q->items.pop_front();
+    if (v.index() == 8) prevWasClosure = true;
     ok = true;
     return v;
 }
@@ -268,7 +318,10 @@ int64_t as_int(const Value& v) {
     }
 }
 
-std::string as_string(const Value& v) { return to_string(v, false); }
+std::string as_string(const Value& v) {
+    if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+    return to_string(v, false);
+}
 
 std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
     std::string out;
@@ -412,18 +465,18 @@ bool mysqlExecReal(int cno, const std::string& sql, MysqlClient::Result& out, st
 
 std::string vfsRoot() {
     std::error_code ec;
+    const std::string& pr = vfsProfile().vfsRoot;
+    if (fs::exists(pr, ec)) return pr;
     if (fs::exists("linux/aaa - bak", ec)) return "linux/aaa - bak";
     if (fs::exists("out/game", ec)) return "out/game";
     return "out/lib_aaa32";
 }
 
-// The driver's run directory.  The original driver was started from the game
-// directory (see linux/aaa/runaaa: "./magic_Linux32 /r ./ ..."), so virtual
-// paths like "/aaa/aaa.ini" and "/aaa/pack_data/etc.pak" resolve relative to
-// that directory, NOT to the extracted .o tree (linux/aaa - bak) which only
-// holds object files.  "/aaa/x" -> <runDir>/aaa/x.
+// The driver's run directory (see above).  "/<objPrefix>/x" -> <runDir>/x.
 std::string dataRoot() {
     std::error_code ec;
+    const std::string& pr = vfsProfile().dataRoot;
+    if (fs::exists(pr, ec)) return pr;
     if (fs::exists("linux/aaa/magic_Linux32", ec) || fs::exists("linux/aaa/runaaa", ec))
         return "linux/aaa";
     if (fs::exists("linux/aaa/aaa", ec)) return "linux/aaa";
@@ -437,6 +490,8 @@ bool hasSuffix(const std::string& s, const std::string& suffix);   // defined be
 // unpacked, so both are supported.
 std::string etcRoot() {
     std::error_code ec;
+    const std::string& pr = vfsProfile().etcDir;
+    if (fs::exists(pr, ec)) return pr;
     if (fs::exists("linux/etc", ec)) return "linux/etc";
     return "";
 }
@@ -684,7 +739,7 @@ std::string resolveVfsPath(const std::string& p) {
     // the extracted .o tree.  The .o tree has no such files, so trying the
     // data root first is unambiguous for them.
     if (hasSuffix(path, ".ini") || path.rfind("pack_data/", 0) == 0 ||
-        path.rfind("aaa/pack_data/", 0) == 0) {
+        path.rfind(vfsProfile().objPrefix + "/pack_data/", 0) == 0) {
         std::string d = dataRoot() + "/" + path;
         std::error_code ec;
         if (fs::exists(d, ec)) {
@@ -712,10 +767,11 @@ std::string readVfsFile(const std::string& vpath) {
             return ss.str();
         }
     }
-    // /aaa/etc/<file> fallback: the unpacked etc dir (same content as the
-    // original etc.pak).
-    if (vpath.rfind("/aaa/etc/", 0) == 0) {
-        std::string name = vpath.substr(10);
+    // /<objPrefix>/etc/<file> fallback: the unpacked etc dir (same content as
+    // the original etc.pak).
+    std::string etcPrefix = "/" + vfsProfile().objPrefix + "/etc/";
+    if (vpath.rfind(etcPrefix, 0) == 0) {
+        std::string name = vpath.substr(etcPrefix.size());
         std::string etc = etcRoot();
         if (!etc.empty()) {
             fs::path alt = etc + "/" + name;
@@ -729,20 +785,21 @@ std::string readVfsFile(const std::string& vpath) {
             }
         }
     }
-    // /aaa/pack_data/<pak>/<entry> fallback: read from the real pak file in
-    // the game data root.
-    static const std::string pakPrefix = "/aaa/pack_data/";
+    // /<objPrefix>/pack_data/<pak>/<entry> fallback: read from the real pak
+    // file in the game data root.
+    std::string pakPrefix = vfsProfile().pakPrefix;
     if (vpath.rfind(pakPrefix, 0) == 0) {
         std::string rest = vpath.substr(pakPrefix.size());
         size_t slash = rest.find('/');
         if (slash != std::string::npos) {
             std::string pakName = rest.substr(0, slash);
             std::string entry = rest.substr(slash + 1);
+            const std::string& op = vfsProfile().objPrefix;
             std::vector<std::string> candidates = {
-                dataRoot() + "/aaa/pack_data/" + pakName,
+                dataRoot() + "/" + op + "/pack_data/" + pakName,
                 dataRoot() + "/pack_data/" + pakName,
                 vfsRoot() + "/pack_data/" + pakName,
-                vfsRoot() + "/aaa/pack_data/" + pakName,
+                vfsRoot() + "/" + op + "/pack_data/" + pakName,
             };
             for (const auto& pakPath : candidates) {
                 if (!fs::is_regular_file(pakPath, ec)) continue;
@@ -1527,6 +1584,53 @@ int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Valu
     return matches;
 }
 
+// vm_padVariable (0x804ea50): serialize one value in the wire "value-type"
+// encoding used by send_to_client/pkt_pad_buffer:
+//   int -> u16 BE; float -> 4 raw bytes; string -> u8 len + bytes (max 255);
+//   buffer (string containing NUL) -> raw bytes; array -> elements; else 2 zeros.
+void padVariableValue(const Value& v, std::string& out) {
+    switch (v.index()) {
+    case 2: {
+        uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
+        out.push_back(static_cast<char>((u >> 8) & 0xFF));
+        out.push_back(static_cast<char>(u & 0xFF));
+        break;
+    }
+    case 3: {
+        float f = static_cast<float>(std::get<double>(v));
+        uint32_t u = 0;
+        std::memcpy(&u, &f, 4);
+        for (int k = 0; k < 4; ++k) out.push_back(static_cast<char>((u >> (8 * k)) & 0xFF));
+        break;
+    }
+    case 4: {
+        const std::string& s = std::get<std::string>(v);
+        if (s.find('\0') != std::string::npos) {
+            out.append(s);  // buffer: raw bytes
+        } else {
+            size_t n = s.size();
+            if (n > 255) n = 255;
+            out.push_back(static_cast<char>(n));
+            out.append(s.data(), n);
+        }
+        break;
+    }
+    case 5: {
+        auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+        for (const auto& e : arr->items) padVariableValue(e, out);
+        break;
+    }
+    case 10: {
+        out.append(std::get<std::shared_ptr<BufferValue>>(v)->data);  // raw bytes
+        break;
+    }
+    default:
+        out.push_back(0);
+        out.push_back(0);
+        break;
+    }
+}
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
@@ -1626,6 +1730,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         else if (name == "islower") r = (c >= 'a' && c <= 'z');
         else r = (c >= 'A' && c <= 'Z');
         return make_int(r ? 1 : 0);
+    }
+    if (name == "stricmp") {
+        // vm_f_stricmp (0x80d7ee0): case-insensitive string compare, returns
+        // -1/0/1 like strcasecmp.  check_account_info relies on
+        //   stricmp(account_info["password"], new_md5password) != 0
+        // to reject a wrong password; returning 0 unconditionally (the old
+        // fallthrough) made EVERY password accepted.
+        if (args.size() >= 2) {
+            const std::string& a = as_string(args[0]);
+            const std::string& b = as_string(args[1]);
+            int r = _stricmp(a.c_str(), b.c_str());
+            return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
+        }
+        return make_int(0);
     }
     if (name == "clone_object") {
         // vm_f_clone_object (0x80f8eac): clone_object(path, createArgs...) clones
@@ -1793,6 +1911,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "query_temp" || name == "query") return make_int(0);
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
     if (name == "destruct_object" || name == "to_be_disconnect") return make_int(1);
+    if (name == "close_client") {
+        // vm_f_close_client (0x804e5d8): close_client(client_no) closes the
+        // client's socket and drops it from the game-service registry.  The
+        // account/agent teardown (comm_connection_disconnect -> ... ->
+        // close_client) relies on this to actually sever the TCP connection.
+        if (!args.empty()) {
+            int clientNo = static_cast<int>(as_int(args[0]));
+            gameServiceDisconnect(clientNo);
+        }
+        return make_int(1);
+    }
     if (name == "is_clone") {
         // vm_f_is_clone: true when the object was created by clone_object
         // (clone registry keys carry a "#<seq>" suffix).  With no argument it
@@ -2104,45 +2233,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_pktPadVariable's value-type encoding and concatenate:
         //   int  -> u16 big-endian
         //   float-> 4 raw bytes
-        //   string/buffer -> u8 length + bytes (max 255)
+        //   string -> u8 length + bytes (max 255); buffer -> raw bytes
         //   array-> each element padded recursively (no implicit count)
         //   undefined/null -> 2 zero bytes
         std::string out;
-        std::function<void(const Value&)> pad = [&](const Value& v) {
-            switch (v.index()) {
-            case 2: {
-                uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
-                out.push_back(static_cast<char>((u >> 8) & 0xFF));
-                out.push_back(static_cast<char>(u & 0xFF));
-                break;
-            }
-            case 3: {
-                float f = static_cast<float>(std::get<double>(v));
-                uint32_t u = 0;
-                std::memcpy(&u, &f, 4);
-                for (int k = 0; k < 4; ++k) out.push_back(static_cast<char>((u >> (8 * k)) & 0xFF));
-                break;
-            }
-            case 4: {
-                const std::string& s = std::get<std::string>(v);
-                size_t n = s.size();
-                if (n > 255) n = 255;
-                out.push_back(static_cast<char>(n));
-                out.append(s.data(), n);
-                break;
-            }
-            case 5: {
-                auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
-                for (const auto& e : arr->items) pad(e);
-                break;
-            }
-            default:
-                out.push_back(0);
-                out.push_back(0);
-                break;
-            }
-        };
-        for (const auto& a : args) pad(a);
+        for (const auto& a : args) padVariableValue(a, out);
         return make_string(out);
     }
     if (name == "pkt_pad_field") {
@@ -2757,36 +2852,57 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "get_all_client_no") {
+        // vm_f_get_all_client_no (0x804d3f8): all live client numbers in the
+        // driver's unified clientInfo[] table (game + bound sockets).
         auto arr = std::make_shared<ArrayValue>();
-        std::lock_guard<std::mutex> lk(telnetMutex());
-        for (auto& kv : telnetClients()) arr->items.push_back(make_int(kv.first));
+        for (int cno : lpc::gameGetAllClientNo()) arr->items.push_back(make_int(cno));
         return arr;
+    }
+    if (name == "bind_to_client") {
+        // vm_f_bind_to_client (0x804ee68): bind_to_client(fd, [type]) ->
+        // client_no.  Detaches the connected socket from the virtual socket
+        // table and registers it as a game client (attrib = type, default
+        // INTERNAL_COMM = 2), starting its receive/dispatch loop.
+        if (!args.empty() && args[0].index() == 2) {
+            int fd = static_cast<int>(std::get<int64_t>(args[0]));
+            uint32_t clientType = 2;
+            if (args.size() >= 2 && args[1].index() == 2)
+                clientType = static_cast<uint32_t>(std::get<int64_t>(args[1]));
+            uintptr_t sock = xdbcDetachSocket(fd);
+            if (!sock) return make_int(-1);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[bind_to_client] fd=" << fd << " sock=" << sock
+                          << " type=" << clientType << "\n";
+            return make_int(gameServiceBindClient(static_cast<int>(sock), clientType));
+        }
+        return make_int(-1);
     }
     if (name == "send_to_client") {
         // vm_f_send_to_client (0x804fdfc): send_to_client(client_no, msg_no,
-        // data) - write a full packet to the GAME client (binary protocol,
-        // port 8101).  vm_sendFullPacket builds the wire frame:
+        // ...) - pad args[2..] with vm_padStackVariables/vm_padVariable and
+        // write a full packet to the GAME client.  Wire frame:
         //   MZ(2) + checksum(2)=0 + tick(4)=0 + msgLen(2 BE) + cmdNo(2 BE) +
         //   padded args; msgLen counts from the cmdNo field (2) through the
         //   body (vm_clientSocketCallback: bodyLen = msgLen - 2).
         if (args.size() >= 3 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
             int64_t msgNo = as_int(args[1]);
-            std::string data = as_string(args[2]);
+            std::string body;
+            for (size_t i = 2; i < args.size(); ++i) padVariableValue(args[i], body);
             std::string pkt;
             pkt += "MZ";
-            pkt += std::string(4, '\0');            // checksum
-            pkt += std::string(2, '\0');            // tick (0)
-            uint16_t msgLen = static_cast<uint16_t>(2 + data.size());  // from cmdNo
+            pkt += std::string(4, '\0');            // checksum(2) + tick[0..1]
+            pkt += std::string(2, '\0');            // tick[2..3]
+            uint16_t msgLen = static_cast<uint16_t>(2 + body.size());  // from cmdNo
             pkt.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
             pkt.push_back(static_cast<char>(msgLen & 0xFF));
             uint16_t cmd = static_cast<uint16_t>(msgNo);
             pkt.push_back(static_cast<char>((cmd >> 8) & 0xFF));
             pkt.push_back(static_cast<char>(cmd & 0xFF));
-            pkt += data;
+            pkt += body;
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[send_to_client] cno=" << cno << " msgNo=" << msgNo
-                          << " body=" << data.size() << " total=" << pkt.size() << "\n";
+                          << " body=" << body.size() << " total=" << pkt.size() << "\n";
             return make_int(lpc::gameServiceSend(cno, pkt) ? 1 : 0);
         }
         return make_int(0);
@@ -2798,20 +2914,34 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return lpc::gameGetClientInfo(static_cast<int>(std::get<int64_t>(args[0])));
     }
     if (name == "set_client_attrib") {
+        // vm_f_set_client_attrib (0x804d0ac): set_client_attrib(client_no,
+        // ([ "type": "internal"|"client"|"from_server", "size": N, "peek": N ])).
+        // The type ORs attrib bits onto the game client (internal -> 0x302,
+        // client -> 1, from_server -> 0x404) so the (attrib & flag & 7) check
+        // in dispatch accepts INTERNAL_COMM packets from dba/gs/cta servers.
         if (args.size() >= 2 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
-            TelnetClient* cl = findTelnetClient(cno);
-            if (cl && args[1].index() == 6) {
+            uint32_t attribOr = 0;
+            int maxBodySize = 0;   // 0 -> keep current
+            int peek = 0;
+            if (args[1].index() == 6) {
                 auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
                 for (auto& kv : mp->items()) {
-                    if (kv.first.index() == 4) {
-                        std::string k = std::get<std::string>(kv.first);
-                        if (k == "type" && kv.second.index() == 4)
-                            cl->isInternal = std::get<std::string>(kv.second) == "internal";
-                        if (k == "peek") cl->peek = static_cast<int>(as_int(kv.second));
+                    if (kv.first.index() != 4) continue;
+                    std::string k = std::get<std::string>(kv.first);
+                    if (k == "type" && kv.second.index() == 4) {
+                        const std::string& t = std::get<std::string>(kv.second);
+                        if (_stricmp(t.c_str(), "internal") == 0) attribOr |= 0x302;
+                        else if (_stricmp(t.c_str(), "client") == 0) attribOr |= 1;
+                        else if (_stricmp(t.c_str(), "from_server") == 0) attribOr |= 0x404;
+                    } else if (k == "size") {
+                        maxBodySize = static_cast<int>(as_int(kv.second));
+                    } else if (k == "peek") {
+                        peek = static_cast<int>(as_int(kv.second));
                     }
                 }
             }
+            gameServiceSetAttrib(cno, attribOr, maxBodySize, peek);
         }
         return make_int(1);
     }
@@ -2826,12 +2956,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "make32" || name == "make32i") {
-        // make32(n) -> 4-byte big-endian string; make32i(str[,off]) -> int.
+        // make32(n) -> 4-byte big-endian BUFFER; make32i(str[,off]) -> int.
         if (name == "make32") {
             int64_t v = args.empty() ? 0 : as_int(args[0]);
             std::string s(4, '\0');
             for (int i = 0; i < 4; ++i) s[static_cast<size_t>(i)] = static_cast<char>((v >> (24 - 8 * i)) & 0xFF);
-            return make_string(s);
+            return make_buffer(s);
         }
         std::string s = args.empty() ? "" : as_string(args[0]);
         size_t off = args.size() >= 2 ? static_cast<size_t>(as_int(args[1])) : 0;
@@ -3166,6 +3296,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         size_t blocks = (data.size() + 7) / 8;
         std::string out(blocks * 8, '\0');
         if (blocks > 0) {
+            // d3des deskey()/des() share GLOBAL key-schedule state (KnL/KnR).
+            // Serialize schedule+block loop so concurrent login/version
+            // threads don't clobber each other's key (which made password
+            // decryption non-deterministic -> "pass =" varied every login).
+            static std::mutex g_desMutex;
+            std::lock_guard<std::mutex> desLock(g_desMutex);
             if (action == 0) deskey(key8, 0);       // EN0: encrypt
             else deskey(key8, 1);                   // DE1: decrypt
             std::string padded = data;
@@ -3243,9 +3379,60 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty() && args[0].index() == 4) return args[0];
         return make_string("");
     }
+    if (name == "atoinet") {
+        // vm_atoinet (0x80b69a8): "a.b.c.d" -> a<<24 | b<<16 | c<<8 | d.
+        if (args.empty()) return make_int(0);
+        std::string s = as_string(args[0]);
+        unsigned int a = 0, b = 0, c = 0, d = 0;
+        if (sscanf(s.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+            uint32_t ip = (a << 24) | (b << 16) | (c << 8) | d;
+            return make_int(static_cast<int64_t>(ip));
+        }
+        return make_int(0);
+    }
+    if (name == "inettoa") {
+        // vm_inettoa (0x80b697c): int -> "a.b.c.d".
+        if (args.empty()) return make_string("0.0.0.0");
+        uint32_t ip = static_cast<uint32_t>(as_int(args[0]));
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%u.%u.%u.%u",
+                 (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+        return make_string(buf);
+    }
     if (name == "socket") {
         // vm_f_socket (0x80e3f4c): allocate a socket fd (1-based).
         return make_int(xdbcSocket());
+    }
+    if (name == "resolve") {
+        // vm_f_resolve (0x80e3708): resolve(host) -> array of one int (atoinet
+        // form) for an IPv4 literal, or the host's A records for a hostname.
+        if (args.empty()) return make_array();
+        std::string s = as_string(args[0]);
+        int a = 0, b = 0, c = 0, d = 0;
+        if (sscanf(s.c_str(), "%d.%d.%d.%d", &a, &b, &c, &d) == 4 &&
+            a >= 0 && a <= 255 && b >= 0 && b <= 255 &&
+            c >= 0 && c <= 255 && d >= 0 && d <= 255) {
+            auto arr = std::make_shared<ArrayValue>();
+            uint32_t ip = (static_cast<uint32_t>(a) << 24) | (static_cast<uint32_t>(b) << 16) |
+                          (static_cast<uint32_t>(c) << 8) | static_cast<uint32_t>(d);
+            arr->items.push_back(make_int(static_cast<int64_t>(ip)));
+            return arr;
+        }
+        // hostname: resolve A records
+        auto arr = std::make_shared<ArrayValue>();
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        if (getaddrinfo(s.c_str(), nullptr, &hints, &res) == 0 && res) {
+            for (addrinfo* p = res; p; p = p->ai_next) {
+                auto* sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+                uint32_t ip = static_cast<uint32_t>(ntohl(sin->sin_addr.S_un.S_addr));
+                arr->items.push_back(make_int(static_cast<int64_t>(ip)));
+            }
+            freeaddrinfo(res);
+        }
+        return arr;
     }
     if (name == "connect") {
         // vm_f_connect (0x80e83b4): connect(fd, host, port) -> 0 / -1.
@@ -3307,16 +3494,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_allocate_buffer (0x80d444c): buffer of n zero bytes.
         int64_t n = args.empty() ? 0 : as_int(args[0]);
         if (n < 0) n = 0;
-        return make_string(std::string(static_cast<size_t>(n), '\0'));
+        return make_buffer(std::string(static_cast<size_t>(n), '\0'));
     }
     if (name == "is_buffer") {
-        // Buffers are represented as byte strings; distinguish them from text
-        // by checking for embedded NUL bytes.
-        if (!args.empty() && args[0].index() == 4) {
-            const std::string& s = std::get<std::string>(args[0]);
-            return make_int(s.find('\0') != std::string::npos ? 1 : 0);
-        }
-        return make_int(0);
+        // Buffers are the distinct BufferValue type (vm buffer type 5).
+        return make_int((!args.empty() && args[0].index() == 10) ? 1 : 0);
     }
     if (name == "save_string") {
         // vm_f_save_string (0x80db0d0) -> vm_saveValueToString: the ASCII

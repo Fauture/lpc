@@ -56,4 +56,9 @@ void xdbcCloseSocket(int fd);
 // True when the fd exists (used by the recv/select efun wrappers).
 bool xdbcSocketExists(int fd);
 
+// Detach a connected socket fd from the virtual socket table, returning its
+// real OS socket handle (0 when absent or not a real TCP socket).  Used by
+// bind_to_client to hand the socket over to the game client layer.
+uintptr_t xdbcDetachSocket(int fd);
+
 } // namespace lpc

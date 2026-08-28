@@ -14,6 +14,7 @@ struct MappingValue;
 struct ObjectValue;
 struct ClosureValue;
 struct LoopCtrl;
+struct BufferValue;
 struct Program;
 
 struct UndefinedTag {};
@@ -28,7 +29,8 @@ using Value = std::variant<
     std::shared_ptr<MappingValue>,
     std::shared_ptr<ObjectValue>,
     std::shared_ptr<ClosureValue>,
-    std::shared_ptr<LoopCtrl>>;
+    std::shared_ptr<LoopCtrl>,
+    std::shared_ptr<BufferValue>>;   // buffer (binary bytes, distinct from text)
 
 struct ArrayValue {
     std::vector<Value> items;
@@ -125,10 +127,17 @@ struct LoopCtrl {
     size_t mIdx = 0;                  // mapping iterator
     int mElementIndex = 0;
 };
+// Binary buffer (the original driver's Vm_Buffer_T).  Kept distinct from a
+// text string so send_to_client/pkt_pad_buffer serialize it as raw bytes
+// rather than as a length-prefixed string.
+struct BufferValue {
+    std::string data;
+};
 
 Value make_int(int64_t v);
 Value make_float(double v);
 Value make_string(std::string s);
+Value make_buffer(std::string data);
 Value make_array();
 Value make_mapping();
 Value make_object(std::string programName);

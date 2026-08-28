@@ -767,6 +767,11 @@ private:
     // threads.  Serialize execution per VM with a recursive mutex (recursive
     // because one VM's execute() may re-enter itself through closures/calls).
     mutable std::recursive_mutex execMutex_;
+    // Recursion depth of execMutex_ for the CURRENT holder thread (only the
+    // holder touches it).  runDetached() releases all of these to make a
+    // cross-object call without holding this VM's lock, avoiding the AB-BA
+    // deadlock between two threads calling into each other's objects.
+    int execDepth_ = 0;
 
     const OriginalObject& obj_;
     std::string objName_;
@@ -1430,6 +1435,45 @@ private:
                     return make_int(1);
                 }
             }
+            if (nm == "sort" && args.size() >= 2 && args[0].index() == 5) {
+                // vm_f_sort (0x80dbf4c): sort(array, cmp_func) sorts ascending by
+                // the comparison function's result.  cmd_l_get_server_list does
+                //   sort(values(server_list), (: sort_by_server_id :))
+                // where sort_by_server_id(data) returns data["id"].
+                auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+                std::vector<Value> items = src->items;
+                Value cmp = args[1];
+                auto invokeCmp = [&](const Value& v) -> Value {
+                    if (cmp.index() != 8) return make_int(0);
+                    auto cl = std::get<std::shared_ptr<ClosureValue>>(cmp);
+                    std::vector<Value> all = cl->boundArgs;
+                    all.push_back(v);
+                    const OriginalObject* master = objectRegistry().masterObj;
+                    if (cl->func && (cl->owner == nullptr || cl->owner == &obj_ || cl->owner == master)) {
+                        return executeFunctionFromOutside(*cl->func, all);
+                    }
+                    if (cl->owner && cl->owner != &obj_) {
+                        auto& reg = objectRegistry();
+                        std::shared_ptr<OriginalVm> ownerVm;
+                        {
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            for (auto& kv : reg.vms)
+                                if (&kv.second->object() == cl->owner) { ownerVm = kv.second; break; }
+                        }
+                        if (ownerVm) {
+                            if (cl->func) return ownerVm->callFunctionPointer(cl->func, all);
+                            return ownerVm->callFunctionByName(cl->functionName, all);
+                        }
+                    }
+                    return make_int(0);
+                };
+                std::stable_sort(items.begin(), items.end(), [&](const Value& a, const Value& b) {
+                    return toInt(invokeCmp(a)) < toInt(invokeCmp(b));
+                });
+                auto out = std::make_shared<ArrayValue>();
+                out->items = std::move(items);
+                return out;
+            }
             return call_builtin(nullptr, nm, args);
         }
         return make_int(0);
@@ -1545,7 +1589,7 @@ private:
                 std::cerr << "[fallback] vm=" << this << " index=" << index << " name=" << name
                           << " argc=" << argCount << " args=[" << dbg << "] stackLeft=" << stack_.size() << "\n";
             }
-            return target->callFunctionByName(name, args);
+            return runDetached([&] { return target->callFunctionByName(name, args); });
         }
         // Some global function indices refer to builtin efuns (e.g. the telnet
         // helpers). The low 6 bits of the flags carry the argument count.
@@ -1557,6 +1601,55 @@ private:
             return callEfun(index, argCount);
         }
         return make_int(0);
+    }
+
+    // RAII reentrant execution lock that also tracks the recursion depth so
+    // runDetached() can fully release it around a cross-object call.
+    struct ExecGuard {
+        std::recursive_mutex& m;
+        int& depth;
+        ExecGuard(std::recursive_mutex& m_, int& d_) : m(m_), depth(d_) { m.lock(); ++depth; }
+        ~ExecGuard() { --depth; m.unlock(); }
+        ExecGuard(const ExecGuard&) = delete;
+        ExecGuard& operator=(const ExecGuard&) = delete;
+    };
+
+    // Run a cross-object call WITHOUT holding this VM's execution lock, so two
+    // threads that call into each other's objects (A->B on the game thread,
+    // B->A on the threadd thread) can't deadlock on the two exec mutexes.
+    // The paused stack/frames/return state are detached first, so a thread that
+    // enters this VM during the window gets a fresh empty stack instead of
+    // clobbering the paused caller's.
+    template <typename F>
+    Value runDetached(F&& fn) {
+        int d = execDepth_;
+        std::vector<StackItem> s = std::move(stack_);
+        std::vector<Frame> f = std::move(frames_);
+        Value rv = returnValue_;
+        bool rd = returned_;
+        returnValue_ = make_int(0);
+        returned_ = false;
+        execDepth_ = 0;
+        for (int i = 0; i < d; ++i) execMutex_.unlock();
+        Value r;
+        try {
+            r = fn();
+        } catch (...) {
+            for (int i = 0; i < d; ++i) execMutex_.lock();
+            execDepth_ = d;
+            stack_ = std::move(s);
+            frames_ = std::move(f);
+            returnValue_ = rv;
+            returned_ = rd;
+            throw;
+        }
+        for (int i = 0; i < d; ++i) execMutex_.lock();
+        execDepth_ = d;
+        stack_ = std::move(s);
+        frames_ = std::move(f);
+        returnValue_ = rv;
+        returned_ = rd;
+        return r;
     }
 
     Value executeFunctionFromOutside(const OriginalFunction& fn, const std::vector<Value>& args) {
@@ -1573,7 +1666,7 @@ private:
         if (diagMe)
             std::cerr << "[lock] TRY obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
-        std::lock_guard<std::recursive_mutex> lock(execMutex_);
+        ExecGuard lock(execMutex_, execDepth_);
         if (diagMe)
             std::cerr << "[lock] GOT obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
@@ -1606,7 +1699,7 @@ private:
 
     Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
                                  int passedArgs = -1) {
-        std::lock_guard<std::recursive_mutex> lock(execMutex_);
+        ExecGuard lock(execMutex_, execDepth_);
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
@@ -2346,10 +2439,14 @@ private:
                         if (funName.empty()) {
                             // function index on an explicit object: resolve
                             // via the object's own function table
-                            result = tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                            result = runDetached([&] {
+                                return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                            });
                             found = true;
                         } else {
-                            result = tryCallOtherObject(searchRoot_, path, funName, args);
+                            result = runDetached([&] {
+                                return tryCallOtherObject(searchRoot_, path, funName, args);
+                            });
                             found = true;
                         }
                     }
@@ -2382,9 +2479,9 @@ private:
                                     std::cerr << "[obj-this] owner-resolve -> "
                                               << ownerVm->object().sourceName << "\n";
                                 if (funName.empty()) {
-                                    result = ownerVm->callFunctionByIndex(funIndex);
+                                    result = runDetached([&] { return ownerVm->callFunctionByIndex(funIndex); });
                                 } else {
-                                    result = ownerVm->callFunctionByName(funName, args);
+                                    result = runDetached([&] { return ownerVm->callFunctionByName(funName, args); });
                                 }
                                 found = true;
                                 break;
@@ -2393,16 +2490,22 @@ private:
                         resolveSelf();
                     } else {
                         if (funName.empty()) {
-                            result = tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                            result = runDetached([&] {
+                                return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                            });
                             found = true;
                         } else {
-                            result = tryCallOtherObject(searchRoot_, path, funName, args);
+                            result = runDetached([&] {
+                                return tryCallOtherObject(searchRoot_, path, funName, args);
+                            });
                             found = true;
                         }
                     }
                 }
                 if (!found && pathVal.index() == 4 && !funName.empty()) {
-                    result = tryCallOtherObject(searchRoot_, std::get<std::string>(pathVal), funName, args);
+                    result = runDetached([&] {
+                        return tryCallOtherObject(searchRoot_, std::get<std::string>(pathVal), funName, args);
+                    });
                 }
                 pushValue(result);
                 break;
@@ -2472,8 +2575,10 @@ private:
                             // Use the captured function pointer when available so
                             // an overloaded name (process_command) resolves to the
                             // exact function the closure was bound to.
-                            if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
-                            else result = ownerVm->callFunctionByName(cl->functionName, all);
+                            if (cl->func)
+                                result = runDetached([&] { return ownerVm->callFunctionPointer(cl->func, all); });
+                            else
+                                result = runDetached([&] { return ownerVm->callFunctionByName(cl->functionName, all); });
                         }
                     } else {
                         // The closure may reference a builtin efun (e.g. the
@@ -2891,21 +2996,26 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
     static bool inBroadcast = false;
     if (inBroadcast) return make_int(1);
     inBroadcast = true;
-    struct Section { const char* title; const char* dir; };
-    Section sections[] = {
+    struct Section { std::string title; std::string dir; };
+    std::string op = vfsObjPrefix();
+    std::string daemonsDir = "/" + op + "/daemons";
+    std::string cloneDir = "/" + op + "/clone";
+    std::string cmdsDir = "/" + op + "/cmds";
+    std::vector<Section> sections = {
         {"Load all global feature.", "/feature"},
         {"Load all global inherits.", "/inherit"},
         {"Load all global objects.", "/clone"},
         {"Load all global cmds.", "/cmds"},
         {"", "/daemons"},
-        {"", "/aaa/daemons"},
-        {"", "/aaa/clone"},
+        {"", daemonsDir},
+        {"", cloneDir},
+        {"", cmdsDir},
     };
     auto& reg = objectRegistry();
     for (auto& sec : sections) {
         std::string title = sec.title;
         if (!title.empty()) std::cout << title << "\n";
-        fs::path dir = fs::path(searchRoot) / (sec.dir + 1);
+        fs::path dir = fs::path(searchRoot) / (sec.dir.c_str() + 1);
         std::error_code ec;
         if (!fs::exists(dir, ec)) continue;
         std::cout << "Load sub dir: " << sec.dir << "\n";
@@ -2966,9 +3076,10 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
     std::vector<std::string> candidates;
     candidates.push_back(searchRoot + "/" + rel);
     candidates.push_back("pak:" + rel);
-    if (rel.compare(0, 4, "aaa/") == 0) {
-        candidates.push_back(searchRoot + "/" + rel.substr(4));
-        candidates.push_back("pak:" + rel.substr(4));
+    std::string opPrefix = vfsObjPrefix() + "/";
+    if (rel.compare(0, opPrefix.size(), opPrefix) == 0) {
+        candidates.push_back(searchRoot + "/" + rel.substr(opPrefix.size()));
+        candidates.push_back("pak:" + rel.substr(opPrefix.size()));
     }
     auto& reg = objectRegistry();
     auto lookup = [&](const std::string& c) -> std::shared_ptr<OriginalVm> {
@@ -3026,9 +3137,10 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     std::vector<std::string> candidates;
     candidates.push_back(searchRoot + "/" + rel);
     candidates.push_back("pak:" + rel);
-    if (rel.compare(0, 4, "aaa/") == 0) {
-        candidates.push_back(searchRoot + "/" + rel.substr(4));
-        candidates.push_back("pak:" + rel.substr(4));
+    std::string opPrefix = vfsObjPrefix() + "/";
+    if (rel.compare(0, opPrefix.size(), opPrefix) == 0) {
+        candidates.push_back(searchRoot + "/" + rel.substr(opPrefix.size()));
+        candidates.push_back("pak:" + rel.substr(opPrefix.size()));
     }
     auto& reg = objectRegistry();
     for (const auto& c : candidates) {
@@ -3215,7 +3327,9 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
     // directory (the mounted pak) first, then the real filesystem.
     std::vector<std::string> relCandidates;
     relCandidates.push_back(rel);
-    if (rel.compare(0, 4, "aaa/") == 0) relCandidates.push_back(rel.substr(4));
+    std::string opPrefix = vfsObjPrefix() + "/";
+    if (rel.compare(0, opPrefix.size(), opPrefix) == 0)
+        relCandidates.push_back(rel.substr(opPrefix.size()));
     for (const auto& rc : relCandidates) {
         auto pakObj = loadOriginalObjectByRelPath(rc);
         if (!pakObj) continue;

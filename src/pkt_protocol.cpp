@@ -372,6 +372,14 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
         }
         fieldVals.push_back(v);
     }
+    if (std::getenv("LPCVM_TRACE") &&
+        (pi.name == "cmd_cfg_get_aaa_list" || pi.name == "cmd_internal_auth" ||
+         pi.name == "cmd_cfg_get_my_info" || pi.name == "cmd_cfg_get_dba_list")) {
+        std::string dbg;
+        for (size_t i = 0; i < fieldVals.size(); ++i)
+            dbg += (i ? "," : "") + to_string(fieldVals[i], false);
+        std::cerr << "[pkt] " << pi.name << " fields=[" << dbg << "]\n";
+    }
     Value collection;
     if (pi.encapType == 0) {
         auto mp = std::make_shared<MappingValue>();

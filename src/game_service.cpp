@@ -17,6 +17,7 @@
 #include <ws2tcpip.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -100,6 +101,7 @@ const CmdEntry kCmdList[] = {
     //   <0F9D3h, 4, vm_msgLoginDone>
     { 0x5351, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_l_auth", 0 }, // vm_msgLAuth
     { 0xF9D3, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_login_done", 0 }, // vm_msgLoginDone
+    { 0x20D2, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "cmd_echo", 0 }, // vm_cmdEcho
 };
 constexpr size_t kCmdCount = sizeof(kCmdList) / sizeof(kCmdList[0]);
 
@@ -139,6 +141,35 @@ void handleMsgLAuth(GameClient& cl, const uint8_t* body, size_t len) {
     applyLpc("msg_l_auth", {make_int(cl.clientNo), make_int(result), make_int(authKey), make_string(name)});
 }
 
+// vm_cmdEcho (0x8053178): echo/heartbeat (CMD_ECHO 0x20D2).  body = client
+// tick (be:u32).  Replies MSG_REPLY_ECHO (0xF9C3) carrying the server's
+// current tick so the remote end (dba/gs/cta) can verify the link is alive.
+void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body;
+    if (len < 4) return;
+    uint64_t nowMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    uint32_t tick = static_cast<uint32_t>(nowMs);
+    std::string frame;
+    frame += "MZ";
+    frame += std::string(2, '\0');     // checksum
+    frame += std::string(4, '\0');     // tick field (0)
+    uint16_t msgLen = 6;               // cmdNo(2) + body(4)
+    frame.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
+    frame.push_back(static_cast<char>(msgLen & 0xFF));
+    uint16_t cmd = 0xF9C3;             // MSG_REPLY_ECHO
+    frame.push_back(static_cast<char>((cmd >> 8) & 0xFF));
+    frame.push_back(static_cast<char>(cmd & 0xFF));
+    frame.push_back(static_cast<char>((tick >> 24) & 0xFF));
+    frame.push_back(static_cast<char>((tick >> 16) & 0xFF));
+    frame.push_back(static_cast<char>((tick >> 8) & 0xFF));
+    frame.push_back(static_cast<char>(tick & 0xFF));
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[game] echo reply client=" << cl.clientNo << " tick=" << tick << "\n";
+    gameServiceSend(cl.clientNo, frame);
+}
+
 // Dispatcher: run the C handler for a parsed packet.
 // Original logic (vm_clientSocketCallback LABEL_42):
 //   if (vm_pktAnalyse(cmdNo, body, len) != 1) {
@@ -171,6 +202,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     }
     switch (cmdNo) {
     case 0x5351: handleMsgLAuth(cl, body, len); break;
+    case 0x20D2: handleCmdEcho(cl, body, len); break;
     default:
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[game] cmd 0x" << std::hex << cmdNo << std::dec
@@ -275,6 +307,10 @@ void feedClient(GameClient& cl, const char* data, size_t n) {
                 dispatchCommand(cl, cl.pendingCmd, cl.body.data(), cl.body.size());
                 cl.status = 3;
                 cl.hdrBuf.clear();
+                // More packets may already be buffered in this recv() chunk
+                // (dba/gs/cta batch several cmd_cfg_get_* requests in one
+                // write).  Continue the loop instead of dropping the rest.
+                continue;
             }
             break;
         }
@@ -361,6 +397,14 @@ int startGameService(int port) {
                         if (it == gameClients().end()) break;
                         cur = &it->second;
                     }
+                    // The original driver is cooperative: a dispatched service
+                    // (e.g. _check_client_data) runs to completion - including
+                    // its lite_set_temp("antibot_answer") AFTER the reply - before
+                    // the client's NEXT packet is read.  Wait here until the
+                    // threadd service queue drains so the account packet doesn't
+                    // race that tail and see antibot_answer still unset.
+                    for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     feedClient(*cur, buf, static_cast<size_t>(n));
                 }
                 closesocket(c);
@@ -390,6 +434,15 @@ void gameServiceDisconnect(int clientNo) {
     gameClients().erase(it);
 }
 
+void gameServiceSetAttrib(int clientNo, uint32_t attribOrMask, int maxBodySize, int peekMsgNum) {
+    std::lock_guard<std::mutex> lk(gameMutex());
+    auto it = gameClients().find(clientNo);
+    if (it == gameClients().end()) return;
+    it->second.attrib |= attribOrMask;
+    if (maxBodySize > 0) it->second.maxBodySize = static_cast<uint32_t>(maxBodySize);
+    it->second.peekMsgNum = peekMsgNum;
+}
+
 bool gameServiceSend(int clientNo, const std::string& data) {
     // vm_sendFullPacket: write the complete wire frame to the client socket.
     // A partial write counts as failure (vm_writeDataToSocket returning -3).
@@ -409,6 +462,47 @@ bool gameServiceSend(int clientNo, const std::string& data) {
         sent += n;
     }
     return true;
+}
+
+int gameServiceBindClient(int fd, uint32_t clientType) {
+    // vm_bindToClient (0x804eccc): register a connected socket as a game
+    // client and start its receive loop.  The original driver adds the socket
+    // to its global scanner; we spawn a dedicated recv thread per connection.
+    int clientNo = nextGameClientNo().fetch_add(1);
+    {
+        GameClient cl;
+        cl.fd = fd;
+        cl.clientNo = clientNo;
+        cl.attrib = clientType;
+        cl.status = 1;
+        std::lock_guard<std::mutex> lk(gameMutex());
+        gameClients()[clientNo] = std::move(cl);
+    }
+    std::thread([fd, clientNo]() {
+        char buf[4096];
+        for (;;) {
+            int n = recv(static_cast<SOCKET>(fd), buf, sizeof(buf), 0);
+            if (n <= 0) break;
+            GameClient* cur;
+            {
+                std::lock_guard<std::mutex> lk(gameMutex());
+                auto it = gameClients().find(clientNo);
+                if (it == gameClients().end()) break;
+                cur = &it->second;
+            }
+            // Preserve the cooperative scheduler's reply-then-cleanup ordering
+            // (see the accept loop for details).
+            for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            feedClient(*cur, buf, static_cast<size_t>(n));
+        }
+        closesocket(static_cast<SOCKET>(fd));
+        {
+            std::lock_guard<std::mutex> lk(gameMutex());
+            gameClients().erase(clientNo);
+        }
+    }).detach();
+    return clientNo;
 }
 
 Value gameGetClientInfo(int clientNo) {
@@ -448,6 +542,13 @@ Value gameGetClientInfo(int clientNo) {
 
 void gameServiceDispatchPacket(GameClient& cl) {
     (void)cl;
+}
+
+std::vector<int> gameGetAllClientNo() {
+    std::vector<int> out;
+    std::lock_guard<std::mutex> lk(gameMutex());
+    for (auto& kv : gameClients()) out.push_back(kv.first);
+    return out;
 }
 
 } // namespace lpc

@@ -63,6 +63,12 @@ void gameServiceFeed(int clientNo, const char* data, size_t len);
 // Disconnect a game client (socket closed).
 void gameServiceDisconnect(int clientNo);
 
+// set_client_attrib(client_no, mapping) support (vm_f_set_client_attrib
+// 0x804d0ac): OR attribOrMask onto the game client's attrib and update its
+// maxBodySize/peekMsgNum.  do_auth_new_connection sets "internal" here so
+// cmd_cfg_* (INTERNAL_COMM) packets are no longer denied.
+void gameServiceSetAttrib(int clientNo, uint32_t attribOrMask, int maxBodySize, int peekMsgNum);
+
 // Dispatch one parsed packet to the command table (vm_clientSocketCallback's
 // cmdIndex lookup + attrib check + cmdFunc call).
 void gameServiceDispatchPacket(GameClient& cl);
@@ -73,9 +79,18 @@ void gameServiceDispatchPacket(GameClient& cl);
 // port fields are included.
 Value gameGetClientInfo(int clientNo);
 
+// get_all_client_no() support (vm_f_get_all_client_no 0x804d3f8): all live
+// game client numbers (the driver's unified clientInfo[] table).
+std::vector<int> gameGetAllClientNo();
+
 // Send raw wire bytes to a game client's socket (vm_sendFullPacket path).
 // The caller has already built the complete frame.  Returns false when the
 // client slot is unknown.
 bool gameServiceSend(int clientNo, const std::string& data);
+
+// bind_to_client(fd, [type]) (vm_f_bind_to_client 0x804ee68): attach a
+// connected socket (from socket()/connect()) to a game client slot and start
+// its receive/dispatch loop.  Returns the client number, or -1 on failure.
+int gameServiceBindClient(int fd, uint32_t clientType);
 
 } // namespace lpc
