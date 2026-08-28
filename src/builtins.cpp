@@ -16,10 +16,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -38,6 +40,122 @@ namespace fs = std::filesystem;
 #include "parser.h"
 
 namespace lpc {
+
+// ---------------------------------------------------------------------------
+// Driver message queues (vm_f_create_queue / send_to_queue / receive_from_queue).
+// A real, cross-thread FIFO: send_to_queue from any OS thread enqueues and
+// wakes a blocked receiver.  Queue ids come from create_queue() (object-id
+// table shared with events); threadd's daemon threads block in
+// receive_from_queue until a dispatch_*_service puts a closure on the queue.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct DriverQueue {
+    std::deque<Value> items;
+    bool destroyed = false;
+};
+
+struct QueueRegistry {
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::unordered_map<int64_t, std::shared_ptr<DriverQueue>> queues;
+    std::unordered_map<std::string, int64_t> nameToQid;   // create_queue("name") table
+};
+
+QueueRegistry& queueRegistry() {
+    static QueueRegistry r;
+    return r;
+}
+
+// Resolve a queue reference: an int is a qid directly; a string is a queue
+// name registered by create_queue (vm_lookupPendObject path).  Returns -1 if
+// unknown.
+int64_t resolveQidLocked(const Value& v) {
+    if (v.index() == 2) return std::get<int64_t>(v);
+    if (v.index() == 4) {
+        const std::string& s = std::get<std::string>(v);
+        auto& reg = queueRegistry();
+        auto it = reg.nameToQid.find(s);
+        if (it != reg.nameToQid.end()) return it->second;
+    }
+    return -1;
+}
+
+} // namespace
+
+// Public queue-reference resolver (used by the efun wrappers in this file and
+// by the VM's call_in_efun path in original_vm.cpp).
+int64_t queueResolveId(const Value& v) {
+    std::lock_guard<std::mutex> lk(queueRegistry().mtx);
+    return resolveQidLocked(v);
+}
+
+int64_t queueCreate(int64_t qid, const std::string& name) {
+    auto& reg = queueRegistry();
+    std::lock_guard<std::mutex> lk(reg.mtx);
+    reg.queues[qid] = std::make_shared<DriverQueue>();
+    if (!name.empty()) reg.nameToQid[name] = qid;
+    return qid;
+}
+
+bool queueSend(int64_t qid, const Value& v) {
+    auto& reg = queueRegistry();
+    std::shared_ptr<DriverQueue> q;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.queues.find(qid);
+        if (it == reg.queues.end() || it->second->destroyed) return false;
+        q = it->second;
+        q->items.push_back(v);
+    }
+    reg.cv.notify_all();
+    return true;
+}
+
+void queueDelete(int64_t qid) {
+    auto& reg = queueRegistry();
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.queues.find(qid);
+        if (it != reg.queues.end()) it->second->destroyed = true;
+        reg.queues.erase(qid);
+    }
+    reg.cv.notify_all();
+}
+
+Value queueReceive(int64_t qid, int timeoutMs, bool& ok) {
+    auto& reg = queueRegistry();
+    ok = false;
+    std::shared_ptr<DriverQueue> q;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.queues.find(qid);
+        if (it == reg.queues.end() || it->second->destroyed) return make_int(0);
+        q = it->second;
+        if (!q->items.empty()) {
+            Value v = std::move(q->items.front());
+            q->items.pop_front();
+            ok = true;
+            return v;
+        }
+    }
+    std::unique_lock<std::mutex> lk(reg.mtx);
+    if (timeoutMs < 0) {
+        reg.cv.wait(lk, [&] {
+            return q->destroyed || !q->items.empty();
+        });
+    } else {
+        if (!reg.cv.wait_for(lk, std::chrono::milliseconds(timeoutMs), [&] {
+                return q->destroyed || !q->items.empty();
+            }))
+            return make_int(0);   // timed out
+    }
+    if (q->destroyed) return make_int(0);
+    Value v = std::move(q->items.front());
+    q->items.pop_front();
+    ok = true;
+    return v;
+}
 
 namespace {
 
@@ -1380,6 +1498,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "is_string") return make_int(!args.empty() && args[0].index() == 4 ? 1 : 0);
     if (name == "is_int") return make_int(!args.empty() && args[0].index() == 2 ? 1 : 0);
     if (name == "is_float") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
+    if (name == "clone_object") {
+        // vm_f_clone_object (0x80f8eac): clone_object(path) clones a loaded
+        // template object into a fresh instance and returns it; 0 on failure.
+        if (args.empty()) return make_int(0);
+        std::string path = as_string(args[0]);
+        if (path.empty()) return make_int(0);
+        // NOTE: do NOT call masterSearchRoot() here - it takes the registry
+        // lock and the caller (a connectiond daemon VM) may already be inside
+        // a cross-object call that holds it, deadlocking on another thread.
+        // The clone registry lookup uses suffix matching on the object path
+        // and does not need the search root.
+        return lpc::cloneObjectInRegistry(path, "");
+    }
     if (name == "is_object") return make_int(!args.empty() && args[0].index() == 7 ? 1 : 0);
     if (name == "to_int" || name == "to_number") return args.empty() ? make_int(0) : make_int(as_int(args[0]));
     if (name == "to_string") return args.empty() ? make_string("") : make_string(as_string(args[0]));
@@ -1475,7 +1606,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "query_temp" || name == "query") return make_int(0);
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
-    if (name == "destruct_object" || name == "to_be_disconnect" || name == "is_clone") return name == "is_clone" ? make_int(0) : make_int(1);
+    if (name == "destruct_object" || name == "to_be_disconnect") return make_int(1);
+    if (name == "is_clone") {
+        // vm_f_is_clone: true when the object was created by clone_object
+        // (clone registry keys carry a "#<seq>" suffix).  With no argument it
+        // refers to the current object; call_builtin cannot see the current
+        // object, so a no-arg is_clone returns 0 (matches non-clone).
+        if (args.empty() || args[0].index() != 7) return make_int(0);
+        auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+        return make_int(ov->programName.find('#') != std::string::npos ? 1 : 0);
+    }
     if (name == "register_daemon_data" || name == "dispatch_service" || name == "send_to_cta") return make_int(1);
     if (name == "find_function") {
         // Return a function value for a builtin efun (the game uses this to
@@ -2350,6 +2490,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
+    if (name == "get_client_info") {
+        // vm_f_get_client_info (0x804d478): get_client_info(client_no) ->
+        // mapping of the client slot (empty mapping if absent).
+        if (args.empty() || args[0].index() != 2) return make_mapping();
+        return lpc::gameGetClientInfo(static_cast<int>(std::get<int64_t>(args[0])));
+    }
     if (name == "set_client_attrib") {
         if (args.size() >= 2 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
@@ -2515,7 +2661,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
-    if (name == "wait_event" || name == "send_to_queue") {
+    if (name == "send_to_queue") {
+        // vm_f_send_to_queue (0x80f2d94): send_to_queue(qid_or_name, value,
+        // timeout) enqueues value on the real cross-thread queue; returns 0 on
+        // success, -101 if the queue does not exist, -401 if full (no bound).
+        if (args.empty()) return make_int(-101);
+        int64_t qid = queueResolveId(args[0]);
+        if (qid < 0) return make_int(-101);
+        Value v = args.size() >= 2 ? args[1] : Value(UndefinedTag{});
+        bool ok = lpc::queueSend(qid, v);
+        return make_int(ok ? 0 : -101);
+    }
+    if (name == "wait_event") {
         // Original vm_f_wait_event (0x80f097c) blocks the process until an
         // event fires or the timeout (arg 3, seconds; -1 = forever) expires.
         // Our event queue is a stub that never fires: emulate the blocking
@@ -2537,19 +2694,28 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "receive_from_queue" || name == "receive_from_queue_ex") {
-        // Queue is a stub; the daemon loop is:
-        //   msg = receive_from_queue(...)
-        //   if (msg == 0) goto loop;     // "if" jumps on non-zero result of
-        //                                // (msg==0) comparison, i.e. loops when
-        //                                // the call returned a non-zero value
-        //   ... dispatch msg ...
-        // Sleeping briefly (like the original blocking queue read) prevents a
-        // 100% CPU service loop, and returning non-zero keeps the loop running
-        // instead of falling into the "Bad message" branch.
-        int timeout = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        if (timeout <= 0 || timeout > 200) timeout = 100;  // ms
-        std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
-        return make_int(1);
+        // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
+        // timeout) blocks the process until an element arrives; returns 0 with
+        // the element written through the reference, -402 on timeout, -101 if
+        // the queue does not exist.  The .o bytecode path intercepts this efun
+        // in the VM (call_in_efun) so the &msg reference can be written back;
+        // this builtin fallback (source interpreter / plain callers) returns
+        // the element itself as the value with the status in a 2-array.
+        if (args.empty()) return make_int(-101);
+        int64_t qid = queueResolveId(args[0]);
+        if (qid < 0) return make_int(-101);
+        int timeoutMs = -1;
+        if (args.size() >= 3) {
+            double secs = (args[2].index() == 3) ? std::get<double>(args[2]) : static_cast<double>(as_int(args[2]));
+            timeoutMs = secs < 0 ? -1 : static_cast<int>(secs * 1000.0);
+        }
+        bool ok = false;
+        Value v = lpc::queueReceive(qid, timeoutMs, ok);
+        if (!ok) return make_int(-402);
+        auto arr = std::make_shared<ArrayValue>();
+        arr->items.push_back(make_int(0));   // status 0 = success
+        arr->items.push_back(v);
+        return arr;
     }
     if (name == "get_thread_id") return make_int(-1);
     if (name == "time" || name == "time_desc")
@@ -2610,18 +2776,29 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "create_queue" || name == "create_event") {
-        // vm_f_create_queue -> vm_createPendObject (0x80a9cc4): queues and
-        // events share ONE global object-id table (vmObject[]), ids start at
-        // 1 (the first free slot), which is what makes threadd's service
-        // numbers match the original run (first queue id 9 in aaa.log).
+        // vm_f_create_queue (0x80eef1c) -> vm_createPendObject (0x80a9cc4):
+        // queues and events share ONE global object-id table (vmObject[]),
+        // ids start at 1 (the first free slot), which is what makes threadd's
+        // service numbers match the original run.  The optional first argument
+        // is a NAME string that can be used to address the queue later
+        // (http_clientd/sorterrord use "qHttpClient" etc.).
         static std::atomic<int64_t> pendSeq{0};
         int64_t qid = pendSeq.fetch_add(1, std::memory_order_relaxed) + 1;
+        std::string qname;
+        if (!args.empty() && args[0].index() == 4) qname = std::get<std::string>(args[0]);
+        if (name == "create_queue") lpc::queueCreate(qid, qname);
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[create_" << (name == "create_queue" ? "queue" : "event")
-                      << "] id=" << qid << "\n";
+                      << "] id=" << qid << " name='" << qname << "'\n";
         return make_int(qid);
     }
-    if (name == "delete_queue" || name == "delete_event") return make_int(1);
+    if (name == "delete_queue" || name == "delete_event") {
+        if (name == "delete_queue" && !args.empty()) {
+            int64_t qid = queueResolveId(args[0]);
+            if (qid >= 0) lpc::queueDelete(qid);
+        }
+        return make_int(1);
+    }
     if (name == "raise_event") return make_int(1);
     if (name == "restore_value") {
         // vm_f_restore_value (0x80dae84) -> vm_restoreMixedString: parse one

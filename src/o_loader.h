@@ -18,6 +18,10 @@ struct OriginalFunction {
     int localCount = 0;
     std::vector<OriginalInsn> code;
     std::vector<uint8_t> metaData;
+    // String table of the program this function belongs to.  Shared-string
+    // indexes inside the bytecode resolve against THIS table (inherited
+    // functions keep their own program's strings, not the inheritor's).
+    std::vector<std::string> strings;
 };
 
 struct OriginalInherit {

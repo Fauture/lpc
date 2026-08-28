@@ -49,4 +49,10 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
 // do the loading.)
 Value findObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot);
 
+// clone_object(virtualPath): find the loaded template object, create a fresh
+// instance (independent instance variables), run its create() and register it
+// in the object registry under a unique clone key.  Returns an object value,
+// or 0 if the template is not loaded.
+Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot);
+
 } // namespace lpc

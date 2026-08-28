@@ -29,6 +29,7 @@
 #include "original_vm.h"
 #include "pkt_protocol.h"
 #include "value.h"
+#include "value.h"
 
 namespace lpc {
 
@@ -316,6 +317,15 @@ int startGameService(int port) {
                     std::lock_guard<std::mutex> lk(gameMutex());
                     gameClients()[clientNo] = std::move(cl);
                 }
+                // vm_gameListenSocketCallback: after binding the client slot,
+                // notify the LPC master: vm_apply("cmd_new_connection", clientNo)
+                // -> cmd_new_connection -> threadd dispatch -> post_new_connection
+                // (creates/registers the client agent).
+                try {
+                    callMasterProgramFunction("cmd_new_connection", {make_int(clientNo)},
+                                              lpc::masterSearchRoot());
+                } catch (...) {
+                }
                 char buf[4096];
                 for (;;) {
                     int n = recv(c, buf, sizeof(buf), 0);
@@ -354,6 +364,41 @@ void gameServiceDisconnect(int clientNo) {
     if (it == gameClients().end()) return;
     if (it->second.fd >= 0) closesocket(static_cast<SOCKET>(it->second.fd));
     gameClients().erase(it);
+}
+
+Value gameGetClientInfo(int clientNo) {
+    // vm_f_get_client_info (0x804d478): mapping with id/client_no/alive/peek/
+    // time_stamp/.../local_address/local_port/remote_address/remote_port/
+    // remain_send_bytes; empty mapping when the client slot does not exist.
+    auto mp = std::make_shared<MappingValue>();
+    GameClient cl;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lk(gameMutex());
+        auto it = gameClients().find(clientNo);
+        if (it != gameClients().end()) { cl = it->second; found = true; }
+    }
+    if (!found) return mp;
+    auto add = [&](const char* k, const Value& v) { mp->insert(make_string(k), v); };
+    add("id", make_int(cl.id));
+    add("client_no", make_int(cl.clientNo));
+    add("alive", make_int(cl.fd > 0 ? 1 : 0));
+    add("peek", make_int(cl.peekMsgNum));
+    add("time_stamp", make_int(0));
+    add("time_receive_echo", make_int(0));
+    add("total_receive", make_int(static_cast<int64_t>(cl.recvPkts)));
+    add("failed_count", make_int(static_cast<int64_t>(cl.recvBadPkts)));
+    add("debug_enabled", make_int(0));
+    add("mobile_client", make_int(cl.mobileClient ? 1 : 0));
+    if (cl.fd > 0) {
+        sockaddr_in sin{};
+        int slen = static_cast<int>(sizeof(sin));
+        if (getpeername(static_cast<SOCKET>(cl.fd), reinterpret_cast<sockaddr*>(&sin), &slen) == 0) {
+            add("remote_address", make_string(inet_ntoa(sin.sin_addr)));
+            add("remote_port", make_int(ntohs(sin.sin_port)));
+        }
+    }
+    return mp;
 }
 
 void gameServiceDispatchPacket(GameClient& cl) {

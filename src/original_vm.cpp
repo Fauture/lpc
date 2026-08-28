@@ -427,6 +427,10 @@ struct Frame {
     int bp = 0;                       // stack index of arg0 (param0 = top)
     int argNum = 0;
     int localCount = 0;
+    // String table of the PROGRAM the function belongs to.  Inherited
+    // functions carry their own program's strings (shared-string indexes are
+    // resolved against the callee's table, not the current object's).
+    const std::vector<std::string>* strings = nullptr;
     // Loop control blocks.  The original VM keeps a loop's control value in a
     // local slot, but expression-stack pops can descend into the local region
     // in this interpreter (the prologue of load_comm_desc does); storing the
@@ -439,6 +443,8 @@ struct Frame {
 // ---------------------------------------------------------------------------
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args);
+Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string& objectPath,
+                                int funIndex, const std::vector<Value>& args);
 Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value>& args);
 bool hasSuffix(const std::string& s, const std::string& suffix);
 struct PendingThread {
@@ -523,6 +529,10 @@ public:
     // create_thread semantics: the thread shares the creator's thisObject,
     // so writes to instance vars are visible to other threads/callers).
     void shareObjVars(OriginalVm* other) { objVars_ = other->objVars_; }
+    // Set the object identity this_object() resolves to (clone instances get
+    // their "clone:<rel>#<seq>" registry key so cross-object calls and
+    // set_client_agent store the REAL object, not the "<this>" placeholder).
+    void setThisObjectName(const std::string& n) { thisObjectName_ = n; }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
         // Resolve through own + inherited functions (like vm_lookupIdentInProgram
@@ -618,6 +628,7 @@ private:
     const OriginalObject& obj_;
     std::string objName_;
     std::string searchRoot_;
+    std::string thisObjectName_ = "<this>";   // object identity for this_object()
     std::vector<StackItem> stack_;
     std::shared_ptr<std::vector<Value>> objVars_;  // per-object instance variables (shared across threads of the same object)
     std::vector<Frame> frames_;
@@ -644,11 +655,33 @@ private:
 
     // Search the object's own functions AND the inherited ones merged into
     // funcsByIndex_ (vm_findProgramFunction walks the inherit chain too).
+    // Returns the merged-table pointer; its .index is the merged index when
+    // the function came from funcsByIndex_ (inherited) - own functions keep
+    // their original index which equals the merged one.
     const OriginalFunction* findFunctionAny(const std::string& name) const {
         for (const auto& fn : obj_.functions)
             if (fn.name == name && fn.index >= 0) return &fn;
         for (const auto& kv : funcsByIndex_)
             if (kv.second->name == name && kv.second->index >= 0) return kv.second;
+        return nullptr;
+    }
+
+    // Resolve a function by name to its MERGED table entry, fixing the merged
+    // index on inherited copies (their .index field still holds the parent
+    // program's local index).  Returns nullptr when not found.
+    const OriginalFunction* findMergedFunction(const std::string& name) const {
+        for (const auto& fn : obj_.functions)
+            if (fn.name == name && fn.index >= 0) return &fn;
+        for (const auto& kv : funcsByIndex_)
+            if (kv.second->name == name && kv.second->index >= 0) {
+                if (kv.second->index != kv.first) {
+                    // fix up the copied function's index so callers that
+                    // re-look-up by index hit the right entry
+                    auto mut = const_cast<OriginalFunction*>(kv.second);
+                    mut->index = kv.first;
+                }
+                return kv.second;
+            }
         return nullptr;
     }
 
@@ -693,8 +726,12 @@ private:
                     if (fn.index < 0) continue;
                     int childIndex = inh.baseFunOffset + fn.index;
                     if (funcsByIndex_.find(childIndex) == funcsByIndex_.end()) {
-                        inheritedFuncs_.push_back(std::make_shared<OriginalFunction>(fn));
-                        funcsByIndex_[childIndex] = inheritedFuncs_.back().get();
+                        auto inhFn = std::make_shared<OriginalFunction>(fn);
+                        // inherited functions resolve shared-string indexes
+                        // against the PARENT's string table
+                        inhFn->strings = parentObj->strings;
+                        inheritedFuncs_.push_back(inhFn);
+                        funcsByIndex_[childIndex] = inhFn.get();
                     }
                 }
             }
@@ -842,7 +879,21 @@ private:
                 // A function-valued argument is returned unchanged.
                 if (!args.empty()) {
                     const Value& a = args[0];
-                    if (a.index() == 8) return a;
+                    if (a.index() == 8) {
+                        // find_function(fn, extraArg, ...): bind the extra
+                        // arguments onto a NEW closure (vm_findFunction
+                        // 0x8094ef4: v6 = argNum-1; pushes getArgument(1..)
+                        // onto the new function value's bound args, keeping
+                        // the original bound args first).
+                        auto src = std::get<std::shared_ptr<ClosureValue>>(a);
+                        auto cl = std::make_shared<ClosureValue>();
+                        cl->functionName = src->functionName;
+                        cl->owner = src->owner;
+                        cl->boundArgs = src->boundArgs;
+                        for (size_t i = 1; i < args.size(); ++i)
+                            cl->boundArgs.push_back(args[i]);
+                        return cl;
+                    }
                     if (a.index() == 4) {
                         const std::string& fname = std::get<std::string>(a);
                         if (const OriginalFunction* fn = findFunctionAny(fname)) {
@@ -1222,7 +1273,8 @@ private:
         // argNum records how many arguments were actually PASSED: functions
         // with default arguments compare it against the declared count in
         // check_args_num and push the missing defaults inline.
-        Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount};
+        Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
+                    fn.strings.empty() ? &obj_.strings : &fn.strings};
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
         bool savedReturned = returned_;
@@ -1332,14 +1384,18 @@ private:
                 pushValue(make_float(*reinterpret_cast<const float*>(&m0)));
                 break;
             case 64: // push_shared_string
-                if (in.a < obj_.strings.size()) pushValue(make_string(obj_.strings[in.a]));
-                else pushValue(make_int(0));
+                {
+                    const std::vector<std::string>* tbl =
+                        frames_.empty() || !frames_.back().strings ? &obj_.strings : frames_.back().strings;
+                    if (in.a < tbl->size()) pushValue(make_string((*tbl)[in.a]));
+                    else pushValue(make_int(0));
+                }
                 break;
             case 66: // push_undefined
                 pushValue(UndefinedTag{});
                 break;
             case 65: // push_this_object
-                pushValue(make_object("<this>"));
+                pushValue(make_object(thisObjectName_));
                 break;
             case 52: // push_arg_num
                 pushValue(make_int(frames_.empty() ? 0 : frames_.back().argNum));
@@ -1737,6 +1793,72 @@ private:
                         break;
                     }
                 }
+                else if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                         names[efun] == "receive_from_queue") {
+                    // vm_f_receive_from_queue (0x80f29f8):
+                    //   receive_from_queue(qid, &msg, timeout)
+                    // Blocks the process until an element arrives, writes it
+                    // through the reference, and returns 0.  Returns -402 on
+                    // timeout / empty-with-no-timeout and -101 if the queue
+                    // does not exist.  The VM pushes args in reverse (param0
+                    // on top), so pop() yields arg0 first.
+                    std::vector<StackItem> items;
+                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    if (std::getenv("LPCVM_TRACE")) {
+                        std::string dbg;
+                        for (auto& it : items) {
+                            Value v = it.isRef ? deref(it) : it.value;
+                            if (!dbg.empty()) dbg += ",";
+                            dbg += (it.isRef ? "&" : "") + to_string(v, false);
+                        }
+                        std::cerr << "[queue] receive argc=" << argc << " items=[" << dbg << "]\n";
+                    }
+                    if (items.size() >= 2) {
+                        Value qv = items[0].isRef ? deref(items[0]) : items[0].value;
+                        int64_t qid = queueResolveId(qv);
+                        int timeoutMs = -1;
+                        if (items.size() >= 3) {
+                            Value tv = items[2].isRef ? deref(items[2]) : items[2].value;
+                            double secs = tv.index() == 3 ? std::get<double>(tv)
+                                                          : static_cast<double>(toInt(tv));
+                            timeoutMs = secs < 0 ? -1 : static_cast<int>(secs * 1000.0);
+                        }
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[queue] receive qid=" << qid
+                                      << " timeoutMs=" << timeoutMs << "\n";
+                        bool ok = false;
+                        Value msg = queueReceive(qid, timeoutMs, ok);
+                        if (ok) {
+                            writeThrough(items[1], msg);
+                            pushValue(make_int(0));
+                        } else {
+                            pushValue(make_int(-402));
+                        }
+                    } else {
+                        pushValue(make_int(-101));
+                    }
+                    break;
+                }
+                else if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                         names[efun] == "send_to_queue") {
+                    // vm_f_send_to_queue (0x80f2d94): send_to_queue(qid, value,
+                    // timeout) enqueues and wakes a receiver; 0 on success,
+                    // -101 unknown queue.
+                    std::vector<StackItem> items;
+                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    if (items.size() >= 2) {
+                        Value qv = items[0].isRef ? deref(items[0]) : items[0].value;
+                        Value v = items[1].isRef ? deref(items[1]) : items[1].value;
+                        int64_t qid = queueResolveId(qv);
+                        bool ok = queueSend(qid, v);
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[queue] send qid=" << qid << " ok=" << ok << "\n";
+                        pushValue(make_int(ok ? 0 : -101));
+                    } else {
+                        pushValue(make_int(-101));
+                    }
+                    break;
+                }
                 pushValue(callEfun(efun, argc));
                 break;
             }
@@ -1751,32 +1873,74 @@ private:
                 int argn = fromMeta ? m1 : in.b;
                 std::vector<Value> args;
                 for (int i = 0; i < argn && !stack_.empty(); ++i) args.push_back(pop().value);
+                // funVal is either a function-name string (dynamic call) or a
+                // function INDEX int (the compiler emits this_object()->fun(x)
+                // and other self/inherited calls with the callee's function
+                // index; vm_callInOtherFun resolves it in the target object).
                 std::string funName = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
+                int funIndex = -1;
+                if (funVal.index() == 2) funIndex = static_cast<int>(std::get<int64_t>(funVal));
+                if (funName.empty() && funIndex >= 0) {
+                    auto fit = funcsByIndex_.find(funIndex);
+                    if (fit != funcsByIndex_.end()) funName = fit->second->name;
+                }
                 Value result = make_int(0);
                 bool found = false;
                 // The target object path, if the call names one.  The original
                 // driver resolves the function in that object; only when the
                 // path is absent/self do we fall back to the current object
                 // (which covers inherited function calls).
+                auto resolveSelf = [&]() {
+                    if (funIndex >= 0) {
+                        // direct inherited/own function index
+                        auto fit = funcsByIndex_.find(funIndex);
+                        if (fit != funcsByIndex_.end()) {
+                            result = executeFunctionFromOutside(*fit->second, args);
+                            found = true;
+                            return;
+                        }
+                    }
+                    const OriginalFunction* selfFn = findMergedFunction(funName);
+                    if (selfFn && selfFn->index >= 0) {
+                        auto fit = funcsByIndex_.find(selfFn->index);
+                        if (fit != funcsByIndex_.end()) {
+                            result = executeFunctionFromOutside(*fit->second, args);
+                            found = true;
+                        }
+                    }
+                };
                 if (pathVal.index() == 4) {
                     std::string path = std::get<std::string>(pathVal);
                     if (path.empty() || path == "<this>" || path == ".") {
-                        for (const auto& fn : obj_.functions) {
-                            if (fn.name == funName && fn.index >= 0) {
-                                auto fit = funcsByIndex_.find(fn.index);
-                                if (fit != funcsByIndex_.end()) {
-                                    result = executeFunctionFromOutside(*fit->second, args);
-                                    found = true;
-                                }
-                                break;
-                            }
-                        }
+                        resolveSelf();
                     } else {
-                        result = tryCallOtherObject(searchRoot_, path, funName, args);
-                        found = true;
+                        if (funName.empty()) {
+                            // function index on an explicit object: resolve
+                            // via the object's own function table
+                            result = tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                            found = true;
+                        } else {
+                            result = tryCallOtherObject(searchRoot_, path, funName, args);
+                            found = true;
+                        }
+                    }
+                } else if (pathVal.index() == 7) {
+                    // Object value: resolve through the clone/registry key.
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(pathVal);
+                    std::string path = ov->programName;
+                    if (path == "<this>" || path == "." || path.empty()) {
+                        resolveSelf();
+                    } else {
+                        if (funName.empty()) {
+                            result = tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                            found = true;
+                        } else {
+                            result = tryCallOtherObject(searchRoot_, path, funName, args);
+                            found = true;
+                        }
                     }
                 }
-                if (!found && pathVal.index() == 4) {
+                if (!found && pathVal.index() == 4 && !funName.empty()) {
                     result = tryCallOtherObject(searchRoot_, std::get<std::string>(pathVal), funName, args);
                 }
                 pushValue(result);
@@ -1801,15 +1965,21 @@ private:
                         // master's post_init loop calling a daemon's do_init):
                         // resolve the function in the owner's VM.
                         auto& reg = objectRegistry();
-                        for (auto& kv : reg.vms) {
-                            if (&kv.second->object() == cl->owner) {
-                                if (std::getenv("LPCVM_TRACE"))
-                                    std::cerr << "[cfv] owner-resolve " << cl->functionName
-                                              << " in " << kv.first << "\n";
-                                result = kv.second->callFunctionByName(cl->functionName, all);
-                                break;
+                        std::shared_ptr<OriginalVm> ownerVm;
+                        {
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            for (auto& kv : reg.vms) {
+                                if (&kv.second->object() == cl->owner) {
+                                    if (std::getenv("LPCVM_TRACE"))
+                                        std::cerr << "[cfv] owner-resolve " << cl->functionName
+                                                  << " in " << kv.first << "\n";
+                                    ownerVm = kv.second;
+                                    break;
+                                }
                             }
                         }
+                        if (ownerVm)
+                            result = ownerVm->callFunctionByName(cl->functionName, all);
                     } else {
                         // The closure may reference a builtin efun (e.g. the
                         // mysql_connect closure created by find_function).
@@ -1980,9 +2150,11 @@ private:
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int strIndex = fromMeta ? m1 : 0;
                 Value v = top().value;
+                const std::vector<std::string>* tbl =
+                    frames_.empty() || !frames_.back().strings ? &obj_.strings : frames_.back().strings;
                 if (v.index() == 4 && strIndex >= 0 &&
-                    static_cast<size_t>(strIndex) < obj_.strings.size() &&
-                    std::get<std::string>(v) == obj_.strings[static_cast<size_t>(strIndex)]) {
+                    static_cast<size_t>(strIndex) < tbl->size() &&
+                    std::get<std::string>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
                     pop();
                     ip += offset;
                 }
@@ -2276,11 +2448,67 @@ bool hasSuffix(const std::string& s, const std::string& suffix) {
     return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string& objectPath,
+                                int funIndex, const std::vector<Value>& args) {
+    // call_in_other_fun_ex with a function-INDEX funVal on an explicit object:
+    // resolve the index in the target object's merged function table.
+    if (searchRoot.empty() || objectPath.empty() || funIndex < 0) return make_int(0);
+    std::string rel = objectPath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    std::vector<std::string> candidates;
+    candidates.push_back(searchRoot + "/" + rel);
+    candidates.push_back("pak:" + rel);
+    if (rel.compare(0, 4, "aaa/") == 0) {
+        candidates.push_back(searchRoot + "/" + rel.substr(4));
+        candidates.push_back("pak:" + rel.substr(4));
+    }
+    auto& reg = objectRegistry();
+    auto lookup = [&](const std::string& c) -> std::shared_ptr<OriginalVm> {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        auto it = reg.vms.find(c);
+        return it == reg.vms.end() ? nullptr : it->second;
+    };
+    for (const auto& c : candidates) {
+        auto vm = lookup(c);
+        if (vm) {
+            std::string name = vm->functionNameByIndex(funIndex);
+            if (!name.empty()) return vm->callFunctionByName(name, args);
+            return make_int(0);
+        }
+    }
+    std::shared_ptr<OriginalVm> hit;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms)
+            if (hasSuffix(kv.first, rel)) { hit = kv.second; break; }
+    }
+    if (hit) {
+        std::string name = hit->functionNameByIndex(funIndex);
+        if (!name.empty()) return hit->callFunctionByName(name, args);
+    }
+    return make_int(0);
+}
+
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args) {
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[call_other] " << objectPath << " -> " << funName
                   << " args=" << args.size() << "\n";
+    // Clone instances are registered under "clone:<rel>#<seq>"; resolve them
+    // by exact key first (vm_callInOtherFun with an object value).  This must
+    // run BEFORE the searchRoot check: clone keys carry no search root.
+    if (objectPath.compare(0, 6, "clone:") == 0) {
+        auto& reg0 = objectRegistry();
+        std::shared_ptr<OriginalVm> hit;
+        {
+            std::lock_guard<std::recursive_mutex> rl0(registryMutex());
+            auto it0 = reg0.vms.find(objectPath);
+            if (it0 != reg0.vms.end()) hit = it0->second;
+        }
+        if (hit) return hit->callFunctionByName(funName, args);
+        return make_int(0);
+    }
     if (searchRoot.empty() || objectPath.empty()) return make_int(0);
     std::string rel = objectPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
@@ -2309,14 +2537,19 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     // Suffix match (covers registry keys stored with a different root, e.g.
     // absolute pak paths) - mirrors findObjectInRegistry's resolution.
     {
-        std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        for (auto& kv : reg.vms) {
-            if (hasSuffix(kv.first, rel)) {
-                if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
-                    std::cerr << "[call_other] -> " << kv.first << " (suffix)\n";
-                return kv.second->callFunctionByName(funName, args);
+        std::shared_ptr<OriginalVm> hit;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms) {
+                if (hasSuffix(kv.first, rel)) {
+                    if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
+                        std::cerr << "[call_other] -> " << kv.first << " (suffix)\n";
+                    hit = kv.second;
+                    break;
+                }
             }
         }
+        if (hit) return hit->callFunctionByName(funName, args);
     }
     // The original driver does NOT auto-load objects on call_other: an
     // unloaded target raises "Object is not found (when call in function)."
@@ -2513,6 +2746,87 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
     return make_int(0);
 }
 
+Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot) {
+    // vm_f_clone_object (0x80f8eac): look up the loaded template, clone it
+    // (fresh instance variables), run its create() initializer and return the
+    // new object.  Clones are registered under "clone:<rel>#<seq>" so later
+    // call_other through the object value resolves to the clone.
+    if (virtualPath.empty()) return make_int(0);
+    std::string rel = virtualPath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    auto& reg = objectRegistry();
+    std::shared_ptr<OriginalVm> tmplVm;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms) {
+            std::string key = kv.first;
+            // template keys are real paths or "pak:<rel>"; strip "#" clones.
+            size_t hash = key.find('#');
+            if (hash != std::string::npos) key.resize(hash);
+            if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+        }
+    }
+    if (!tmplVm) {
+        // Not loaded yet: load it first (safe_load_object semantics), then
+        // re-look it up.
+        if (!loadObjectIntoRegistry(virtualPath, searchRoot)) return make_int(0);
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms) {
+            std::string key = kv.first;
+            size_t hash = key.find('#');
+            if (hash != std::string::npos) key.resize(hash);
+            if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+        }
+    }
+    if (!tmplVm) return make_int(0);
+    // Clone: fresh OriginalObject copy (program+metadata shared) but a NEW
+    // OriginalVm whose instance-variable storage is independent.
+    static std::atomic<int64_t> cloneSeq{0};
+    int64_t seq = cloneSeq.fetch_add(1, std::memory_order_relaxed);
+    std::string cloneKey = "clone:" + rel + "#" + std::to_string(seq);
+    std::shared_ptr<OriginalObject> objPtr;
+    std::shared_ptr<OriginalVm> vmPtr;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        // find the template's OriginalObject to copy program/objVars layout
+        std::shared_ptr<OriginalObject> tmplObj;
+        for (auto& kv : reg.objects) {
+            std::string key = kv.first;
+            size_t hash = key.find('#');
+            if (hash != std::string::npos) key.resize(hash);
+            if (hasSuffix(key, rel)) { tmplObj = kv.second; break; }
+        }
+        if (!tmplObj) {
+            // fall back to the VM's object
+            const OriginalObject& to = tmplVm->object();
+            objPtr = std::make_shared<OriginalObject>(to);
+        } else {
+            objPtr = std::make_shared<OriginalObject>(*tmplObj);
+        }
+        vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+        vmPtr->setThisObjectName(cloneKey);
+        reg.objects[cloneKey] = objPtr;
+        reg.vms[cloneKey] = vmPtr;
+    }
+    try {
+        // vm_cloneObject only runs the initializer list (create), NOT the
+        // global initializer code: the template's global code already ran
+        // when the template was loaded and must not run per clone.
+        vmPtr->callCreate();
+    } catch (const std::exception& e) {
+        std::cerr << "[clone] " << cloneKey << " create error: " << e.what() << "\n";
+    } catch (...) {
+    }
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        reg.initialized[cloneKey] = true;
+    }
+    auto ov = std::make_shared<ObjectValue>();
+    ov->programName = cloneKey;
+    return ov;
+}
+
 Value callOriginalObjectFunction(const std::string& oPath, const std::string& funName,
                                  const std::vector<Value>& args, const std::string& searchRoot) {
     return tryCallOtherObject(searchRoot, oPath, funName, args);
@@ -2551,22 +2865,31 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
     std::vector<Value> all = cl->boundArgs;
     all.insert(all.end(), args.begin(), args.end());
     auto& reg = objectRegistry();
+    std::shared_ptr<OriginalVm> ownerVm;
     if (cl->owner) {
-        std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        for (auto& kv : reg.vms) {
-            if (&kv.second->object() == cl->owner) {
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[applyClosure] owner-resolve " << cl->functionName
-                              << " in " << kv.first << "\n";
-                return kv.second->callFunctionByName(cl->functionName, all);
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms) {
+                if (&kv.second->object() == cl->owner) {
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[applyClosure] owner-resolve " << cl->functionName
+                                  << " in " << kv.first << "\n";
+                    ownerVm = kv.second;
+                    break;
+                }
             }
         }
-        if (std::getenv("LPCVM_TRACE"))
+        if (!ownerVm && std::getenv("LPCVM_TRACE"))
             std::cerr << "[applyClosure] owner not in registry: " << cl->functionName
                       << " owner=" << (cl->owner ? cl->owner->sourceName : "?") << "\n";
     } else if (std::getenv("LPCVM_TRACE")) {
         std::cerr << "[applyClosure] no owner for " << cl->functionName << "\n";
     }
+    // Call OUTSIDE the registry lock: the owner VM's execution may itself
+    // touch the registry (clone_object, call_other, ...) and taking the
+    // registry lock while holding another VM's exec lock deadlocks against a
+    // thread doing the reverse.
+    if (ownerVm) return ownerVm->callFunctionByName(cl->functionName, all);
     return callMasterProgramFunction(cl->functionName, all, masterSearchRoot());
 }
 

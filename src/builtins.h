@@ -42,4 +42,19 @@ int threadTelnetClient();
 int startDriverTelnet(int port);
 void setDriverTelnetPassword(const std::string& pwd);
 
+// ---- driver message queues (vm_f_create_queue/send_to_queue/receive_from_queue) ----
+// Queue ids are the object ids returned by create_queue() (1-based, shared
+// with events).  A queue may also be addressed by the name string passed to
+// create_queue() (vm_lookupPendObject).  These are real cross-thread queues:
+// send_to_queue from any OS thread enqueues and wakes a blocked receiver.
+int64_t queueCreate(int64_t qid, const std::string& name);
+bool queueSend(int64_t qid, const Value& v);     // false -> queue not found
+void queueDelete(int64_t qid);
+// Resolve a queue reference (int qid or registered name string) to a qid,
+// or -1 if unknown.  Thread-safe.
+int64_t queueResolveId(const Value& v);
+// Block until an element is available or timeoutMs elapses (timeoutMs < 0 =
+// forever).  Returns the element; `ok` is false on timeout / missing queue.
+Value queueReceive(int64_t qid, int timeoutMs, bool& ok);
+
 } // namespace lpc

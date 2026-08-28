@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "value.h"
+
 namespace lpc {
 
 // Wire packet header (12 bytes, all multi-byte fields big-endian on the wire).
@@ -64,5 +66,11 @@ void gameServiceDisconnect(int clientNo);
 // Dispatch one parsed packet to the command table (vm_clientSocketCallback's
 // cmdIndex lookup + attrib check + cmdFunc call).
 void gameServiceDispatchPacket(GameClient& cl);
+
+// get_client_info(client_no) support (vm_f_get_client_info 0x804d478):
+// returns a mapping describing the client slot, or an empty mapping when the
+// client does not exist.  When a socket is attached, local/remote address and
+// port fields are included.
+Value gameGetClientInfo(int clientNo);
 
 } // namespace lpc

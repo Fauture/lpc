@@ -235,8 +235,11 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
         return 0;
     }
     size_t off = 0;
-    std::vector<Value> args;
-    args.push_back(make_int(clientNo));   // implicit first argument
+    // vm_matchPktArguments produces the argument collection; vm_pktAnalyse
+    // then applies the interface function with (clientNo, collection):
+    //   encapType==1 -> array of field values
+    //   encapType==0 -> mapping of name->value (+ extra_data buffer)
+    std::vector<Value> fieldVals;
     for (const auto& f : pi.fields) {
         Value v;
         if (!decodeField(f, body, len, off, v)) {
@@ -244,10 +247,26 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
                 std::cerr << "[pkt] analyse field '" << f.name << "' decode failed at off=" << off << "\n";
             return -1;
         }
-        args.push_back(v);
+        fieldVals.push_back(v);
     }
+    Value collection;
+    if (pi.encapType == 0) {
+        auto mp = std::make_shared<MappingValue>();
+        for (size_t i = 0; i < pi.fields.size() && i < fieldVals.size(); ++i)
+            mp->insert(make_string(pi.fields[i].name), fieldVals[i]);
+        collection = mp;
+    } else {
+        auto arr = std::make_shared<ArrayValue>();
+        arr->items = std::move(fieldVals);
+        collection = arr;
+    }
+    std::vector<Value> args;
+    args.push_back(make_int(clientNo));   // implicit first argument
+    args.push_back(collection);
     if (std::getenv("LPCVM_TRACE"))
-        std::cerr << "[pkt] analyse dispatching " << pi.name << " argc=" << args.size() << "\n";
+        std::cerr << "[pkt] analyse dispatching " << pi.name
+                  << " client=" << clientNo << " argc=" << args.size()
+                  << " encap=" << pi.encapType << "\n";
     if (pi.func.index() == 8) {
         auto cl = std::get<std::shared_ptr<ClosureValue>>(pi.func);
         if (std::getenv("LPCVM_TRACE"))
