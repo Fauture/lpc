@@ -1940,8 +1940,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_int(0);
         std::string vpath = normalizeSlashes(as_string(args[0]));
         if (std::getenv("LPCVM_TRACE"))
-            std::cerr << "[load_object] " << vpath << "\n";
-        int ok = loadObjectIntoRegistry(vpath, vfsRoot());
+            std::cerr << "[load_object] " << vpath << " nargs=" << args.size()
+                      << " a1=" << (args.size() >= 2 ? to_string(args[1], false).substr(0, 40) : "-") << "\n";
+        // The second argument (when present) is the object-creation context
+        // that load_object passes to create(): handler.c's create reads
+        // arg0["module"] (the loading module object) to register the command's
+        // main() into the module's handler table.  cmd_*.o are loaded with
+        // (["module": object(<this>)]).
+        std::vector<Value> createArgs;
+        if (args.size() >= 2) createArgs.push_back(args[1]);
+        int ok = loadObjectIntoRegistry(vpath, vfsRoot(), createArgs);
         return make_int(ok);
     }
     if (name == "find_object") {

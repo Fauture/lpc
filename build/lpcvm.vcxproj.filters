@@ -46,6 +46,9 @@
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\xdbc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\d3des.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="C:\Users\Administrator\Desktop\lpc\CMakeLists.txt" />

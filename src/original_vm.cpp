@@ -553,21 +553,33 @@ public:
         // Resolve through own + inherited functions (like vm_lookupIdentInProgram
         // on the global program used by vm_apply): a command function such as
         // msg_l_auth may live in an inherited program, not the master itself.
-        if (std::getenv("LPCVM_TRACE") && name == "lite_query_temp")
+        if (std::getenv("LPCVM_TRACE") &&
+            (name == "lite_query_temp" || name == "lite_set_temp" || name == "set_temp" ||
+             name == "query_temp" || name == "set"))
             std::cerr << "[lqt] callFunctionByName vm=" << this << " obj=" << objName_
-                      << " args=" << args.size() << " thisObj=" << thisObjectName_ << "\n";
+                      << " fn=" << name << " args=" << args.size()
+                      << " thisObj=" << thisObjectName_ << " a0=["
+                      << (args.empty() ? "" : to_string(args[0], false).substr(0, 40)) << "]\n";
         if (const OriginalFunction* fn = findFunctionAny(name)) {
             if (std::getenv("LPCVM_TRACE") && name == "lite_query_temp")
                 std::cerr << "[lqt] found idx=" << fn->index << " code=" << fn->code.size()
                           << " argCount=" << fn->argCount << "\n";
+            if (std::getenv("LPCVM_TRACE") && name == "account_login")
+                std::cerr << "[cfv-enter] account_login on obj=" << objName_
+                          << " fnidx=" << fn->index << " code=" << fn->code.size()
+                          << " args=" << args.size() << "\n";
             Value r = executeFunctionFromOutside(*fn, args);
             if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
                 std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
                 std::cerr.flush();
             }
+            if (std::getenv("LPCVM_TRACE") && name == "account_login")
+                std::cerr << "[cfv-exit] account_login done\n";
             return r;
         }
+        if (std::getenv("LPCVM_TRACE") && name == "account_login")
+            std::cerr << "[cfv-miss] account_login NOT FOUND on obj=" << objName_ << "\n";
         return make_int(0);
     }
 
@@ -577,7 +589,7 @@ public:
         return executeFunctionOnStack(*it->second);
     }
 
-    int runInit() {
+    int runInit(const std::vector<Value>& createArgs = {}) {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
         try {
             // The original runs EVERY constitution's initCodeSegment in
@@ -588,7 +600,7 @@ public:
             // program's global code under its own accumulated offset.
             execute(obj_.globalCode, obj_.globalMeta);
             runInheritedInits(0, 0);
-            callCreate();
+            callCreate(createArgs);
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
                                      " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
@@ -648,20 +660,41 @@ public:
         }
     }
 
-    void callCreate() {
+    void callCreate(const std::vector<Value>& createArgs = {}) {
+        // The create() initializer may be the object's OWN function or an
+        // INHERITED one (e.g. every cmd_*.o inherits /inherit/misc/handler.c
+        // whose create registers the command's main()).  Search the merged
+        // table so inherited creates run too.
+        const OriginalFunction* createFn = nullptr;
         for (const auto& fn : obj_.functions) {
-            if (fn.name == "create" && fn.index >= 0) {
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[create] object=" << obj_.magic << " fn=" << fn.name
-                              << " index=" << fn.index << " args=" << fn.argCount << "\n";
-                auto it = funcsByIndex_.find(fn.index);
-                if (it != funcsByIndex_.end()) {
-                    std::vector<Value> args;
-                    for (int i = 0; i < it->second->argCount; ++i) args.push_back(UndefinedTag{});
-                    executeFunctionFromOutside(*it->second, args);
+            if (fn.name == "create" && fn.index >= 0) { createFn = &fn; break; }
+        }
+        if (!createFn) {
+            for (const auto& kv : funcsByIndex_) {
+                if (kv.second->name == "create" && kv.second->index >= 0) {
+                    createFn = kv.second;
+                    break;
                 }
-                break;
             }
+        }
+        if (!createFn) return;
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[create] object=" << obj_.magic << " fn=" << createFn->name
+                      << " index=" << createFn->index << " args=" << createFn->argCount
+                      << " extArgs=" << createArgs.size() << "\n";
+        auto it = funcsByIndex_.find(createFn->index);
+        if (it != funcsByIndex_.end()) {
+            std::vector<Value> args;
+            // External (load_object) arguments are the object-creation
+            // context; only pass them to creates that declare parameters
+            // (handler.c's create(arg) reads arg["module"]).  A zero-arg
+            // create ignores them, so keep its stack clean.
+            if (!createArgs.empty() && it->second->argCount >= 1) {
+                for (size_t i = 0; i < createArgs.size(); ++i) args.push_back(createArgs[i]);
+            }
+            for (int i = static_cast<int>(args.size()); i < it->second->argCount; ++i)
+                args.push_back(UndefinedTag{});
+            executeFunctionFromOutside(*it->second, args);
         }
     }
 
@@ -948,6 +981,20 @@ private:
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
+            if (nm == "is_clone" && args.empty()) {
+                // vm_f_is_clone (0x80f7900) with no argument inspects the
+                // CURRENT object (vm_currentContext->thisObject) and returns
+                // (thisObject->flags & 1) - the clone flag.  account.o's
+                // create() does `if (!is_clone()) return;` and only when the
+                // object IS a clone proceeds to replace_entire_dbase() and
+                // set_cmd_module(); returning 0 here skipped those, leaving
+                // cmd_module unset so process_command could not forward.
+                bool isClone = thisObjectName_.find('#') != std::string::npos;
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[is_clone] no-arg this=" << thisObjectName_
+                              << " -> " << (isClone ? 1 : 0) << "\n";
+                return make_int(isClone ? 1 : 0);
+            }
             if (nm == "find_function" || nm == "find_function_arg") {
                 // vm_f_find_function (0x80d626c) / vm_f_find_function_arg
                 // (0x80d6347) -> vm_findFunction (0x8094ef4).
@@ -967,6 +1014,7 @@ private:
                     auto makeBound = [&](const std::shared_ptr<ClosureValue>& src) {
                         auto cl = std::make_shared<ClosureValue>();
                         cl->functionName = src->functionName;
+                        cl->funcIndex = src->funcIndex;
                         cl->owner = src->owner;
                         cl->boundArgs = src->boundArgs;
                         for (const auto& b : bind) cl->boundArgs.push_back(b);
@@ -975,9 +1023,10 @@ private:
                     if (fn0.index() == 8) return makeBound(std::get<std::shared_ptr<ClosureValue>>(fn0));
                     if (fn0.index() == 4) {
                         const std::string& fname = std::get<std::string>(fn0);
-                        if (const OriginalFunction* fn = findFunctionAny(fname)) {
+                        if (const OriginalFunction* fn = findMergedFunction(fname)) {
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
+                            cl->funcIndex = fn->index;
                             cl->owner = &obj_;
                             return makeBound(cl);
                         }
@@ -1010,6 +1059,7 @@ private:
                 auto bindClosure = [&](const std::shared_ptr<ClosureValue>& src) {
                     auto cl = std::make_shared<ClosureValue>();
                     cl->functionName = src->functionName;
+                    cl->funcIndex = src->funcIndex;
                     cl->owner = src->owner;
                     cl->boundArgs = src->boundArgs;
                     for (size_t i = 1; i < args.size(); ++i)
@@ -1381,7 +1431,15 @@ private:
         // same registry VM concurrently; pushing outside the lock let one
         // thread's arguments land on another thread's stack (seen as a
         // shifted mixed_mysql_select parameter list -> bogus cno/sql).
+        if (std::getenv("LPCVM_TRACE") && fn.name == "account_login")
+            std::cerr << "[cfv-lock] account_login trying execMutex_ obj=" << objName_ << "\n";
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
+        if (std::getenv("LPCVM_TRACE") && fn.name == "account_login")
+            std::cerr << "[cfv-lock] account_login GOT execMutex_\n";
+        return executeFunctionFromOutsideLocked(fn, args);
+    }
+
+    Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
         // The original VM pushes args in reverse (param0 last, on top).
         // For a zero-arg function the stack top would be -1; reserve one slot
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
@@ -1558,7 +1616,7 @@ private:
                 pushValue(UndefinedTag{});
                 break;
             case 65: // push_this_object
-                pushValue(make_object(thisObjectName_));
+                pushValue(make_object_owned(thisObjectName_, &obj_));
                 break;
             case 52: // push_arg_num
                 pushValue(make_int(frames_.empty() ? 0 : frames_.back().argNum));
@@ -1651,6 +1709,7 @@ private:
                     for (int i = 0; i < boundCount && !stack_.empty(); ++i) bound.push_back(pop().value);
                     auto cl = std::make_shared<ClosureValue>();
                     cl->functionName = it->second->name;
+                    cl->funcIndex = in.a;   // merged index of the exact function
                     cl->boundArgs = bound;
                     cl->owner = &obj_;
                     pushValue(cl);
@@ -2117,6 +2176,38 @@ private:
                     auto ov = std::get<std::shared_ptr<ObjectValue>>(pathVal);
                     std::string path = ov->programName;
                     if (path == "<this>" || path == "." || path.empty()) {
+                        // object(<this>) captured at creation time: resolve
+                        // through the OWNER's registry VM, not the current
+                        // (callee) VM.  handler.c's create receives
+                        // (["module": object(<this>)]) from load_object and
+                        // does call_other(module, "register_entry", ...); the
+                        // module object is the loader (master), so it must map
+                        // to the master's registered VM.
+                        if (ov->owner) {
+                            auto& reg0 = objectRegistry();
+                            std::shared_ptr<OriginalVm> ownerVm;
+                            {
+                                std::lock_guard<std::recursive_mutex> rl0(registryMutex());
+                                for (auto& kv : reg0.vms) {
+                                    if (&kv.second->object() == ov->owner) {
+                                        ownerVm = kv.second;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (ownerVm) {
+                                if (std::getenv("LPCVM_TRACE"))
+                                    std::cerr << "[obj-this] "<this>" owner-resolve -> "
+                                              << ownerVm->object().sourceName << "\n";
+                                if (funName.empty()) {
+                                    result = ownerVm->callFunctionByIndex(funIndex);
+                                } else {
+                                    result = ownerVm->callFunctionByName(funName, args);
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
                         resolveSelf();
                     } else {
                         if (funName.empty()) {
@@ -2145,7 +2236,25 @@ private:
                     auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
-                    const OriginalFunction* fn = findFunctionAny(cl->functionName);
+                    const OriginalFunction* fn = nullptr;
+                    // Prefer the function captured at closure-creation time:
+                    // create_function_value(n) binds the EXACT merged function
+                    // at index n.  Re-resolving by name later can pick a
+                    // DIFFERENT (overriding) copy in the current VM - e.g.
+                    // handler_module's process_command (merged 32) vs
+                    // accountd's own process_command (153) - which changed the
+                    // dispatch target and caused an infinite re-dispatch loop.
+                    if (cl->funcIndex >= 0) {
+                        auto fit = funcsByIndex_.find(cl->funcIndex);
+                        if (fit != funcsByIndex_.end()) {
+                            fn = fit->second;
+                            if (std::getenv("LPCVM_TRACE"))
+                                std::cerr << "[cfv] closure by-index " << cl->functionName
+                                          << " idx=" << cl->funcIndex
+                                          << " -> " << (fn ? fn->name : "?") << "\n";
+                        }
+                    }
+                    if (!fn) fn = findFunctionAny(cl->functionName);
                     if (fn) {
                         result = executeFunctionFromOutside(*fn, all);
                     } else if (cl->owner && cl->owner != &obj_) {
@@ -2166,8 +2275,12 @@ private:
                                 }
                             }
                         }
-                        if (ownerVm)
+                        if (ownerVm) {
+                            if (std::getenv("LPCVM_TRACE"))
+                                std::cerr << "[cfv] calling " << cl->functionName << " on " << ownerVm->object().sourceName
+                                          << " args=" << all.size() << "\n";
                             result = ownerVm->callFunctionByName(cl->functionName, all);
+                        }
                     } else {
                         // The closure may reference a builtin efun (e.g. the
                         // mysql_connect closure created by find_function).
@@ -2212,13 +2325,23 @@ private:
                 break;
             }
             case 15: { // check_args_num
+                // vm_checkArgNum (0x809521c): the operand is the function's
+                // MAX argument count (declared + defaults).  When fewer
+                // arguments were actually passed the compiler falls through
+                // to the inline default-value code (which pushes the missing
+                // defaults, then resort_stack reorders them); when all were
+                // passed it skips that block.  handler.c's create and other
+                // functions rely on this: create declares 1 arg but has a
+                // default create_mapping second argument (maxArgNo=2), so a
+                // 1-arg call MUST run the default block that sets up the
+                // command-registration mapping.
                 int skipAll = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int passed = frames_.empty() ? 0 : frames_.back().argNum;
-                int declared = 0;
-                if (!frames_.empty() && frames_.back().fn)
-                    declared = frames_.back().fn->argCount;
+                int declared = frames_.empty() || !frames_.back().fn ? 0 : frames_.back().fn->argCount;
+                int maxArgNo = skipAll;
+                if (maxArgNo < declared) maxArgNo = declared;
                 // If every declared argument was passed, skip the default-code block.
-                if (passed >= declared) ip += skipAll;
+                if (passed >= maxArgNo) ip += skipAll;
                 // otherwise fall through and let the inline defaults + resort_stack run
                 break;
             }
@@ -2824,17 +2947,26 @@ void runPostInitFunctions(const std::string& searchRoot) {
 
 int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
     OriginalVm vm(obj, searchRoot);
+    // The master's this_object() must resolve to a REAL registry key so
+    // object(<this>) values created by the master (e.g. load_object's
+    // (["module": object(<this>)]) context) can be called back later - the
+    // cmd_*.o create() does call_other(module, "register_entry", ...) with
+    // that captured object.  "<this>" alone cannot be resolved outside the
+    // creating VM.
+    std::string mainKey = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
+    vm.setThisObjectName(mainKey);
     // Register the main object (the driver's "global program") so cross-object
     // function lookups can resolve its functions.  The same OriginalObject is
     // used by the running VM, so thread closures created from it share state.
     {
         auto& reg = objectRegistry();
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
-        if (reg.vms.find(key) == reg.vms.end()) {
+        if (reg.vms.find(mainKey) == reg.vms.end()) {
             auto objPtr = std::make_shared<OriginalObject>(obj);
-            reg.objects[key] = objPtr;
-            reg.vms[key] = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            reg.objects[mainKey] = objPtr;
+            auto mainVm = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            mainVm->setThisObjectName(mainKey);
+            reg.vms[mainKey] = mainVm;
             // mark the registered copy initialized after vm.run() below
         }
     }
@@ -2842,8 +2974,7 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
     {
         auto& reg = objectRegistry();
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
-        reg.initialized[key] = true;
+        reg.initialized[mainKey] = true;
         // The local vm ran the init on the caller's obj (not the registry
         // copy); mark that instance too so master-object thread closures
         // (daemon/echo_daemon) don't re-run the whole driver startup.
@@ -2861,7 +2992,8 @@ int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRo
     return 0;
 }
 
-int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot) {
+int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot,
+                           const std::vector<Value>& createArgs) {
     if (searchRoot.empty() || virtualPath.empty()) return 0;
     std::string rel = virtualPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
@@ -2887,7 +3019,7 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
                 reg.objects[key] = pakObj;
                 reg.vms[key] = vmPtr;
             }
-            vmPtr->runInit();
+            vmPtr->runInit(createArgs);
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.initialized[key] = true;
@@ -2914,7 +3046,7 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
                 reg.objects[c] = objPtr;
                 reg.vms[c] = vmPtr;
             }
-            vmPtr->runInit();
+            vmPtr->runInit(createArgs);
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.initialized[c] = true;

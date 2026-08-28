@@ -83,10 +83,23 @@ struct MappingValue {
 };
 struct ObjectValue {
     std::string programName;
+    // The program that created this object value (set by push_this_object).
+    // When programName is "<this>" the value is an object-identity reference
+    // captured at creation time; callers resolve it through this owner's
+    // registry VM (handler.c's create calls call_other(module, ...) with a
+    // captured (["module": object(<this>)])).
+    const struct OriginalObject* owner = nullptr;
     std::unordered_map<std::string, Value> variables;
 };
 struct ClosureValue {
     std::string functionName;
+    // Merged function-table index captured at closure-creation time.  A
+    // closure created from create_function_value(n) must invoke THAT function
+    // (e.g. handler_module's inherited process_command at merged index 32),
+    // not whatever the current VM's findFunctionAny(name) happens to resolve
+    // later (which would pick the OVERRIDING copy - accountd's own
+    // process_command - and loop forever).  -1 = resolve by name only.
+    int funcIndex = -1;
     std::vector<Value> boundArgs;
     // Object that owns this closure (the program whose bytecode created it).
     // When the closure is invoked from another VM (e.g. the master's post_init
@@ -114,6 +127,7 @@ Value make_string(std::string s);
 Value make_array();
 Value make_mapping();
 Value make_object(std::string programName);
+Value make_object_owned(std::string programName, const struct OriginalObject* owner);
 Value make_closure(std::string name, std::vector<Value> args = {});
 
 std::string value_type_name(const Value& v);

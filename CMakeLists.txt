@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lpcvm CXX)
+project(lpcvm C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +9,9 @@ if(MSVC)
 else()
     add_compile_options(-Wall -Wextra)
 endif()
+
+# The d3des source is a classic K&R-style .c file; keep it compiled as C.
+set_source_files_properties(src/d3des.c PROPERTIES LANGUAGE C)
 
 add_executable(lpcvm
     src/main.cpp
@@ -26,6 +29,7 @@ add_executable(lpcvm
     src/pkt_protocol.cpp
     src/mysql_client.cpp
     src/xdbc.cpp
+    src/d3des.c
 )
 
 target_include_directories(lpcvm PRIVATE src)

@@ -311,6 +311,12 @@ Value make_object(std::string programName) {
     o->programName = std::move(programName);
     return o;
 }
+Value make_object_owned(std::string programName, const struct OriginalObject* owner) {
+    auto o = std::make_shared<ObjectValue>();
+    o->programName = std::move(programName);
+    o->owner = owner;
+    return o;
+}
 Value make_closure(std::string name, std::vector<Value> args) {
     auto c = std::make_shared<ClosureValue>();
     c->functionName = std::move(name);

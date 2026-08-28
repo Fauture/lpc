@@ -42,7 +42,8 @@ void drainPendingOriginalThreads(const std::string& searchRoot);
 // loads the .o for a virtual path (e.g. "/aaa/daemons/configd.c"), registers
 // it in the object registry (so find_object / cross-object calls work) and
 // runs its global initializer + create().  Returns 1 on success.
-int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot);
+int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot,
+                           const std::vector<Value>& createArgs = {});
 
 // find_object: returns an object value if the object is loaded, otherwise 0.
 // (The original driver does not auto-load here; load_object/safe_load_object
