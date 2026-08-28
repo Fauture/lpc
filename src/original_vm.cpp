@@ -436,6 +436,10 @@ struct Frame {
     // (vm_pushObjVar 0x8091224 / vm_pushObjVptr 0x80911a8 /
     // vm_setObjVar 0x808f7f8).  0 for the object's own functions.
     int varOffset = 0;
+    // Accumulated baseFunOffset of the function's constitution.  call_in_user_fun
+    // resolves local function indexes as baseFunOffset + index
+    // (vm_callInUserFun 0x8094080).  0 for the object's own functions.
+    int funOffset = 0;
     // Loop control blocks.  The original VM keeps a loop's control value in a
     // local slot, but expression-stack pops can descend into the local region
     // in this interpreter (the prologue of load_comm_desc does); storing the
@@ -796,10 +800,13 @@ private:
                     if (funcsByIndex_.find(childIndex) == funcsByIndex_.end()) {
                         auto inhFn = std::make_shared<OriginalFunction>(fn);
                         // inherited functions resolve shared-string indexes
-                        // against the PARENT's string table, and obj-var
-                        // accesses against the accumulated baseVarOffset
+                        // against the PARENT's string table, obj-var accesses
+                        // against the accumulated baseVarOffset, and local
+                        // function-index calls against the accumulated
+                        // baseFunOffset
                         inhFn->strings = parentObj->strings;
                         inhFn->varOffset = varOff;
+                        inhFn->funOffset = funOff;
                         inheritedFuncs_.push_back(inhFn);
                         funcsByIndex_[childIndex] = inhFn.get();
                     }
@@ -1269,18 +1276,45 @@ private:
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
             const OriginalFunction& fn = *it->second;
-            bool traceMe = fn.name == "mixed_mysql_select" || fn.name == "get_info_by_type" ||
-                           fn.name == "get_aaa_info" || fn.name == "get_my_info" ||
-                           fn.name == "fetch_config_list" || fn.name == "assure_connection" ||
-                           fn.name == "mysql_select" || fn.name == "update_config" ||
-                           fn.name == "choose_one_url" || fn.name == "do_init";
+            // A nodes==0 entry is a forward declaration (dlt reference) whose
+            // bytecode lives in the program that actually implements it (e.g.
+            // feature/common/agent.o declares get_client_no/set_client_no/
+            // relay_comm but the real bodies are comm.c's).  Resolve to the
+            // implementing copy by name so relay_agent's local calls work.
+            const OriginalFunction* impl = &fn;
+            if (fn.code.empty()) {
+                for (const auto& kv : funcsByIndex_) {
+                    if (kv.second->name == fn.name && !kv.second->code.empty() && kv.second != &fn) {
+                        impl = kv.second;
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[cfu] fwd " << fn.name << " idx=" << index
+                                      << " -> impl idx=" << kv.first
+                                      << " varOff=" << kv.second->varOffset
+                                      << " funOff=" << kv.second->funOffset << "\n";
+                        break;
+                    }
+                }
+                if (impl == &fn) {
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[cfu] fwd " << fn.name << " idx=" << index << " NO IMPL\n";
+                    // No implementation anywhere: keep a zero result but still
+                    // consume the declared arguments.
+                    for (int i = 0; i < fn.argCount && !stack_.empty(); ++i) pop();
+                    return make_int(0);
+                }
+            }
+            bool traceMe = impl->name == "mixed_mysql_select" || impl->name == "get_info_by_type" ||
+                           impl->name == "get_aaa_info" || impl->name == "get_my_info" ||
+                           impl->name == "fetch_config_list" || impl->name == "assure_connection" ||
+                           impl->name == "mysql_select" || impl->name == "update_config" ||
+                           impl->name == "choose_one_url" || impl->name == "do_init";
             if (std::getenv("LPCVM_TRACE") && traceMe) {
-                std::string msg = "[xret] " + fn.name + " start argc=" + std::to_string(fn.argCount) + "\n";
+                std::string msg = "[xret] " + impl->name + " start argc=" + std::to_string(impl->argCount) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
             }
-            Value r = executeFunctionOnStack(fn, false, flags & 0x3F);
+            Value r = executeFunctionOnStack(*impl, false, flags & 0x3F);
             if (std::getenv("LPCVM_TRACE") && traceMe) {
-                std::string msg = "[xret] " + fn.name + " result=" + to_string(r, false) + "\n";
+                std::string msg = "[xret] " + impl->name + " result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
                 std::cerr.flush();
             }
@@ -1402,6 +1436,7 @@ private:
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
                     fn.strings.empty() ? &obj_.strings : &fn.strings};
         frame.varOffset = fn.varOffset;
+        frame.funOffset = fn.funOffset;
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
         bool savedReturned = returned_;
@@ -1996,7 +2031,20 @@ private:
             }
             case 7: { // call_in_user_fun
                 int funIndex = fromMeta ? m0 : static_cast<int16_t>(in.a);
-                pushValue(callUserFunction(funIndex, fromMeta ? m1 : in.b));
+                int flags = fromMeta ? m1 : in.b;
+                // vm_callInUserFun (0x8094080): bit 7 of the flags selects the
+                // GLOBAL program's function table; otherwise the index is
+                // LOCAL to the current function's constitution and must be
+                // offset by consititution->baseFunOffset.  Inherited
+                // functions (relay_agent in feature/common/agent.o etc.) call
+                // their own program's functions by local index, so the
+                // accumulated baseFunOffset of the CURRENT frame applies.
+                int off = 0;
+                if ((flags & 0x80) == 0) {
+                    off = frames_.empty() ? 0 : frames_.back().funOffset;
+                    if (off != 0) funIndex += off;
+                }
+                pushValue(callUserFunction(funIndex, flags));
                 break;
             }
             case 8: { // call_in_other_fun_ex

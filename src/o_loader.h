@@ -26,6 +26,10 @@ struct OriginalFunction {
     // push_obj_var/set_obj_var/push_obj_vptr add it to the variable index
     // (vm_pushObjVar: pObjectValues[valueNo + consititution->baseVarOffset]).
     int varOffset = 0;
+    // Accumulated baseFunOffset of the constitution this function belongs to.
+    // call_in_user_fun resolves local function indexes as
+    // consititution->baseFunOffset + index (vm_callInUserFun 0x8094080).
+    int funOffset = 0;
 };
 
 struct OriginalInherit {
