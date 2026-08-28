@@ -32,6 +32,7 @@ struct OriginalObject {
     uint32_t functionBC = 0;
     uint32_t globalVarCount = 0;
     int baseFunOffset = 0;
+    std::string sourceName;   // originating file (diagnostics)
     std::vector<std::string> strings;
     std::vector<std::string> names;
     std::vector<OriginalFunction> functions;

@@ -32,7 +32,8 @@ uint32_t rd32(const std::vector<uint8_t>& d, size_t off) {
 }
 
 bool looksLikeNameAt(const std::vector<uint8_t>& data, size_t base) {
-    size_t maxRead = base + 32;
+    // name field spans [+0x14, +0x40) in a file entry (44 bytes max)
+    size_t maxRead = base + 44;
     if (maxRead > data.size()) return false;
     bool any = false;
     for (size_t i = base; i < maxRead; ++i) {
@@ -55,7 +56,8 @@ std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableO
         uint32_t type, childOff, compSize, origSize;
         size_t nameBase;
         if (rootFormat) {
-            // Root directory entries: name at +4, type at +0x30, child at +0x34.
+            // Root directory entries: name at +4 (up to +0x30), type at +0x30,
+            // child at +0x34.
             nameBase = off + 4;
             type = rd32(data, off + 0x30);
             childOff = rd32(data, off + 0x34);
@@ -89,7 +91,7 @@ std::vector<PakEntry> parseTable(const std::vector<uint8_t>& data, size_t tableO
         }
         consecutiveInvalid = 0;
         PakEntry e;
-        for (size_t i = nameBase; i < nameBase + 32 && i < data.size() && data[i]; ++i) e.name.push_back(static_cast<char>(data[i]));
+        for (size_t i = nameBase; i < nameBase + 44 && i < data.size() && data[i]; ++i) e.name.push_back(static_cast<char>(data[i]));
         e.isDir = (type & 1) != 0;
         e.offset = childOff;
         e.compSize = compSize;

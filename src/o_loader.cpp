@@ -255,7 +255,9 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
 
 OriginalObject loadOriginalObject(const std::string& path) {
     std::vector<uint8_t> data = readFile(path);
-    return loadOriginalObjectFromBytes(data);
+    OriginalObject obj = loadOriginalObjectFromBytes(data);
+    obj.sourceName = path;
+    return obj;
 }
 
 std::string disassembleOriginalObject(const OriginalObject& obj) {

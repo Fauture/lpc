@@ -2476,13 +2476,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "create_queue" || name == "create_event") {
-        // The original vm_f_create_queue allocates a queue object and returns
-        // its unique qid (threadd stores these in an array and passes them to
-        // each service daemon, which prints "THREAD_D.service(%d)...").  A
-        // plain incrementing counter keeps the ids distinct so every daemon
-        // gets its own service number instead of 1 for all.
-        static std::atomic<int64_t> queueSeq{0};
-        return make_int(queueSeq.fetch_add(1, std::memory_order_relaxed));
+        // vm_f_create_queue -> vm_createPendObject (0x80a9cc4): queues and
+        // events share ONE global object-id table (vmObject[]), ids start at
+        // 1 (the first free slot), which is what makes threadd's service
+        // numbers match the original run (first queue id 9 in aaa.log).
+        static std::atomic<int64_t> pendSeq{0};
+        int64_t qid = pendSeq.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[create_" << (name == "create_queue" ? "queue" : "event")
+                      << "] id=" << qid << "\n";
+        return make_int(qid);
     }
     if (name == "delete_queue" || name == "delete_event") return make_int(1);
     if (name == "raise_event") return make_int(1);

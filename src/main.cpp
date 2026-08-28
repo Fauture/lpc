@@ -20,6 +20,7 @@
 #include "lexer.h"
 #include "lzss.h"
 #include "builtins.h"
+#include "mysql_client.h"
 #include "o_loader.h"
 #include "original_vm.h"
 #include "pak_loader.h"
@@ -260,6 +261,48 @@ int startSimpleTcpServer(int port) {
     return 0;
 }
 
+// Debug helper: run one SQL statement against the configured MySQL and print
+// the result as a table (reads [ADB]/[MDB] from linux/aaa/aaa/aaa.ini).
+int sqlDebug(const std::string& sql, const std::string& which) {
+    lpc::MysqlClient cl;
+    std::string err;
+    // same defaults assure_connection uses (aaa.ini [ADB])
+    std::string host = "192.168.200.128";
+    std::string user = "root";
+    std::string pass = "123456";
+    std::string db = (which == "mdb") ? "dl_mdb_all" : "dl_adb_all";
+    int port = 3306;
+    lpc::MysqlClient::Result res;
+    if (!cl.connect(host, port, user, pass, db, err)) {
+        std::cerr << "connect failed: " << err << "\n";
+        return 1;
+    }
+    if (!cl.execute(sql, res, err)) {
+        std::cerr << "query failed: " << err << "\n";
+        return 1;
+    }
+    if (!res.hasResultSet) {
+        std::cout << "affected rows: " << res.affectedRows << "\n";
+        return 0;
+    }
+    for (size_t i = 0; i < res.cols.size(); ++i) {
+        if (i) std::cout << " | ";
+        std::cout << res.cols[i];
+    }
+    std::cout << "\n";
+    for (const auto& row : res.rows) {
+        for (size_t i = 0; i < row.size(); ++i) {
+            if (i) std::cout << " | ";
+            const auto& c = row[i];
+            if (c.isNull) std::cout << "NULL";
+            else if (c.isNumber) std::cout << c.num;
+            else std::cout << c.str;
+        }
+        std::cout << "\n";
+    }
+    return 0;
+}
+
 int runPakOriginal(const std::string& path) {
     // Faithful driver emulation of "runaaa":
     //   ./magic_Linux32 /r ./ /e /aaa/pack_data/lib_aaa32.pak/aaa/start_aaa.o
@@ -383,6 +426,12 @@ int main(int argc, char** argv) {
             lpc::extractPak(path, outDir);
             std::cout << "Unpacked " << path << " to " << outDir << "\n";
             return 0;
+        }
+        if (cmd == "sqlcmd") {
+            // Debug helper: query the configured MySQL directly.
+            //   lpcvm sqlcmd "select ..." [adb|mdb]
+            if (args.size() < 2) { usage(); return 1; }
+            return sqlDebug(path, args.size() >= 3 ? args[2] : std::string());
         }
         usage();
         return 1;

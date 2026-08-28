@@ -39,7 +39,9 @@ std::shared_ptr<OriginalObject> loadOriginalObjectByRelPath(const std::string& r
         std::vector<uint8_t> bytes;
         if (pakReadFile(pakVirtualPrefix() + "/" + rel, bytes)) {
             try {
-                return std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
+                auto obj = std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
+                obj->sourceName = "/" + rel;
+                return obj;
             } catch (...) {
             }
         }
@@ -504,6 +506,7 @@ public:
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
         }
         mergeInheritedFunctions();
+        objName_ = obj.sourceName.empty() ? "<obj>" : obj.sourceName;
     }
 
     const OriginalObject& object() const { return obj_; }
@@ -608,6 +611,7 @@ private:
     mutable std::recursive_mutex execMutex_;
 
     const OriginalObject& obj_;
+    std::string objName_;
     std::string searchRoot_;
     std::vector<StackItem> stack_;
     std::vector<Value> objVars_;    // per-object instance variables
@@ -821,7 +825,7 @@ private:
                                  ? names[efunIndex] : "?";
             std::string fn = frames_.empty() ? "<global>" : frames_.back().fn->name;
             std::cerr << "[vm] efun idx=" << efunIndex << " name=" << nm << " argc=" << args.size()
-                      << " in=" << fn << "\n";
+                      << " in=" << fn << " obj=" << objName_ << "\n";
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
