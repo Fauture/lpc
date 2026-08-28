@@ -525,19 +525,17 @@ public:
     void shareObjVars(OriginalVm* other) { objVars_ = other->objVars_; }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
-        for (const auto& fn : obj_.functions) {
-            if (fn.name == name && fn.index >= 0) {
-                auto it = funcsByIndex_.find(fn.index);
-                if (it != funcsByIndex_.end()) {
-                    Value r = executeFunctionFromOutside(*it->second, args);
-                    if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
-                        std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
-                        std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
-                        std::cerr.flush();
-                    }
-                    return r;
-                }
+        // Resolve through own + inherited functions (like vm_lookupIdentInProgram
+        // on the global program used by vm_apply): a command function such as
+        // msg_l_auth may live in an inherited program, not the master itself.
+        if (const OriginalFunction* fn = findFunctionAny(name)) {
+            Value r = executeFunctionFromOutside(*fn, args);
+            if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
+                std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
+                std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+                std::cerr.flush();
             }
+            return r;
         }
         return make_int(0);
     }
@@ -2520,15 +2518,38 @@ Value callOriginalObjectFunction(const std::string& oPath, const std::string& fu
     return tryCallOtherObject(searchRoot, oPath, funName, args);
 }
 
+std::string masterSearchRoot() {
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    for (auto& kv : reg.vms)
+        if (kv.first.find("<main>") != std::string::npos) {
+            std::string key = kv.first;
+            size_t p = key.rfind("/<main>");
+            if (p != std::string::npos) return key.substr(0, p);
+            return "";
+        }
+    return "";
+}
+
 Value callMasterProgramFunction(const std::string& funName, const std::vector<Value>& args,
                                 const std::string& searchRoot) {
     auto& reg = objectRegistry();
     std::shared_ptr<OriginalVm> target;
     {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        std::string key = searchRoot.empty() ? "<main>" : searchRoot + "/<main>";
-        auto it = reg.vms.find(key);
-        if (it != reg.vms.end()) target = it->second;
+        if (searchRoot.empty()) {
+            // Auto-locate the master VM under any registered root.
+            for (auto& kv : reg.vms) {
+                if (kv.first.find("<main>") != std::string::npos) {
+                    target = kv.second;
+                    break;
+                }
+            }
+        } else {
+            std::string key = searchRoot + "/<main>";
+            auto it = reg.vms.find(key);
+            if (it != reg.vms.end()) target = it->second;
+        }
     }
     if (!target) return make_int(0);
     return target->callFunctionByName(funName, args);

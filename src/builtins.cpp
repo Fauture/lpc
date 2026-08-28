@@ -1,6 +1,7 @@
 #include "builtins.h"
 #include "efun_table.h"
 
+#include "game_service.h"
 #include "o_loader.h"
 #include "original_vm.h"
 #include "mysql_client.h"
@@ -1713,25 +1714,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "telnet_off") return make_int(1);
     if (name == "start_service_on") {
-        ensureWsa();
+        // start_service_on(port) - start the GAME client service (binary
+        // packet protocol, cmdList dispatch).  This is NOT the telnet service;
+        // telnet_on() handles the telnet port separately.
         int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
-        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (s == INVALID_SOCKET) return make_int(0);
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(static_cast<u_short>(port));
-        if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-            closesocket(s);
-            return make_int(0);
-        }
-        if (listen(s, 2104) == SOCKET_ERROR) {
-            closesocket(s);
-            return make_int(0);
-        }
-        std::thread(telnetServerLoop, s).detach();
-        std::cout << "Service started on port " << port << "\n";
-        return make_int(1);
+        return make_int(lpc::startGameService(port));
     }
     if (name == "mysql_connect") {
         // mysql_connect(host, user, password, database) -> cno (>=1) or -1.

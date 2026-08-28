@@ -34,6 +34,9 @@
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\original_vm.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\game_service.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\mysql_client.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

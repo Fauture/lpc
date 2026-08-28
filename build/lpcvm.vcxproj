@@ -339,6 +339,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\lzss.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\pak_loader.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\original_vm.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\game_service.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\mysql_client.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\xdbc.cpp" />
   </ItemGroup>

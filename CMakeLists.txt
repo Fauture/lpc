@@ -22,6 +22,7 @@ add_executable(lpcvm
     src/lzss.cpp
     src/pak_loader.cpp
     src/original_vm.cpp
+    src/game_service.cpp
     src/mysql_client.cpp
     src/xdbc.cpp
 )

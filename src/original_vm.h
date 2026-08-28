@@ -20,6 +20,9 @@ Value callOriginalObjectFunction(const std::string& oPath, const std::string& fu
 Value callMasterProgramFunction(const std::string& funName, const std::vector<Value>& args,
                                 const std::string& searchRoot);
 
+// The search root under which the master program ("<main>") is registered.
+std::string masterSearchRoot();
+
 // Spawn threads queued at runtime by create_thread (e.g. the telnet daemon
 // thread created when a client connects).  Startup threads are drained by
 // runOriginalObject itself; this drains the runtime ones.
