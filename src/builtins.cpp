@@ -7,6 +7,7 @@
 #include "mysql_client.h"
 #include "pak_loader.h"
 #include "lzss.h"
+#include "pkt_protocol.h"
 #include "xdbc.h"
 
 #include <winsock2.h>
@@ -1513,18 +1514,43 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 return make_string("\"\"");
             }
             if (key == "CONFIG") return make_int(0);
+            // Command-number macros: the .o binary stores the #define table
+            // (vm_loadDefines 0x8087080); vm_lookupDefine reads it at runtime
+            // to resolve message numbers like MSG_L_AUTH -> 0x5351.  Query the
+            // master program's defines the same way.
+            std::string expansion;
+            bool found = masterDefineLookup(key, expansion);
+            if (std::getenv("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
+                std::cerr << "[expand_macro] " << key << " found=" << found
+                          << " exp='" << (found ? expansion : "<none>") << "'\n";
+            if (found) {
+                // expansion in the .o may carry leading/trailing whitespace
+                // ("                  0x5351\n"); trim it before parsing.
+                size_t b0 = expansion.find_first_not_of(" \t\r\n");
+                size_t e0 = expansion.find_last_not_of(" \t\r\n");
+                std::string trimmed = (b0 == std::string::npos) ? "" :
+                                      expansion.substr(b0, e0 - b0 + 1);
+                char* end = nullptr;
+                long long v = std::strtoll(trimmed.c_str(), &end, 0);
+                if (std::getenv("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
+                    std::cerr << "[expand_macro] " << key << " parsed=" << v
+                              << " end='" << (end ? *end : '?') << "'\n";
+                if (end && *end == '\0') return make_int(static_cast<int64_t>(v));
+            }
         }
         return make_int(0);
     }
     if (name == "set_case_check") {
         // vm_f_set_case_check (0x80db520) -> vm_setCaseCheck(m, flag, obsorb):
-        // flag != 0 turns case sensitivity ON, 0 turns it OFF.
+        // flag != 0 turns case sensitivity ON, 0 turns it OFF.  The mapping
+        // itself stays on the stack (returned) - the LPC code assigns the
+        // result: "_cmd_types = set_case_check(([...]), 0)".
         if (args.size() >= 2 && args[0].index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
             int flag = static_cast<int>(as_int(args[1]));
             int obsorb = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 0;
             mp->setCaseCheck(flag != 0, obsorb);
-            return make_int(1);
+            return args[0];   // the (possibly re-keyed) mapping
         }
         return make_int(0);
     }
@@ -1655,6 +1681,76 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_int(0);
         std::string vpath = normalizeSlashes(as_string(args[0]));
         return findObjectInRegistry(vpath, vfsRoot());
+    }
+    // ---- packet protocol analyser efuns (vm_pkt_analyser.c) ----
+    if (name == "pkt_init_analyser") {
+        int maxInterfaces = args.size() >= 1 ? static_cast<int>(as_int(args[0])) : 65536;
+        int maxFields = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 1024;
+        lpc::pktInitAnalyser(maxInterfaces, maxFields);
+        return make_int(1);
+    }
+    if (name == "pkt_add_def") {
+        // pkt_add_def("encap:mapping NAME = type field, ...")
+        if (!args.empty()) {
+            std::string line = as_string(args[0]);
+            // parse: encap:mapping NAME = field-desc
+            size_t sp = line.find(' ');
+            if (sp != std::string::npos) {
+                std::string name = line.substr(sp + 1);
+                size_t eq = name.find('=');
+                if (eq != std::string::npos) name = name.substr(0, eq);
+                size_t b = name.find_first_not_of(" \t");
+                size_t e = name.find_last_not_of(" \t");
+                if (b != std::string::npos && e != std::string::npos)
+                    name = name.substr(b, e - b + 1);
+                size_t ae = line.find('=');
+                std::string fields = (ae != std::string::npos) ? line.substr(ae + 1) : "";
+                lpc::pktAddDef(name, fields);
+            }
+        }
+        return make_int(1);
+    }
+    if (name == "pkt_add_interface") {
+        // pkt_add_interface(cmdFilter, signature, function, encapType)
+        // cmdNo is resolved from the interface name's #define macro
+        // (e.g. MSG_L_AUTH -> 0x5351) via expand_macro.
+        if (args.size() >= 3) {
+            int cmdFilter = static_cast<int>(as_int(args[0]));
+            std::string sig = as_string(args[1]);
+            Value fn = args[2];
+            int encap = args.size() >= 4 ? static_cast<int>(as_int(args[3])) : 0;
+            // interface name from "void name(...)"
+            size_t lp = sig.find('(');
+            if (lp != std::string::npos) {
+                std::string head = sig.substr(0, lp);
+                size_t vp = head.rfind("void ");
+                std::string name = (vp != std::string::npos) ? head.substr(vp + 5) : head;
+                size_t b = name.find_first_not_of(" \t");
+                size_t e2 = name.find_last_not_of(" \t");
+                if (b != std::string::npos && e2 != std::string::npos)
+                    name = name.substr(b, e2 - b + 1);
+                // uppercase macro name
+                std::string macro = name;
+                std::transform(macro.begin(), macro.end(), macro.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                int64_t cmdNo = 0;
+                Value mv = call_builtin(nullptr, "expand_macro", {make_string(macro)});
+                if (mv.index() == 2) cmdNo = std::get<int64_t>(mv);
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[pkt] add_interface " << name << " macro=" << macro
+                              << " cmdNo=" << cmdNo << " mvIndex=" << static_cast<int>(mv.index())
+                              << " filter=" << cmdFilter << " encap=" << encap << "\n";
+                if (cmdNo > 0 && cmdNo < 65536)
+                    lpc::pktAddInterface(static_cast<int>(cmdNo), sig, fn, encap,
+                                         static_cast<uint32_t>(cmdFilter));
+            }
+        }
+        return make_int(1);
+    }
+    if (name == "pkt_add_field" || name == "pkt_remove_field" ||
+        name == "pkt_remove_interface" || name == "pkt_remove_def" ||
+        name == "pkt_destruct_analyser") {
+        return make_int(1);
     }
     if (name == "object_name") {
         // object_name(ob) - return the object's path.

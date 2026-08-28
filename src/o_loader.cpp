@@ -159,8 +159,9 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
     uint32_t defineCount = r.u32();
     for (uint32_t i = 0; i < defineCount; ++i) {
         r.u32();       // nargs
-        r.tempString(); // name
-        r.tempString(); // expansion
+        std::string dname = r.tempString();   // name
+        std::string dexp = r.tempString();    // expansion
+        obj.defines.emplace_back(std::move(dname), std::move(dexp));
     }
     uint32_t stringCount = r.u32();
     for (uint32_t i = 0; i < stringCount; ++i) {

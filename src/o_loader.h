@@ -35,6 +35,10 @@ struct OriginalObject {
     std::string sourceName;   // originating file (diagnostics)
     std::vector<std::string> strings;
     std::vector<std::string> names;
+    // Preprocessor defines from the .o binary (name -> expansion string).
+    // The runtime can look these up via expand_macro / vm_lookupDefine (the
+    // packet protocol analyser resolves command numbers from them).
+    std::vector<std::pair<std::string, std::string>> defines;
     std::vector<OriginalFunction> functions;
     std::vector<OriginalInsn> globalCode;
     std::vector<uint8_t> globalMeta;

@@ -2531,6 +2531,45 @@ std::string masterSearchRoot() {
     return "";
 }
 
+bool masterDefineLookup(const std::string& name, std::string& expansion) {
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    for (auto& kv : reg.vms) {
+        if (kv.first.find("<main>") != std::string::npos) {
+            const auto& defs = kv.second->object().defines;
+            for (const auto& d : defs)
+                if (d.first == name) { expansion = d.second; return true; }
+            return false;
+        }
+    }
+    return false;
+}
+
+Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) {
+    if (closure.index() != 8) return make_int(0);
+    auto cl = std::get<std::shared_ptr<ClosureValue>>(closure);
+    std::vector<Value> all = cl->boundArgs;
+    all.insert(all.end(), args.begin(), args.end());
+    auto& reg = objectRegistry();
+    if (cl->owner) {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms) {
+            if (&kv.second->object() == cl->owner) {
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[applyClosure] owner-resolve " << cl->functionName
+                              << " in " << kv.first << "\n";
+                return kv.second->callFunctionByName(cl->functionName, all);
+            }
+        }
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[applyClosure] owner not in registry: " << cl->functionName
+                      << " owner=" << (cl->owner ? cl->owner->sourceName : "?") << "\n";
+    } else if (std::getenv("LPCVM_TRACE")) {
+        std::cerr << "[applyClosure] no owner for " << cl->functionName << "\n";
+    }
+    return callMasterProgramFunction(cl->functionName, all, masterSearchRoot());
+}
+
 Value callMasterProgramFunction(const std::string& funName, const std::vector<Value>& args,
                                 const std::string& searchRoot) {
     auto& reg = objectRegistry();

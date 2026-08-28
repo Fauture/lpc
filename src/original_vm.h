@@ -23,6 +23,16 @@ Value callMasterProgramFunction(const std::string& funName, const std::vector<Va
 // The search root under which the master program ("<main>") is registered.
 std::string masterSearchRoot();
 
+// Preprocessor defines of the master (global) program: name -> expansion.
+// The runtime queries these in expand_macro (the packet protocol analyser
+// resolves command numbers such as MSG_L_AUTH -> 0x5351 from them).
+bool masterDefineLookup(const std::string& name, std::string& expansion);
+
+// Apply a function closure on its owning object's VM (the original driver's
+// vm_applyFun executes the function in the current/owning program context).
+// Used by the packet protocol analyser to invoke registered command handlers.
+Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args);
+
 // Spawn threads queued at runtime by create_thread (e.g. the telnet daemon
 // thread created when a client connects).  Startup threads are drained by
 // runOriginalObject itself; this drains the runtime ones.

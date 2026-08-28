@@ -27,6 +27,7 @@
 
 #include "builtins.h"
 #include "original_vm.h"
+#include "pkt_protocol.h"
 #include "value.h"
 
 namespace lpc {
@@ -139,17 +140,18 @@ void handleMsgLAuth(GameClient& cl, const uint8_t* body, size_t len) {
 
 // Dispatcher: run the C handler for a parsed packet.
 // Original logic (vm_clientSocketCallback LABEL_42):
-//   v34 = cmdNo;
-//   if (vm_pktAnalyse(...) != 1) {
-//     if (v34+1 != 0 && (v20 = cmdIndex[v34]) != 0) {
-//       v21 = attrib;  v22 = v21 & v20->type;
-//       if (((u8)v21 & v20->type & 7) != 0) {
-//         if ((v21 & 1) && mobileClient) { check mobileClientCmds[] }
-//         v20->cmdFunc(clientNo, body, len, v22);
-//       } else -> bad command
-//     } else -> bad command
+//   if (vm_pktAnalyse(cmdNo, body, len) != 1) {
+//     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
+    // Primary path: packet protocol analyser (comm_desc.txt interfaces).
+    int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
+    if (pa == 1) return;   // handled by the protocol interface
+    if (pa < 0) {          // parse error
+        ++cl.recvBadPkts;
+        return;
+    }
+    // Fallback: cmdList/cmdIndex dispatch.
     const CmdEntry* e = findCmd(cmdNo);
     if (!e) {
         if (std::getenv("LPCVM_TRACE"))
