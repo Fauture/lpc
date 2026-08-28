@@ -36,6 +36,102 @@
 
 namespace fs = std::filesystem;
 
+// ---------------------------------------------------------------------------
+// Standard MD5 (RFC 1321) - used by calc_account_checksum:
+//   save_string(md5(str))[1..<2] -> 32 uppercase hex chars
+// ---------------------------------------------------------------------------
+namespace {
+
+struct Md5Ctx {
+    uint32_t state[4] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u};
+    uint64_t bits = 0;
+    uint8_t buf[64] = {0};
+    size_t buflen = 0;
+};
+
+inline uint32_t rol32(uint32_t v, int s) { return (v << s) | (v >> (32 - s)); }
+
+void md5Process(Md5Ctx& ctx, const uint8_t* p) {
+    static const uint32_t K[64] = {
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a,
+        0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+        0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340,
+        0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8,
+        0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+        0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92,
+        0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+        0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
+    static const int S[64] = {
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+    uint32_t M[16];
+    for (int i = 0; i < 16; ++i)
+        M[i] = static_cast<uint32_t>(p[i * 4]) | (static_cast<uint32_t>(p[i * 4 + 1]) << 8) |
+               (static_cast<uint32_t>(p[i * 4 + 2]) << 16) | (static_cast<uint32_t>(p[i * 4 + 3]) << 24);
+    uint32_t a = ctx.state[0], b = ctx.state[1], c = ctx.state[2], d = ctx.state[3];
+    for (int i = 0; i < 64; ++i) {
+        uint32_t f;
+        int g;
+        if (i < 16) { f = (b & c) | (~b & d); g = i; }
+        else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16; }
+        else if (i < 48) { f = b ^ c ^ d; g = (3 * i + 5) % 16; }
+        else { f = c ^ (b | ~d); g = (7 * i) % 16; }
+        uint32_t tmp = d;
+        d = c;
+        c = b;
+        b = b + rol32(a + f + K[i] + M[g], S[i]);
+        a = tmp;
+    }
+    ctx.state[0] += a;
+    ctx.state[1] += b;
+    ctx.state[2] += c;
+    ctx.state[3] += d;
+}
+
+void md5Update(Md5Ctx& ctx, const uint8_t* data, size_t len) {
+    ctx.bits += static_cast<uint64_t>(len) * 8;
+    while (len > 0) {
+        size_t take = 64 - ctx.buflen;
+        if (take > len) take = len;
+        memcpy(ctx.buf + ctx.buflen, data, take);
+        ctx.buflen += take;
+        data += take;
+        len -= take;
+        if (ctx.buflen == 64) {
+            md5Process(ctx, ctx.buf);
+            ctx.buflen = 0;
+        }
+    }
+}
+
+std::string md5Digest(const uint8_t* data, size_t len) {
+    Md5Ctx ctx;
+    md5Update(ctx, data, len);
+    // padding: 0x80 + zeros to 56 mod 64, then 64-bit bit length (LE)
+    uint8_t pad[72];
+    size_t padLen = (ctx.buflen < 56) ? (56 - ctx.buflen) : (120 - ctx.buflen);
+    pad[0] = 0x80;
+    memset(pad + 1, 0, padLen - 1);
+    uint64_t bits = ctx.bits;
+    for (int i = 0; i < 8; ++i) pad[padLen + i] = static_cast<uint8_t>((bits >> (8 * i)) & 0xFF);
+    md5Update(ctx, pad, padLen + 8);
+    std::string out(16, '\0');
+    for (int i = 0; i < 4; ++i) {
+        out[i * 4] = static_cast<char>(ctx.state[i] & 0xFF);
+        out[i * 4 + 1] = static_cast<char>((ctx.state[i] >> 8) & 0xFF);
+        out[i * 4 + 2] = static_cast<char>((ctx.state[i] >> 16) & 0xFF);
+        out[i * 4 + 3] = static_cast<char>((ctx.state[i] >> 24) & 0xFF);
+    }
+    return out;
+}
+
+} // namespace
+
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
@@ -181,34 +277,51 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
             out += fmt[i];
             continue;
         }
-        char spec = fmt[++i];
-        if (spec == '%') {
-            out += '%';
-        } else if (spec == 's') {
-            out += argi < args.size() ? as_string(args[argi++]) : "";
-        } else if (spec == 'd' || spec == 'i') {
-            out += argi < args.size() ? std::to_string(as_int(args[argi++])) : "0";
-        } else if (spec == 'f') {
-            if (argi < args.size()) {
-                const Value& v = args[argi++];
-                if (v.index() == 3) out += std::to_string(std::get<double>(v));
-                else out += std::to_string(static_cast<double>(as_int(v)));
+        // Parse a full printf spec: %[flags][width][.prec][len]type
+        // (the original vm_f_sprintf passes through to C snprintf, so any
+        // standard format is valid - %08X, %-5s, %.2f, %u, %o ...).
+        size_t j = i + 1;
+        std::string spec = "%";
+        while (j < fmt.size() && std::strchr("-+ #0", fmt[j])) spec += fmt[j++];
+        while (j < fmt.size() && std::isdigit(static_cast<unsigned char>(fmt[j]))) spec += fmt[j++];
+        if (j < fmt.size() && fmt[j] == '.') { spec += fmt[j++]; while (j < fmt.size() && std::isdigit(static_cast<unsigned char>(fmt[j]))) spec += fmt[j++]; }
+        while (j < fmt.size() && std::strchr("hlLzjt", fmt[j])) spec += fmt[j++];
+        if (j >= fmt.size()) { out += fmt[i]; continue; }
+        char type = fmt[j];
+        spec += type;
+        j += 1;
+        if (type == '%') { out += '%'; i = j - 1; continue; }
+        char buf[256];
+        if (argi >= args.size()) {
+            // missing argument: render the type's zero value
+            if (type == 's') { out += ""; }
+            else if (type == 'f' || type == 'F' || type == 'e' || type == 'E' || type == 'g' || type == 'G') {
+                snprintf(buf, sizeof(buf), spec.c_str(), 0.0);
+                out += buf;
             } else {
-                out += "0";
+                snprintf(buf, sizeof(buf), spec.c_str(), 0);
+                out += buf;
             }
-        } else if (spec == 'x' || spec == 'X') {
-            char buf[32];
-            if (argi < args.size()) {
-                if (spec == 'x') snprintf(buf, sizeof(buf), "%llx", static_cast<unsigned long long>(as_int(args[argi++])));
-                else snprintf(buf, sizeof(buf), "%llX", static_cast<unsigned long long>(as_int(args[argi++])));
-            } else {
-                buf[0] = '0'; buf[1] = 0;
-            }
+            i = j - 1;
+            continue;
+        }
+        const Value& v = args[argi++];
+        if (type == 's' || type == 'S') {
+            snprintf(buf, sizeof(buf), spec.c_str(), as_string(v).c_str());
+            out += buf;
+        } else if (type == 'f' || type == 'F' || type == 'e' || type == 'E' || type == 'g' || type == 'G') {
+            double d = (v.index() == 3) ? std::get<double>(v) : static_cast<double>(as_int(v));
+            snprintf(buf, sizeof(buf), spec.c_str(), d);
+            out += buf;
+        } else if (type == 'c') {
+            snprintf(buf, sizeof(buf), spec.c_str(), static_cast<int>(as_int(v) & 0xFF));
             out += buf;
         } else {
-            out += '%';
-            out += spec;
+            // integer types: d i u o x X
+            snprintf(buf, sizeof(buf), spec.c_str(), as_int(v));
+            out += buf;
         }
+        i = j - 1;
     }
     return out;
 }
@@ -2963,6 +3076,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             return make_string(hex);
         }
         return make_string(out);
+    }
+    if (name == "md5") {
+        // vm_f_md5 (0x80e0228): md5(str) -> 16-byte BUFFER.  Every use in the
+        // game goes through save_string(md5(...))[1..<2] which serialises the
+        // buffer as :HEX: and strips the colons.  Since our Value type has no
+        // distinct buffer, return the 32-char UPPERCASE hex directly so
+        // save_string(hex)[1..<2] yields the identical string.
+        if (args.empty()) return make_string("");
+        std::string data = as_string(args[0]);
+        std::string digest = md5Digest(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        static const char* hx = "0123456789ABCDEF";
+        std::string hex;
+        hex.reserve(32);
+        for (unsigned char c : digest) { hex += hx[c >> 4]; hex += hx[c & 0xF]; }
+        return make_string(hex);
     }
     if (name == "rdl") {
         // vm_f_rdl (0x80e0314): AES-128 ECB, action 16 = encrypt / 17 = decrypt.
