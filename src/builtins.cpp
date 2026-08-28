@@ -1499,6 +1499,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "is_string") return make_int(!args.empty() && args[0].index() == 4 ? 1 : 0);
     if (name == "is_int") return make_int(!args.empty() && args[0].index() == 2 ? 1 : 0);
     if (name == "is_float") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
+    // Character-class predicates (vm_f_isalpha/isdigit/isxdigit etc.): the
+    // argument is an int holding a byte value (e.g. version[i]); LOBYTE is
+    // tested.  vm_isxdigit: '0'-'9' | 'A'-'F' | 'a'-'f'.
+    if (name == "isalpha" || name == "isdigit" || name == "isxdigit" ||
+        name == "islower" || name == "isupper") {
+        int c = args.empty() ? 0 : static_cast<int>(as_int(args[0]) & 0xFF);
+        bool r = false;
+        if (name == "isalpha") r = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        else if (name == "isdigit") r = (c >= '0' && c <= '9');
+        else if (name == "isxdigit") r = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+        else if (name == "islower") r = (c >= 'a' && c <= 'z');
+        else r = (c >= 'A' && c <= 'Z');
+        return make_int(r ? 1 : 0);
+    }
     if (name == "clone_object") {
         // vm_f_clone_object (0x80f8eac): clone_object(path) clones a loaded
         // template object into a fresh instance and returns it; 0 on failure.
@@ -2885,10 +2899,23 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::string data = as_string(args[0]);
         int action = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
         std::string key = args.size() >= 3 ? as_string(args[2]) : "01234567";
+        if (std::getenv("LPCVM_TRACE") && key == "abcdef") {
+            std::string dbg;
+            for (unsigned char c : data) {
+                if (c >= 0x20 && c < 0x7F) dbg += static_cast<char>(c);
+                else { dbg += "\\x"; char hx[3]; snprintf(hx, sizeof(hx), "%02X", c); dbg += hx; }
+            }
+            std::cerr << "[des-abcdef] action=" << action << " in=" << dbg
+                      << " len=" << data.size() << "\n";
+        }
+        // d3des key derivation: makekey() hashes the key string into an
+        // 8-byte DES key.  Verified against the real client: the antibot
+        // checksum (des(md5, 0, "uWvgwf")) reproduces the client's exact
+        // digest ONLY with makekey, so the client uses the same hashing.
         char keyBuf[128] = {0};
         memcpy(keyBuf, key.c_str(), key.size() < 127 ? key.size() : 127);
         unsigned char key8[8] = {0};
-        makekey(keyBuf, key8);   // d3des: hash the password into an 8-byte key
+        makekey(keyBuf, key8);
         size_t blocks = (data.size() + 7) / 8;
         std::string out(blocks * 8, '\0');
         if (blocks > 0) {
@@ -2911,6 +2938,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         if (static_cast<unsigned char>(out[i]) != last) { ok = false; break; }
                     if (ok) out.resize(out.size() - last);
                 }
+                // The real client encrypts short version strings with
+                // ZERO-padding (not PKCS7): des("1.60.0905", EN0, "abcdef")
+                // yields 9 plaintext bytes + 7 x 0x00.  The original driver's
+                // (string)buffer cast (vm_castType case 4 -> case 5) then
+                // truncates at the first NUL, so the server compares
+                // "1.60.0905".  Strip trailing NULs here so the decrypt result
+                // matches that cast behaviour.
+                size_t end = out.size();
+                while (end > 0 && out[end - 1] == '\0') --end;
+                out.resize(end);
                 return make_string(out);   // decrypt: raw bytes
             }
             // encrypt: return the cipher bytes as a UPPERCASE HEX string so

@@ -344,6 +344,12 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
         std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                   << " iface=" << pi.name << " flag=" << pi.flag
                   << " attrib=" << attrib << " fields=" << pi.fields.size() << "\n";
+    if (std::getenv("LPCVM_TRACE") && pi.name == "cmd_l_account") {
+        std::string hex;
+        static const char* hx = "0123456789ABCDEF";
+        for (size_t i = 0; i < len; ++i) { hex += hx[(body[i] >> 4) & 0xF]; hex += hx[body[i] & 0xF]; }
+        std::cerr << "[pkt] cmd_l_account body(" << len << ")=" << hex << "\n";
+    }
     // cmdFilter check: (attrib & cmdFilter & 7) != 0  (vm_clientSocketCallback)
     if ((attrib & pi.flag & 7) == 0) {
         if (std::getenv("LPCVM_TRACE"))
@@ -380,10 +386,20 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     std::vector<Value> args;
     args.push_back(make_int(clientNo));   // implicit first argument
     args.push_back(collection);
-    if (std::getenv("LPCVM_TRACE"))
+    if (std::getenv("LPCVM_TRACE")) {
+        std::string fdbg;
+        for (size_t i = 0; i < pi.fields.size() && i < fieldVals.size(); ++i) {
+            if (i) fdbg += " | ";
+            fdbg += pi.fields[i].name + "=" + to_string(fieldVals[i], false);
+        }
         std::cerr << "[pkt] analyse dispatching " << pi.name
                   << " client=" << clientNo << " argc=" << args.size()
-                  << " encap=" << pi.encapType << "\n";
+                  << " encap=" << pi.encapType
+                  << " fieldCount=" << pi.fields.size()
+                  << " vals=" << fieldVals.size()
+                  << " bodyLen=" << len
+                  << " fields=[" << fdbg << "]\n";
+    }
     if (pi.func.index() == 8) {
         auto cl = std::get<std::shared_ptr<ClosureValue>>(pi.func);
         if (std::getenv("LPCVM_TRACE"))
