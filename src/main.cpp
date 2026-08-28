@@ -261,26 +261,47 @@ int startSimpleTcpServer(int port) {
 }
 
 int runPakOriginal(const std::string& path) {
-    // The user-provided extracted tree (linux/aaa - bak) is the current game
-    // version; it is already unpacked, no pak handling here.
-    std::string root = "linux/aaa - bak";
+    // Faithful driver emulation of "runaaa":
+    //   ./magic_Linux32 /r ./ /e /aaa/pack_data/lib_aaa32.pak/aaa/start_aaa.o
+    //                    /b /aaa/pack_data/lib_aaa32.pak ...
+    // The pak is mounted as the binary directory (any ".pak/" path is a
+    // packed volume, vm_isInPackedVolume), the boot object comes from inside
+    // the pak, and object loading is driven entirely by the LPC startup code
+    // in start_aaa.o.
+    std::cout << "PDB is initialized by vmmemlib.\n";   // vmmemlib static init (0x816eb20)
     std::error_code ec;
-    if (!fs::exists(root, ec)) {
-        std::cerr << "Missing extracted structure: " << root << "\n";
+    if (!fs::exists(path, ec)) {
+        std::cerr << "Missing pak file: " << path << "\n";
         return 1;
     }
-    std::string oPath = root + "/aaa/start_aaa.o";
-    if (!fs::exists(oPath, ec)) {
-        std::cerr << "Missing " << oPath << "\n";
-        return 1;
+    std::string absPak = fs::absolute(fs::path(path)).string();
+    std::string prefix = "/aaa/pack_data/" + fs::path(path).filename().string();
+    lpc::setPakMount(absPak, prefix);
+
+    // Boot object: <pak>/aaa/start_aaa.o (runaaa -e argument).
+    lpc::OriginalObject obj;
+    std::vector<uint8_t> bootBytes;
+    bool fromPak = lpc::pakReadFile(prefix + "/aaa/start_aaa.o", bootBytes);
+    if (fromPak) {
+        obj = lpc::loadOriginalObjectFromBytes(bootBytes);
+        std::cout << "Loaded boot object from pak: " << prefix << "/aaa/start_aaa.o\n";
+    } else {
+        std::string root = "linux/aaa - bak";
+        std::string oPath = root + "/aaa/start_aaa.o";
+        if (!fs::exists(oPath, ec)) {
+            std::cerr << "Missing boot object (pak has no aaa/start_aaa.o and no "
+                      << oPath << ")\n";
+            return 1;
+        }
+        obj = lpc::loadOriginalObject(oPath);
+        std::cout << "Loaded boot object from extracted tree: " << oPath << "\n";
     }
-    (void)path;
-    std::cout << "Using extracted game root: " << root << "\n";
-    lpc::OriginalObject obj = lpc::loadOriginalObject(oPath);
-    std::cout << "Loaded original .o: " << oPath << "\n";
     std::cout << "  strings=" << obj.strings.size()
               << " functions=" << obj.functions.size()
               << " globalNodes=" << obj.globalCode.size() << "\n";
+    // The extracted tree stays as the fallback data root (it mirrors the pak
+    // contents for any path the pak itself cannot serve).
+    std::string root = "linux/aaa - bak";
     int rc = lpc::runOriginalObject(obj, std::cout, root);
     std::cout.flush();
 
@@ -313,22 +334,25 @@ int main(int argc, char** argv) {
         // configured.  Without these options the driver does not listen.
         std::string telnetPwd;
         int telnetPort = 0;
+        std::vector<std::string> args;
         for (int i = 1; i < argc; ++i) {
             if (std::strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
                 telnetPwd = argv[++i];
             } else if (std::strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
                 telnetPort = std::atoi(argv[++i]);
+            } else {
+                args.push_back(argv[i]);
             }
         }
         if (!telnetPwd.empty()) lpc::setDriverTelnetPassword(telnetPwd);
         if (telnetPort >= 1024) lpc::startDriverTelnet(telnetPort);
 
-        if (argc < 3) {
+        if (args.size() < 2) {
             usage();
             return 1;
         }
-        std::string cmd = argv[1];
-        std::string path = argv[2];
+        std::string cmd = args[0];
+        std::string path = args[1];
         if (cmd == "run") {
             if (hasSuffix(path, ".pak")) return runPak(path);
             if (hasSuffix(path, ".o")) return runOriginalObject(path);
@@ -345,17 +369,17 @@ int main(int argc, char** argv) {
             return opStats(path);
         }
         if (cmd == "disfn") {
-            if (argc < 4) { usage(); return 1; }
-            return disasmFunction(path, argv[3]);
+            if (args.size() < 3) { usage(); return 1; }
+            return disasmFunction(path, args[2]);
         }
         if (cmd == "server") {
             int port = 4000;
-            if (argc >= 4) port = std::atoi(argv[3]);
+            if (args.size() >= 3) port = std::atoi(args[2].c_str());
             return runServer(path, port);
         }
         if (cmd == "unpack") {
             std::string outDir = "out";
-            if (argc >= 4) outDir = argv[3];
+            if (args.size() >= 3) outDir = args[2];
             lpc::extractPak(path, outDir);
             std::cout << "Unpacked " << path << " to " << outDir << "\n";
             return 0;

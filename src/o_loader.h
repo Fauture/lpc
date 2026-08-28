@@ -41,6 +41,7 @@ struct OriginalObject {
 };
 
 OriginalObject loadOriginalObject(const std::string& path);
+OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data);
 std::string disassembleOriginalObject(const OriginalObject& obj);
 std::string actionName(uint8_t op);
 

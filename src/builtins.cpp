@@ -1,4 +1,4 @@
-#include "builtins.h"
+﻿#include "builtins.h"
 #include "efun_table.h"
 
 #include "o_loader.h"
@@ -6,6 +6,7 @@
 #include "mysql_client.h"
 #include "pak_loader.h"
 #include "lzss.h"
+#include "xdbc.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -212,6 +213,38 @@ std::string normalizeSlashes(std::string s) {
         out += s[i];
     }
     return out;
+}
+
+// vm_matchString (0x80eaeb0): '*' matches any run, '?' one char, '\\' escapes
+// the next pattern char.  str must be fully consumed for a match.
+bool matchString(const std::string& str, const std::string& pat) {
+    size_t si = 0, pi = 0;
+    while (si < str.size()) {
+        char pc = pi < pat.size() ? pat[pi] : '\0';
+        if (pc == '?') {
+            ++si; ++pi;
+            continue;
+        }
+        if (pc == '*') {
+            if (pi + 1 >= pat.size()) return true;
+            if (si >= str.size()) return false;
+            for (size_t k = si; k < str.size(); ++k) {
+                if (matchString(str.substr(k), pat.substr(pi + 1))) return true;
+            }
+            return false;
+        }
+        if (pc == '\\') {
+            ++pi;
+            if (pi >= pat.size() || pat[pi] != str[si]) return false;
+            ++si; ++pi;
+            continue;
+        }
+        if (pc != str[si]) return false;
+        ++si; ++pi;
+    }
+    // string consumed: match only if the rest of the pattern can match empty
+    while (pi < pat.size() && pat[pi] == '*') ++pi;
+    return pi >= pat.size();
 }
 
 void ensureWsa() {
@@ -992,9 +1025,9 @@ Value simpleDbSelect(const std::string& table) {
         if (it != sqlDb().end()) {
             const SqlTable& t = it->second;
             for (const auto& row : t.rows) {
-                auto mp = std::make_shared<MappingValue>();
+                auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(t.cols.size()));
                 for (size_t i = 0; i < t.cols.size() && i < row.size(); ++i)
-                    mp->entries.emplace_back(make_string(t.cols[i].name), row[i]);
+                    mp->insert(make_string(t.cols[i].name), row[i]);
                 arr->items.push_back(mp);
             }
         }
@@ -1015,7 +1048,8 @@ Value get_index(const Value& c, const Value& idx) {
     }
     if (c.index() == 6) {
         auto mp = std::get<std::shared_ptr<MappingValue>>(c);
-        for (auto& kv : mp->entries) if (value_equal(kv.first, idx)) return kv.second;
+        const Value* hit = mp->find(idx);
+        if (hit) return *hit;
         return UndefinedTag{};
     }
     return UndefinedTag{};
@@ -1098,55 +1132,114 @@ int startDriverTelnet(int port) {
     return 1;
 }
 
-int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Value>& out) {
-    // C-style sscanf over std::string, mirroring vm_interSscanf (0x8109908).
-    // Conversions: %s %d %u %x %c %f, * suppression, literal matching,
-    // whitespace skipping.  Output values are appended in conversion order.
+int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Value>& out,
+              int maxOutputs) {
+    // Faithful port of vm_interSscanf (0x8109908):
+    //   - literal characters match exactly (NO whitespace skipping anywhere),
+    //   - %s followed by literal text matches the SHORTEST prefix that lets
+    //     the whole literal segment (up to the next '%') match, and may
+    //     contain whitespace (sscanf("/a.c : /d.c", "%s:%s") -> 2 matches),
+    //   - %s at the end of the format matches the whole remaining input,
+    //   - %s directly followed by another conversion skips forward to where
+    //     that conversion could start ('%d'/'%f': first digit, '%x': past
+    //     leading zeros/0x, '%c': one char, '%%': next '%'),
+    //   - when the format is exhausted but input remains (and an output
+    //     argument is left), the rest of the input becomes one extra string
+    //     match (LABEL_10),
+    //   - %d/%u/%x/%f parse with strtol/strtoul/strtof semantics.
     const char* s = input.c_str();
     const char* f = fmt.c_str();
     int matches = 0;
-    auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; };
-    auto skipWs = [&]() { while (*s && isSpace(*s)) ++s; };
+    bool unlimited = maxOutputs < 0;
+    auto room = [&]() { return unlimited || static_cast<int>(out.size()) < maxOutputs; };
+    auto isDigit = [](char c) { return c >= '0' && c <= '9'; };
     while (*f) {
-        if (isSpace(*f)) {          // whitespace in format: skip input ws
-            skipWs();
-            while (isSpace(*f)) ++f;
-            continue;
-        }
-        if (*f != '%') {            // literal match
-            if (*s != *f) break;
+        if (*f != '%') {            // literal match (exact, no ws skipping)
+            if (*s != *f) return matches;
             ++s; ++f;
             continue;
         }
         ++f;                        // past '%'
         if (*f == '%') {            // literal '%'
-            if (*s != '%') break;
+            if (*s != '%') return matches;
             ++s; ++f;
             continue;
         }
+        if (!*f) return matches;    // format ends in '%'
         bool suppress = false;
         if (*f == '*') { suppress = true; ++f; }
         char conv = *f++;
-        skipWs();
         switch (conv) {
         case 's': {
-            // %s normally matches up to whitespace.  When the format has a
-            // literal character right after %s (e.g. "[%s]"), the original
-            // vm_interSscanf matches %s up to that literal (LABEL_24 path), so
-            // "[Client_user]" yields "Client_user", not "Client_user]".
-            const char* stop = nullptr;
-            if (*f && !isSpace(*f) && *f != '%') stop = f;
-            const char* start = s;
-            while (*s && !isSpace(*s) && (!stop || *s != *stop)) ++s;
-            if (s == start && !*start) goto done;
-            if (!suppress) out.push_back(make_string(std::string(start, static_cast<size_t>(s - start))));
+            if (!*f) {
+                // %s at the end of the format: the whole remaining input.
+                if (!suppress) out.push_back(make_string(s));
+                return matches + 1;
+            }
+            if (*f != '%') {
+                // Literal segment follows: match the shortest prefix before
+                // the first occurrence of the whole segment (may contain
+                // whitespace; lazy like the original's LABEL_24 scan).
+                const char* after = f + 1;
+                const char* pct = strchr(after, '%');
+                size_t num = pct ? static_cast<size_t>(pct - after + 1) : strlen(after) + 1;
+                const char* start = s;
+                const char* p = s;
+                bool hit = false;
+                while (*p) {
+                    if (*p == *f && strncmp(p, f, num) == 0) {
+                        if (!suppress)
+                            out.push_back(make_string(std::string(start, static_cast<size_t>(p - start))));
+                        s = p + num;
+                        f = pct ? pct : after + strlen(after);
+                        ++matches;
+                        hit = true;
+                        break;
+                    }
+                    ++p;
+                }
+                if (!hit) return matches;   // segment never matched
+                break;
+            }
+            // %s directly followed by another conversion: skip forward to
+            // where that conversion could start.
+            char nextConv = f[1];
+            if (nextConv == '*') nextConv = f[2];
+            const char* t = s;
+            if (nextConv == 'd') {
+                while (*t && !isDigit(*t)) {
+                    if ((*t == '+' || *t == '-') && isDigit(t[1])) break;
+                    ++t;
+                }
+            } else if (nextConv == 'f') {
+                while (*t && !isDigit(*t)) {
+                    if ((*t == '+' || *t == '-') && isDigit(t[1])) break;
+                    if (*t == '.' && isDigit(t[1])) break;
+                    ++t;
+                }
+            } else if (nextConv == 'x') {
+                while (*t) {
+                    if (*t != '0') break;
+                    if ((t[1] == 'x' || t[1] == 'X') && isxdigit(static_cast<unsigned char>(t[2]))) break;
+                    ++t;
+                }
+            } else if (nextConv == 'c') {
+                if (*t) t = s + 1;
+            } else if (nextConv == '%') {
+                while (*t && *t != '%') ++t;
+            } else if (nextConv == 's') {
+                return matches;   // adjacent %s is illegal
+            }
+            if (!suppress) out.push_back(make_string(std::string(s, static_cast<size_t>(t - s))));
             ++matches;
+            s = t;
+            if (!*t) return matches;
             break;
         }
         case 'd': {
             char* end = nullptr;
             long long v = std::strtoll(s, &end, 10);
-            if (end == s) goto done;
+            if (end == s) return matches;
             s = end;
             if (!suppress) out.push_back(make_int(static_cast<int64_t>(v)));
             ++matches;
@@ -1155,7 +1248,7 @@ int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Valu
         case 'u': {
             char* end = nullptr;
             unsigned long long v = std::strtoull(s, &end, 10);
-            if (end == s) goto done;
+            if (end == s) return matches;
             s = end;
             if (!suppress) out.push_back(make_int(static_cast<int64_t>(v)));
             ++matches;
@@ -1164,14 +1257,14 @@ int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Valu
         case 'x': {
             char* end = nullptr;
             unsigned long long v = std::strtoull(s, &end, 16);
-            if (end == s) goto done;
+            if (end == s) return matches;
             s = end;
             if (!suppress) out.push_back(make_int(static_cast<int64_t>(v)));
             ++matches;
             break;
         }
         case 'c': {
-            if (!*s) goto done;
+            if (!*s) return matches;
             if (!suppress) out.push_back(make_int(static_cast<unsigned char>(*s)));
             ++s;
             ++matches;
@@ -1180,17 +1273,22 @@ int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Valu
         case 'f': {
             char* end = nullptr;
             double v = std::strtod(s, &end);
-            if (end == s) goto done;
+            if (end == s) return matches;
             s = end;
             if (!suppress) out.push_back(make_float(v));
             ++matches;
             break;
         }
         default:
-            goto done;   // unsupported conversion: stop
+            return matches;   // bad conversion
         }
     }
-done:
+    // Format exhausted; remaining input becomes one extra string match when
+    // an output argument is still available (LABEL_10 in vm_interSscanf).
+    if (*s && room()) {
+        out.push_back(make_string(s));
+        ++matches;
+    }
     return matches;
 }
 
@@ -1268,7 +1366,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_int(0);
         const Value& v = args[0];
         if (v.index() == 5) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size()));
-        if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->entries.size()));
+        if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size()));
         if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<std::string>(v).size()));
         return make_int(0);
     }
@@ -1290,22 +1388,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "keys") {
         if (args.empty() || args[0].index() != 6) return make_array();
         auto arr = std::make_shared<ArrayValue>();
-        for (auto& kv : std::get<std::shared_ptr<MappingValue>>(args[0])->entries) arr->items.push_back(kv.first);
+        for (auto& kv : std::get<std::shared_ptr<MappingValue>>(args[0])->items()) arr->items.push_back(kv.first);
         return arr;
     }
     if (name == "values") {
         if (args.empty() || args[0].index() != 6) return make_array();
         auto arr = std::make_shared<ArrayValue>();
-        for (auto& kv : std::get<6>(args[0])->entries) arr->items.push_back(kv.second);
+        for (auto& kv : std::get<6>(args[0])->items()) arr->items.push_back(kv.second);
         return arr;
     }
     if (name == "map_delete") {
         if (args.size() >= 2 && args[0].index() == 6) {
             auto mp = std::get<6>(args[0]);
-            auto& entries = mp->entries;
-            entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const std::pair<Value, Value>& kv) {
-                return value_equal(kv.first, args[1]);
-            }), entries.end());
+            mp->erase(args[1]);
         }
         return make_int(1);
     }
@@ -1406,12 +1501,31 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "expand_macro") {
+        // vm_f_expand_macro (0x80d5598) looks up the predefine table.
+        // __BIN_DIR__ (vm_getBinDir) returns the -b directory WRAPPED IN
+        // DOUBLE QUOTES; the LPC startup strips them with [1..<2].
         if (!args.empty() && args[0].index() == 4) {
             const std::string& key = std::get<std::string>(args[0]);
-            if (key == "__BIN_DIR__") return make_string("");
-            if (key == "CONFIG") return make_string("");
+            if (key == "__BIN_DIR__") {
+                if (pakMounted())
+                    return make_string("\"" + pakVirtualPrefix() + "\"");
+                return make_string("\"\"");
+            }
+            if (key == "CONFIG") return make_int(0);
         }
-        return make_string("");
+        return make_int(0);
+    }
+    if (name == "set_case_check") {
+        // vm_f_set_case_check (0x80db520) -> vm_setCaseCheck(m, flag, obsorb):
+        // flag != 0 turns case sensitivity ON, 0 turns it OFF.
+        if (args.size() >= 2 && args[0].index() == 6) {
+            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+            int flag = static_cast<int>(as_int(args[1]));
+            int obsorb = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 0;
+            mp->setCaseCheck(flag != 0, obsorb);
+            return make_int(1);
+        }
+        return make_int(0);
     }
     if (name == "trim") {
         if (args.empty()) return make_string("");
@@ -1432,56 +1546,76 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "relinquish") return make_int(1);
     if (name == "get_dir_ex" || name == "get_dir") {
+        // Original vm_f_get_dir2_in_st (0x80eb5d4):
+        //   - paths containing ".pak/" are packed volumes listed through the
+        //     pak catalog in CATALOG order (vm_getDirInPackedFs),
+        //   - otherwise opendir/readdir order (no sorting),
+        //   - the last path component is the wildcard pattern ('*' any run,
+        //     '?' one char, '\\' escape - vm_matchString); an empty pattern
+        //     behaves like "*",
+        //   - flag 0 -> plain names; flag 1/2 -> ({name, size, mtime}) with
+        //     size -2 for directories.
         auto arr = std::make_shared<ArrayValue>();
         if (args.empty()) return arr;
         std::string pattern = as_string(args[0]);
-        // Original vm_f_get_dir: flag 0 -> plain names; flag 1/2 -> per entry
-        // [name, size, mtime] where directories have size -2 (used by
-        // get_sub_dirs_ex/load_all_path to recurse into subdirectories).
         int flag = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        auto pushEntry = [&](const std::string& name, const fs::path& full) {
+
+        // split into dir + pattern at the last '/'
+        std::string dirPart, pat;
+        {
+            size_t slash = pattern.find_last_of('/');
+            if (slash == std::string::npos) {
+                dirPart = "";
+                pat = pattern;
+            } else {
+                dirPart = pattern.substr(0, slash + 1);
+                pat = pattern.substr(slash + 1);
+            }
+            if (pat.empty()) pat = "*";
+        }
+
+        auto pushPlain = [&](const std::string& name, int64_t size, int64_t mtime) {
             if (flag) {
                 auto item = std::make_shared<ArrayValue>();
                 item->items.push_back(make_string(name));
-                std::error_code ec2;
-                if (fs::is_directory(full, ec2)) {
-                    item->items.push_back(make_int(-2));
-                } else {
-                    item->items.push_back(make_int(static_cast<int64_t>(fs::file_size(full, ec2))));
-                }
-                auto ft = fs::last_write_time(full, ec2);
-                item->items.push_back(make_int(static_cast<int64_t>(ft.time_since_epoch().count() / 10000000)));
+                item->items.push_back(make_int(size));
+                item->items.push_back(make_int(mtime));
                 arr->items.push_back(item);
             } else {
                 arr->items.push_back(make_string(name));
             }
         };
-        if (pattern.find('*') != std::string::npos) {
-            size_t slash = pattern.find_last_of('/');
-            std::string dirPart = slash == std::string::npos ? "" : pattern.substr(0, slash);
-            std::string pat = slash == std::string::npos ? pattern : pattern.substr(slash + 1);
-            fs::path dir = resolveVfsPath(dirPart.empty() ? "/" : dirPart);
-            std::error_code ec;
-            if (!fs::exists(dir, ec)) return arr;
-            std::vector<std::string> names;
-            for (auto& p : fs::directory_iterator(dir, ec)) {
-                std::string name = p.path().filename().string();
-                if (pat == "*") names.push_back(name);
-                else if (hasSuffix(name, pat.substr(1))) names.push_back(name);
+
+        // packed volume?
+        if (pattern.find(".pak/") != std::string::npos && pakMounted()) {
+            std::vector<const PakEntry*> entries;
+            if (!pakListDir(dirPart, entries)) return arr;
+            for (const PakEntry* e : entries) {
+                if (!matchString(e->name, pat)) continue;
+                int64_t size = e->isDir ? -2 : static_cast<int64_t>(e->origSize);
+                pushPlain(e->name, size, 0);
             }
-            std::sort(names.begin(), names.end());
-            for (auto& n : names) pushEntry(n, dir / n);
             return arr;
         }
-        fs::path dir = resolveVfsPath(pattern);
+
+        // real filesystem: readdir order (NTFS gives name order; the original
+        // relied on ext3 readdir order, but on the deployed servers these
+        // plain .c directories were empty - everything lived in the pak).
+        fs::path dir = resolveVfsPath(dirPart.empty() ? "/" : dirPart);
         std::error_code ec;
         if (!fs::exists(dir, ec)) return arr;
-        std::vector<std::string> names;
         for (auto& p : fs::directory_iterator(dir, ec)) {
-            names.push_back(p.path().filename().string());
+            std::string name = p.path().filename().string();
+            if (!matchString(name, pat)) continue;
+            std::error_code ec2;
+            int64_t size = -2, mtime = 0;
+            if (!fs::is_directory(p.path(), ec2)) {
+                size = static_cast<int64_t>(fs::file_size(p.path(), ec2));
+                auto ft = fs::last_write_time(p.path(), ec2);
+                mtime = static_cast<int64_t>(ft.time_since_epoch().count() / 10000000);
+            }
+            pushPlain(name, size, mtime);
         }
-        std::sort(names.begin(), names.end());
-        for (auto& n : names) pushEntry(n, dir / n);
         return arr;
     }
     if (name == "get_sub_dirs_ex") {
@@ -1691,15 +1825,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 if (res.hasResultSet) {
                     auto arr = std::make_shared<ArrayValue>();
                     for (const auto& row : res.rows) {
-                        auto mp = std::make_shared<MappingValue>();
+                        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(res.cols.size()));
                         for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
                             const auto& cell = row[i];
                             if (cell.isNull) {
-                                mp->entries.emplace_back(make_string(res.cols[i]), make_string(""));
+                                mp->insert(make_string(res.cols[i]), make_string(""));
                             } else if (cell.isNumber) {
-                                mp->entries.emplace_back(make_string(res.cols[i]), make_int(cell.num));
+                                mp->insert(make_string(res.cols[i]), make_int(cell.num));
                             } else {
-                                mp->entries.emplace_back(make_string(res.cols[i]), make_string(cell.str));
+                                mp->insert(make_string(res.cols[i]), make_string(cell.str));
                             }
                         }
                         arr->items.push_back(mp);
@@ -1793,9 +1927,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "mysql_field_value" || name == "mysql_field_name") {
         if (args.size() >= 2 && args[0].index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-            Value key = args[1];
-            for (auto& kv : mp->entries)
-                if (value_equal(kv.first, key)) return kv.second;
+            const Value* hit = mp->find(args[1]);
+            if (hit) return *hit;
         }
         return make_int(0);
     }
@@ -1825,12 +1958,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     // SELECT via execute: return the rows as an array.
                     auto arr = std::make_shared<ArrayValue>();
                     for (const auto& row : res.rows) {
-                        auto mp = std::make_shared<MappingValue>();
+                        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(res.cols.size()));
                         for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
                             const auto& cell = row[i];
-                            if (cell.isNull) mp->entries.emplace_back(make_string(res.cols[i]), make_string(""));
-                            else if (cell.isNumber) mp->entries.emplace_back(make_string(res.cols[i]), make_int(cell.num));
-                            else mp->entries.emplace_back(make_string(res.cols[i]), make_string(cell.str));
+                            if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
+                            else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_int(cell.num));
+                            else mp->insert(make_string(res.cols[i]), make_string(cell.str));
                         }
                         arr->items.push_back(mp);
                     }
@@ -1865,12 +1998,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (mysqlExecReal(cno, sql, res, err) && res.hasResultSet) {
             auto arr = std::make_shared<ArrayValue>();
             for (const auto& row : res.rows) {
-                auto mp = std::make_shared<MappingValue>();
+                auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(res.cols.size()));
                 for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
                     const auto& cell = row[i];
-                    if (cell.isNull) mp->entries.emplace_back(make_string(res.cols[i]), make_string(""));
-                    else if (cell.isNumber) mp->entries.emplace_back(make_string(res.cols[i]), make_int(cell.num));
-                    else mp->entries.emplace_back(make_string(res.cols[i]), make_string(cell.str));
+                    if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
+                    else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_int(cell.num));
+                    else mp->insert(make_string(res.cols[i]), make_string(cell.str));
                 }
                 arr->items.push_back(mp);
             }
@@ -1962,7 +2095,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 if (e == std::string::npos) continue;
                 std::string sec = trim(line.substr(s + 1, e - s - 1));
                 cur = std::make_shared<MappingValue>();
-                root->entries.emplace_back(make_string(sec), cur);
+                root->insert(make_string(sec), cur);
                 continue;
             }
             if (!cur) continue;
@@ -1970,7 +2103,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (eq == std::string::npos) continue;
             std::string key = trim(line.substr(s, eq - s));
             std::string val = trim(line.substr(eq + 1));
-            cur->entries.emplace_back(make_string(key), make_string(val));
+            cur->insert(make_string(key), make_string(val));
         }
         return root;
     }
@@ -2031,21 +2164,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             TelnetClient* cl = findTelnetClient(cno);
             if (cl) {
                 auto getInt = [&](const char* k, int def) {
-                    for (auto& kv : mp->entries) {
-                        if (kv.first.index() == 4 && std::get<std::string>(kv.first) == k)
-                            return static_cast<int>(as_int(kv.second));
-                    }
+                    const Value* hit = mp->find(make_string(k));
+                    if (hit) return static_cast<int>(as_int(*hit));
                     return def;
                 };
-                if (mp->entries.size()) {
+                if (!mp->empty()) {
                     cl->nativeProcess = getInt("native_process", cl->nativeProcess ? 1 : 0) != 0;
                     cl->echo = getInt("echo", cl->echo ? 1 : 0) != 0;
                     cl->auth = getInt("auth", cl->auth ? 1 : 0) != 0;
                     cl->enabled = getInt("enable", cl->enabled ? 1 : 0) != 0;
-                    for (auto& kv : mp->entries) {
-                        if (kv.first.index() == 4 && std::get<std::string>(kv.first) == "id")
-                            cl->id = as_string(kv.second);
-                    }
+                    const Value* idv = mp->find(make_string("id"));
+                    if (idv) cl->id = as_string(*idv);
                 }
             }
         }
@@ -2055,8 +2184,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // The game reads get_telnet_settings()["type"]: "L" enables the LPC
         // telnet_daemon login path, "G" enables game-style id logging.
         auto mp = std::make_shared<MappingValue>();
-        mp->entries.emplace_back(make_string("type"), make_string("LG"));
-        mp->entries.emplace_back(make_string("ip"), make_string("127.0.0.1"));
+        mp->insert(make_string("type"), make_string("LG"));
+        mp->insert(make_string("ip"), make_string("127.0.0.1"));
         return mp;
     }
     if (name == "get_telnet_info") {
@@ -2093,7 +2222,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             TelnetClient* cl = findTelnetClient(cno);
             if (cl && args[1].index() == 6) {
                 auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
-                for (auto& kv : mp->entries) {
+                for (auto& kv : mp->items()) {
                     if (kv.first.index() == 4) {
                         std::string k = std::get<std::string>(kv.first);
                         if (k == "type" && kv.second.index() == 4)
@@ -2309,7 +2438,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::tm tm{};
         localtime_s(&tm, &t);
         auto mp = std::make_shared<MappingValue>();
-        auto add = [&](const char* k, int64_t v) { mp->entries.emplace_back(make_string(k), make_int(v)); };
+        auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
         add("hour", tm.tm_hour);
         add("min", tm.tm_min);
         add("sec", tm.tm_sec);
@@ -2326,10 +2455,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty() && args[0].index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
             auto get = [&](const char* k, int def) -> int {
-                for (auto& kv : mp->entries) {
-                    if (kv.first.index() == 4 && std::get<std::string>(kv.first) == k)
-                        return static_cast<int>(as_int(kv.second));
-                }
+                const Value* hit = mp->find(make_string(k));
+                if (hit) return static_cast<int>(as_int(*hit));
                 return def;
             };
             std::tm t{};
@@ -2360,13 +2487,64 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "delete_queue" || name == "delete_event") return make_int(1);
     if (name == "raise_event") return make_int(1);
     if (name == "restore_value") {
-        if (args.empty()) return make_int(0);
-        // Very small restore_value: try to parse "123" or return input unchanged.
-        const Value& v = args[0];
-        if (v.index() == 4) {
-            try { return make_int(std::stoll(std::get<std::string>(v))); } catch (...) { return v; }
+        // vm_f_restore_value (0x80dae84) -> vm_restoreMixedString: parse one
+        // value in the vm_saveValueAscii format.  On failure the original
+        // raises (caught by xdbc_wait_command's try/catch); returning the
+        // input lets the caller's is_mapping check fail the same way.
+        if (!args.empty() && args[0].index() == 4) {
+            Value out;
+            if (restoreValueAscii(std::get<std::string>(args[0]), out)) return out;
         }
-        return v;
+        return args.empty() ? make_int(0) : args[0];
+    }
+    if (name == "save_buffer") {
+        // vm_f_save_buffer (0x80dafe4) -> vm_saveValueToBuffer; we keep the
+        // ASCII form (identical grammar to save_string).
+        if (args.empty()) return make_string("0");
+        return make_string(saveValueAscii(args[0]));
+    }
+    if (name == "rdl") {
+        // vm_f_rdl (0x80e0314): AES-128 ECB, action 16 = encrypt / 17 = decrypt.
+        if (!args.empty()) {
+            std::string data = as_string(args[0]);
+            int action = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 16;
+            std::string key = args.size() >= 3 ? as_string(args[2]) : std::string();
+            return make_string(rdlAes(data, action, key));
+        }
+        return make_int(0);
+    }
+    if (name == "bzip_compress" || name == "bzip_decompress") {
+        // The bzip layer only ever runs between our own efuns and the
+        // in-process XDBC emulator (xdbc.cpp), so identity keeps the frame
+        // format self-consistent without a bzip2 implementation.
+        if (!args.empty() && args[0].index() == 4) return args[0];
+        return make_string("");
+    }
+    if (name == "socket") {
+        // vm_f_socket (0x80e3f4c): allocate a socket fd (1-based).
+        return make_int(xdbcSocket());
+    }
+    if (name == "connect") {
+        // vm_f_connect (0x80e83b4): connect(fd, host, port) -> 0 / -1.
+        if (args.size() >= 3) {
+            int fd = static_cast<int>(as_int(args[0]));
+            std::string host = as_string(args[1]);
+            int port = static_cast<int>(as_int(args[2]));
+            return make_int(xdbcConnect(fd, host, port));
+        }
+        return make_int(-1);
+    }
+    if (name == "send") {
+        // vm_f_send (0x80e7034): send(fd, data) -> bytes sent.
+        if (args.size() >= 2) {
+            int fd = static_cast<int>(as_int(args[0]));
+            return make_int(xdbcSend(fd, as_string(args[1])));
+        }
+        return make_int(-1);
+    }
+    if (name == "close_socket") {
+        if (!args.empty()) xdbcCloseSocket(static_cast<int>(as_int(args[0])));
+        return make_int(0);
     }
     if (name == "error") return make_int(0);
     // ---- LPC value helpers the game uses (verified against the original
@@ -2418,35 +2596,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "save_string") {
-        // vm_f_save_string (0x80db0d0) -> vm_saveValueToString: the LPC "save"
-        // ASCII form.  The game uses save_string(buf)[1..<2] to strip the
-        // surrounding quotes, so produce a quoted string for strings/buffers
-        // and plain text for ints.
+        // vm_f_save_string (0x80db0d0) -> vm_saveValueToString: the ASCII
+        // save form (vm_saveValueAscii).
         if (args.empty()) return make_string("0");
-        const Value& v = args[0];
-        switch (v.index()) {
-        case 2: return make_string(std::to_string(std::get<int64_t>(v)));
-        case 3: {
-            double d = std::get<double>(v);
-            std::ostringstream ss;
-            ss << d;
-            return make_string(ss.str());
-        }
-        case 4: {
-            std::string out = "\"";
-            for (char c : std::get<std::string>(v)) {
-                if (c == '\\' || c == '"') { out += '\\'; out += c; }
-                else if (c == '\n') out += "\\n";
-                else if (c == '\r') out += "\\r";
-                else if (c == '\t') out += "\\t";
-                else out += c;
-            }
-            out += '"';
-            return make_string(out);
-        }
-        default:
-            return make_string(to_string(v, false));
-        }
+        return make_string(saveValueAscii(args[0]));
     }
     if (name == "iconv") {
         // vm_f_iconv (0x817af00): converts between encodings.  The game calls

@@ -20,13 +20,32 @@
 #include "builtins.h"
 #include "efun_table.h"
 #include "o_loader.h"
+#include "pak_loader.h"
 #include "value.h"
+#include "xdbc.h"
 
 namespace fs = std::filesystem;
 
 namespace lpc {
 
 namespace {
+
+// Resolve a mudlib-relative .o path (e.g. "feature/common/daemon.o") exactly
+// like the original driver's binary-directory lookup: the mounted pak first
+// (the -b directory /aaa/pack_data/lib_aaa32.pak), then the extracted tree
+// on disk.  Returns nullptr when neither holds the file.
+std::shared_ptr<OriginalObject> loadOriginalObjectByRelPath(const std::string& rel) {
+    if (pakMounted()) {
+        std::vector<uint8_t> bytes;
+        if (pakReadFile(pakVirtualPrefix() + "/" + rel, bytes)) {
+            try {
+                return std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
+            } catch (...) {
+            }
+        }
+    }
+    return nullptr;
+}
 
 // ---------------------------------------------------------------------------
 // Action table recovered from the original driver (actionInfoTable).
@@ -163,7 +182,7 @@ int64_t toInt(const Value& v) {
         return s.empty() ? 0 : std::strtoll(s.c_str(), nullptr, 10);
     }
     case 5: return static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size());
-    case 6: return static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->entries.size());
+    case 6: return static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size());
     default: return 0;
     }
 }
@@ -185,7 +204,7 @@ bool isZero(const Value& v) {
     case 3: return std::get<double>(v) == 0.0;
     case 4: return std::get<std::string>(v).empty();
     case 5: return std::get<std::shared_ptr<ArrayValue>>(v)->items.empty();
-    case 6: return std::get<std::shared_ptr<MappingValue>>(v)->entries.empty();
+    case 6: return std::get<std::shared_ptr<MappingValue>>(v)->empty();
     case 8: {
         auto c = std::get<std::shared_ptr<ClosureValue>>(v);
         return c->functionName.empty();
@@ -206,16 +225,11 @@ Value addValues(const Value& a, const Value& b) {
         return r;
     }
     if (a.index() == 6 && b.index() == 6) {
-        auto r = std::make_shared<MappingValue>();
-        const auto& aa = std::get<std::shared_ptr<MappingValue>>(a)->entries;
-        const auto& bb = std::get<std::shared_ptr<MappingValue>>(b)->entries;
-        r->entries = aa;
-        for (const auto& kv : bb) {
-            bool found = false;
-            for (auto& e : r->entries)
-                if (value_equal(e.first, kv.first)) { e.second = kv.second; found = true; break; }
-            if (!found) r->entries.push_back(kv);
-        }
+        auto r = std::make_shared<MappingValue>(static_cast<uint32_t>(std::get<std::shared_ptr<MappingValue>>(a)->size()));
+        for (const auto& kv : std::get<std::shared_ptr<MappingValue>>(a)->items())
+            r->insert(kv.first, kv.second);
+        for (const auto& kv : std::get<std::shared_ptr<MappingValue>>(b)->items())
+            r->insert(kv.first, kv.second);
         return r;
     }
     if (a.index() == 4 || b.index() == 4)
@@ -241,17 +255,16 @@ Value subValues(const Value& a, const Value& b) {
     // mapping - mapping/array: remove keys present in b
     if (a.index() == 6) {
         auto r = std::make_shared<MappingValue>();
-        const auto& aa = std::get<std::shared_ptr<MappingValue>>(a)->entries;
-        for (const auto& kv : aa) {
+        auto am = std::get<std::shared_ptr<MappingValue>>(a);
+        for (const auto& kv : am->items()) {
             bool found = false;
             if (b.index() == 6) {
-                for (const auto& x : std::get<std::shared_ptr<MappingValue>>(b)->entries)
-                    if (value_equal(kv.first, x.first)) { found = true; break; }
+                found = std::get<std::shared_ptr<MappingValue>>(b)->find(kv.first) != nullptr;
             } else if (b.index() == 5) {
                 for (const auto& x : std::get<std::shared_ptr<ArrayValue>>(b)->items)
                     if (value_equal(kv.first, x)) { found = true; break; }
             }
-            if (!found) r->entries.push_back(kv);
+            if (!found) r->insert(kv.first, kv.second);
         }
         return r;
     }
@@ -300,7 +313,23 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
     switch (targetType) {
     case 2:
         if (v.index() == 3) return make_int(static_cast<int64_t>(std::get<double>(v)));
-        if (v.index() == 4) return make_int(std::strtoll(std::get<std::string>(v).c_str(), nullptr, 10));
+        if (v.index() == 4) {
+            // vm_castType: (int)string -> strtol; (int)buffer -> big-endian
+            // first 4 bytes.  Buffers are byte strings in this VM: when the
+            // content is not a decimal number treat it as a buffer.
+            const std::string& s = std::get<std::string>(v);
+            char* end = nullptr;
+            long long parsed = std::strtoll(s.c_str(), &end, 10);
+            if (end && *end == '\0' && end != s.c_str()) return make_int(parsed);
+            if (s.size() >= 4) {
+                uint32_t be = (static_cast<unsigned char>(s[0]) << 24) |
+                              (static_cast<unsigned char>(s[1]) << 16) |
+                              (static_cast<unsigned char>(s[2]) << 8) |
+                              static_cast<unsigned char>(s[3]);
+                return make_int(static_cast<int32_t>(be));
+            }
+            return make_int(0);
+        }
         if (v.index() == 1 || v.index() == 0) return make_int(0);
         return v;
     case 3:
@@ -315,6 +344,21 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
             return make_string(to_string(v, false));
         }
         return make_string(to_string(v, false));
+    case 5:
+        // (buffer) casts (vm_castType case 5): int -> 4-byte big-endian,
+        // string -> same bytes, nil/undefined -> empty buffer.
+        if (v.index() == 2) {
+            uint32_t n = static_cast<uint32_t>(static_cast<int32_t>(std::get<int64_t>(v)));
+            std::string s;
+            s += static_cast<char>((n >> 24) & 0xFF);
+            s += static_cast<char>((n >> 16) & 0xFF);
+            s += static_cast<char>((n >> 8) & 0xFF);
+            s += static_cast<char>(n & 0xFF);
+            return make_string(s);
+        }
+        if (v.index() == 4) return v;
+        if (v.index() == 1 || v.index() == 0) return make_string("");
+        return v;
     case 6:
         if (v.index() == 1 || v.index() == 0) return make_array();
         return v;
@@ -589,6 +633,16 @@ private:
         return nullptr;
     }
 
+    // Search the object's own functions AND the inherited ones merged into
+    // funcsByIndex_ (vm_findProgramFunction walks the inherit chain too).
+    const OriginalFunction* findFunctionAny(const std::string& name) const {
+        for (const auto& fn : obj_.functions)
+            if (fn.name == name && fn.index >= 0) return &fn;
+        for (const auto& kv : funcsByIndex_)
+            if (kv.second->name == name && kv.second->index >= 0) return kv.second;
+        return nullptr;
+    }
+
     // Merge inherited functions into this object's function table.  The
     // compiler assigns each inherit a baseFunOffset (from the INHERITS table)
     // and indexes inherited functions as baseFunOffset + <function index in the
@@ -597,32 +651,31 @@ private:
     // vm_loadBinaryInherit at 0x80a2b58 in the original driver.)
     void mergeInheritedFunctions() {
         // Resolve an inherit path (a mudlib-relative virtual path like
-        // "/feature/daemon/register.c") to a real file the same way every
-        // other virtual path is resolved (see resolveVfsPath).
-        auto resolveInheritFile = [this](const std::string& vpath) -> std::string {
+        // "/feature/daemon/register.c"): the mounted pak (binary directory)
+        // first, then the extracted tree on disk.
+        auto loadInheritFile = [this](const std::string& vpath) -> std::shared_ptr<OriginalObject> {
             std::string rel = vpath;
             if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
             if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-            return searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+            if (auto p = loadOriginalObjectByRelPath(rel)) return p;
+            std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+            return std::make_shared<OriginalObject>(loadOriginalObject(cand));
         };
         std::map<std::string, std::shared_ptr<OriginalObject>> loaded;
         std::function<void(const OriginalObject&)> walk;
         walk = [&](const OriginalObject& parent) {
             for (const auto& inh : parent.inherits) {
-                std::string cand = resolveInheritFile(inh.path);
-                std::error_code ec;
-                if (!std::filesystem::exists(cand, ec)) continue;   // missing file: nothing to merge
                 std::shared_ptr<OriginalObject> parentObj;
-                auto lit = loaded.find(cand);
+                auto lit = loaded.find(inh.path);
                 if (lit != loaded.end()) {
                     parentObj = lit->second;
                 } else {
                     try {
-                        parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
+                        parentObj = loadInheritFile(inh.path);
                     } catch (...) {
                         continue;   // failed to load the inherited file
                     }
-                    loaded[cand] = parentObj;
+                    loaded[inh.path] = parentObj;
                 }
                 // Parent's own inheritance comes first (its function indexes
                 // already include them), then the parent's functions.
@@ -686,8 +739,8 @@ private:
             return UndefinedTag{};
         }
         if (ref.map) {
-            for (const auto& kv : ref.map->entries)
-                if (value_equal(kv.first, ref.key)) return kv.second;
+            const Value* hit = ref.map->find(ref.key);
+            if (hit) return *hit;
             return UndefinedTag{};
         }
         return make_int(0);
@@ -734,10 +787,7 @@ private:
             auto& items = target->arr->items;
             if (i >= 0 && i < static_cast<int64_t>(items.size())) items[static_cast<size_t>(i)] = v;
         } else if (target->map) {
-            for (auto& kv : target->map->entries) {
-                if (value_equal(kv.first, target->key)) { kv.second = v; return; }
-            }
-            target->map->entries.emplace_back(target->key, v);
+            target->map->insert(target->key, v);
         }
     }
 
@@ -775,6 +825,52 @@ private:
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
+            if (nm == "find_function") {
+                // vm_f_find_function (0x80d626c) -> vm_findFunction (0x8094ef4):
+                // a string name is resolved against the CURRENT object's
+                // program first (own + inherited functions), then the global
+                // (master) program, and only then behaves like an efun lookup.
+                // A function-valued argument is returned unchanged.
+                if (!args.empty()) {
+                    const Value& a = args[0];
+                    if (a.index() == 8) return a;
+                    if (a.index() == 4) {
+                        const std::string& fname = std::get<std::string>(a);
+                        if (const OriginalFunction* fn = findFunctionAny(fname)) {
+                            auto cl = std::make_shared<ClosureValue>();
+                            cl->functionName = fname;
+                            cl->owner = &obj_;
+                            return cl;
+                        }
+                        std::shared_ptr<OriginalVm> master;
+                        const OriginalObject* masterObj = nullptr;
+                        {
+                            auto& reg = objectRegistry();
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            std::string key = searchRoot_.empty() ? "<main>" : searchRoot_ + "/<main>";
+                            auto mit = reg.vms.find(key);
+                            if (mit != reg.vms.end()) {
+                                master = mit->second;
+                                masterObj = &mit->second->object();
+                            }
+                        }
+                        if (master && masterObj && masterObj != &obj_ &&
+                            master->findFunctionAny(fname)) {
+                            auto cl = std::make_shared<ClosureValue>();
+                            cl->functionName = fname;
+                            cl->owner = masterObj;
+                            return cl;
+                        }
+                        const auto& efn = efunNameTable();
+                        for (size_t i = 0; i < efn.size(); ++i)
+                            if (efn[i] == fname) return make_closure(fname, {});
+                        return UndefinedTag{};
+                    }
+                    // bad type: option 0 -> undefined (no error)
+                    return UndefinedTag{};
+                }
+                return UndefinedTag{};
+            }
             if (nm == "broadcast") {
                 // Pure log message (vm_f_broadcast).  Object loading is driven
                 // by the LPC startup code (load_all_path/load_all -> load_object
@@ -947,7 +1043,7 @@ private:
                 std::string msg = "[xret] " + fn.name + " start argc=" + std::to_string(fn.argCount) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
             }
-            Value r = executeFunctionOnStack(fn);
+            Value r = executeFunctionOnStack(fn, false, flags & 0x3F);
             if (std::getenv("LPCVM_TRACE") && traceMe) {
                 std::string msg = "[xret] " + fn.name + " result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
@@ -1021,15 +1117,21 @@ private:
         // For a zero-arg function the stack top would be -1; reserve one slot
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
         int n = fn.argCount;
-        if (n == 0) pushValue(UndefinedTag{});   // frame slot for bp
+        bool placeholder = false;
+        if (n == 0) {
+            pushValue(UndefinedTag{});   // frame slot for bp
+            placeholder = true;
+        }
         for (int i = n - 1; i >= 0; --i) {
             Value a = (i < static_cast<int>(args.size())) ? args[i] : Value(UndefinedTag{});
             pushValue(a);
         }
-        return executeFunctionOnStack(fn);
+        // all declared arguments were pushed (missing ones as undefined)
+        return executeFunctionOnStack(fn, placeholder, fn.argCount);
     }
 
-    Value executeFunctionOnStack(const OriginalFunction& fn) {
+    Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
+                                 int passedArgs = -1) {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
@@ -1053,7 +1155,10 @@ private:
                       << " frames=" << frames_.size()
                       << (stack0.empty() ? "" : (" stack0=" + stack0)) << "\n";
         }
-        Frame frame{&fn, bp, fn.argCount, fn.localCount};
+        // argNum records how many arguments were actually PASSED: functions
+        // with default arguments compare it against the declared count in
+        // check_args_num and push the missing defaults inline.
+        Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount};
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
         bool savedReturned = returned_;
@@ -1068,9 +1173,22 @@ private:
             throw;
         }
         Value result = returnValue_;
-        // For zero-arg calls we pushed one placeholder frame slot; remove it
+        // The cleanup must be based on the LIVE frame: resort_stack moves the
+        // frame base (inline default arguments become trailing parameters)
+        // and updates argNum to passed + defaults.  Using the DECLARED
+        // argCount instead eats the caller's stack slots whenever a function
+        // with default arguments is called with fewer arguments (e.g.
+        // read_etc_file("file") -> 3 declared, 1 passed, 2 caller slots lost
+        // per call - seen as load_file_dependence's locals vanishing).
+        int liveBp = bp;
+        int usedArgs = fn.argCount;
+        if (!frames_.empty() && frames_.back().fn == &fn) {
+            liveBp = frames_.back().bp;
+            usedArgs = frames_.back().argNum;
+        }
+        // For zero-arg calls one placeholder frame slot was pushed; remove it
         // with the frame (otherwise it leaks on every external 0-arg call).
-        int newSize = bp - fn.argCount + 1 - (fn.argCount == 0 ? 1 : 0);
+        int newSize = liveBp - usedArgs + 1 - (zeroArgPlaceholder ? 1 : 0);
         if (newSize < 0) newSize = 0;
         stack_.resize(static_cast<size_t>(newSize));
         frames_.pop_back();
@@ -1262,9 +1380,9 @@ private:
                 std::vector<Value> items;
                 for (uint32_t i = 0; i < count && !stack_.empty(); ++i) items.push_back(pop().value);
                 std::reverse(items.begin(), items.end());
-                auto mp = std::make_shared<MappingValue>();
+                auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(items.size() / 2));
                 for (size_t i = 0; i + 1 < items.size(); i += 2)
-                    mp->entries.emplace_back(items[i + 1], items[i]);
+                    mp->insert(items[i + 1], items[i]);
                 pushValue(mp);
                 break;
             }
@@ -1412,7 +1530,7 @@ private:
                     pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size())));
                     break;
                 case 6:
-                    pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->entries.size())));
+                    pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size())));
                     break;
                 default:
                     pushValue(make_int(0));
@@ -1491,13 +1609,67 @@ private:
                         std::string input = strOf(refs[0]);
                         std::string fmtStr = strOf(refs[1]);
                         std::vector<Value> outs;
-                        int n = lpcSscanf(input, fmtStr, outs);
+                        // The original tracks the remaining output pointers;
+                        // a trailing-input match only counts when a ref exists.
+                        int maxOutputs = static_cast<int>(refs.size()) - 2;
+                        int n = lpcSscanf(input, fmtStr, outs, maxOutputs);
                         if (std::getenv("LPCVM_TRACE"))
                             std::cerr << "[sscanf] input=[" << input.substr(0, 30) << "] fmt=[" << fmtStr
                                       << "] n=" << n << " outs=" << outs.size() << "\n";
                         for (size_t i = 0; i + 2 < refs.size() && i < outs.size(); ++i)
                             writeThrough(refs[i + 2], outs[i]);
                         pushValue(make_int(n));
+                        break;
+                    }
+                    if (names[efun] == "recv") {
+                        // vm_f_recv (0x80e80c8): recv(fd, &buf, len) writes the
+                        // received bytes back through the reference and returns
+                        // the byte count.
+                        std::vector<StackItem> items;
+                        for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                        std::reverse(items.begin(), items.end());
+                        if (items.size() >= 3) {
+                            Value fdv = items[0].isRef ? deref(items[0]) : items[0].value;
+                            Value lenv = items[2].isRef ? deref(items[2]) : items[2].value;
+                            int fd = static_cast<int>(toInt(fdv));
+                            int len = static_cast<int>(toInt(lenv));
+                            std::string data = xdbcRecv(fd, len);
+                            if (!data.empty()) writeThrough(items[1], make_string(data));
+                            if (std::getenv("LPCVM_TRACE"))
+                                std::cerr << "[recv] fd=" << fd << " len=" << len
+                                          << " got=" << data.size() << "\n";
+                            pushValue(make_int(static_cast<int64_t>(data.size())));
+                        } else {
+                            pushValue(make_int(-1));
+                        }
+                        break;
+                    }
+                    if (names[efun] == "select") {
+                        // vm_f_select: select(&read, &write, &exc, ms) filters
+                        // the fd arrays in place and returns the ready count.
+                        std::vector<StackItem> items;
+                        for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                        std::reverse(items.begin(), items.end());
+                        int timeoutMs = 0;
+                        if (items.size() >= 4) {
+                            Value tv = items[3].isRef ? deref(items[3]) : items[3].value;
+                            timeoutMs = static_cast<int>(toInt(tv));
+                        }
+                        int readyCount = 0;
+                        if (!items.empty()) {
+                            Value arrVal = items[0].isRef ? deref(items[0]) : items[0].value;
+                            if (arrVal.index() == 5) {
+                                auto arr = std::get<std::shared_ptr<ArrayValue>>(arrVal);
+                                std::vector<int> fds;
+                                for (const auto& f : arr->items) fds.push_back(static_cast<int>(toInt(f)));
+                                int nready = xdbcSelect(fds, timeoutMs);
+                                auto out = std::make_shared<ArrayValue>();
+                                for (int f : fds) out->items.push_back(make_int(f));
+                                writeThrough(items[0], out);
+                                readyCount = nready;
+                            }
+                        }
+                        pushValue(make_int(readyCount));
                         break;
                     }
                 }
@@ -1557,7 +1729,7 @@ private:
                     auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
-                    const OriginalFunction* fn = findFunction(cl->functionName);
+                    const OriginalFunction* fn = findFunctionAny(cl->functionName);
                     if (fn) {
                         result = executeFunctionFromOutside(*fn, all);
                     } else if (cl->owner && cl->owner != &obj_) {
@@ -1587,7 +1759,7 @@ private:
                     }
                 } else if (funItem.value.index() == 4) {
                     const std::string& fnName = std::get<std::string>(funItem.value);
-                    const OriginalFunction* fn = findFunction(fnName);
+                    const OriginalFunction* fn = findFunctionAny(fnName);
                     if (fn) result = executeFunctionFromOutside(*fn, args);
                 }
                 if (funItem.value.index() == 0 || funItem.value.index() == 1) {
@@ -1639,7 +1811,12 @@ private:
                     for (int i = f.argNum - 1; i >= 0; --i)
                         args.push_back(stack_[static_cast<size_t>(f.bp - i)]);
                     stack_.resize(static_cast<size_t>(f.bp - f.argNum + 1));
-                    for (auto& d : defaults) stack_.push_back(d);
+                    // Parameter layout is [paramN ... param1, param0(top)]: the
+                    // defaults (pushed by the compiler in param order param1,
+                    // param2, ...) must be laid down REVERSED so that param1's
+                    // default ends up directly below param0.
+                    for (auto it = defaults.rbegin(); it != defaults.rend(); ++it)
+                        stack_.push_back(*it);
                     for (auto& a : args) stack_.push_back(a);
                     f.argNum += defaultPushed;
                     f.bp = static_cast<int>(stack_.size()) - 1;
@@ -1833,7 +2010,9 @@ private:
             }
         } else if (c->type == 902) {
             if (!c->map) return;
-            const auto& entries = c->map->entries;
+            // foreach over a mapping iterates in vm_mappingIndices order
+            // (bucket high -> low, chain head first).
+            const auto entries = c->map->items();
             if (c->mIdx >= entries.size()) {
                 ip += breakOffset;
             } else {
@@ -1856,8 +2035,8 @@ private:
         }
         if (container.index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(container);
-            for (auto& kv : mp->entries)
-                if (value_equal(kv.first, key)) return kv.second;
+            const Value* hit = mp->find(key);
+            if (hit) return *hit;
             return UndefinedTag{};
         }
         if (container.index() == 5) {
@@ -2044,28 +2223,33 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
     std::vector<std::string> candidates;
     candidates.push_back(searchRoot + "/" + rel);
-    if (rel.compare(0, 4, "aaa/") == 0) candidates.push_back(searchRoot + "/" + rel.substr(4));
+    candidates.push_back("pak:" + rel);
+    if (rel.compare(0, 4, "aaa/") == 0) {
+        candidates.push_back(searchRoot + "/" + rel.substr(4));
+        candidates.push_back("pak:" + rel.substr(4));
+    }
+    auto& reg = objectRegistry();
     for (const auto& c : candidates) {
-        std::error_code ec;
-        if (!std::filesystem::exists(c, ec)) continue;
-        auto& reg = objectRegistry();
         std::shared_ptr<OriginalVm> existing;
         {
             std::lock_guard<std::recursive_mutex> rl(registryMutex());
             auto it = reg.vms.find(c);
             if (it != reg.vms.end()) existing = it->second;
         }
-        if (existing) {
-            return existing->callFunctionByName(funName, args);
-        }
-        // The original driver does NOT auto-load objects on call_other: an
-        // unloaded target raises "Object is not found (when call in function)."
-        // (vm_callInOtherFun).  Loading on demand here broke startup ordering
-        // (e.g. connectiond's create -> main -> THREAD_D->dispatch_service
-        // pulled threadd.c in early, before the daemons pass reached it).
-        // Only objects loaded by load_object/safe_load_object are callable.
-        return make_int(0);
+        if (existing) return existing->callFunctionByName(funName, args);
     }
+    // Suffix match (covers registry keys stored with a different root, e.g.
+    // absolute pak paths) - mirrors findObjectInRegistry's resolution.
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms) {
+            if (hasSuffix(kv.first, rel)) return kv.second->callFunctionByName(funName, args);
+        }
+    }
+    // The original driver does NOT auto-load objects on call_other: an
+    // unloaded target raises "Object is not found (when call in function)."
+    // (vm_callInOtherFun).  Only objects loaded by load_object/safe_load_object
+    // are callable.
     return make_int(0);
 }
 
@@ -2180,10 +2364,39 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
     std::string rel = virtualPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-    std::vector<std::string> candidates;
-    candidates.push_back(searchRoot + "/" + rel);
-    if (rel.compare(0, 4, "aaa/") == 0) candidates.push_back(searchRoot + "/" + rel.substr(4));
-    for (const auto& c : candidates) {
+    // The original driver resolves compiled objects through the binary
+    // directory (the mounted pak) first, then the real filesystem.
+    std::vector<std::string> relCandidates;
+    relCandidates.push_back(rel);
+    if (rel.compare(0, 4, "aaa/") == 0) relCandidates.push_back(rel.substr(4));
+    for (const auto& rc : relCandidates) {
+        auto pakObj = loadOriginalObjectByRelPath(rc);
+        if (!pakObj) continue;
+        std::string key = "pak:" + rc;
+        auto& reg = objectRegistry();
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            if (reg.vms.find(key) != reg.vms.end()) return 1;
+        }
+        try {
+            auto vmPtr = std::make_shared<OriginalVm>(*pakObj, searchRoot);
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                reg.objects[key] = pakObj;
+                reg.vms[key] = vmPtr;
+            }
+            vmPtr->runInit();
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                reg.initialized[key] = true;
+            }
+            return 1;
+        } catch (...) {
+            return 0;
+        }
+    }
+    for (const auto& rc : relCandidates) {
+        std::string c = searchRoot + "/" + rc;
         std::error_code ec;
         if (!std::filesystem::exists(c, ec)) continue;
         auto& reg = objectRegistry();

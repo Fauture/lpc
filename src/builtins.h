@@ -22,9 +22,11 @@ Value call_builtin(Interpreter* interp, const std::string& name, const std::vect
 // vm_interSscanf (0x8109908): C-style sscanf.  Parses input against fmt,
 // appends one output Value per conversion (in order) to `out`, and returns the
 // number of successful conversions.  Supports %s %d %u %x %c %f %* (suppress)
-// and literal/whitespace matching.  The caller writes each output back into the
-// corresponding reference argument.
-int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Value>& out);
+// and literal matching.  maxOutputs caps the trailing whole-rest match the
+// original performs when the format is exhausted with input remaining (the
+// number of reference arguments still available); -1 = unlimited.
+int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Value>& out,
+              int maxOutputs = -1);
 
 // Telnet client plumbing shared with the VM thread runner (original_vm.cpp).
 // The daemon thread that serves one telnet connection registers itself with

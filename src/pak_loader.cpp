@@ -182,4 +182,81 @@ const PakEntry* findPakEntry(const PakFile& pak, const std::string& virtualPath)
     return found;
 }
 
+// ---------------------------------------------------------------------------
+// Pak mount (driver-style packed volume)
+// ---------------------------------------------------------------------------
+namespace {
+
+struct MountedPak {
+    std::string pakPath;         // real file path
+    std::string prefix;          // virtual prefix, e.g. "/aaa/pack_data/lib_aaa32.pak"
+    PakFile pak;
+    std::vector<uint8_t> raw;    // whole pak file bytes (for reading entries)
+};
+
+MountedPak& mountedPak() {
+    static MountedPak mp;
+    return mp;
+}
+
+bool decompressEntry(const MountedPak& mp, const PakEntry& e, std::vector<uint8_t>& out) {
+    if (static_cast<size_t>(e.offset) + e.compSize > mp.raw.size()) return false;
+    std::vector<uint8_t> src(mp.raw.begin() + e.offset, mp.raw.begin() + e.offset + e.compSize);
+    if (lzssDecompress(src, e.origSize, out)) return true;
+    if (e.compSize == e.origSize) {
+        out = src;
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void setPakMount(const std::string& pakRealPath, const std::string& virtualPrefix) {
+    MountedPak& mp = mountedPak();
+    if (mp.pakPath == pakRealPath) return;
+    mp.pakPath = pakRealPath;
+    mp.prefix = virtualPrefix;
+    while (!mp.prefix.empty() && mp.prefix.back() == '/') mp.prefix.pop_back();
+    mp.raw = readFileBytes(pakRealPath);
+    mp.pak = loadPak(pakRealPath);
+}
+
+bool pakMounted() {
+    return !mountedPak().pakPath.empty();
+}
+
+std::string pakVirtualPrefix() {
+    return mountedPak().prefix;
+}
+
+bool pakReadFile(const std::string& vpath, std::vector<uint8_t>& out) {
+    MountedPak& mp = mountedPak();
+    if (mp.pakPath.empty()) return false;
+    if (vpath.compare(0, mp.prefix.size(), mp.prefix) != 0) return false;
+    std::string rel = vpath.substr(mp.prefix.size());
+    while (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    const PakEntry* e = findPakEntry(mp.pak, rel);
+    if (!e || e->isDir) return false;
+    return decompressEntry(mp, *e, out);
+}
+
+bool pakListDir(const std::string& vdir, std::vector<const PakEntry*>& out) {
+    MountedPak& mp = mountedPak();
+    if (mp.pakPath.empty()) return false;
+    if (vdir.compare(0, mp.prefix.size(), mp.prefix) != 0) return false;
+    std::string rel = vdir.substr(mp.prefix.size());
+    while (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    while (!rel.empty() && rel.back() == '/') rel.pop_back();
+    const std::vector<PakEntry>* cur = &mp.pak.root;
+    if (!rel.empty()) {
+        const PakEntry* dir = findPakEntry(mp.pak, rel);
+        if (!dir || !dir->isDir) return false;
+        cur = &dir->children;
+    }
+    out.clear();
+    for (const auto& e : *cur) out.push_back(&e);
+    return true;
+}
+
 } // namespace lpc

@@ -150,8 +150,7 @@ std::string actionName(uint8_t op) {
     return "unknown";
 }
 
-OriginalObject loadOriginalObject(const std::string& path) {
-    std::vector<uint8_t> data = readFile(path);
+OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
     Reader r{data};
     OriginalObject obj;
     obj.magic = r.u32();
@@ -252,6 +251,11 @@ OriginalObject loadOriginalObject(const std::string& path) {
     obj.globalCode = std::move(globalCode.insns);
     obj.globalMeta = std::move(globalCode.meta);
     return obj;
+}
+
+OriginalObject loadOriginalObject(const std::string& path) {
+    std::vector<uint8_t> data = readFile(path);
+    return loadOriginalObjectFromBytes(data);
 }
 
 std::string disassembleOriginalObject(const OriginalObject& obj) {

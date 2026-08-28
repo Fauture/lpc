@@ -223,7 +223,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
             }
         } else if (container.index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(container);
-            for (auto& kv : mp->entries) {
+            for (auto& kv : mp->items()) {
                 if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = kv.first;
                 Flow f = exec(stmt->thenStmt, env);
@@ -288,8 +288,8 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
         return arr;
     }
     case Expr::Kind::Mapping: {
-        auto mp = std::make_shared<MappingValue>();
-        for (auto& kv : expr->mapEntries) mp->entries.emplace_back(eval(kv.first, env), eval(kv.second, env));
+        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(expr->mapEntries.size()));
+        for (auto& kv : expr->mapEntries) mp->insert(eval(kv.first, env), eval(kv.second, env));
         return mp;
     }
     case Expr::Kind::Unary:
@@ -478,9 +478,8 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     if (c.index() == 6) {
         Value idx = eval(rhs, env);
         auto mp = std::get<std::shared_ptr<MappingValue>>(c);
-        for (auto& kv : mp->entries) {
-            if (value_equal(kv.first, idx)) return kv.second;
-        }
+        const Value* hit = mp->find(idx);
+        if (hit) return *hit;
         return UndefinedTag{};
     }
     if (c.index() == 4) {
@@ -506,13 +505,7 @@ void Interpreter::assignIndex(ExprPtr lhs, ExprPtr rhs, const Value& v, Environm
     }
     if (c.index() == 6) {
         auto mp = std::get<std::shared_ptr<MappingValue>>(c);
-        for (auto& kv : mp->entries) {
-            if (value_equal(kv.first, idx)) {
-                kv.second = v;
-                return;
-            }
-        }
-        mp->entries.emplace_back(idx, v);
+        mp->insert(idx, v);
         return;
     }
     throw RuntimeError("cannot index-assign this value");

@@ -22,6 +22,8 @@ add_executable(lpcvm
     src/lzss.cpp
     src/pak_loader.cpp
     src/original_vm.cpp
+    src/mysql_client.cpp
+    src/xdbc.cpp
 )
 
 target_include_directories(lpcvm PRIVATE src)
