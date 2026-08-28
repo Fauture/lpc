@@ -249,7 +249,11 @@ void feedClient(GameClient& cl, const char* data, size_t n) {
             cl.pendingCmd = rd16be(h + 10);
             cl.bodyGot = 0;
             cl.body.clear();
-            if (cl.pendingLen <= 12) {
+            // Original vm_clientSocketCallback: len = ROR2(msgLen) - 2.
+            // msgLen counts from the cmdNo field (2 bytes) through the body,
+            // so bodyLen = msgLen - 2 (NOT msgLen - 12).  Total wire packet =
+            // 12-byte header + (msgLen - 2) body bytes.
+            if (cl.pendingLen <= 2) {
                 // No body: dispatch the command now.
                 dispatchCommand(cl, cl.pendingCmd, nullptr, 0);
                 cl.status = 3;
@@ -257,17 +261,17 @@ void feedClient(GameClient& cl, const char* data, size_t n) {
                 continue;
             }
             cl.status = 4;
-            cl.body.reserve(cl.pendingLen - 12);
+            cl.body.reserve(cl.pendingLen - 2);
             continue;
         }
         if (cl.status == 4) {
             // WAIT_BODY
-            size_t need = cl.pendingLen - 12 - cl.bodyGot;
+            size_t need = cl.pendingLen - 2 - cl.bodyGot;
             size_t take = avail < need ? avail : need;
             cl.body.insert(cl.body.end(), p, p + take);
             cl.bodyGot += take;
             off += take;
-            if (cl.bodyGot >= cl.pendingLen - 12) {
+            if (cl.bodyGot >= cl.pendingLen - 2) {
                 dispatchCommand(cl, cl.pendingCmd, cl.body.data(), cl.body.size());
                 cl.status = 3;
                 cl.hdrBuf.clear();
@@ -326,6 +330,26 @@ int startGameService(int port) {
                                               lpc::masterSearchRoot());
                 } catch (...) {
                 }
+                // The original driver is a cooperative single-threaded
+                // scheduler: the new-connection callback runs to completion
+                // (agent cloned + set_client_agent registered) BEFORE the
+                // socket is read.  Our port runs the callback on the
+                // connectiond queue thread, so wait here until the agent for
+                // this client exists before feeding any packet - otherwise the
+                // first packet's process_command -> find_agent_by_client races
+                // the registration and the command is silently dropped.
+                {
+                    auto root = lpc::masterSearchRoot();
+                    for (int tries = 0; tries < 200; ++tries) {
+                        Value agent = callMasterProgramFunction("find_agent_by_client",
+                                                               {make_int(clientNo)}, root);
+                        if (agent.index() == 7) break;   // object registered
+                        if (std::getenv("LPCVM_TRACE"))
+                            std::cerr << "[game] waiting agent client=" << clientNo
+                                      << " try=" << tries << "\n";
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                }
                 char buf[4096];
                 for (;;) {
                     int n = recv(c, buf, sizeof(buf), 0);
@@ -364,6 +388,27 @@ void gameServiceDisconnect(int clientNo) {
     if (it == gameClients().end()) return;
     if (it->second.fd >= 0) closesocket(static_cast<SOCKET>(it->second.fd));
     gameClients().erase(it);
+}
+
+bool gameServiceSend(int clientNo, const std::string& data) {
+    // vm_sendFullPacket: write the complete wire frame to the client socket.
+    // A partial write counts as failure (vm_writeDataToSocket returning -3).
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> lk(gameMutex());
+        auto it = gameClients().find(clientNo);
+        if (it == gameClients().end()) return false;
+        fd = it->second.fd;
+    }
+    if (fd < 0) return false;
+    int sent = 0;
+    while (sent < static_cast<int>(data.size())) {
+        int n = send(static_cast<SOCKET>(fd), data.data() + sent,
+                     static_cast<int>(data.size()) - sent, 0);
+        if (n <= 0) return false;
+        sent += n;
+    }
+    return true;
 }
 
 Value gameGetClientInfo(int clientNo) {

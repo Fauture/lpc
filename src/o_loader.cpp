@@ -219,6 +219,9 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
             if (raw.size() >= 4) {
                 inh.baseFunOffset = static_cast<int16_t>(raw[2] | (raw[3] << 8));
             }
+            if (raw.size() >= 6) {
+                inh.baseVarOffset = static_cast<int16_t>(raw[4] | (raw[5] << 8));
+            }
             if (i == 0 && raw.size() >= 4) {
                 // Legacy field kept for compatibility.
                 obj.baseFunOffset = static_cast<int16_t>(raw[2] | (raw[3] << 8));
@@ -264,9 +267,18 @@ OriginalObject loadOriginalObject(const std::string& path) {
 std::string disassembleOriginalObject(const OriginalObject& obj) {
     std::ostringstream os;
     os << "magic=0x" << std::hex << obj.magic << " version=" << obj.version
-       << " functionBC=" << std::dec << obj.functionBC << "\n";
+       << " functionBC=" << std::dec << obj.functionBC
+       << " globalVarCount=" << obj.globalVarCount << "\n";
     os << "strings: " << obj.strings.size() << "\n";
     for (size_t i = 0; i < obj.strings.size(); ++i) os << "  [" << i << "] " << obj.strings[i] << "\n";
+    os << "names: " << obj.names.size() << "\n";
+    for (size_t i = 0; i < obj.names.size(); ++i) os << "  [" << i << "] " << obj.names[i] << "\n";
+    os << "inherits: " << obj.inherits.size() << "\n";
+    for (size_t i = 0; i < obj.inherits.size(); ++i) {
+        os << "  " << i << ": " << obj.inherits[i].path
+           << " baseFunOffset=" << obj.inherits[i].baseFunOffset
+           << " baseVarOffset=" << obj.inherits[i].baseVarOffset << "\n";
+    }
     os << "functions: " << obj.functions.size() << "\n";
     for (size_t i = 0; i < obj.functions.size(); ++i) {
         const auto& fn = obj.functions[i];

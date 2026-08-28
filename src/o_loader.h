@@ -22,12 +22,20 @@ struct OriginalFunction {
     // indexes inside the bytecode resolve against THIS table (inherited
     // functions keep their own program's strings, not the inheritor's).
     std::vector<std::string> strings;
+    // Accumulated baseVarOffset of the constitution this function belongs to.
+    // push_obj_var/set_obj_var/push_obj_vptr add it to the variable index
+    // (vm_pushObjVar: pObjectValues[valueNo + consititution->baseVarOffset]).
+    int varOffset = 0;
 };
 
 struct OriginalInherit {
     std::string path;       // e.g. "/feature/daemon/register.c"
     int baseFunOffset = 0;  // inherited functions are mapped to
                             // baseFunOffset + <function index in the parent>
+    int baseVarOffset = 0;  // inherited instance variables are mapped to
+                            // baseVarOffset + <variable index in the parent>
+                            // (vm_pushObjVar/setObjVar add the current
+                            // constitution's accumulated baseVarOffset)
 };
 
 struct OriginalObject {

@@ -431,6 +431,11 @@ struct Frame {
     // functions carry their own program's strings (shared-string indexes are
     // resolved against the callee's table, not the current object's).
     const std::vector<std::string>* strings = nullptr;
+    // Accumulated baseVarOffset of the function's constitution.  The original
+    // driver adds consititution->baseVarOffset to every obj-var access
+    // (vm_pushObjVar 0x8091224 / vm_pushObjVptr 0x80911a8 /
+    // vm_setObjVar 0x808f7f8).  0 for the object's own functions.
+    int varOffset = 0;
     // Loop control blocks.  The original VM keeps a loop's control value in a
     // local slot, but expression-stack pops can descend into the local region
     // in this interpreter (the prologue of load_comm_desc does); storing the
@@ -519,6 +524,11 @@ public:
     }
 
     const OriginalObject& object() const { return obj_; }
+    // baseVarOffset of the currently executing function's constitution.
+    // Global init code runs with no frame -> offset 0 (its own program).
+    int currentVarOffset() const {
+        return frames_.empty() ? 0 : frames_.back().varOffset;
+    }
     std::string functionNameByIndex(int index) const {
         auto it = funcsByIndex_.find(index);
         if (it == funcsByIndex_.end()) return "";
@@ -533,12 +543,19 @@ public:
     // their "clone:<rel>#<seq>" registry key so cross-object calls and
     // set_client_agent store the REAL object, not the "<this>" placeholder).
     void setThisObjectName(const std::string& n) { thisObjectName_ = n; }
+    const std::string& searchRoot() const { return searchRoot_; }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
         // Resolve through own + inherited functions (like vm_lookupIdentInProgram
         // on the global program used by vm_apply): a command function such as
         // msg_l_auth may live in an inherited program, not the master itself.
+        if (std::getenv("LPCVM_TRACE") && name == "lite_query_temp")
+            std::cerr << "[lqt] callFunctionByName vm=" << this << " obj=" << objName_
+                      << " args=" << args.size() << " thisObj=" << thisObjectName_ << "\n";
         if (const OriginalFunction* fn = findFunctionAny(name)) {
+            if (std::getenv("LPCVM_TRACE") && name == "lite_query_temp")
+                std::cerr << "[lqt] found idx=" << fn->index << " code=" << fn->code.size()
+                          << " argCount=" << fn->argCount << "\n";
             Value r = executeFunctionFromOutside(*fn, args);
             if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
                 std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
@@ -559,7 +576,14 @@ public:
     int runInit() {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
         try {
+            // The original runs EVERY constitution's initCodeSegment in
+            // initOrderList order (vm_callInInitFun 0x8094258 sets
+            // consititution per program, so obj-var accesses inside the init
+            // use that program's baseVarOffset).  The child's own global code
+            // first (its constitution, offset 0), then each inherited
+            // program's global code under its own accumulated offset.
             execute(obj_.globalCode, obj_.globalMeta);
+            runInheritedInits(0, 0);
             callCreate();
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
@@ -571,6 +595,7 @@ public:
     int run() {
         try {
             execute(obj_.globalCode, obj_.globalMeta);
+            runInheritedInits(0, 0);
             callCreate();
             runMainLoop(10, std::chrono::milliseconds(50));
         } catch (const std::exception& e) {
@@ -578,6 +603,45 @@ public:
                                      " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
         }
         return 0;
+    }
+
+    // Execute the global initializer of every inherited program, each under
+    // its own constitution (accumulated baseVarOffset + its own strings).
+    // Recurses through the inherit chain; mirrors mergeInheritedFunctions.
+    void runInheritedInits(int accFun, int accVar) {
+        runInheritedInitsOf(obj_, accFun, accVar);
+    }
+
+    void runInheritedInitsOf(const OriginalObject& parent, int accFun, int accVar) {
+        for (const auto& inh : parent.inherits) {
+            std::shared_ptr<OriginalObject> parentObj;
+            try {
+                std::string rel = inh.path;
+                if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+                if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+                if (auto p = loadOriginalObjectByRelPath(rel)) parentObj = p;
+                else {
+                    std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+                    parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
+                }
+            } catch (...) {
+                continue;
+            }
+            int funOff = accFun + inh.baseFunOffset;
+            int varOff = accVar + inh.baseVarOffset;
+            runInheritedInitsOf(*parentObj, funOff, varOff);
+            // Execute the parent's own global init code under its constitution.
+            Frame frame{nullptr, 0, 0, 0, &parentObj->strings};
+            frame.varOffset = varOff;
+            frames_.push_back(frame);
+            try {
+                execute(parentObj->globalCode, parentObj->globalMeta);
+            } catch (...) {
+                frames_.pop_back();
+                throw;
+            }
+            frames_.pop_back();
+        }
     }
 
     void callCreate() {
@@ -686,11 +750,13 @@ private:
     }
 
     // Merge inherited functions into this object's function table.  The
-    // compiler assigns each inherit a baseFunOffset (from the INHERITS table)
-    // and indexes inherited functions as baseFunOffset + <function index in the
-    // parent program>.  The parent may itself inherit other programs, so the
-    // merge walks the inherit chain recursively.  (Verified against
-    // vm_loadBinaryInherit at 0x80a2b58 in the original driver.)
+    // compiler assigns each inherit a baseFunOffset / baseVarOffset (from the
+    // INHERITS table) and indexes inherited functions as baseFunOffset +
+    // <function index in the parent program>.  The parent may itself inherit
+    // other programs, so the merge walks the inherit chain recursively and
+    // ACCUMULATES both offsets (vm_loadBinaryInherit 0x80a2b58 does the same:
+    // v25->baseFunOffset = pConsititutions->baseFunOffset + v29,
+    // v25->baseVarOffset = pConsititutions->baseVarOffset + v27).
     void mergeInheritedFunctions() {
         // Resolve an inherit path (a mudlib-relative virtual path like
         // "/feature/daemon/register.c"): the mounted pak (binary directory)
@@ -704,8 +770,8 @@ private:
             return std::make_shared<OriginalObject>(loadOriginalObject(cand));
         };
         std::map<std::string, std::shared_ptr<OriginalObject>> loaded;
-        std::function<void(const OriginalObject&)> walk;
-        walk = [&](const OriginalObject& parent) {
+        std::function<void(const OriginalObject&, int, int)> walk;
+        walk = [&](const OriginalObject& parent, int accFun, int accVar) {
             for (const auto& inh : parent.inherits) {
                 std::shared_ptr<OriginalObject> parentObj;
                 auto lit = loaded.find(inh.path);
@@ -719,24 +785,28 @@ private:
                     }
                     loaded[inh.path] = parentObj;
                 }
+                int funOff = accFun + inh.baseFunOffset;
+                int varOff = accVar + inh.baseVarOffset;
                 // Parent's own inheritance comes first (its function indexes
                 // already include them), then the parent's functions.
-                walk(*parentObj);
+                walk(*parentObj, funOff, varOff);
                 for (const auto& fn : parentObj->functions) {
                     if (fn.index < 0) continue;
-                    int childIndex = inh.baseFunOffset + fn.index;
+                    int childIndex = funOff + fn.index;
                     if (funcsByIndex_.find(childIndex) == funcsByIndex_.end()) {
                         auto inhFn = std::make_shared<OriginalFunction>(fn);
                         // inherited functions resolve shared-string indexes
-                        // against the PARENT's string table
+                        // against the PARENT's string table, and obj-var
+                        // accesses against the accumulated baseVarOffset
                         inhFn->strings = parentObj->strings;
+                        inhFn->varOffset = varOff;
                         inheritedFuncs_.push_back(inhFn);
                         funcsByIndex_[childIndex] = inhFn.get();
                     }
                 }
             }
         };
-        walk(obj_);
+        walk(obj_, 0, 0);
     }
 
     // ---- stack primitives (top = back of vector) ----
@@ -871,36 +941,38 @@ private:
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
-            if (nm == "find_function") {
-                // vm_f_find_function (0x80d626c) -> vm_findFunction (0x8094ef4):
-                // a string name is resolved against the CURRENT object's
-                // program first (own + inherited functions), then the global
-                // (master) program, and only then behaves like an efun lookup.
-                // A function-valued argument is returned unchanged.
-                if (!args.empty()) {
-                    const Value& a = args[0];
-                    if (a.index() == 8) {
-                        // find_function(fn, extraArg, ...): bind the extra
-                        // arguments onto a NEW closure (vm_findFunction
-                        // 0x8094ef4: v6 = argNum-1; pushes getArgument(1..)
-                        // onto the new function value's bound args, keeping
-                        // the original bound args first).
-                        auto src = std::get<std::shared_ptr<ClosureValue>>(a);
+            if (nm == "find_function" || nm == "find_function_arg") {
+                // vm_f_find_function (0x80d626c) / vm_f_find_function_arg
+                // (0x80d6347) -> vm_findFunction (0x8094ef4).
+                // find_function(fn, extraArg, ...): extra args are BOUND onto a
+                // new closure.
+                // find_function_arg(fn, midArg..., lastArray): the mid args are
+                // bound AND the last ARRAY is EXPANDED into individual bound
+                // arguments (connectiond's process_command calls
+                // (*find_function_arg(auth_func[cmd], agent, args))() where
+                // args is the command argument array).
+                if (nm == "find_function_arg" && args.size() >= 2 && args.back().index() == 5) {
+                    std::vector<Value> bind;
+                    for (size_t i = 1; i + 1 < args.size(); ++i) bind.push_back(args[i]);
+                    auto arr = std::get<std::shared_ptr<ArrayValue>>(args.back());
+                    for (const auto& e : arr->items) bind.push_back(e);
+                    const Value& fn0 = args[0];
+                    auto makeBound = [&](const std::shared_ptr<ClosureValue>& src) {
                         auto cl = std::make_shared<ClosureValue>();
                         cl->functionName = src->functionName;
                         cl->owner = src->owner;
                         cl->boundArgs = src->boundArgs;
-                        for (size_t i = 1; i < args.size(); ++i)
-                            cl->boundArgs.push_back(args[i]);
+                        for (const auto& b : bind) cl->boundArgs.push_back(b);
                         return cl;
-                    }
-                    if (a.index() == 4) {
-                        const std::string& fname = std::get<std::string>(a);
+                    };
+                    if (fn0.index() == 8) return makeBound(std::get<std::shared_ptr<ClosureValue>>(fn0));
+                    if (fn0.index() == 4) {
+                        const std::string& fname = std::get<std::string>(fn0);
                         if (const OriginalFunction* fn = findFunctionAny(fname)) {
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
                             cl->owner = &obj_;
-                            return cl;
+                            return makeBound(cl);
                         }
                         std::shared_ptr<OriginalVm> master;
                         const OriginalObject* masterObj = nullptr;
@@ -919,7 +991,55 @@ private:
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
                             cl->owner = masterObj;
-                            return cl;
+                            return makeBound(cl);
+                        }
+                        const auto& efn = efunNameTable();
+                        for (size_t i = 0; i < efn.size(); ++i)
+                            if (efn[i] == fname) return make_closure(fname, {});
+                        return UndefinedTag{};
+                    }
+                    return UndefinedTag{};
+                }
+                auto bindClosure = [&](const std::shared_ptr<ClosureValue>& src) {
+                    auto cl = std::make_shared<ClosureValue>();
+                    cl->functionName = src->functionName;
+                    cl->owner = src->owner;
+                    cl->boundArgs = src->boundArgs;
+                    for (size_t i = 1; i < args.size(); ++i)
+                        cl->boundArgs.push_back(args[i]);
+                    return cl;
+                };
+                if (!args.empty()) {
+                    const Value& a = args[0];
+                    if (a.index() == 8) {
+                        return bindClosure(std::get<std::shared_ptr<ClosureValue>>(a));
+                    }
+                    if (a.index() == 4) {
+                        const std::string& fname = std::get<std::string>(a);
+                        if (const OriginalFunction* fn = findFunctionAny(fname)) {
+                            auto cl = std::make_shared<ClosureValue>();
+                            cl->functionName = fname;
+                            cl->owner = &obj_;
+                            return bindClosure(cl);
+                        }
+                        std::shared_ptr<OriginalVm> master;
+                        const OriginalObject* masterObj = nullptr;
+                        {
+                            auto& reg = objectRegistry();
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            std::string key = searchRoot_.empty() ? "<main>" : searchRoot_ + "/<main>";
+                            auto mit = reg.vms.find(key);
+                            if (mit != reg.vms.end()) {
+                                master = mit->second;
+                                masterObj = &mit->second->object();
+                            }
+                        }
+                        if (master && masterObj && masterObj != &obj_ &&
+                            master->findFunctionAny(fname)) {
+                            auto cl = std::make_shared<ClosureValue>();
+                            cl->functionName = fname;
+                            cl->owner = masterObj;
+                            return bindClosure(cl);
                         }
                         const auto& efn = efunNameTable();
                         for (size_t i = 0; i < efn.size(); ++i)
@@ -1232,17 +1352,23 @@ private:
         // For a zero-arg function the stack top would be -1; reserve one slot
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
         int n = fn.argCount;
+        // varargs functions (attrib "varargs"): the caller may pass MORE args
+        // than declared; ALL of them stay on the stack so ($<) /
+        // create_argument_array sees them and the frame records the real
+        // passed count (vm_padStackVariables in send_to_client relies on it).
+        int passed = static_cast<int>(args.size());
         bool placeholder = false;
-        if (n == 0) {
+        if (n == 0 && passed == 0) {
             pushValue(UndefinedTag{});   // frame slot for bp
             placeholder = true;
         }
-        for (int i = n - 1; i >= 0; --i) {
+        int pushCount = (passed > n) ? passed : n;
+        for (int i = pushCount - 1; i >= 0; --i) {
             Value a = (i < static_cast<int>(args.size())) ? args[i] : Value(UndefinedTag{});
             pushValue(a);
         }
         // all declared arguments were pushed (missing ones as undefined)
-        return executeFunctionOnStack(fn, placeholder, fn.argCount);
+        return executeFunctionOnStack(fn, placeholder, passed);
     }
 
     Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
@@ -1275,6 +1401,7 @@ private:
         // check_args_num and push the missing defaults inline.
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
                     fn.strings.empty() ? &obj_.strings : &fn.strings};
+        frame.varOffset = fn.varOffset;
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
         bool savedReturned = returned_;
@@ -1323,7 +1450,8 @@ private:
             lastOp_ = in.op;
             lastIp_ = ip - 1;
             if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
-                std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                std::string cur = "<global>";
+                if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
                 if (cur == std::getenv("LPCVM_TRACE_FN"))
                     std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (ip - 1) << " op=" << in.op
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
@@ -1403,15 +1531,17 @@ private:
             case 53: // push_global_var
                 pushValue(sharedGlobal(in.a));
                 break;
-            case 61: // push_obj_var
-                if (in.a < objVars_->size()) pushValue((*objVars_)[in.a]);
+            case 61: { // push_obj_var
+                int vi = static_cast<int>(in.a) + currentVarOffset();
+                if (static_cast<size_t>(vi) < objVars_->size()) pushValue((*objVars_)[vi]);
                 else pushValue(make_int(0));
                 break;
+            }
             case 54: // push_global_vptr
                 push(makeGlobalRef(in.a));
                 break;
             case 62: // push_obj_vptr
-                push(makeObjRef(in.a));
+                push(makeObjRef(static_cast<int>(in.a) + currentVarOffset()));
                 break;
             case 55: // push_local_value
             case 56: { // push_local_var_i (index popped from stack)
@@ -1440,10 +1570,12 @@ private:
             case 76: // set_global_var
                 sharedGlobal(in.a) = pop().value;
                 break;
-            case 78: // set_obj_var
-                if (in.a < objVars_->size()) (*objVars_)[in.a] = pop().value;
+            case 78: { // set_obj_var
+                int vi = static_cast<int>(in.a) + currentVarOffset();
+                if (static_cast<size_t>(vi) < objVars_->size()) (*objVars_)[vi] = pop().value;
                 else pop();
                 break;
+            }
             case 77: // set_local_var
                 if (!stack_.empty()) stack_[static_cast<size_t>(slotOf(static_cast<int16_t>(in.a)))].value = pop().value;
                 break;
@@ -1871,6 +2003,14 @@ private:
                 Value pathVal = pop().value;
                 Value funVal = pop().value;
                 int argn = fromMeta ? m1 : in.b;
+                if (std::getenv("LPCVM_TRACE")) {
+                    std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                    std::string fv = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
+                    if (fv == "lite_query_temp")
+                        std::cerr << "[case8-lqt] pathIdx=" << static_cast<int>(pathVal.index())
+                                  << " path='" << to_string(pathVal, false).substr(0, 60)
+                                  << "' cur=" << cur << " argn=" << argn << "\n";
+                }
                 std::vector<Value> args;
                 for (int i = 0; i < argn && !stack_.empty(); ++i) args.push_back(pop().value);
                 // funVal is either a function-name string (dynamic call) or a
@@ -2026,7 +2166,9 @@ private:
             case 15: { // check_args_num
                 int skipAll = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int passed = frames_.empty() ? 0 : frames_.back().argNum;
-                int declared = frames_.empty() ? 0 : frames_.back().fn->argCount;
+                int declared = 0;
+                if (!frames_.empty() && frames_.back().fn)
+                    declared = frames_.back().fn->argCount;
                 // If every declared argument was passed, skip the default-code block.
                 if (passed >= declared) ip += skipAll;
                 // otherwise fall through and let the inline defaults + resort_stack run
@@ -2506,6 +2648,9 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             auto it0 = reg0.vms.find(objectPath);
             if (it0 != reg0.vms.end()) hit = it0->second;
         }
+        if (std::getenv("LPCVM_TRACE") && funName == "lite_query_temp")
+            std::cerr << "[lqt] tryCallOtherObject clone path=" << objectPath
+                      << " hit=" << (hit ? "YES" : "NO") << "\n";
         if (hit) return hit->callFunctionByName(funName, args);
         return make_int(0);
     }
@@ -2549,6 +2694,10 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
                 }
             }
         }
+        if (std::getenv("LPCVM_TRACE") && funName == "process_command" &&
+            rel.find("connectiond") != std::string::npos)
+            std::cerr << "[call_other-pc] rel=" << rel << " hit=" << (hit ? "YES" : "NO")
+                      << " root='" << searchRoot << "'\n";
         if (hit) return hit->callFunctionByName(funName, args);
     }
     // The original driver does NOT auto-load objects on call_other: an
@@ -2804,16 +2953,17 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         } else {
             objPtr = std::make_shared<OriginalObject>(*tmplObj);
         }
-        vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+        vmPtr = std::make_shared<OriginalVm>(*objPtr, tmplVm->searchRoot());
         vmPtr->setThisObjectName(cloneKey);
         reg.objects[cloneKey] = objPtr;
         reg.vms[cloneKey] = vmPtr;
     }
     try {
-        // vm_cloneObject only runs the initializer list (create), NOT the
-        // global initializer code: the template's global code already ran
-        // when the template was loaded and must not run per clone.
-        vmPtr->callCreate();
+        // vm_f_construct_object2 runs the full construction: the global
+        // initializer code (initOrderList constitutions -> initCodeSegment)
+        // THEN create() - clone instances must have their instance variables
+        // (tmp_dbase etc.) initialized exactly like the original.
+        vmPtr->runInit();
     } catch (const std::exception& e) {
         std::cerr << "[clone] " << cloneKey << " create error: " << e.what() << "\n";
     } catch (...) {

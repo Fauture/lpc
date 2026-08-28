@@ -45,8 +45,11 @@ PktState& pktState() {
     static PktState s;
     return s;
 }
-std::mutex& pktMutex() {
-    static std::mutex m;
+// Recursive: pktAnalyse holds the lock while applying the interface function,
+// and that function may re-enter the analyser (send_message ->
+// pkt_pad_interface) on the same thread.
+std::recursive_mutex& pktMutex() {
+    static std::recursive_mutex m;
     return m;
 }
 
@@ -167,10 +170,124 @@ bool decodeField(const PktField& f, const uint8_t* body, size_t len, size_t& off
     return false;
 }
 
+// ---- body encoding (vm_pktPadDefValue / vm_pktPadUserDefinedValue) --------
+
+void wr16be(std::string& s, uint16_t v) { s.push_back(static_cast<char>((v >> 8) & 0xFF)); s.push_back(static_cast<char>(v & 0xFF)); }
+void wr32be(std::string& s, uint32_t v) {
+    s.push_back(static_cast<char>((v >> 24) & 0xFF));
+    s.push_back(static_cast<char>((v >> 16) & 0xFF));
+    s.push_back(static_cast<char>((v >> 8) & 0xFF));
+    s.push_back(static_cast<char>(v & 0xFF));
+}
+void wr64be(std::string& s, uint64_t v) {
+    for (int i = 7; i >= 0; --i) s.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
+}
+
+int64_t valInt(const Value& v) {
+    if (v.index() == 2) return std::get<int64_t>(v);
+    if (v.index() == 3) return static_cast<int64_t>(std::get<double>(v));
+    if (v.index() == 4) {
+        const std::string& t = std::get<std::string>(v);
+        return t.empty() ? 0 : std::strtoll(t.c_str(), nullptr, 10);
+    }
+    return 0;
+}
+
+// Serialize one field value; appends to out.  Mirrors decodeField.
+void encodeField(const PktField& f, const Value& val, std::string& out) {
+    if (f.isArray) {
+        // u16 element count then elements
+        size_t cnt = 0;
+        std::vector<Value> items;
+        if (val.index() == 5) {
+            items = std::get<std::shared_ptr<ArrayValue>>(val)->items;
+            cnt = items.size();
+        }
+        wr16be(out, static_cast<uint16_t>(cnt));
+        PktField elem = f;
+        elem.isArray = false;
+        for (size_t k = 0; k < cnt; ++k) encodeField(elem, items[k], out);
+        return;
+    }
+    if (f.type == "int8") {
+        out.push_back(static_cast<char>(valInt(val) & 0xFF));
+    } else if (f.type == "int16") {
+        wr16be(out, static_cast<uint16_t>(valInt(val) & 0xFFFF));
+    } else if (f.type == "int32") {
+        wr32be(out, static_cast<uint32_t>(valInt(val)));
+    } else if (f.type == "int64") {
+        wr64be(out, static_cast<uint64_t>(valInt(val)));
+    } else if (f.type.rfind("string", 0) == 0 || f.type.rfind("buffer", 0) == 0) {
+        // length-prefixed string/buffer (1/2/4 byte length)
+        std::string s;
+        if (val.index() == 4) s = std::get<std::string>(val);
+        else if (val.index() == 2) s = std::to_string(std::get<int64_t>(val));
+        else if (val.index() == 6) s = to_string(val, false);
+        int llen = f.fixedLen ? f.fixedLen : 1;
+        uint32_t slen = static_cast<uint32_t>(s.size());
+        for (int k = llen - 1; k >= 0; --k) out.push_back(static_cast<char>((slen >> (8 * k)) & 0xFF));
+        out += s;
+    } else {
+        // encapsulated named type - encode as a mapping of fields
+        auto dit = pktState().defs.find(f.type);
+        if (dit != pktState().defs.end()) {
+            for (const auto& sf : dit->second) {
+                Value v;
+                if (val.index() == 6) {
+                    auto mp = std::get<std::shared_ptr<MappingValue>>(val);
+                    const Value* fv = mp->find(make_string(sf.name));
+                    if (fv) v = *fv;
+                } else if (val.index() == 5) {
+                    auto arr = std::get<std::shared_ptr<ArrayValue>>(val);
+                    size_t fi = 0;
+                    for (size_t k = 0; k < dit->second.size(); ++k) if (&dit->second[k] == &sf) { fi = k; break; }
+                    if (fi < arr->items.size()) v = arr->items[fi];
+                }
+                encodeField(sf, v, out);
+            }
+        }
+    }
+}
+
 } // namespace
 
+std::string pktPadInterface(uint16_t msgNo, const Value& args) {
+    std::lock_guard<std::recursive_mutex> lk(pktMutex());
+    auto it = pktState().interfaces.find(msgNo);
+    if (it == pktState().interfaces.end()) return "";
+    const PktInterface& pi = it->second;
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[pad] iface 0x" << std::hex << msgNo << std::dec
+                  << " name=" << pi.name << " encap=" << pi.encapType
+                  << " fields=" << pi.fields.size()
+                  << " argsType=" << static_cast<int>(args.index()) << "\n";
+    std::string out;
+    // vm_pktPadUserDefinedValue: encapType 0 -> single value (mapping of
+    // name->value), 1 -> positional array of values.
+    Value values = args;
+    if (pi.encapType == 1) {
+        // args is an array of field values in order
+        std::vector<Value> items;
+        if (args.index() == 5) items = std::get<std::shared_ptr<ArrayValue>>(args)->items;
+        for (size_t i = 0; i < pi.fields.size() && i < items.size(); ++i)
+            encodeField(pi.fields[i], items[i], out);
+    } else {
+        // args is a mapping name->value
+        for (const auto& f : pi.fields) {
+            Value v;
+            if (args.index() == 6) {
+                auto mp = std::get<std::shared_ptr<MappingValue>>(args);
+                const Value* fv = mp->find(make_string(f.name));
+                if (fv) v = *fv;
+            }
+            encodeField(f, v, out);
+        }
+    }
+    return out;
+}
+
 void pktInitAnalyser(int maxInterfaces, int) {
-    std::lock_guard<std::mutex> lk(pktMutex());
+    std::lock_guard<std::recursive_mutex> lk(pktMutex());
     pktState().inited = true;
     pktState().maxInterfaces = maxInterfaces;
     pktState().interfaces.clear();
@@ -179,14 +296,14 @@ void pktInitAnalyser(int maxInterfaces, int) {
 }
 
 void pktAddDef(const std::string& name, const std::string& signature) {
-    std::lock_guard<std::mutex> lk(pktMutex());
+    std::lock_guard<std::recursive_mutex> lk(pktMutex());
     std::vector<PktField> fields;
     deriveArguments(signature, fields);
     pktState().defs[name] = std::move(fields);
 }
 
 void pktAddInterface(int cmdNo, const std::string& signature, const Value& func, int encapType, uint32_t flag) {
-    std::lock_guard<std::mutex> lk(pktMutex());
+    std::lock_guard<std::recursive_mutex> lk(pktMutex());
     // signature: "void msg_l_auth(int32 result, int32 auth_key, string2 msg)"
     size_t lp = signature.find('(');
     if (lp == std::string::npos) return;
@@ -207,14 +324,14 @@ void pktAddInterface(int cmdNo, const std::string& signature, const Value& func,
 }
 
 const PktInterface* pktFindInterface(uint16_t cmdNo) {
-    std::lock_guard<std::mutex> lk(pktMutex());
+    std::lock_guard<std::recursive_mutex> lk(pktMutex());
     auto it = pktState().interfaces.find(cmdNo);
     return it == pktState().interfaces.end() ? nullptr : &it->second;
 }
 
 int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
                const uint8_t* body, size_t len) {
-    std::lock_guard<std::mutex> lk(pktMutex());
+    std::lock_guard<std::recursive_mutex> lk(pktMutex());
     auto it = pktState().interfaces.find(cmdNo);
     if (it == pktState().interfaces.end()) {
         if (std::getenv("LPCVM_TRACE"))

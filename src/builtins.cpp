@@ -1,6 +1,7 @@
 #include "builtins.h"
 #include "efun_table.h"
 
+#include "d3des.h"
 #include "game_service.h"
 #include "o_loader.h"
 #include "original_vm.h"
@@ -1892,6 +1893,25 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         name == "pkt_destruct_analyser") {
         return make_int(1);
     }
+    if (name == "pkt_pad_interface") {
+        // pkt_pad_interface(msg_no, values) -> body buffer (byte string).
+        // send_message calls pkt_pad_interface(msg_no, ($<)[1..<1]) where the
+        // array is the arguments after msg_no.  vm_pktPadUserDefinedValue
+        // serializes per the interface field layout (encapType 0 = mapping,
+        // 1 = positional array).
+        if (args.size() >= 1) {
+            int64_t msgNo = as_int(args[0]);
+            Value values = (args.size() >= 2) ? args[1] : Value(UndefinedTag{});
+            return make_string(lpc::pktPadInterface(static_cast<uint16_t>(msgNo), values));
+        }
+        return make_string("");
+    }
+    if (name == "pkt_get_interface" || name == "pkt_get_interface_name" ||
+        name == "pkt_get_all_interfaces" || name == "pkt_get_all_fields" ||
+        name == "pkt_get_all_defs" || name == "pkt_get_def" ||
+        name == "pkt_get_field") {
+        return make_int(0);
+    }
     if (name == "object_name") {
         // object_name(ob) - return the object's path.
         if (!args.empty() && args[0].index() == 7) {
@@ -2482,13 +2502,33 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return arr;
     }
     if (name == "send_to_client") {
-        // send_to_client(client_no, msg_no, data) - write raw bytes.
+        // vm_f_send_to_client (0x804fdfc): send_to_client(client_no, msg_no,
+        // data) - write a full packet to the GAME client (binary protocol,
+        // port 8101).  vm_sendFullPacket builds the wire frame:
+        //   MZ(2) + checksum(2)=0 + tick(4)=0 + msgLen(2 BE) + cmdNo(2 BE) +
+        //   padded args; msgLen counts from the cmdNo field (2) through the
+        //   body (vm_clientSocketCallback: bodyLen = msgLen - 2).
         if (args.size() >= 3 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            int64_t msgNo = as_int(args[1]);
             std::string data = as_string(args[2]);
-            telnetSend(cno, data);
+            std::string pkt;
+            pkt += "MZ";
+            pkt += std::string(4, '\0');            // checksum
+            pkt += std::string(2, '\0');            // tick (0)
+            uint16_t msgLen = static_cast<uint16_t>(2 + data.size());  // from cmdNo
+            pkt.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
+            pkt.push_back(static_cast<char>(msgLen & 0xFF));
+            uint16_t cmd = static_cast<uint16_t>(msgNo);
+            pkt.push_back(static_cast<char>((cmd >> 8) & 0xFF));
+            pkt.push_back(static_cast<char>(cmd & 0xFF));
+            pkt += data;
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[send_to_client] cno=" << cno << " msgNo=" << msgNo
+                          << " body=" << data.size() << " total=" << pkt.size() << "\n";
+            return make_int(lpc::gameServiceSend(cno, pkt) ? 1 : 0);
         }
-        return make_int(1);
+        return make_int(0);
     }
     if (name == "get_client_info") {
         // vm_f_get_client_info (0x804d478): get_client_info(client_no) ->
@@ -2610,6 +2650,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
     }
     if (name == "log_to_das") return make_int(1);
+    // DAS verification system is NOT run in this port (the original driver
+    // executes the built-in scripts /v/auth_1980.c etc. BEFORE the main
+    // program; we skip them).  These function names are stubbed so the game
+    // LPC code sees a "verification succeeded" world: auth_driver returns 1,
+    // send_request/get_auth_addr report no server, password helpers accept the
+    // configured stub password.
+    if (name == "auth_driver") return make_int(1);
+    if (name == "send_request" || name == "get_auth_addr" || name == "check_request_password") return make_int(0);
+    if (name == "check_authenticate") return make_int(1);
+    if (name == "pwd_gen") return make_string("");
+    if (name == "driver_bd") return make_int(1);
     if (name == "start_buildin_telnet_shell" || name == "buildin_telnet_daemon") {
         // Driver builtin telnet shell: login with the configured password,
         // then a command loop.  The LPC telnet_daemon path is preferred when
@@ -2816,6 +2867,65 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // ASCII form (identical grammar to save_string).
         if (args.empty()) return make_string("0");
         return make_string(saveValueAscii(args[0]));
+    }
+    if (name == "des") {
+        // vm_f_des / vm_f_std_des (0x80dfabc): DES family, d3des-based.
+        //   des(data, action, key)
+        //     action: 0 = DES_EN0 (encrypt), 1 = DES_DE1 (decrypt)
+        //     key:    any length; d3des makekey() hashes it to 8 bytes
+        // Single-length DES in ECB mode (the original passes nCBC=0 when only
+        // three arguments are given; the 8+ argument form is 2-key/3-key
+        // DES/3DES with IV, which we do not need for the login flow).
+        // Returns a buffer (represented as a byte string) of len rounded up
+        // to a multiple of 8; the final partial block is PKCS7-padded with the
+        // value 8-remaining (McbDoDES2's padding behaviour).  Verified against
+        // the client's cmd_l_get_antibot_question checksum: makekey-hashed
+        // "uWvgwf" produces the exact expected digest.
+        if (args.empty()) return make_int(0);
+        std::string data = as_string(args[0]);
+        int action = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        std::string key = args.size() >= 3 ? as_string(args[2]) : "01234567";
+        char keyBuf[128] = {0};
+        memcpy(keyBuf, key.c_str(), key.size() < 127 ? key.size() : 127);
+        unsigned char key8[8] = {0};
+        makekey(keyBuf, key8);   // d3des: hash the password into an 8-byte key
+        size_t blocks = (data.size() + 7) / 8;
+        std::string out(blocks * 8, '\0');
+        if (blocks > 0) {
+            if (action == 0) deskey(key8, 0);       // EN0: encrypt
+            else deskey(key8, 1);                   // DE1: decrypt
+            std::string padded = data;
+            if (padded.size() % 8 != 0) {
+                size_t rem = 8 - (padded.size() % 8);
+                padded.append(rem, static_cast<char>(rem));
+            }
+            for (size_t i = 0; i < blocks; ++i)
+                des(reinterpret_cast<unsigned char*>(&padded[i * 8]),
+                    reinterpret_cast<unsigned char*>(&out[i * 8]));
+            if (action != 0 && !out.empty()) {
+                // strip PKCS7 padding on decrypt (McbDoDES2 nPadding=0 path)
+                unsigned char last = static_cast<unsigned char>(out[out.size() - 1]);
+                if (last >= 1 && last <= 8 && out.size() >= last) {
+                    bool ok = true;
+                    for (size_t i = out.size() - last; i < out.size(); ++i)
+                        if (static_cast<unsigned char>(out[i]) != last) { ok = false; break; }
+                    if (ok) out.resize(out.size() - last);
+                }
+                return make_string(out);   // decrypt: raw bytes
+            }
+            // encrypt: return the cipher bytes as a UPPERCASE HEX string so
+            // save_string(...)[1..<2] (which strips the quotes) yields exactly
+            // the value the client's checksum compares against.
+            std::string hex;
+            hex.reserve(out.size() * 2);
+            static const char* hx = "0123456789ABCDEF";
+            for (size_t i = 0; i < out.size(); ++i) {
+                hex += hx[(out[i] >> 4) & 0xF];
+                hex += hx[out[i] & 0xF];
+            }
+            return make_string(hex);
+        }
+        return make_string(out);
     }
     if (name == "rdl") {
         // vm_f_rdl (0x80e0314): AES-128 ECB, action 16 = encrypt / 17 = decrypt.

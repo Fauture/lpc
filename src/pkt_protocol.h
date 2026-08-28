@@ -65,6 +65,13 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
 // Look up an interface by command number (for cmdIndex fallback debugging).
 const PktInterface* pktFindInterface(uint16_t cmdNo);
 
+// Build the reply body for an interface: serialize the field values (the
+// "$<"[1..<1] argument array from send_message) per the interface's field
+// layout.  encapType 0 -> mapping name->value, 1 -> positional array.
+// Returns the body bytes (starts with the msg_no?  no - caller adds it).
+// Empty string when the interface is unknown (original returns length 0).
+std::string pktPadInterface(uint16_t msgNo, const Value& args);
+
 // Load comm_desc.txt content: parse sections and register all interfaces via
 // the given callback (used by the load_comm_desc efun).
 void pktLoadCommDesc(const std::string& content,

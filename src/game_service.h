@@ -73,4 +73,9 @@ void gameServiceDispatchPacket(GameClient& cl);
 // port fields are included.
 Value gameGetClientInfo(int clientNo);
 
+// Send raw wire bytes to a game client's socket (vm_sendFullPacket path).
+// The caller has already built the complete frame.  Returns false when the
+// client slot is unknown.
+bool gameServiceSend(int clientNo, const std::string& data);
+
 } // namespace lpc
