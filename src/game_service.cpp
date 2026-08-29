@@ -1250,8 +1250,11 @@ void handleMsgCfgCtaList(GameClient& cl, const uint8_t* body, size_t len) {
 //   vm_msgWritePetDeposit  0x80677d4 -> msg_write_pet_deposit
 void handleMsgIntInt(GameClient& cl, const uint8_t* body, size_t len, const char* fun) {
     if (len < 8) return;
-    uint32_t a = rd32be(body);
-    uint32_t b = rd32be(body + 4);
+    // a/b are SIGNED int32 in the original wire protocol (results can be
+    // negative, e.g. -1 / -2 failures); pass them signed so filed's
+    // do_operate sees -1 instead of 4294967295.
+    int32_t a = static_cast<int32_t>(rd32be(body));
+    int32_t b = static_cast<int32_t>(rd32be(body + 4));
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[game] " << fun << " client=" << cl.clientNo
                   << " a=" << a << " b=" << b << "\n";
@@ -1263,7 +1266,7 @@ void handleMsgIntInt(GameClient& cl, const uint8_t* body, size_t len, const char
 void handleMsgReadPetDeposit(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 12) return;
     uint32_t a = rd32be(body);
-    uint32_t b = rd32be(body + 4);
+    int32_t b = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     uint32_t slen = rd32be(body + 8);
     if (slen > len - 12) return;
     std::string s(reinterpret_cast<const char*>(body + 12), slen);
@@ -1300,7 +1303,7 @@ void handleMsgGotPageDataEx(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgGetCounts(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 9) return;
     uint32_t cookie = rd32be(body);
-    uint32_t result = rd32be(body + 4);
+    int32_t result = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     uint32_t count = body[8];
     if (count > len - 9) return;
     std::string s(reinterpret_cast<const char*>(body + 9), count);
@@ -11647,10 +11650,13 @@ void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
     uint32_t slen = rd32be(body + 8);
     if (slen > len - 12) return;
     std::string s(reinterpret_cast<const char*>(body + 12), slen);
+    // result is a SIGNED int32 in the original wire protocol (0xFFFFFFFF = -1
+    // "not found"); passing it unsigned made ccs's filed do_operate see
+    // 4294967295 instead of -1 and share_datad's restore loop forever.
     std::cerr << "[readcontent] client=" << cl.clientNo << " cookie=" << a
-              << " result=" << (int)b << " len=" << slen << "\n";
+              << " result=" << (int32_t)b << " len=" << slen << "\n";
     applyLpc("msg_read_content",
-             {make_int(cl.clientNo), make_int(a), make_int(b), make_string(s)});
+             {make_int(cl.clientNo), make_int((int32_t)a), make_int((int32_t)b), make_string(s)});
 }
 
 // vm_msgWrittenContent (0x8067634): body = [u32 BE a][u32 BE b]
@@ -11658,7 +11664,7 @@ void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgWrittenContent(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 8) return;
     uint32_t a = rd32be(body);
-    uint32_t b = rd32be(body + 4);
+    int32_t b = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     applyLpc("msg_written_content",
              {make_int(cl.clientNo), make_int(a), make_int(b)});
 }
@@ -11668,7 +11674,7 @@ void handleMsgWrittenContent(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgCreatedGid(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 9) return;
     uint32_t cookie = rd32be(body);
-    uint32_t result = rd32be(body + 4);
+    int32_t result = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     uint32_t glen = body[8];
     if (glen > len - 9) return;
     std::string gid(reinterpret_cast<const char*>(body + 9), glen);
@@ -11681,7 +11687,7 @@ void handleMsgCreatedGid(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgGotGid(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 9) return;
     uint32_t cookie = rd32be(body);
-    uint32_t result = rd32be(body + 4);
+    int32_t result = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     uint32_t glen = body[8];
     if (glen > len - 9) return;
     std::string gid(reinterpret_cast<const char*>(body + 9), glen);
@@ -11694,7 +11700,7 @@ void handleMsgGotGid(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgGotGidArr(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 12) return;
     uint32_t a = rd32be(body);
-    uint32_t b = rd32be(body + 4);
+    int32_t b = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     uint32_t slen = rd32be(body + 8);
     if (slen > len - 12) return;
     std::string s(reinterpret_cast<const char*>(body + 12), slen);
@@ -11708,7 +11714,7 @@ void handleMsgGotGidArr(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 9) return;
     uint32_t cookie = rd32be(body);
-    uint32_t result = rd32be(body + 4);
+    int32_t result = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
     size_t off = 8;
     uint32_t tlen = body[off++];
     if (tlen > len - off) return;

@@ -251,18 +251,17 @@ double toReal(const Value& v) {
 }
 
 bool isZero(const Value& v) {
+    // vm_isZero (0x808cae6): ONLY number-0, real-0.0, undefined(void) and
+    // nil are zero.  Arrays, mappings, buffers, strings and functions are
+    // ALWAYS non-zero (probed live: if(({})) and if("") are truthy).
+    // Treating an empty array as zero made dba's cmd_read_content skip its
+    // send_message reply ("if (!arr)" with a ({}) result -> return 0 without
+    // replying), hanging ccs's filed do_operate forever.
     switch (v.index()) {
     case 0:
     case 1: return true;
     case 2: return std::get<int64_t>(v) == 0;
     case 3: return std::get<double>(v) == 0.0;
-    case 4: return std::get<std::string>(v).empty();
-    case 5: return std::get<std::shared_ptr<ArrayValue>>(v)->items.empty();
-    case 6: return std::get<std::shared_ptr<MappingValue>>(v)->empty();
-    case 8: {
-        auto c = std::get<std::shared_ptr<ClosureValue>>(v);
-        return c->functionName.empty();
-    }
     default: return false;
     }
 }
@@ -1875,6 +1874,10 @@ private:
         // The original VM pushes args in reverse (param0 last, on top).
         // For a zero-arg function the stack top would be -1; reserve one slot
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
+        if (std::getenv("LPCVM_TRACE") && fn.name == "save_to_text")
+            std::cerr << "[efo-dbg] save_to_text args=" << args.size()
+                      << " stackBefore=" << stack_.size()
+                      << " caller=" << (frames_.empty() ? "<top>" : frames_.back().fn->name) << "\n";
         int n = fn.argCount;
         // varargs functions (attrib "varargs"): the caller may pass MORE args
         // than declared; ALL of them stay on the stack so ($<) /
@@ -1975,6 +1978,11 @@ private:
             liveBp = frames_.back().bp;
             usedArgs = frames_.back().argNum;
         }
+        if (std::getenv("LPCVM_TRACE") && fn.name == "save_to_text")
+            std::cerr << "[xfn-ret] " << fn.name << " bp=" << bp << " liveBp=" << liveBp
+                      << " usedArgs=" << usedArgs << " zeroArg=" << zeroArgPlaceholder
+                      << " newSize=" << (liveBp - usedArgs + 1 - (zeroArgPlaceholder ? 1 : 0))
+                      << " result=" << to_string(result, false) << "\n";
         // For zero-arg calls one placeholder frame slot was pushed; remove it
         // with the frame (otherwise it leaks on every external 0-arg call).
         int newSize = liveBp - usedArgs + 1 - (zeroArgPlaceholder ? 1 : 0);
@@ -2036,6 +2044,10 @@ private:
                 //   valued: size == bp + 2            -> pop the return value
                 const Frame& f = frames_.back();
                 size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
+                if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
+                    std::cerr << "[ret] " << f.fn->name << " bp=" << f.bp << " stack=" << stack_.size()
+                              << " expVoid=" << expectedVoid << " top="
+                              << (stack_.empty() ? "empty" : to_string(stack_.back().value, false)) << "\n";
                 if (stack_.size() == expectedVoid) {
                     returnValue_ = UndefinedTag{};   // void return value (type 1)
                 } else if (stack_.size() == expectedVoid + 1 && !stack_.empty()) {
@@ -2045,6 +2057,8 @@ private:
                     if (!stack_.empty()) returnValue_ = pop().value;
                     else returnValue_ = UndefinedTag{};
                 }
+                if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
+                    std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 returned_ = true;
                 return;
             }
@@ -2644,6 +2658,10 @@ private:
                     break;
                 }
                 pushValue(callEfun(efun, argc));
+                if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
+                    frames_.back().fn->name == "save_to_text" && efun == 102)
+                    std::cerr << "[efun-dbg] save_string after: stack=" << stack_.size()
+                              << " top=" << to_string(top().value, false) << " idx=" << top().value.index() << "\n";
                 break;
             }
             case 7: { // call_in_user_fun
@@ -2660,6 +2678,14 @@ private:
                 if ((flags & 0x80) == 0) {
                     off = frames_.empty() ? 0 : frames_.back().funOffset;
                     if (off != 0) funIndex += off;
+                }
+                if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
+                    frames_.back().fn->name == "save_to_text") {
+                    auto it = funcsByIndex_.find(funIndex);
+                    std::cerr << "[cfu-dbg] save_to_text call a=" << (fromMeta ? m0 : static_cast<int16_t>(in.a))
+                              << " funIndex=" << funIndex << " off=" << off
+                              << " -> " << (it != funcsByIndex_.end() ? it->second->name : "NOT FOUND")
+                              << " flags=0x" << std::hex << flags << std::dec << "\n";
                 }
                 if ((std::getenv("LPCVM_EVENT_TRACE")) &&
                     objName_.find("filed.o") != std::string::npos &&
@@ -2678,6 +2704,11 @@ private:
                 Value pathVal = pop().value;
                 Value funVal = pop().value;
                 int argn = fromMeta ? m1 : in.b;
+                if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
+                    funVal.index() == 4 && std::get<std::string>(funVal) == "save_to_text")
+                    std::cerr << "[case8-dbg] save_to_text cur=" << frames_.back().fn->name
+                              << " stack=" << stack_.size() << " argn=" << argn
+                              << " frames=" << frames_.size() << "\n";
                 if (std::getenv("LPCVM_TRACE")) {
                     std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
                     std::string fv = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
@@ -2686,12 +2717,13 @@ private:
                                   << " path='" << to_string(pathVal, false).substr(0, 60)
                                   << "' cur=" << cur << " argn=" << argn << "\n";
                 }
-                std::vector<Value> args;
-                for (int i = 0; i < argn && !stack_.empty(); ++i) args.push_back(pop().value);
-                // funVal is either a function-name string (dynamic call) or a
-                // function INDEX int (the compiler emits this_object()->fun(x)
-                // and other self/inherited calls with the callee's function
-                // index; vm_callInOtherFun resolves it in the target object).
+                // NOTE: the arguments are NOT popped yet.  Same-VM calls
+                // (this_object()/self paths) run the callee INLINE on the
+                // current stack (executeFunctionOnStack, like call_in_user_fun)
+                // so reference parameters (&path, &name, &branch in
+                // get_save_path) stay as live refs to the caller's slots and
+                // assignments inside the callee write back to the caller.
+                // Only genuinely cross-VM / cross-object calls pop the args.
                 std::string funName = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
                 int funIndex = -1;
                 if (funVal.index() == 2) funIndex = static_cast<int>(std::get<int64_t>(funVal));
@@ -2701,26 +2733,56 @@ private:
                 }
                 Value result = make_int(0);
                 bool found = false;
+                bool argsConsumed = false;   // true once popArgs() or the inline
+                                             // executeFunctionOnStack has taken
+                                             // the argument slots off the stack
                 // The target object path, if the call names one.  The original
                 // driver resolves the function in that object; only when the
                 // path is absent/self do we fall back to the current object
                 // (which covers inherited function calls).
+                auto popArgs = [&]() {
+                    std::vector<Value> out;
+                    for (int i = 0; i < argn && !stack_.empty(); ++i) out.push_back(pop().value);
+                    argsConsumed = true;
+                    return out;
+                };
                 auto resolveSelf = [&]() {
+                    const OriginalFunction* selfFn = nullptr;
                     if (funIndex >= 0) {
                         // direct inherited/own function index
                         auto fit = funcsByIndex_.find(funIndex);
-                        if (fit != funcsByIndex_.end()) {
-                            result = executeFunctionFromOutside(*fit->second, args);
-                            found = true;
-                            return;
-                        }
+                        if (fit != funcsByIndex_.end()) selfFn = fit->second;
                     }
-                    const OriginalFunction* selfFn = findMergedFunction(funName);
+                    if (!selfFn) selfFn = findMergedFunction(funName);
                     if (selfFn && selfFn->index >= 0) {
                         auto fit = funcsByIndex_.find(selfFn->index);
                         if (fit != funcsByIndex_.end()) {
-                            result = executeFunctionFromOutside(*fit->second, args);
+                            const OriginalFunction& fn = *fit->second;
+                            // Pull the passed args off the stack (StackItems, so
+                            // reference parameters keep their slot pointers),
+                            // pad missing declared defaults BELOW them, then push
+                            // back so param0 ends on top - executeFunctionOnStack
+                            // expects [paramN-1 ... param0(top)] exactly like
+                            // executeFunctionFromOutsideLocked builds it.
+                            std::vector<StackItem> real;
+                            for (int i = 0; i < argn && !stack_.empty(); ++i) real.push_back(pop());
+                            // real[0] = param0 (popped from top first).
+                            int declared = fn.argCount;
+                            int pad = (declared > argn) ? declared - argn : 0;
+                            for (int i = 0; i < pad; ++i) pushValue(Value{});
+                            for (int i = static_cast<int>(real.size()) - 1; i >= 0; --i)
+                                push(real[static_cast<size_t>(i)]);
+                            if (declared == 0 && argn == 0) {
+                                // executeFunctionFromOutsideLocked pushes one
+                                // placeholder slot for 0-arg calls so bp >= 0;
+                                // mirror that here.
+                                pushValue(Value{});
+                                result = executeFunctionOnStack(fn, true, 0);
+                            } else {
+                                result = executeFunctionOnStack(fn, false, argn);
+                            }
                             found = true;
+                            argsConsumed = true;   // frame args popped with the frame
                         }
                     }
                 };
@@ -2729,13 +2791,14 @@ private:
                     std::string pv = pathVal.index() == 4 ? std::get<std::string>(pathVal)
                         : (pathVal.index() == 7 ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName : "?");
                     std::cerr << "[case8] " << objName_ << " -> " << pv << "::" << funName
-                              << " argc=" << args.size() << "\n";
+                              << " argc=" << argn << "\n";
                 }
                 if (pathVal.index() == 4) {
                     std::string path = std::get<std::string>(pathVal);
                     if (path.empty() || path == "<this>" || path == ".") {
                         resolveSelf();
                     } else {
+                        auto args = popArgs();
                         if (funName.empty()) {
                             // function index on an explicit object: resolve
                             // via the object's own function table
@@ -2777,18 +2840,38 @@ private:
                             if (ownerVm) {
                                 if (std::getenv("LPCVM_TRACE"))
                                     std::cerr << "[obj-this] owner-resolve -> "
-                                              << ownerVm->object().sourceName << "\n";
-                                if (funName.empty()) {
+                                              << ownerVm->object().sourceName
+                                              << (ownerVm.get() == this ? " (same VM)" : "") << "\n";
+                                if (ownerVm.get() == this) {
+                                    // object(<this>) owned by THIS VM (e.g.
+                                    // save.c's this_object()->get_save_path(&path,
+                                    // &name, &branch)): run the callee inline on
+                                    // the current stack so reference arguments
+                                    // keep pointing at the caller's slots.
+                                    resolveSelf();
+                                } else if (funName.empty()) {
+                                    auto args = popArgs();
                                     result = runDetached([&] { return ownerVm->callFunctionByIndex(funIndex); });
+                                    found = true;
                                 } else {
+                                    auto args = popArgs();
                                     result = runDetached([&] { return ownerVm->callFunctionByName(funName, args); });
+                                    found = true;
                                 }
-                                found = true;
-                                break;
+                                // NOTE: no break here!  A break would exit the
+                                // case-8 switch and skip the pushValue(result)
+                                // below, dropping the callee's return value from
+                                // the stack (e.g. save_to_text's "([])" string
+                                // vanished, so save.c's `data = save_to_text()`
+                                // read garbage and share_datad's restore loop
+                                // retried forever).  Fall through to the common
+                                // pushValue at the end of case 8 instead.
+                            } else {
+                                resolveSelf();
                             }
                         }
-                        resolveSelf();
                     } else {
+                        auto args = popArgs();
                         if (funName.empty()) {
                             result = runDetached([&] {
                                 return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
@@ -2803,11 +2886,22 @@ private:
                     }
                 }
                 if (!found && pathVal.index() == 4 && !funName.empty()) {
+                    auto args = popArgs();
                     result = runDetached([&] {
                         return tryCallOtherObject(searchRoot_, std::get<std::string>(pathVal), funName, args);
                     });
                 }
+                // If nothing consumed the argument slots (no function found at
+                // all), drop them so they don't leak into the caller's stack.
+                if (!argsConsumed) {
+                    for (int i = 0; i < argn && !stack_.empty(); ++i) pop();
+                }
                 pushValue(result);
+                if (std::getenv("LPCVM_TRACE") && funVal.index() == 4 &&
+                    std::get<std::string>(funVal) == "save_to_text")
+                    std::cerr << "[case8-ret] save_to_text result=" << to_string(result, false)
+                              << " idx=" << result.index() << " stack=" << stack_.size()
+                              << " cur=" << (frames_.empty() ? "<top>" : frames_.back().fn->name) << "\n";
                 break;
             }
             case 5: { // call_fun_ptr
@@ -3154,11 +3248,13 @@ private:
             case 10: { // case_check_number
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int number = fromMeta ? m1 : 0;
+                Value v = top().value;
+                bool hit = (v.index() == 2 && std::get<int64_t>(v) == number);
                 if (std::getenv("LPCVM_TRACE_CASE"))
                     std::cerr << "[case] num offset=" << offset << " value=" << number
-                              << " top=" << to_string(top().value, false) << "\n";
-                Value v = top().value;
-                if (v.index() == 2 && std::get<int64_t>(v) == number) {
+                              << " top=" << to_string(v, false) << " idx=" << v.index()
+                              << " hit=" << hit << " ip=" << ip << "\n";
+                if (hit) {
                     pop();
                     ip += offset;
                 }

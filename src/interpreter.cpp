@@ -298,6 +298,19 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
         if (expr->op == "?:") {
             return is_truthy(eval(expr->lhs, env)) ? eval(expr->rhs, env) : eval(expr->cond, env);
         }
+        if (expr->op == "&&") {
+            // Short-circuit: the RHS must NOT be evaluated when the LHS is
+            // falsy (original compiler emits if+goto; side effects in the RHS
+            // must not run).  a && b -> 1 when both truthy else 0.
+            if (!is_truthy(eval(expr->lhs, env))) return make_int(0);
+            return make_int(is_truthy(eval(expr->rhs, env)) ? 1 : 0);
+        }
+        if (expr->op == "||") {
+            // Short-circuit: the RHS must NOT be evaluated when the LHS is
+            // truthy.  a || b -> 1 when either truthy else 0.
+            if (is_truthy(eval(expr->lhs, env))) return make_int(1);
+            return make_int(is_truthy(eval(expr->rhs, env)) ? 1 : 0);
+        }
         return evalBinary(expr->op, eval(expr->lhs, env), eval(expr->rhs, env), expr->line);
     case Expr::Kind::Assign: {
         Value r = eval(expr->rhs, env);

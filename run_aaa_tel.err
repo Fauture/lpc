@@ -1,0 +1,1070 @@
+[efun-stub] enable_trace args=2 calls=1 (placeholder efun)
+[gfn] inline global fn=init_xdbc_client idx=604 argc=0 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=find_mysql_func idx=603 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] switch_include_dir args=1 calls=1 (placeholder efun)
+[efun-stub] config_driver args=2 calls=1 (placeholder efun)
+[efun-stub] set_log_on args=1 calls=1 (placeholder efun)
+[gfn] inline global fn=init_startup_module idx=656 argc=0 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=assure_file idx=613 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=init_compile_module idx=796 argc=0 vm=00F5F5AC obj=<obj>
+[efun-stub] is_compiling args=0 calls=1 (placeholder efun)
+[gfn] inline global fn=load_file_dependence idx=803 argc=0 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=read_etc_file idx=661 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=check_server_status idx=658 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=read_etc_file idx=661 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=check_server_status idx=658 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=file_exist_ex idx=614 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=file_exist_ex idx=614 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=file_exist_ex idx=614 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=file_exist_ex idx=614 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=file_exist_ex idx=614 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=file_exist_ex idx=614 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=process_online_update_files idx=801 argc=0 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=init_sql_module idx=762 argc=0 vm=00F5F5AC obj=<obj>
+[efun-stub] sql_open_db args=1 calls=1 (placeholder efun)
+[gfn] inline global fn=init_debug_cmds_module idx=763 argc=0 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=init_platform_module idx=840 argc=0 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all_path idx=800 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_daemon_data idx=642 argc=1 vm=021B78F0 obj=/daemons/statmoduled.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=021BB968 obj=/feature/common/module_maintain.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_daemon_data idx=642 argc=1 vm=021BEBD8 obj=/feature/common/updatehook.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all_path idx=800 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_daemon_data idx=642 argc=1 vm=021BE430 obj=/feature/daemon/eternal_data.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all_path idx=800 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all_path idx=800 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all_path idx=800 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=021DBAB0 obj=/cmds/cta/start_telnet_service.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=021DB768 obj=/cmds/cta/reboot_server.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=021DC140 obj=/cmds/cta/get_server_version.o
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=require_uid idx=845 argc=0 vm=021DB308 obj=/daemons/sorterrord.o
+[efun-stub] previous_object args=0 calls=1 (unimplemented efun)
+[efun-stub] set_uid args=2 calls=1 (unimplemented efun)
+[efun-stub] set_euid args=1 calls=1 (unimplemented efun)
+[efun-stub] set_as_daemon args=0 calls=1 (placeholder efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=1 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DA5E8 obj=/daemons/datasaved.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all_path idx=800 argc=1 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=load_all idx=799 argc=2 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=021DB0D8 obj=/daemons/ctacommandd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_raw_password idx=751 argc=1 vm=021DB420 obj=/daemons/dbd.o
+[gfn] inline global fn=get_raw_password idx=751 argc=1 vm=021DB420 obj=/daemons/dbd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=021DB880 obj=/daemons/verify_coded.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] set_as_daemon args=0 calls=2 (placeholder efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[cfu] local fn=annouce_eternal_data idx=2 obj=/daemons/connectiond.o code=22
+[cfu] local fn=annouce_eternal_data idx=2 obj=/daemons/connectiond.o code=22
+[gfn] inline global fn=register_post_new_connection idx=817 argc=1 vm=02245160 obj=/daemons/connectiond.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=[efun-stub] set_as_daemon args=0 calls=3 (placeholder efun)
+register_post_init idx=618 argc=1 vm=02243FE0 obj=/daemons/scheduled.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] set_as_daemon args=0 calls=4 (placeholder efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=require_uid idx=845 argc=0 vm=02245A20 obj=/daemons/threadd.o
+[efun-stub] previous_object args=0 calls=2 (unimplemented efun)
+[efun-stub] set_uid args=2 calls=2 (unimplemented efun)
+[efun-stub] set_euid args=1 calls=2 (unimplemented efun)
+[efun-stub] set_as_daemon args=0 calls=5 (placeholder efun)
+[gfn] inline global fn=load_comm_desc idx=816 argc=2 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=read_etc_file idx=661 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=check_server_status idx=658 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=is_need_excluded idx=815 argc=1 vm=023B1E28 obj=/daemons/communicated.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=unregister_daemon_data idx=643 argc=2 vm=023B24B8 obj=/daemons/timerd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B2800 obj=/daemons/logd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=require_uid idx=845 argc=0 vm=023B1D10 obj=/aaa/daemons/rebootd.o
+[efun-stub] previous_object args=0 calls=3 (unimplemented efun)
+[efun-stub] set_uid args=2 calls=3 (unimplemented efun)
+[efun-stub] set_euid args=1 calls=3 (unimplemented efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B1798 obj=/aaa/daemons/pwdprotect_authd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B19C8 obj=/aaa/daemons/passpodd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B2918 obj=/aaa/daemons/coin_traded.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=023B2B48 obj=/aaa/daemons/ctad.o
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=023B2B48 obj=/aaa/daemons/ctad.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B2B48 obj=/aaa/daemons/ctad.o
+[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=023B1AE0 obj=/aaa/daemons/cta/cmd_cta_oper_adb_config.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B2B48 obj=/aaa/daemons/ctad.o
+[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=023B23A0 obj=/aaa/daemons/cta/cmd_cta_get_dist_info.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_daemon_data idx=642 argc=1 vm=023B1BF8 obj=/aaa/daemons/account_transactiond.o
+[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=02243FE0 obj=/daemons/scheduled.o
+[gfn] inline global fn=unregister_daemon_data idx=643 argc=2 vm=02CEFB84 obj=/daemons/scheduled.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=[gfn] inline global fn=register_daemon_data idx=641 argc=3 vm=02CEFB84 obj=/daemons/scheduled.o
+00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_daemon_data idx=642 argc=1 vm=023B2170 obj=/aaa/daemons/admintoold.o
+[gfn] inline global fn=load_all idx=799 argc=2 vm=023B2170 obj=/aaa/daemons/admintoold.o
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=023B2170 obj=/aaa/daemons/admintoold.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B2170 obj=/aaa/daemons/admintoold.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B48D0 obj=/aaa/daemons/ecardd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B4B00 obj=/aaa/daemons/vip_smsd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=read_etc_file idx=661 argc=2 vm=023B4588 obj=/aaa/daemons/picd.o
+[gfn] inline global fn=check_server_status idx=658 argc=1 vm=023B4588 obj=/aaa/daemons/picd.o
+[efun-stub] verigen_load_font args=2 calls=1 (unimplemented efun)
+[gfn] inline global fn=read_etc_file idx=661 argc=2 vm=023B4588 obj=/aaa/daemons/picd.o
+[gfn] inline global fn=check_server_status idx=658 argc=1 vm=023B4588 obj=/aaa/daemons/picd.o
+[efun-stub] verigen_load_font args=2 calls=2 (unimplemented efun)
+[gfn] inline global fn=read_etc_file idx=661 argc=2 vm=023B4588 obj=/aaa/daemons/picd.o
+[gfn] inline global fn=check_server_status idx=658 argc=1 vm=023B4588 obj=/aaa/daemons/picd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] verigen_render args=5 calls=1 (unimplemented efun)
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=023B46A0 obj=/aaa/daemons/express_recharged.o
+[efun-stub] verigen_render args=5 calls=2 (unimplemented efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] verigen_merge args=8 calls=1 (unimplemented efun)
+[gfn] inline global fn=register_post_disconnected idx=821 argc=1 vm=023B3638 obj=/aaa/daemons/antibotd.o
+[efun-stub] verigen_render args=5 calls=3 (unimplemented efun)
+[efun-stub] create_mailbox args=2 calls=1 (placeholder efun)
+[efun-stub] verigen_render args=5 calls=4 (unimplemented efun)
+[efun-stub] create_mailbox args=2 calls=1 (unimplemented efun)
+[efun-stub] verigen_merge args=8 calls=2 (unimplemented efun)
+[gfn] inline global fn=register_post_init idx=618 argc=[efun-stub] verigen_render args=5 calls=5 (unimplemented efun)
+1 vm=023B3638 obj=/aaa/daemons/antibotd.o
+[efun-stub] verigen_merge args=8 calls=3 (unimplemented efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] verigen_merge args=8 calls=4 (unimplemented efun)
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] verigen_merge args=8 calls=5 (unimplemented efun)
+[gfn] inline global fn=load_all idx=799 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=023B4D30 obj=/aaa/daemons/serverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=require_uid idx=845 argc=0 vm=024A4160 obj=/aaa/daemons/aaaserverd.o
+[efun-stub] previous_object args=0 calls=4 (unimplemented efun)
+[efun-stub] set_uid args=2 calls=4 (unimplemented efun)
+[efun-stub] set_euid args=1 calls=4 (unimplemented efun)
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=024A4160 obj=/aaa/daemons/aaaserverd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=load_all idx=799 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=024A2A68 obj=/aaa/daemons/accountd.o
+[cfu] local fn=set_matrix_status idx=55 obj=/aaa/daemons/accountd.o code=18
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=require_uid idx=845 argc=0 vm=024A3D00 obj=/aaa/daemons/configd.o
+[efun-stub] previous_object args=0 calls=5 (unimplemented efun)
+[efun-stub] set_uid args=2 calls=5 (unimplemented efun)
+[efun-stub] set_euid args=1 calls=5 (unimplemented efun)
+[gfn] inline global fn=reset_log_file_name idx=704 argc=1 vm=024A3D00 obj=/aaa/daemons/configd.o
+[efun-stub] set_log_file args=2 calls=1 (placeholder efun)
+[cfu] local fn=fetch_global_config idx=51 obj=/aaa/daemons/configd.o code=31
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[gfn] mysql_select -> ({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[gfn] mysql_select -> ({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[gfn] mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[gfn] mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] inline global fn=deep_dup idx=708 argc=1 vm=024A3D00 obj=/aaa/daemons/configd.o
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[gfn] mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[cfu] local fn=fetch_server_status idx=53 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[gfn] mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[cfu] local fn=update_spa_list idx=54 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[gfn] mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[cfu] local fn=update_csa_list idx=55 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_privilege_group idx=52 obj=/aaa/daemons/configd.o code=102
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[gfn] mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[cfu] local fn=update_internal_address idx=56 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=register_post_init idx=618 argc=1 vm=024A3D00 obj=/aaa/daemons/configd.o
+[gfn] inline global fn=reset_log_file_name idx=704 argc=1 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=load_all idx=799 argc=2 vm=00F5F5AC obj=<obj>
+[efun-stub] set_log_file args=2 calls=2 (placeholder efun)
+[gfn] inline global fn=get_dir_ex idx=615 argc=1 vm=00F5F5AC obj=<obj>
+[cfu] local fn=fetch_global_config idx=51 obj=/aaa/daemons/configd.o code=31
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=safe_load_object idx=805 argc=2 vm=00F5F5AC obj=<obj>
+[gfn] inline global fn=get_sub_dirs_ex idx=616 argc=1 vm=00F5F5AC obj=<obj>
+[efun-stub] is_compiling args=0 calls=2 (placeholder efun)
+[gfn] mixed_mysql_select -> [gfn] inline global fn=post_init idx=629 argc=0 vm=00F5F5AC obj=<obj>
+({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[gfn] mysql_select -> [gfn] inline global fn=get_daemon_data idx=642 argc=1 vm=[gfn] inline global fn=set_server_status idx=790 argc=1 vm=00F5F5AC obj=<obj>
+({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+021DB0D8 obj=/daemons/ctacommandd.o
+[efun-stub] sql_open_db args=1 calls=2 (placeholder efun)
+[gfn] inline global fn=[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+get_daemon_data idx=642 argc=1 vm=02243FE0 obj=/daemons/scheduled.o
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=0806FDC0 obj=/aaa/daemons/express_recharged.o
+[gfn] inline global fn=is_valid_ip idx=703 argc=1 vm=02245390 obj=/daemons/http_clientd.o
+[efun-stub] verigen_render_chars args=6 calls=1 (unimplemented efun)
+[gfn] inline global fn=mixed_mysql_select idx=806[efun-stub] verigen_render_chars args=6 calls=2 (unimplemented efun)
+[gfn] inline global fn=mixed_mysql_select idx=806[efun-stub] verigen_render_chars args=6 calls=3 (unimplemented efun)
+ argc=4 vm=0806FDC0 obj=/aaa/daemons/express_recharged.o
+[gfn] inline global fn=sql_get_table idx=759 argc=2 vm=023B2800 obj=/daemons/logd.o
+ argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[efun-stub] verigen_render_chars args=6 calls=4 (unimplemented efun)
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[efun-stub] verigen_render_chars args=6 calls=5 (unimplemented efun)
+[gfn] inline global fn=sql_select idx=758 argc=3 vm=023B2800 obj=/daemons/logd.o
+[gfn] mixed_mysql_select -> [efun-stub] sql_query args=({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[gfn] mysql_select -> 2 calls=1 (placeholder efun)
+({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[efun-stub] sql_step args=1 calls=1 (placeholder efun)
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[efun-stub] sql_finalize args=1 calls=1 (placeholder efun)
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=time_desc idx=681 argc=1 vm=023B2800 obj=/daemons/logd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[gfn] mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[gfn] mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] inline global fn=deep_dup idx=708 argc=1 vm=077AFBEC obj=/aaa/daemons/configd.o
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[gfn] mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[cfu] local fn=fetch_server_status idx=53 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[gfn] mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[cfu] local fn=update_spa_list idx=54 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[gfn] mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[cfu] local fn=update_csa_list idx=55 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_privilege_group idx=52 obj=/aaa/daemons/configd.o code=102
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[gfn] mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[cfu] local fn=update_internal_address idx=56 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=0806FDC0 obj=/aaa/daemons/express_recharged.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=0806FDC0 obj=/aaa/daemons/express_recharged.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[gfn] inline global fn=reset_log_file_name idx=704 argc=1 vm=077AFBEC obj=/aaa/daemons/configd.o
+[efun-stub] set_log_file args=2 calls=3 (placeholder efun)
+[cfu] local fn=fetch_global_config idx=51 obj=/aaa/daemons/configd.o code=31
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[gfn] mysql_select -> ({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[gfn] mysql_select -> ({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[gfn] mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[gfn] mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] inline global fn=deep_dup idx=708 argc=1 vm=077AFBEC obj=/aaa/daemons/configd.o
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[gfn] mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[cfu] local fn=fetch_server_status idx=53 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[gfn] mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[cfu] local fn=update_spa_list idx=54 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[gfn] mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[cfu] local fn=update_csa_list idx=55 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_privilege_group idx=52 obj=/aaa/daemons/configd.o code=102
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[gfn] mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[cfu] local fn=update_internal_address idx=56 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=is_valid_ip idx=703 argc=1 vm=02245390 obj=/daemons/http_clientd.o
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=0806FDC0 obj=/aaa/daemons/express_recharged.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=0806FDC0 obj=/aaa/daemons/express_recharged.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[gfn] inline global fn=reset_log_file_name idx=704 argc=1 vm=077AFBEC obj=/aaa/daemons/configd.o
+[efun-stub] set_log_file args=2 calls=4 (placeholder efun)
+[cfu] local fn=fetch_global_config idx=51 obj=/aaa/daemons/configd.o code=31
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[gfn] mysql_select -> ({(["value": "http://192.168.200.1/alipay_qr_url", "section": "global", "memo": 
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[gfn] mysql_select -> ({(["memo": "", "sms_auth_url": "http://192.168.200.1/s", "ecard_fill_url": "htt
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8110, "memo": "", "server_key": "", "dist": "
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[gfn] mysql_select -> ({(["access_adb_user": "root", "ip": "192.168.200.1", "cta": "普天同庆", "access
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8120, "dba": "dba_daili", "memo": "", "server
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[gfn] mysql_select -> ({(["ip": "192.168.200.1", "port": 8040, "ldba": "ldba_jiangw", "memo": "", "ser
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[gfn] mysql_select -> ({(["tts": "tte_test", "check_sum": "", "http_ip": "*", "web_status_url": "http:
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] mysql_select -> ({(["csa": "", "alias": "", "memo": "", "dist": "coding", "spa": "spa_coding", "
+[gfn] inline global fn=deep_dup idx=708 argc=1 vm=077AFBEC obj=/aaa/daemons/configd.o
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[gfn] mysql_select -> ({(["save_when_coin_cost": 0, "alias": "", "memo": "", "when_found_cheater": "",
+[cfu] local fn=fetch_server_status idx=53 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[gfn] mysql_select -> ({(["http_ip": "", "port": 9877, "memo": "", "spa": "p01g_spa_pack", "http_plat"
+[cfu] local fn=update_spa_list idx=54 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[gfn] mysql_select -> ({(["csa": "csa_daili", "http_ip": "", "port": "6101", "memo": "", "http_port": 
+[cfu] local fn=update_csa_list idx=55 obj=/aaa/daemons/configd.o code=75
+[cfu] local fn=fetch_config_list idx=50 obj=/aaa/daemons/configd.o code=110
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({})
+[gfn] mysql_select -> ({})
+[cfu] local fn=fetch_privilege_group idx=52 obj=/aaa/daemons/configd.o code=102
+[gfn] inline global fn=mysql_select idx=810 argc=3 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] inline global fn=mixed_mysql_select idx=806 argc=4 vm=077AFBEC obj=/aaa/daemons/configd.o
+[gfn] mixed_mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[gfn] mysql_select -> ({(["privilege_group": "CS1", "class": "admintool", "memo": "", "privilege": "bl
+[cfu] local fn=update_internal_address idx=56 obj=/aaa/daemons/configd.o code=62
+[gfn] inline global fn=is_valid_ip idx=703 argc=1 vm=02245390 obj=/daemons/http_clientd.o
