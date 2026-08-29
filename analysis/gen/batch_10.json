@@ -1,0 +1,240 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdBroadcastCombatList",
+        "handlerName":  "handle_vm_cmdBroadcastCombatList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073fb4",
+        "handlerCode":  "void handle_vm_cmdBroadcastCombatList(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    (void)body; (void)len;\n    applyLpc(\"cmd_broadcast_combat_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8574,
+        "lpcFun":  "cmd_broadcast_combat_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x217E, ATTRIB_CLIENT_USER, \"cmd_broadcast_combat_list\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdButtonDoubleBonus",
+        "handlerName":  "handle_vm_cmdButtonDoubleBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8071ab0",
+        "handlerCode":  "void handle_vm_cmdButtonDoubleBonus(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 2) return;\n    int a = body[0];\n    int b = body[1];\n    applyLpc(\"cmd_button_double_bonus\", {make_int(cl.clientNo), make_int(a), make_int(b)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  63752,
+        "lpcFun":  "cmd_button_double_bonus",
+        "bodyFields":  [
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF908, ATTRIB_CLIENT_USER, \"cmd_button_double_bonus\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdBuyCard",
+        "handlerName":  "handle_vm_cmdBuyCard",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8050fc8",
+        "handlerCode":  "void handle_vm_cmdBuyCard(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string cardNo((const char*)body + off, n1);\n    off += n1;\n    if (off \u003e= len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string account((const char*)body + off, n2);\n    off += n2;\n    applyLpc(\"cmd_buy_card\", {make_int(cl.clientNo), make_string(cardNo), make_string(account)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  20590,
+        "lpcFun":  "cmd_buy_card",
+        "bodyFields":  [
+                           "string u8len cardNo",
+                           "string u8len account"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x506E, ATTRIB_CLIENT_USER, \"cmd_buy_card\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdBuyCustomizePack",
+        "handlerName":  "handle_vm_cmdBuyCustomizePack",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805135c",
+        "handlerCode":  "void handle_vm_cmdBuyCustomizePack(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string coinType((const char*)body + off, n1);\n    off += n1;\n    if (off \u003e= len) return;\n    uint8_t count = body[off++];\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint8_t i = 0; i \u003c count; i++) {\n        if (off \u003e= len) return;\n        uint8_t sl = body[off++];\n        if (off + sl \u003e len) return;\n        std::string s((const char*)body + off, sl);\n        off += sl;\n        if (off \u003e= len) return;\n        int v = body[off++];\n        arr-\u003eitems.push_back(make_string(s));\n        arr-\u003eitems.push_back(make_int(v));\n    }\n    applyLpc(\"cmd_buy_customize_package\", {make_int(cl.clientNo), arr, make_string(coinType)});\n}",
+        "typeSeq":  [
+                        88,
+                        936,
+                        357
+                    ],
+        "cmdNo":  8978,
+        "lpcFun":  "cmd_buy_customize_package",
+        "bodyFields":  [
+                           "string u8len coin_type",
+                           "u8 count",
+                           "count x (string u8len, int u8) -\u003e array"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2312, ATTRIB_CLIENT_USER, \"cmd_buy_customize_package\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdBuyEcard",
+        "handlerName":  "handle_vm_cmdBuyEcard",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805bf74",
+        "handlerCode":  "void handle_vm_cmdBuyEcard(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string id((const char*)body + off, n1);\n    off += n1;\n    if (off + 4 \u003e len) return;\n    uint32_t num = rd32be(body + off);\n    off += 4;\n    applyLpc(\"cmd_buy_ecard\", {make_int(cl.clientNo), make_string(id), make_int(num)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  16660,
+        "lpcFun":  "cmd_buy_ecard",
+        "bodyFields":  [
+                           "string u8len id",
+                           "int u32 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4114, ATTRIB_CLIENT_USER, \"cmd_buy_ecard\", 0 }"
+    },
+    {
+        "nArgs":  7,
+        "fun":  "vm_cmdBuyFromAskTaoShowMall",
+        "handlerName":  "handle_vm_cmdBuyFromAskTaoShowMall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805eee0",
+        "handlerCode":  "void handle_vm_cmdBuyFromAskTaoShowMall(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string barcode((const char*)body + off, n1);\n    off += n1;\n    if (off + 6 \u003e len) return;\n    uint16_t amount = rd16be(body + off);\n    uint16_t usedDay = rd16be(body + off + 2);\n    uint16_t toPos = rd16be(body + off + 4);\n    off += 6;\n    if (off \u003e= len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string coinPwd((const char*)body + off, n2);\n    off += n2;\n    if (off \u003e= len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string coinType((const char*)body + off, n3);\n    off += n3;\n    applyLpc(\"cmd_buy_from_asktao_show_mall\", {make_int(cl.clientNo), make_string(barcode), make_int(amount), make_int(usedDay), make_int(toPos), make_string(coinPwd), make_string(coinType)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8648,
+        "lpcFun":  "cmd_buy_from_asktao_show_mall",
+        "bodyFields":  [
+                           "string u8len barcode",
+                           "int u16 BE amount",
+                           "int u16 BE used_day",
+                           "int u16 BE to_pos",
+                           "string u8len coin_pwd",
+                           "string u8len coin_type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21C8, ATTRIB_CLIENT_USER, \"cmd_buy_from_asktao_show_mall\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdBuyFromOnlineMall",
+        "handlerName":  "handle_vm_cmdBuyFromOnlineMall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8051180",
+        "handlerCode":  "void handle_vm_cmdBuyFromOnlineMall(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string barcode((const char*)body + off, n1);\n    off += n1;\n    if (off + 2 \u003e len) return;\n    uint16_t amount = rd16be(body + off);\n    off += 2;\n    if (off \u003e= len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string coinPwd((const char*)body + off, n2);\n    off += n2;\n    if (off \u003e= len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string coinType((const char*)body + off, n3);\n    off += n3;\n    if (off \u003e= len) return;\n    uint8_t n4 = body[off++];\n    if (off + n4 \u003e len) return;\n    std::string rebate((const char*)body + off, n4);\n    off += n4;\n    applyLpc(\"cmd_buy_from_online_mall\", {make_int(cl.clientNo), make_string(barcode), make_int(amount), make_string(coinPwd), make_string(coinType), make_string(rebate)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  4454,
+        "lpcFun":  "cmd_buy_from_online_mall",
+        "bodyFields":  [
+                           "string u8len barcode",
+                           "int u16 BE amount",
+                           "string u8len coin_pwd",
+                           "string u8len coin_type",
+                           "string u8len rebate_tictket"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1166, ATTRIB_CLIENT_USER, \"cmd_buy_from_online_mall\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdBuyFromStall",
+        "handlerName":  "handle_vm_cmdBuyFromStall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805109c",
+        "handlerCode":  "void handle_vm_cmdBuyFromStall(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string name((const char*)body + off, n1);\n    off += n1;\n    if (off + 10 \u003e len) return;\n    uint32_t v1 = rd32be(body + off);\n    uint16_t v2 = rd16be(body + off + 4);\n    uint32_t v3 = rd32be(body + off + 6);\n    off += 10;\n    applyLpc(\"cmd_buy_from_stall\", {make_int(cl.clientNo), make_string(name), make_int(v1), make_int(v2), make_int(v3)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  13580,
+        "lpcFun":  "cmd_buy_from_stall",
+        "bodyFields":  [
+                           "string u8len name",
+                           "int u32 BE",
+                           "int u16 BE",
+                           "int u32 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x350C, ATTRIB_CLIENT_USER, \"cmd_buy_from_stall\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdBuyService",
+        "handlerName":  "handle_vm_cmdBuyService",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805f854",
+        "handlerCode":  "void handle_vm_cmdBuyService(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string name((const char*)body + off, n1);\n    off += n1;\n    if (off \u003e= len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string coinType((const char*)body + off, n2);\n    off += n2;\n    applyLpc(\"cmd_buy_service\", {make_int(cl.clientNo), make_string(name), make_string(coinType)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  10268,
+        "lpcFun":  "cmd_buy_service",
+        "bodyFields":  [
+                           "string u8len name",
+                           "string u8len coin_type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x281C, ATTRIB_CLIENT_USER, \"cmd_buy_service\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdCalcMountAttrib",
+        "handlerName":  "handle_vm_cmdCalcMountAttrib",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80741f4",
+        "handlerCode":  "void handle_vm_cmdCalcMountAttrib(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    std::string petName((const char*)body + off, n1);\n    off += n1;\n    if (off + 2 \u003e len) return;\n    int a = body[off];\n    int b = body[off + 1];\n    off += 2;\n    applyLpc(\"cmd_calc_mount_attrib\", {make_int(cl.clientNo), make_string(petName), make_int(a), make_int(b)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8586,
+        "lpcFun":  "cmd_calc_mount_attrib",
+        "bodyFields":  [
+                           "string u8len pet_name",
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x218A, ATTRIB_CLIENT_USER, \"cmd_calc_mount_attrib\", 0 }"
+    }
+]

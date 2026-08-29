@@ -1,0 +1,230 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdShopAdFill",
+        "handlerName":  "handle_vm_cmdShopAdFill",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ce80",
+        "handlerCode":  "void handle_vm_cmdShopAdFill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + (size_t)slen + 4 \u003e len) return;\n    size_t off = 1 + slen;\n    applyLpc(\"cmd_shop_ad_fill\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int((int)rd32be(body, off))});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  21765,
+        "lpcFun":  "cmd_shop_ad_fill",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u32 BE int: adMoney"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5505, ATTRIB_CLIENT_USER, \"cmd_shop_ad_fill\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdShopBuyProduct",
+        "handlerName":  "handle_vm_cmdShopBuyProduct",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ca48",
+        "handlerCode":  "void handle_vm_cmdShopBuyProduct(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 4 \u003e len) return;\n    off += slen;\n    uint8_t counter_no = body[off++];\n    uint8_t pos = body[off++];\n    uint8_t count = body[off++];\n    uint8_t clen = body[off++];\n    if (off + (size_t)clen \u003e len) return;\n    applyLpc(\"cmd_shop_buy_product\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int(counter_no), make_int(pos), make_int(count), make_string(body + off, clen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9043,
+        "lpcFun":  "cmd_shop_buy_product",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8 int: counterNo",
+                           "u8 int: pos",
+                           "u8 int: count",
+                           "u8len string: cookie"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2353, ATTRIB_CLIENT_USER, \"cmd_shop_buy_product\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdShopBuyShop",
+        "handlerName":  "handle_vm_cmdShopBuyShop",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c854",
+        "handlerCode":  "void handle_vm_cmdShopBuyShop(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 1 \u003e len) return;\n    off += slen;\n    uint8_t tlen = body[off++];\n    if (off + (size_t)tlen \u003e len) return;\n    applyLpc(\"cmd_shop_buy_shop\", {make_int(cl.clientNo), make_string(body + 1, slen), make_string(body + off, tlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  13201,
+        "lpcFun":  "cmd_shop_buy_shop",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8len string: shopType"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3391, ATTRIB_CLIENT_USER, \"cmd_shop_buy_shop\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdShopChangeInfo",
+        "handlerName":  "handle_vm_cmdShopChangeInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c310",
+        "handlerCode":  "void handle_vm_cmdShopChangeInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 2 \u003e len) return;\n    off += slen;\n    uint8_t modify_type = body[off++];\n    uint8_t nlen = body[off++];\n    if (off + (size_t)nlen \u003e len) return;\n    applyLpc(\"cmd_shop_change_info\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int(modify_type), make_string(body + off, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  64067,
+        "lpcFun":  "cmd_shop_change_info",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8 int: modifyType",
+                           "u8len string: newValue"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA43, ATTRIB_CLIENT_USER, \"cmd_shop_change_info\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdShopDoBusiness",
+        "handlerName":  "handle_vm_cmdShopDoBusiness",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c614",
+        "handlerCode":  "void handle_vm_cmdShopDoBusiness(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 1 \u003e len) return;\n    off += slen;\n    applyLpc(\"cmd_shop_do_business\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int(body[off])});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  24097,
+        "lpcFun":  "cmd_shop_do_business",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8 int: businessType"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5E21, ATTRIB_CLIENT_USER, \"cmd_shop_do_business\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdShopEnterShop",
+        "handlerName":  "handle_vm_cmdShopEnterShop",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c928",
+        "handlerCode":  "void handle_vm_cmdShopEnterShop(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + (size_t)slen \u003e len) return;\n    applyLpc(\"cmd_shop_enter_shop\", {make_int(cl.clientNo), make_string(body + 1, slen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9053,
+        "lpcFun":  "cmd_shop_enter_shop",
+        "bodyFields":  [
+                           "u8len string: shopId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x235D, ATTRIB_CLIENT_USER, \"cmd_shop_enter_shop\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdShopEnterShopType",
+        "handlerName":  "handle_vm_cmdShopEnterShopType",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805cc14",
+        "handlerCode":  "void handle_vm_cmdShopEnterShopType(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + (size_t)slen \u003e len) return;\n    applyLpc(\"cmd_shop_enter_shop_type\", {make_int(cl.clientNo), make_string(body + 1, slen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4219,
+        "lpcFun":  "cmd_shop_enter_shop_type",
+        "bodyFields":  [
+                           "u8len string: shopType"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x107B, ATTRIB_CLIENT_USER, \"cmd_shop_enter_shop_type\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdShopFavorite",
+        "handlerName":  "handle_vm_cmdShopFavorite",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c9ac",
+        "handlerCode":  "void handle_vm_cmdShopFavorite(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 1 \u003e len) return;\n    off += slen;\n    applyLpc(\"cmd_shop_favorite\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int(body[off])});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  64991,
+        "lpcFun":  "cmd_shop_favorite",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8 int: favoriteFlag"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFDDF, ATTRIB_CLIENT_USER, \"cmd_shop_favorite\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdShopManageCounter",
+        "handlerName":  "handle_vm_cmdShopManageCounter",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c4c8",
+        "handlerCode":  "void handle_vm_cmdShopManageCounter(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 2 \u003e len) return;\n    off += slen;\n    uint8_t counter_no = body[off++];\n    uint8_t count = body[off];\n    applyLpc(\"cmd_shop_manage_counter\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int(counter_no), make_int(count)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8817,
+        "lpcFun":  "cmd_shop_manage_counter",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8 int: counterNo",
+                           "u8 int: count"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2271, ATTRIB_CLIENT_USER, \"cmd_shop_manage_counter\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdShopManageMoney",
+        "handlerName":  "handle_vm_cmdShopManageMoney",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805c40c",
+        "handlerCode":  "void handle_vm_cmdShopManageMoney(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    size_t off = 1;\n    if (off + (size_t)slen + 5 \u003e len) return;\n    off += slen;\n    uint8_t manage_type = body[off++];\n    applyLpc(\"cmd_shop_manage_money\", {make_int(cl.clientNo), make_string(body + 1, slen), make_int(manage_type), make_int((int)rd32be(body, off))});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8835,
+        "lpcFun":  "cmd_shop_manage_money",
+        "bodyFields":  [
+                           "u8len string: shopId",
+                           "u8 int: manageType",
+                           "u32 BE int: money"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2283, ATTRIB_CLIENT_USER, \"cmd_shop_manage_money\", 0 }"
+    }
+]

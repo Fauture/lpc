@@ -1,0 +1,202 @@
+[
+    {
+        "cmdNo":  6664,
+        "fun":  "vm_cmdWarViewHistoryInfo",
+        "type":  1,
+        "addr":  "0x805d9f4",
+        "lpcFun":  "cmd_view_war_history_info",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 int"
+                       ],
+        "handlerName":  "handle_vm_cmdWarViewHistoryInfo",
+        "handlerCode":  "void handle_vm_cmdWarViewHistoryInfo(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 1) return;\n    applyLpc(\"cmd_view_war_history_info\", {make_int(cl.clientNo), make_int(body[0])});\n}\n",
+        "kcmdEntry":  "{ 0x1A08, ATTRIB_CLIENT_USER, \"cmd_view_war_history_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  5028,
+        "fun":  "vm_cmdWearAskTaoShow",
+        "type":  1,
+        "addr":  "0x805fa24",
+        "lpcFun":  "cmd_wear_asktao_show",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string"
+                       ],
+        "handlerName":  "handle_vm_cmdWearAskTaoShow",
+        "handlerCode":  "void handle_vm_cmdWearAskTaoShow(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 1) return;\n    uint8_t slen = body[0];\n    if (1u + slen > len) return;\n    applyLpc(\"cmd_wear_asktao_show\", {make_int(cl.clientNo), make_string(body + 1, slen)});\n}\n",
+        "kcmdEntry":  "{ 0x13A4, ATTRIB_CLIENT_USER, \"cmd_wear_asktao_show\", 0 }",
+        "status":  "ok",
+        "note":  "string arg is u8-len+bytes; vm_apply pProgram from ebx (decompiler artifact cast)"
+    },
+    {
+        "cmdNo":  10248,
+        "fun":  "vm_cmdWho",
+        "type":  1,
+        "addr":  "0x805b9ec",
+        "lpcFun":  "cmd_who",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWho",
+        "handlerCode":  "void handle_vm_cmdWho(GameClient& cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_who\", {make_int(cl.clientNo)});\n}\n",
+        "kcmdEntry":  "{ 0x2808, ATTRIB_CLIENT_USER, \"cmd_who\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  25474,
+        "fun":  "vm_cmdWindowSizeChange",
+        "type":  1,
+        "addr":  "0x8071860",
+        "lpcFun":  "cmd_window_size_change",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 int"
+                       ],
+        "handlerName":  "handle_vm_cmdWindowSizeChange",
+        "handlerCode":  "void handle_vm_cmdWindowSizeChange(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 1) return;\n    applyLpc(\"cmd_window_size_change\", {make_int(cl.clientNo), make_int(body[0])});\n}\n",
+        "kcmdEntry":  "{ 0x6382, ATTRIB_CLIENT_USER, \"cmd_window_size_change\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16482,
+        "fun":  "vm_cmdWishing",
+        "type":  1,
+        "addr":  "0x805faa8",
+        "lpcFun":  "cmd_wishing",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        453
+                    ],
+        "bodyFields":  [
+                           "u16be int num",
+                           "u16be count",
+                           "count x (u8len string type, u8len string name) -> mapping key=type value=name"
+                       ],
+        "handlerName":  "handle_vm_cmdWishing",
+        "handlerCode":  "void handle_vm_cmdWishing(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 4) return;\n    uint16_t num = rd16be(body, 0);\n    uint16_t count = rd16be(body, 2);\n    if (count > 63) return;\n    size_t off = 4;\n    auto m = std::make_shared<MappingValue>();\n    for (uint16_t i = 0; i < count; i++) {\n        if (off >= len) return;\n        uint8_t tl = body[off++];\n        if (off + tl > len) return;\n        std::string type((const char*)body + off, tl);\n        off += tl;\n        if (off >= len) return;\n        uint8_t nl = body[off++];\n        if (off + nl > len) return;\n        std::string name((const char*)body + off, nl);\n        off += nl;\n        m->insert(make_string(type.data(), type.size()), make_string(name.data(), name.size()));\n    }\n    applyLpc(\"cmd_wishing\", {make_int(cl.clientNo), make_int(num), m});\n}\n",
+        "kcmdEntry":  "{ 0x4062, ATTRIB_CLIENT_USER, \"cmd_wishing\", 0 }",
+        "status":  "ok",
+        "note":  "mapping key=type(first u8len str) value=name(second u8len str) per vm_addMappingString(m,key,val)"
+    },
+    {
+        "cmdNo":  12366,
+        "fun":  "vm_cmdWishingBuyItem",
+        "type":  1,
+        "addr":  "0x8077d48",
+        "lpcFun":  "cmd_wishing_buy_item",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWishingBuyItem",
+        "handlerCode":  "void handle_vm_cmdWishingBuyItem(GameClient& cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_wishing_buy_item\", {make_int(cl.clientNo)});\n}\n",
+        "kcmdEntry":  "{ 0x304E, ATTRIB_CLIENT_USER, \"cmd_wishing_buy_item\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8724,
+        "fun":  "vm_cmdWishingOpen",
+        "type":  1,
+        "addr":  "0x8078054",
+        "lpcFun":  "cmd_wishing_open",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWishingOpen",
+        "handlerCode":  "void handle_vm_cmdWishingOpen(GameClient& cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_wishing_open\", {make_int(cl.clientNo)});\n}\n",
+        "kcmdEntry":  "{ 0x2214, ATTRIB_CLIENT_USER, \"cmd_wishing_open\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  6910,
+        "fun":  "vm_cmdWishingSaleItem",
+        "type":  1,
+        "addr":  "0x8077d78",
+        "lpcFun":  "cmd_wishing_sale_item",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWishingSaleItem",
+        "handlerCode":  "void handle_vm_cmdWishingSaleItem(GameClient& cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_wishing_sale_item\", {make_int(cl.clientNo)});\n}\n",
+        "kcmdEntry":  "{ 0x1AFE, ATTRIB_CLIENT_USER, \"cmd_wishing_sale_item\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8650,
+        "fun":  "vm_cmdWithdraw",
+        "type":  1,
+        "addr":  "0x805ba1c",
+        "lpcFun":  "cmd_withdraw",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32be int",
+                           "u32be int"
+                       ],
+        "handlerName":  "handle_vm_cmdWithdraw",
+        "handlerCode":  "void handle_vm_cmdWithdraw(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 8) return;\n    uint32_t v1 = rd32be(body, 0);\n    uint32_t v2 = rd32be(body, 4);\n    applyLpc(\"cmd_withdraw\", {make_int(cl.clientNo), make_int(v1), make_int(v2)});\n}\n",
+        "kcmdEntry":  "{ 0x21CA, ATTRIB_CLIENT_USER, \"cmd_withdraw\", 0 }",
+        "status":  "ok",
+        "note":  "both ints read as u32 BE (ROR4/ROR2 swap pattern)"
+    },
+    {
+        "cmdNo":  15922,
+        "fun":  "vm_cmdWLResetSeal",
+        "type":  1,
+        "addr":  "0x80781b4",
+        "lpcFun":  "cmd_world_level_reset_seal",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWLResetSeal",
+        "handlerCode":  "void handle_vm_cmdWLResetSeal(GameClient& cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_world_level_reset_seal\", {make_int(cl.clientNo)});\n}\n",
+        "kcmdEntry":  "{ 0x3E32, ATTRIB_CLIENT_USER, \"cmd_world_level_reset_seal\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

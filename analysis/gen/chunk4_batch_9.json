@@ -1,0 +1,235 @@
+﻿[
+    {
+        "cmdNo":  9130,
+        "fun":  "vm_cmdUnequipPetDress",
+        "type":  1,
+        "addr":  "0x8073c48",
+        "lpcFun":  "cmd_unequip_pet_dress",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32be itemId"
+                       ],
+        "handlerName":  "handle_vm_cmdUnequipPetDress",
+        "handlerCode":  "void handle_vm_cmdUnequipPetDress(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    int itemId = rd32be(body, 0);\n    applyLpc(\"cmd_unequip_pet_dress\", {make_int(cl.clientNo), make_int(itemId)});\n}",
+        "kcmdEntry":  "{ 0x23AA, ATTRIB_CLIENT_USER, \"cmd_unequip_pet_dress\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8270,
+        "fun":  "vm_cmdUpgrade",
+        "type":  1,
+        "addr":  "0x805afbc",
+        "lpcFun":  "cmd_upgrade",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u32be npcId",
+                           "u16be type",
+                           "array\u003cu32be\u003e x4"
+                       ],
+        "handlerName":  "handle_vm_cmdUpgrade",
+        "handlerCode":  "void handle_vm_cmdUpgrade(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 22) return;\n    int npcId = rd32be(body, 0);\n    int type = rd16be(body, 4);\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (int i = 0; i \u003c 4; i++)\n        arr-\u003eitems.push_back(make_int(rd32be(body, 6 + i * 4)));\n    applyLpc(\"cmd_upgrade\", {make_int(cl.clientNo), make_int(npcId), make_int(type), arr});\n}",
+        "kcmdEntry":  "{ 0x204E, ATTRIB_CLIENT_USER, \"cmd_upgrade\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64880,
+        "fun":  "vm_cmdUpgradeByAmount",
+        "type":  1,
+        "addr":  "0x805b1e8",
+        "lpcFun":  "cmd_upgrade_by_amount",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u32be npcId",
+                           "u16be type",
+                           "u8 count",
+                           "count x (u16be amount, u16be amount)"
+                       ],
+        "handlerName":  "handle_vm_cmdUpgradeByAmount",
+        "handlerCode":  "void handle_vm_cmdUpgradeByAmount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    int npcId = rd32be(body, 0);\n    int type = rd16be(body, 4);\n    int cnt = body[6];\n    auto pArray = std::make_shared\u003cArrayValue\u003e();\n    auto nArray = std::make_shared\u003cArrayValue\u003e();\n    size_t off = 7;\n    for (int i = 0; i \u003c cnt; i++)\n    {\n        if (off + 4 \u003e len) return;\n        pArray-\u003eitems.push_back(make_int(rd16be(body, off)));\n        nArray-\u003eitems.push_back(make_int(rd16be(body, off + 2)));\n        off += 4;\n    }\n    applyLpc(\"cmd_upgrade_by_amount\", {make_int(cl.clientNo), make_int(npcId), make_int(type), pArray, nArray});\n}",
+        "kcmdEntry":  "{ 0xFD70, ATTRIB_CLIENT_USER, \"cmd_upgrade_by_amount\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  60,
+        "fun":  "vm_cmdUpgradeEx",
+        "type":  1,
+        "addr":  "0x805b0d4",
+        "lpcFun":  "cmd_upgrade",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u32be npcId",
+                           "u16be type",
+                           "u8 count",
+                           "count x u32be"
+                       ],
+        "handlerName":  "handle_vm_cmdUpgradeEx",
+        "handlerCode":  "void handle_vm_cmdUpgradeEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    int npcId = rd32be(body, 0);\n    int type = rd16be(body, 4);\n    int cnt = body[6];\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    size_t off = 7;\n    for (int i = 0; i \u003c cnt; i++)\n    {\n        if (off + 4 \u003e len) return;\n        arr-\u003eitems.push_back(make_int(rd32be(body, off)));\n        off += 4;\n    }\n    applyLpc(\"cmd_upgrade\", {make_int(cl.clientNo), make_int(npcId), make_int(type), arr});\n}",
+        "kcmdEntry":  "{ 0x3C, ATTRIB_CLIENT_USER, \"cmd_upgrade\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8366,
+        "fun":  "vm_cmdUpgradeMagicPicture",
+        "type":  1,
+        "addr":  "0x80715d8",
+        "lpcFun":  "cmd_upgrade_magic_picture",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32be itemId",
+                           "u8 flag"
+                       ],
+        "handlerName":  "handle_vm_cmdUpgradeMagicPicture",
+        "handlerCode":  "void handle_vm_cmdUpgradeMagicPicture(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    int itemId = rd32be(body, 0);\n    int flag = body[4];\n    applyLpc(\"cmd_upgrade_magic_picture\", {make_int(cl.clientNo), make_int(itemId), make_int(flag)});\n}",
+        "kcmdEntry":  "{ 0x20AE, ATTRIB_CLIENT_USER, \"cmd_upgrade_magic_picture\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64777,
+        "fun":  "vm_cmdVendueCancel",
+        "type":  1,
+        "addr":  "0x805d194",
+        "lpcFun":  "cmd_vendue_cancel",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 interface_type",
+                           "u8 merch_type",
+                           "u16be pos",
+                           "u8len string"
+                       ],
+        "handlerName":  "handle_vm_cmdVendueCancel",
+        "handlerCode":  "void handle_vm_cmdVendueCancel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    int interface_type = body[0];\n    int merch_type = body[1];\n    int pos = rd16be(body, 2);\n    int slen = body[4];\n    if (5 + slen \u003e len) return;\n    applyLpc(\"cmd_vendue_cancel\", {make_int(cl.clientNo), make_int(interface_type), make_int(merch_type), make_int(pos), make_string(body + 5, slen)});\n}",
+        "kcmdEntry":  "{ 0xFD09, ATTRIB_CLIENT_USER, \"cmd_vendue_cancel\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  24581,
+        "fun":  "vm_cmdVendueCanVendue",
+        "type":  1,
+        "addr":  "0x805d358",
+        "lpcFun":  "cmd_vendue_can_vendue",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 type",
+                           "u32be itemId"
+                       ],
+        "handlerName":  "handle_vm_cmdVendueCanVendue",
+        "handlerCode":  "void handle_vm_cmdVendueCanVendue(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    int vtype = body[0];\n    int itemId = rd32be(body, 1);\n    applyLpc(\"cmd_vendue_can_vendue\", {make_int(cl.clientNo), make_int(vtype), make_int(itemId)});\n}",
+        "kcmdEntry":  "{ 0x6005, ATTRIB_CLIENT_USER, \"cmd_vendue_can_vendue\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64835,
+        "fun":  "vm_cmdVendueFetch",
+        "type":  1,
+        "addr":  "0x805d2d4",
+        "lpcFun":  "cmd_vendue_fetch",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string"
+                       ],
+        "handlerName":  "handle_vm_cmdVendueFetch",
+        "handlerCode":  "void handle_vm_cmdVendueFetch(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    int slen = body[0];\n    if (1 + slen \u003e len) return;\n    applyLpc(\"cmd_vendue_fetch\", {make_int(cl.clientNo), make_string(body + 1, slen)});\n}",
+        "kcmdEntry":  "{ 0xFD43, ATTRIB_CLIENT_USER, \"cmd_vendue_fetch\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8577,
+        "fun":  "vm_cmdVendueManage",
+        "type":  1,
+        "addr":  "0x805d294",
+        "lpcFun":  "cmd_vendue_manage",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 type"
+                       ],
+        "handlerName":  "handle_vm_cmdVendueManage",
+        "handlerCode":  "void handle_vm_cmdVendueManage(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_vendue_manage\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "kcmdEntry":  "{ 0x2181, ATTRIB_CLIENT_USER, \"cmd_vendue_manage\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8637,
+        "fun":  "vm_cmdVendueOffer",
+        "type":  1,
+        "addr":  "0x805d068",
+        "lpcFun":  "cmd_vendue_offer",
+        "nArgs":  6,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 interface_type",
+                           "u8 merch_type",
+                           "u8 vendue_type",
+                           "u16be pos",
+                           "u8len string"
+                       ],
+        "handlerName":  "handle_vm_cmdVendueOffer",
+        "handlerCode":  "void handle_vm_cmdVendueOffer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    int interface_type = body[0];\n    int merch_type = body[1];\n    int vendue_type = body[2];\n    int pos = rd16be(body, 3);\n    int slen = body[5];\n    if (6 + slen \u003e len) return;\n    applyLpc(\"cmd_vendue_offer\", {make_int(cl.clientNo), make_int(interface_type), make_int(merch_type), make_int(vendue_type), make_int(pos), make_string(body + 6, slen)});\n}",
+        "kcmdEntry":  "{ 0x21BD, ATTRIB_CLIENT_USER, \"cmd_vendue_offer\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

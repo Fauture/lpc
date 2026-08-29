@@ -1,0 +1,234 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdPreviewPetPracticeBonus",
+        "handlerName":  "handle_vm_cmdPreviewPetPracticeBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8055fd8",
+        "handlerCode":  "void handle_vm_cmdPreviewPetPracticeBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    applyLpc(\"cmd_preview_pet_practice_bonus\",\n        {make_int(cl.clientNo), make_int(body[0]), make_int(body[1]), make_int(rd16be(body, 2))});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9740,
+        "lpcFun":  "cmd_preview_pet_practice_bonus",
+        "bodyFields":  [
+                           "u8 body[0] (also pProgram)",
+                           "u8 body[1]",
+                           "u16be body[2]"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x260C, ATTRIB_CLIENT_USER, \"cmd_preview_pet_practice_bonus\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdPrompt",
+        "handlerName":  "handle_vm_cmdPrompt",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8055ce4",
+        "handlerCode":  "void handle_vm_cmdPrompt(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t nlen = body[0];\n    if (1 + nlen \u003e len) return;\n    const uint8_t* name = body + 1;\n    size_t off = 1 + nlen;\n    if (off \u003e= len) return;\n    uint8_t rlen = body[off];\n    if (off + 1 + rlen \u003e len) return;\n    const uint8_t* right = body + off + 1;\n    applyLpc(\"cmd_prompt\",\n        {make_int(cl.clientNo), make_string(name, nlen), make_string(right, rlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  64900,
+        "lpcFun":  "cmd_prompt",
+        "bodyFields":  [
+                           "u8 nameLen",
+                           "name bytes",
+                           "u8 rightLen",
+                           "right bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD84, ATTRIB_CLIENT_USER, \"cmd_prompt\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdPromptBeforeLeave",
+        "handlerName":  "handle_vm_cmdPromptBeforeLeave",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806c330",
+        "handlerCode":  "void handle_vm_cmdPromptBeforeLeave(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_prompt_before_leave\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  16672,
+        "lpcFun":  "cmd_prompt_before_leave",
+        "bodyFields":  [
+
+                       ],
+        "note":  "body unused (mlen\u003e=0 check only)",
+        "kcmdEntry":  "{ 0x4120, ATTRIB_CLIENT_USER, \"cmd_prompt_before_leave\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdPurchaseAddOrder",
+        "handlerName":  "handle_vm_cmdPurchaseAddOrder",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a7ec",
+        "handlerCode":  "void handle_vm_cmdPurchaseAddOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t type = body[0];\n    size_t off = 1;\n    if (off \u003e= len) return;\n    uint8_t nlen = body[off]; ++off;\n    if (off + nlen \u003e len) return;\n    const uint8_t* name = body + off; off += nlen;\n    if (off + 2 \u003e len) return;\n    uint16_t amount = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t price = rd32be(body, off); off += 4;\n    if (off \u003e= len) return;\n    uint8_t olen = body[off]; ++off;\n    if (off + olen \u003e len) return;\n    const uint8_t* orderInfo = body + off;\n    applyLpc(\"cmd_purchase_add_order\",\n        {make_int(cl.clientNo), make_int(type), make_string(name, nlen),\n         make_int(amount), make_int(price), make_string(orderInfo, olen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  12018,
+        "lpcFun":  "cmd_purchase_add_order",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 nameLen",
+                           "name bytes",
+                           "u16be amount",
+                           "u32be price",
+                           "u8 orderInfoLen",
+                           "orderInfo bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2EF2, ATTRIB_CLIENT_USER, \"cmd_purchase_add_order\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdPurchaseCancleOrder",
+        "handlerName":  "handle_vm_cmdPurchaseCancleOrder",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805aa38",
+        "handlerCode":  "void handle_vm_cmdPurchaseCancleOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t olen = body[1];\n    if (2 + olen \u003e len) return;\n    const uint8_t* orderId = body + 2;\n    applyLpc(\"cmd_purchase_cancle_order\",\n        {make_int(cl.clientNo), make_int(type), make_string(orderId, olen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8834,
+        "lpcFun":  "cmd_purchase_cancle_order",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 orderIdLen",
+                           "orderId bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2282, ATTRIB_CLIENT_USER, \"cmd_purchase_cancle_order\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdPurchaseFetchCash",
+        "handlerName":  "handle_vm_cmdPurchaseFetchCash",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ab78",
+        "handlerCode":  "void handle_vm_cmdPurchaseFetchCash(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_purchase_fetch_cash\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  9124,
+        "lpcFun":  "cmd_purchase_fetch_cash",
+        "bodyFields":  [
+
+                       ],
+        "note":  "body unused (mlen\u003e=0 check only)",
+        "kcmdEntry":  "{ 0x23A4, ATTRIB_CLIENT_USER, \"cmd_purchase_fetch_cash\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdPurchaseFetchItem",
+        "handlerName":  "handle_vm_cmdPurchaseFetchItem",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805aba8",
+        "handlerCode":  "void handle_vm_cmdPurchaseFetchItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t olen = body[1];\n    if (2 + olen \u003e len) return;\n    const uint8_t* orderId = body + 2;\n    applyLpc(\"cmd_purchase_fetch_item\",\n        {make_int(cl.clientNo), make_int(type), make_string(orderId, olen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  20496,
+        "lpcFun":  "cmd_purchase_fetch_item",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 orderIdLen",
+                           "orderId bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5010, ATTRIB_CLIENT_USER, \"cmd_purchase_fetch_item\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdPurchaseGetObjProp",
+        "handlerName":  "handle_vm_cmdPurchaseGetObjProp",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805aad8",
+        "handlerCode":  "void handle_vm_cmdPurchaseGetObjProp(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t olen = body[1];\n    if (2 + olen \u003e len) return;\n    const uint8_t* orderId = body + 2;\n    applyLpc(\"cmd_purchase_get_obj_prop\",\n        {make_int(cl.clientNo), make_int(type), make_string(orderId, olen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8440,
+        "lpcFun":  "cmd_purchase_get_obj_prop",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 orderIdLen",
+                           "orderId bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20F8, ATTRIB_CLIENT_USER, \"cmd_purchase_get_obj_prop\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdPurchaseGetOrderList",
+        "handlerName":  "handle_vm_cmdPurchaseGetOrderList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ac48",
+        "handlerCode":  "void handle_vm_cmdPurchaseGetOrderList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_purchase_get_order_list\",\n        {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  12358,
+        "lpcFun":  "cmd_purchase_get_order_list",
+        "bodyFields":  [
+                           "u8 body[0]"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3046, ATTRIB_CLIENT_USER, \"cmd_purchase_get_order_list\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdPurchaseMatchOrder",
+        "handlerName":  "handle_vm_cmdPurchaseMatchOrder",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a950",
+        "handlerCode":  "void handle_vm_cmdPurchaseMatchOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t olen = body[1];\n    size_t off = 2 + olen;\n    if (off + 4 \u003e len) return;\n    uint16_t v12 = rd16be(body, off);\n    uint16_t v14 = rd16be(body, off + 2);\n    applyLpc(\"cmd_purchase_match_order\",\n        {make_int(cl.clientNo), make_int(type), make_string(body + 2, olen),\n         make_int(v12), make_int(v14)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  62736,
+        "lpcFun":  "cmd_purchase_match_order",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 orderIdLen",
+                           "orderId bytes",
+                           "u16be v12",
+                           "u16be v14"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF510, ATTRIB_CLIENT_USER, \"cmd_purchase_match_order\", 0 }"
+    }
+]

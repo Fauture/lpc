@@ -1,0 +1,214 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCEndAnimate",
+        "handlerName":  "handle_vm_cmdCEndAnimate",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8051888",
+        "handlerCode":  "void handle_vm_cmdCEndAnimate(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t v7 = rd32be(body);\n    applyLpc(\"cmd_c_end_animate\", {make_int(cl.clientNo), make_int(v7)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  16644,
+        "lpcFun":  "cmd_c_end_animate",
+        "bodyFields":  [
+                           "int u32"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4104, ATTRIB_CLIENT_USER, \"cmd_c_end_animate\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdCFlee",
+        "handlerName":  "handle_vm_cmdCFlee",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80518d8",
+        "handlerCode":  "void handle_vm_cmdCFlee(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_c_flee\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4360,
+        "lpcFun":  "cmd_c_flee",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1108, ATTRIB_CLIENT_USER, \"cmd_c_flee\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdChallengeAnswer",
+        "handlerName":  "handle_vm_cmdChallengeAnswer",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ba84",
+        "handlerCode":  "void handle_vm_cmdChallengeAnswer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t v5 = rd32be(body);\n    uint8_t slen = body[4];\n    if (5 + slen \u003e len) return;\n    std::string info((const char*)body + 5, slen);\n    applyLpc(\"cmd_challenge_answer\", {make_int(cl.clientNo), make_int(v5), make_string(info)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8568,
+        "lpcFun":  "cmd_challenge_answer",
+        "bodyFields":  [
+                           "int u32",
+                           "string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2178, ATTRIB_CLIENT_USER, \"cmd_challenge_answer\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdChangeArenaRoomSeat",
+        "handlerName":  "handle_vm_cmdChangeArenaRoomSeat",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806daf0",
+        "handlerCode":  "void handle_vm_cmdChangeArenaRoomSeat(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t seat = rd16be(body);\n    uint32_t a2 = body[2];\n    uint32_t a3 = body[3];\n    applyLpc(\"cmd_arena_room_change_seat\", {make_int(cl.clientNo), make_int(seat), make_int(a2), make_int(a3)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4278,
+        "lpcFun":  "cmd_arena_room_change_seat",
+        "bodyFields":  [
+                           "int u16",
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10B6, ATTRIB_CLIENT_USER, \"cmd_arena_room_change_seat\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdChangeAttribPlan",
+        "handlerName":  "handle_vm_cmdChangeAttribPlan",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073dd0",
+        "handlerCode":  "void handle_vm_cmdChangeAttribPlan(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_change_attrib_plan\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  64934,
+        "lpcFun":  "cmd_change_attrib_plan",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFDA6, ATTRIB_CLIENT_USER, \"cmd_change_attrib_plan\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdChangeChatGroupSetting",
+        "handlerName":  "handle_vm_cmdChangeChatGroupSetting",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8071afc",
+        "handlerCode":  "void handle_vm_cmdChangeChatGroupSetting(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t glen = body[0];\n    if (1 + glen + 2 \u003e len) return;\n    std::string group((const char*)body + 1, glen);\n    uint32_t oper = rd16be(body + 1 + glen);\n    uint8_t plen = body[1 + glen + 2];\n    if (1 + glen + 3 + plen \u003e len) return;\n    std::string para((const char*)body + 1 + glen + 3, plen);\n    applyLpc(\"cmd_change_chat_group_setting\", {make_int(cl.clientNo), make_string(group), make_int(oper), make_string(para)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4122,
+        "lpcFun":  "cmd_change_chat_group_setting",
+        "bodyFields":  [
+                           "string u8len",
+                           "int u16",
+                           "string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x101A, ATTRIB_CLIENT_USER, \"cmd_change_chat_group_setting\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdChangeFurnitureDir",
+        "handlerName":  "handle_vm_cmdChangeFurnitureDir",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8051a2c",
+        "handlerCode":  "void handle_vm_cmdChangeFurnitureDir(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t id = rd32be(body);\n    uint32_t dir = body[4];\n    applyLpc(\"cmd_change_furniture_direction\", {make_int(cl.clientNo), make_int(id), make_int(dir)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9014,
+        "lpcFun":  "cmd_change_furniture_direction",
+        "bodyFields":  [
+                           "int u32",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2336, ATTRIB_CLIENT_USER, \"cmd_change_furniture_direction\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdChangeItemAttrib",
+        "handlerName":  "handle_vm_cmdChangeItemAttrib",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80522b4",
+        "handlerCode":  "void handle_vm_cmdChangeItemAttrib(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint32_t attrib = body[0];\n    applyLpc(\"cmd_change_item_attrib\", {make_int(cl.clientNo), make_int(attrib)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8476,
+        "lpcFun":  "cmd_change_item_attrib",
+        "bodyFields":  [
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x211C, ATTRIB_CLIENT_USER, \"cmd_change_item_attrib\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdChangeTeamLeader",
+        "handlerName":  "handle_vm_cmdChangeTeamLeader",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80522f4",
+        "handlerCode":  "void handle_vm_cmdChangeTeamLeader(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t nlen = body[0];\n    if (1 + nlen + 1 \u003e len) return;\n    std::string name((const char*)body + 1, nlen);\n    uint32_t leader = body[1 + nlen];\n    applyLpc(\"cmd_change_team_leader\", {make_int(cl.clientNo), make_string(name), make_int(leader)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8628,
+        "lpcFun":  "cmd_change_team_leader",
+        "bodyFields":  [
+                           "string u8len",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21B4, ATTRIB_CLIENT_USER, \"cmd_change_team_leader\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdChangeTitle",
+        "handlerName":  "handle_vm_cmdChangeTitle",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8052390",
+        "handlerCode":  "void handle_vm_cmdChangeTitle(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t tlen = body[0];\n    if (1 + tlen \u003e len) return;\n    std::string title((const char*)body + 1, tlen);\n    applyLpc(\"cmd_change_title\", {make_int(cl.clientNo), make_string(title)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  10984,
+        "lpcFun":  "cmd_change_title",
+        "bodyFields":  [
+                           "string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2AE8, ATTRIB_CLIENT_USER, \"cmd_change_title\", 0 }"
+    }
+]

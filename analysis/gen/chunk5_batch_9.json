@@ -1,0 +1,223 @@
+﻿[
+    {
+        "cmdNo":  16630,
+        "fun":  "vm_cmdMaOper",
+        "type":  2,
+        "addr":  "0x806888c",
+        "lpcFun":  "cmd_ma_oper",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u32 BE cookie",
+                           "u8len command string",
+                           "u8len maAccount string",
+                           "u8len target string (parsed, not passed to LPC)",
+                           "u16 unread bytes (driver skips)",
+                           "u16 BE count",
+                           "count x (u16 BE len + string) -\u003e array of strings"
+                       ],
+        "handlerName":  "handle_vm_cmdMaOper",
+        "handlerCode":  "void handle_vm_cmdMaOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t cookie = rd32be(body, off);\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto command = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    auto maAccount = make_string(body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off);\n    if (off + n3 \u003e len) return;\n    off += n3; // target string, parsed but not passed to LPC\n    if (off + 2 \u003e len) return;\n    off += 2; // u16 field, ignored by driver\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off);\n    if (count \u003e 0x3F) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i)\n    {\n        if (off + 2 \u003e len) return;\n        uint16_t sl = rd16be(body, off);\n        if (off + sl \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, sl));\n        off += sl;\n    }\n    applyLpc(\"cmd_ma_oper\", {make_int(cl.clientNo), make_int((int)cookie), command, maAccount, arr});\n}",
+        "kcmdEntry":  "{ 0x40F6, ATTRIB_INTERNAL_COMM, \"cmd_ma_oper\", 0 }",
+        "status":  "ok",
+        "note":  "2 unread bytes between target string and u16 count (driver skips them; target itself not passed to LPC)"
+    },
+    {
+        "cmdNo":  4256,
+        "fun":  "vm_cmdCcsShutdownBySpa",
+        "type":  2,
+        "addr":  "0x8068b64",
+        "lpcFun":  "cmd_ccs_shutdown_by_spa",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len interval string",
+                           "u16 BE int"
+                       ],
+        "handlerName":  "handle_vm_cmdCcsShutdownBySpa",
+        "handlerCode":  "void handle_vm_cmdCcsShutdownBySpa(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto interval = make_string(body + off, n1); off += n1;\n    if (off + 2 \u003e len) return;\n    uint16_t v10 = rd16be(body, off);\n    applyLpc(\"cmd_ccs_shutdown_by_spa\", {make_int(cl.clientNo), interval, make_int(v10)});\n}",
+        "kcmdEntry":  "{ 0x10A0, ATTRIB_INTERNAL_COMM, \"cmd_ccs_shutdown_by_spa\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16632,
+        "fun":  "vm_cmdMaSet",
+        "type":  2,
+        "addr":  "0x806b620",
+        "lpcFun":  "cmd_ma_set",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u32 BE cookie",
+                           "u8len command string",
+                           "u8len maAccount string",
+                           "u8len target string (parsed, not passed to LPC)",
+                           "u16 unread bytes (driver skips)",
+                           "u16 BE count",
+                           "count x (u16 BE len + string) -\u003e array of strings"
+                       ],
+        "handlerName":  "handle_vm_cmdMaSet",
+        "handlerCode":  "void handle_vm_cmdMaSet(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t cookie = rd32be(body, off);\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto command = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    auto maAccount = make_string(body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off);\n    if (off + n3 \u003e len) return;\n    off += n3; // target string, parsed but not passed to LPC\n    if (off + 2 \u003e len) return;\n    off += 2; // u16 field, ignored by driver\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off);\n    if (count \u003e 0x3F) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i)\n    {\n        if (off + 2 \u003e len) return;\n        uint16_t sl = rd16be(body, off);\n        if (off + sl \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, sl));\n        off += sl;\n    }\n    applyLpc(\"cmd_ma_set\", {make_int(cl.clientNo), make_int((int)cookie), command, maAccount, arr});\n}",
+        "kcmdEntry":  "{ 0x40F8, ATTRIB_INTERNAL_COMM, \"cmd_ma_set\", 0 }",
+        "status":  "ok",
+        "note":  "2 unread bytes between target string and u16 count (driver skips them; target itself not passed to LPC)"
+    },
+    {
+        "cmdNo":  1540,
+        "fun":  "vm_msgSpaBusy",
+        "type":  2,
+        "addr":  "0x8068c50",
+        "lpcFun":  "msg_spa_busy",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32 BE int",
+                           "u32 BE int",
+                           "u32 BE int"
+                       ],
+        "handlerName":  "handle_vm_msgSpaBusy",
+        "handlerCode":  "void handle_vm_msgSpaBusy(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v1 = rd32be(body, off);\n    if (off + 4 \u003e len) return;\n    uint32_t v2 = rd32be(body, off);\n    if (off + 4 \u003e len) return;\n    uint32_t v3 = rd32be(body, off);\n    applyLpc(\"msg_spa_busy\", {make_int(cl.clientNo), make_int((int)v1), make_int((int)v2), make_int((int)v3)});\n}",
+        "kcmdEntry":  "{ 0x604, ATTRIB_INTERNAL_COMM, \"msg_spa_busy\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64791,
+        "fun":  "vm_msgCcsRebootResult",
+        "type":  2,
+        "addr":  "0x8068c10",
+        "lpcFun":  "msg_ccs_reboot_result",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 int"
+                       ],
+        "handlerName":  "handle_vm_msgCcsRebootResult",
+        "handlerCode":  "void handle_vm_msgCcsRebootResult(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t result = rd8(body, off);\n    applyLpc(\"msg_ccs_reboot_result\", {make_int(cl.clientNo), make_int(result)});\n}",
+        "kcmdEntry":  "{ 0xFD17, ATTRIB_INTERNAL_COMM, \"msg_ccs_reboot_result\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  7171,
+        "fun":  "vm_cmdGetServerTime",
+        "type":  2,
+        "addr":  "0x8064f08",
+        "lpcFun":  "cmd_get_server_time",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len name string"
+                       ],
+        "handlerName":  "handle_vm_cmdGetServerTime",
+        "handlerCode":  "void handle_vm_cmdGetServerTime(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto name = make_string(body + off, n1); off += n1;\n    applyLpc(\"cmd_get_server_time\", {make_int(cl.clientNo), name});\n}",
+        "kcmdEntry":  "{ 0x1C03, ATTRIB_INTERNAL_COMM, \"cmd_get_server_time\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9091,
+        "fun":  "vm_msgCcsEmoteData",
+        "type":  2,
+        "addr":  "0x8064f8c",
+        "lpcFun":  "msg_ccs_emote_data",
+        "nArgs":  6,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len verb string",
+                           "u8len target string",
+                           "u16 BE channel int",
+                           "u8len peer string",
+                           "u16 unread bytes (driver skips)",
+                           "NUL-terminated C string (rest of body, read by LPC as raw pointer)"
+                       ],
+        "handlerName":  "handle_vm_msgCcsEmoteData",
+        "handlerCode":  "void handle_vm_msgCcsEmoteData(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto verb = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    auto target = make_string(body + off, n2); off += n2;\n    if (off + 2 \u003e len) return;\n    uint16_t channel = rd16be(body, off);\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off);\n    if (off + n3 \u003e len) return;\n    auto peer = make_string(body + off, n3); off += n3;\n    if (off + 2 \u003e len) return;\n    off += 2; // u16 field, ignored by driver\n    size_t sl = 0;\n    while (off + sl \u003c len \u0026\u0026 body[off + sl] != 0) ++sl;\n    auto tail = make_string(body + off, sl);\n    applyLpc(\"msg_ccs_emote_data\", {make_int(cl.clientNo), verb, target, make_int(channel), peer, tail});\n}",
+        "kcmdEntry":  "{ 0x2383, ATTRIB_INTERNAL_COMM, \"msg_ccs_emote_data\", 0 }",
+        "status":  "ok",
+        "note":  "final 6th LPC arg is a NUL-terminated C string in body (driver passes raw body pointer); 2 unread bytes before it"
+    },
+    {
+        "cmdNo":  8519,
+        "fun":  "vm_msgCcsFingerRes",
+        "type":  2,
+        "addr":  "0x8065104",
+        "lpcFun":  "msg_ccs_finger_res",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len char_name string",
+                           "u16 BE int"
+                       ],
+        "handlerName":  "handle_vm_msgCcsFingerRes",
+        "handlerCode":  "void handle_vm_msgCcsFingerRes(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto char_name = make_string(body + off, n1); off += n1;\n    if (off + 2 \u003e len) return;\n    uint16_t v10 = rd16be(body, off);\n    applyLpc(\"msg_ccs_finger_res\", {make_int(cl.clientNo), char_name, make_int(v10)});\n}",
+        "kcmdEntry":  "{ 0x2147, ATTRIB_INTERNAL_COMM, \"msg_ccs_finger_res\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10245,
+        "fun":  "vm_msgCcsFriendTell",
+        "type":  2,
+        "addr":  "0x80651b0",
+        "lpcFun":  "msg_ccs_friend_tell",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len from string",
+                           "u8len to string",
+                           "u8len msg string",
+                           "u32 BE int"
+                       ],
+        "handlerName":  "handle_vm_msgCcsFriendTell",
+        "handlerCode":  "void handle_vm_msgCcsFriendTell(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    auto from = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    auto to = make_string(body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off);\n    if (off + n3 \u003e len) return;\n    auto msg = make_string(body + off, n3); off += n3;\n    if (off + 4 \u003e len) return;\n    uint32_t v19 = rd32be(body, off);\n    applyLpc(\"msg_ccs_friend_tell\", {make_int(cl.clientNo), from, to, msg, make_int((int)v19)});\n}",
+        "kcmdEntry":  "{ 0x2805, ATTRIB_INTERNAL_COMM, \"msg_ccs_friend_tell\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

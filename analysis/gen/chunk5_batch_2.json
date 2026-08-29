@@ -1,0 +1,248 @@
+﻿[
+    {
+        "cmdNo":  13177,
+        "fun":  "vm_msgLLockCard",
+        "type":  2,
+        "addr":  "0x8062188",
+        "lpcFun":  "msg_l_lock_card",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len cookie",
+                           "u8len number",
+                           "u16be",
+                           "u32be"
+                       ],
+        "handlerName":  "handle_vm_msgLLockCard",
+        "handlerCode":  "void handle_vm_msgLLockCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = body[off++];\n    if (off + cookieLen \u003e len) return;\n    const uint8_t* cookie = body + off; off += cookieLen;\n    if (off + 1 \u003e len) return;\n    uint8_t numberLen = body[off++];\n    if (off + numberLen \u003e len) return;\n    const uint8_t* number = body + off; off += numberLen;\n    if (off + 2 \u003e len) return;\n    uint16_t n1 = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t n2 = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_lock_card\", {make_int(cl.clientNo), make_string(cookie, cookieLen), make_string(number, numberLen), make_int(n1), make_int(n2)});\n}",
+        "kcmdEntry":  "{ 0x3379, ATTRIB_INTERNAL_COMM, \"msg_l_lock_card\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  25467,
+        "fun":  "vm_msgLManageVipSms",
+        "type":  2,
+        "addr":  "0x806229c",
+        "lpcFun":  "msg_l_manage_vip_sms",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len gid",
+                           "u16be oper",
+                           "u16be ret",
+                           "u8len para"
+                       ],
+        "handlerName":  "handle_vm_msgLManageVipSms",
+        "handlerCode":  "void handle_vm_msgLManageVipSms(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    const uint8_t* gid = body + off; off += gidLen;\n    if (off + 2 \u003e len) return;\n    uint16_t oper = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t ret = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = body[off++];\n    if (off + paraLen \u003e len) return;\n    const uint8_t* para = body + off; off += paraLen;\n    applyLpc(\"msg_l_manage_vip_sms\", {make_int(cl.clientNo), make_string(gid, gidLen), make_int(oper), make_int(ret), make_string(para, paraLen)});\n}",
+        "kcmdEntry":  "{ 0x637B, ATTRIB_INTERNAL_COMM, \"msg_l_manage_vip_sms\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  25479,
+        "fun":  "vm_msgLManageMpDevice",
+        "type":  2,
+        "addr":  "0x80623d8",
+        "lpcFun":  "msg_l_manage_mp_device",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8 oper",
+                           "u8 ret",
+                           "u8len para"
+                       ],
+        "handlerName":  "handle_vm_msgLManageMpDevice",
+        "handlerCode":  "void handle_vm_msgLManageMpDevice(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    const uint8_t* gid = body + off; off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t oper = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t ret = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = body[off++];\n    if (off + paraLen \u003e len) return;\n    const uint8_t* para = body + off; off += paraLen;\n    applyLpc(\"msg_l_manage_mp_device\", {make_int(cl.clientNo), make_string(gid, gidLen), make_int(oper), make_int(ret), make_string(para, paraLen)});\n}",
+        "kcmdEntry":  "{ 0x6387, ATTRIB_INTERNAL_COMM, \"msg_l_manage_mp_device\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  25463,
+        "fun":  "vm_msgLPrecostCoin",
+        "type":  2,
+        "addr":  "0x80624fc",
+        "lpcFun":  "msg_l_precost_coin",
+        "nArgs":  10,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88,
+                        357,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8len account",
+                           "u8len aaa_cookie",
+                           "u16be result",
+                           "u8len gs_para1",
+                           "u16be gs_para2_len",
+                           "u8len pwd",
+                           "u32be",
+                           "u32be"
+                       ],
+        "handlerName":  "handle_vm_msgLPrecostCoin",
+        "handlerCode":  "void handle_vm_msgLPrecostCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    const uint8_t* gid = body + off; off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    const uint8_t* account = body + off; off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = body[off++];\n    if (off + cookieLen \u003e len) return;\n    const uint8_t* cookie = body + off; off += cookieLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t p1Len = body[off++];\n    if (off + p1Len \u003e len) return;\n    const uint8_t* gs_para1 = body + off; off += p1Len;\n    if (off + 2 \u003e len) return;\n    uint16_t p2Len = rd16be(body, off); off += 2;\n    if (off + p2Len \u003e len) return;\n    const uint8_t* gs_para2 = body + off; off += p2Len;\n    if (off + 1 \u003e len) return;\n    uint8_t pwdLen = body[off++];\n    if (off + pwdLen \u003e len) return;\n    const uint8_t* pwd = body + off; off += pwdLen;\n    if (off + 4 \u003e len) return;\n    uint32_t n1 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t n2 = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_precost_coin\", {make_int(cl.clientNo), make_string(gid, gidLen), make_string(account, accountLen), make_string(cookie, cookieLen), make_int(result), make_string(gs_para1, p1Len), make_string(gs_para2, p2Len), make_string(pwd, pwdLen), make_int(n1), make_int(n2)});\n}",
+        "kcmdEntry":  "{ 0x6377, ATTRIB_INTERNAL_COMM, \"msg_l_precost_coin\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9099,
+        "fun":  "vm_msgLQueryAccountState",
+        "type":  2,
+        "addr":  "0x80627c4",
+        "lpcFun":  "msg_l_query_account_state",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len ret"
+                       ],
+        "handlerName":  "handle_vm_msgLQueryAccountState",
+        "handlerCode":  "void handle_vm_msgLQueryAccountState(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    const uint8_t* account = body + off; off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t retLen = body[off++];\n    if (off + retLen \u003e len) return;\n    const uint8_t* ret = body + off; off += retLen;\n    applyLpc(\"msg_l_query_account_state\", {make_int(cl.clientNo), make_string(account, accountLen), make_string(ret, retLen)});\n}",
+        "kcmdEntry":  "{ 0x238B, ATTRIB_INTERNAL_COMM, \"msg_l_query_account_state\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  21375,
+        "fun":  "vm_msgLQueryCard",
+        "type":  2,
+        "addr":  "0x8062898",
+        "lpcFun":  "msg_l_query_card",
+        "nArgs":  6,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len cookie",
+                           "u16be",
+                           "u32be",
+                           "u16be",
+                           "u16be"
+                       ],
+        "handlerName":  "handle_vm_msgLQueryCard",
+        "handlerCode":  "void handle_vm_msgLQueryCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = body[off++];\n    if (off + cookieLen \u003e len) return;\n    const uint8_t* cookie = body + off; off += cookieLen;\n    if (off + 2 \u003e len) return;\n    uint16_t n1 = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t n2 = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t n3 = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t n4 = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_query_card\", {make_int(cl.clientNo), make_string(cookie, cookieLen), make_int(n1), make_int(n2), make_int(n3), make_int(n4)});\n}",
+        "kcmdEntry":  "{ 0x537F, ATTRIB_INTERNAL_COMM, \"msg_l_query_card\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  25459,
+        "fun":  "vm_msgLQueryCoin",
+        "type":  2,
+        "addr":  "0x806299c",
+        "lpcFun":  "msg_l_query_coin",
+        "nArgs":  9,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357,
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8len account",
+                           "u8len gs_para1",
+                           "u8len gs_para2",
+                           "u16be have_coin_pwd",
+                           "u32be",
+                           "u32be",
+                           "u16len string"
+                       ],
+        "handlerName":  "handle_vm_msgLQueryCoin",
+        "handlerCode":  "void handle_vm_msgLQueryCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    const uint8_t* gid = body + off; off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    const uint8_t* account = body + off; off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t p1Len = body[off++];\n    if (off + p1Len \u003e len) return;\n    const uint8_t* gs_para1 = body + off; off += p1Len;\n    if (off + 1 \u003e len) return;\n    uint8_t p2Len = body[off++];\n    if (off + p2Len \u003e len) return;\n    const uint8_t* gs_para2 = body + off; off += p2Len;\n    if (off + 2 \u003e len) return;\n    uint16_t have_coin_pwd = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t n1 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t n2 = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t lastLen = rd16be(body, off); off += 2;\n    if (off + lastLen \u003e len) return;\n    const uint8_t* last = body + off; off += lastLen;\n    applyLpc(\"msg_l_query_coin\", {make_int(cl.clientNo), make_string(gid, gidLen), make_string(account, accountLen), make_string(gs_para1, p1Len), make_string(gs_para2, p2Len), make_int(have_coin_pwd), make_int(n1), make_int(n2), make_string(last, lastLen)});\n}",
+        "kcmdEntry":  "{ 0x6373, ATTRIB_INTERNAL_COMM, \"msg_l_query_coin\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  17281,
+        "fun":  "vm_msgLQueryFillInfo",
+        "type":  2,
+        "addr":  "0x8062bcc",
+        "lpcFun":  "msg_l_query_fill_info",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len gid",
+                           "u16be result",
+                           "u8len type"
+                       ],
+        "handlerName":  "handle_vm_msgLQueryFillInfo",
+        "handlerCode":  "void handle_vm_msgLQueryFillInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    const uint8_t* account = body + off; off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    const uint8_t* gid = body + off; off += gidLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t typeLen = body[off++];\n    if (off + typeLen \u003e len) return;\n    const uint8_t* type = body + off; off += typeLen;\n    applyLpc(\"msg_l_query_fill_info\", {make_int(cl.clientNo), make_string(account, accountLen), make_string(gid, gidLen), make_int(result), make_string(type, typeLen)});\n}",
+        "kcmdEntry":  "{ 0x4381, ATTRIB_INTERNAL_COMM, \"msg_l_query_fill_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9103,
+        "fun":  "vm_msgLQueryAddiction",
+        "type":  2,
+        "addr":  "0x8062d24",
+        "lpcFun":  "msg_l_query_addiction",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len result_text"
+                       ],
+        "handlerName":  "handle_vm_msgLQueryAddiction",
+        "handlerCode":  "void handle_vm_msgLQueryAddiction(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    const uint8_t* account = body + off; off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t retLen = body[off++];\n    if (off + retLen \u003e len) return;\n    const uint8_t* result_text = body + off; off += retLen;\n    applyLpc(\"msg_l_query_addiction\", {make_int(cl.clientNo), make_string(account, accountLen), make_string(result_text, retLen)});\n}",
+        "kcmdEntry":  "{ 0x238F, ATTRIB_INTERNAL_COMM, \"msg_l_query_addiction\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

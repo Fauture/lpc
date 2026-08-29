@@ -1,0 +1,217 @@
+﻿[
+    {
+        "cmdNo":  11834,
+        "fun":  "vm_cmdInviteChatGroupMember",
+        "type":  1,
+        "addr":  "0x8071d0c",
+        "lpcFun":  "cmd_invite_chat_group_member",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8len: group",
+                           "string u8len: name"
+                       ],
+        "handlerName":  "handle_vm_cmdInviteChatGroupMember",
+        "handlerCode":  "void handle_vm_cmdInviteChatGroupMember(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t off = 0;\n    uint8_t glen = body[off++];\n    if (off + glen \u003e len) return;\n    std::string group((const char*)body + off, glen);\n    off += glen;\n    if (off \u003e= len) return;\n    uint8_t nlen = body[off++];\n    if (off + nlen \u003e len) return;\n    std::string name((const char*)body + off, nlen);\n    applyLpc(\"cmd_invite_chat_group_member\", {make_int(cl.clientNo), make_string(group), make_string(name)});\n}",
+        "kcmdEntry":  "{ 0x2E3A, ATTRIB_CLIENT_USER, \"cmd_invite_chat_group_member\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8808,
+        "fun":  "vm_cmdJoinChatGroup",
+        "type":  1,
+        "addr":  "0x8071eb4",
+        "lpcFun":  "cmd_join_chat_group",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8len: group"
+                       ],
+        "handlerName":  "handle_vm_cmdJoinChatGroup",
+        "handlerCode":  "void handle_vm_cmdJoinChatGroup(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t off = 0;\n    uint8_t glen = body[off++];\n    if (off + glen \u003e len) return;\n    std::string group((const char*)body + off, glen);\n    applyLpc(\"cmd_join_chat_group\", {make_int(cl.clientNo), make_string(group)});\n}",
+        "kcmdEntry":  "{ 0x2268, ATTRIB_CLIENT_USER, \"cmd_join_chat_group\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  6894,
+        "fun":  "vm_cmdJoinSystemGroup",
+        "type":  1,
+        "addr":  "0x8073da0",
+        "lpcFun":  "cmd_join_system_group",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdJoinSystemGroup",
+        "handlerCode":  "void handle_vm_cmdJoinSystemGroup(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_join_system_group\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x1AEE, ATTRIB_CLIENT_USER, \"cmd_join_system_group\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  14082,
+        "fun":  "vm_cmdKickout",
+        "type":  1,
+        "addr":  "0x8054a68",
+        "lpcFun":  "cmd_kickout",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32: id",
+                           "string u8len: name",
+                           "int u8: trailing byte"
+                       ],
+        "handlerName":  "handle_vm_cmdKickout",
+        "handlerCode":  "void handle_vm_cmdKickout(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    size_t off = 0;\n    int id = rd32be(body, off);\n    off += 4;\n    if (off \u003e= len) return;\n    uint8_t nlen = body[off++];\n    if (off + nlen \u003e len) return;\n    std::string name((const char*)body + off, nlen);\n    off += nlen;\n    if (off \u003e= len) return;\n    int extra = body[off];\n    applyLpc(\"cmd_kickout\", {make_int(cl.clientNo), make_int(id), make_string(name), make_int(extra)});\n}",
+        "kcmdEntry":  "{ 0x3702, ATTRIB_CLIENT_USER, \"cmd_kickout\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64834,
+        "fun":  "vm_cmdKill",
+        "type":  1,
+        "addr":  "0x8054b38",
+        "lpcFun":  "cmd_kill",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32: id",
+                           "int u16: val"
+                       ],
+        "handlerName":  "handle_vm_cmdKill",
+        "handlerCode":  "void handle_vm_cmdKill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    size_t off = 0;\n    int id = rd32be(body, off);\n    off += 4;\n    int val = rd16be(body, off);\n    applyLpc(\"cmd_kill\", {make_int(cl.clientNo), make_int(id), make_int(val)});\n}",
+        "kcmdEntry":  "{ 0xFD42, ATTRIB_CLIENT_USER, \"cmd_kill\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4397,
+        "fun":  "vm_cmdKillEx",
+        "type":  1,
+        "addr":  "0x805de74",
+        "lpcFun":  "cmd_kill_ex",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8len: name"
+                       ],
+        "handlerName":  "handle_vm_cmdKillEx",
+        "handlerCode":  "void handle_vm_cmdKillEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t off = 0;\n    uint8_t nlen = body[off++];\n    if (off + nlen \u003e len) return;\n    std::string name((const char*)body + off, nlen);\n    applyLpc(\"cmd_kill_ex\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "kcmdEntry":  "{ 0x112D, ATTRIB_CLIENT_USER, \"cmd_kill_ex\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8224,
+        "fun":  "vm_cmdLaunchConvenant",
+        "type":  1,
+        "addr":  "0x8070304",
+        "lpcFun":  "cmd_launch_convenant",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8len: pgid",
+                           "string u8len: ti_desc"
+                       ],
+        "handlerName":  "handle_vm_cmdLaunchConvenant",
+        "handlerCode":  "void handle_vm_cmdLaunchConvenant(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t off = 0;\n    uint8_t glen = body[off++];\n    if (off + glen \u003e len) return;\n    std::string pgid((const char*)body + off, glen);\n    off += glen;\n    if (off \u003e= len) return;\n    uint8_t tlen = body[off++];\n    if (off + tlen \u003e len) return;\n    std::string ti_desc((const char*)body + off, tlen);\n    applyLpc(\"cmd_launch_convenant\", {make_int(cl.clientNo), make_string(pgid), make_string(ti_desc)});\n}",
+        "kcmdEntry":  "{ 0x2020, ATTRIB_CLIENT_USER, \"cmd_launch_convenant\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  25476,
+        "fun":  "vm_cmdLcDoAction",
+        "type":  1,
+        "addr":  "0x8077dd8",
+        "lpcFun":  "cmd_lc_do_action",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32: action"
+                       ],
+        "handlerName":  "handle_vm_cmdLcDoAction",
+        "handlerCode":  "void handle_vm_cmdLcDoAction(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    int action = rd32be(body, 0);\n    applyLpc(\"cmd_lc_do_action\", {make_int(cl.clientNo), make_int(action)});\n}",
+        "kcmdEntry":  "{ 0x6384, ATTRIB_CLIENT_USER, \"cmd_lc_do_action\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8144,
+        "fun":  "vm_cmdLearnCooking",
+        "type":  1,
+        "addr":  "0x8054b9c",
+        "lpcFun":  "cmd_learn_cooking",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "int u8: taskType",
+                           "string u8len: dish"
+                       ],
+        "handlerName":  "handle_vm_cmdLearnCooking",
+        "handlerCode":  "void handle_vm_cmdLearnCooking(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    size_t off = 0;\n    int taskType = body[off++];\n    uint8_t dlen = body[off++];\n    if (off + dlen \u003e len) return;\n    std::string dish((const char*)body + off, dlen);\n    applyLpc(\"cmd_learn_cooking\", {make_int(cl.clientNo), make_int(taskType), make_string(dish)});\n}",
+        "kcmdEntry":  "{ 0x1FD0, ATTRIB_CLIENT_USER, \"cmd_learn_cooking\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8546,
+        "fun":  "vm_cmdLearnSkill",
+        "type":  1,
+        "addr":  "0x8054c3c",
+        "lpcFun":  "cmd_learn_skill",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32: masterId",
+                           "int u32: studentId",
+                           "int u16: skillId"
+                       ],
+        "handlerName":  "handle_vm_cmdLearnSkill",
+        "handlerCode":  "void handle_vm_cmdLearnSkill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 10) return;\n    int masterId = rd32be(body, 0);\n    int studentId = rd32be(body, 4);\n    int skillId = rd16be(body, 8);\n    applyLpc(\"cmd_learn_skill\", {make_int(cl.clientNo), make_int(masterId), make_int(studentId), make_int(skillId)});\n}",
+        "kcmdEntry":  "{ 0x2162, ATTRIB_CLIENT_USER, \"cmd_learn_skill\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

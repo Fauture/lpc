@@ -1,0 +1,229 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdTradeBuyService",
+        "handlerName":  "handle_vm_cmdTradeBuyService",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a48c",
+        "handlerCode":  "void handle_vm_cmdTradeBuyService(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t s1_len = body[0];\n    if (1 + s1_len \u003e len) return;\n    applyLpc(\"cmd_trade_buy_service\", {make_int(cl.clientNo), make_string(body + 1, s1_len)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4440,
+        "lpcFun":  "cmd_trade_buy_service",
+        "bodyFields":  [
+                           "u8len string coin_type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1158, ATTRIB_CLIENT_USER, \"cmd_trade_buy_service\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTradeCancelSale",
+        "handlerName":  "handle_vm_cmdTradeCancelSale",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059dd4",
+        "handlerCode":  "void handle_vm_cmdTradeCancelSale(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t s1_len = body[0];\n    if (1 + s1_len \u003e len) return;\n    const uint8_t* s1 = body + 1;\n    size_t off = 1 + s1_len;\n    if (off + 1 \u003e len) return;\n    uint8_t i1 = body[off];\n    applyLpc(\"cmd_trade_cancel_sale\", {make_int(cl.clientNo), make_string(s1, s1_len), make_int(i1)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  16386,
+        "lpcFun":  "cmd_trade_cancel_sale",
+        "bodyFields":  [
+                           "u8len string char_gid",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4002, ATTRIB_CLIENT_USER, \"cmd_trade_cancel_sale\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdTradeChangePrice",
+        "handlerName":  "handle_vm_cmdTradeChangePrice",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059e70",
+        "handlerCode":  "void handle_vm_cmdTradeChangePrice(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    uint32_t price = rd32be(body, 0);\n    uint32_t upset_price = rd32be(body, 4);\n    size_t off = 8;\n    if (off \u003e= len) return;\n    uint8_t s1_len = body[off++];\n    if (off + s1_len \u003e len) return;\n    const uint8_t* s1 = body + off;\n    applyLpc(\"cmd_trade_change_price\", {make_int(cl.clientNo), make_int(price), make_int(upset_price), make_string(s1, s1_len)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  10258,
+        "lpcFun":  "cmd_trade_change_price",
+        "bodyFields":  [
+                           "u32 BE price",
+                           "u32 BE upset_price",
+                           "u8len string goods_id"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2812, ATTRIB_CLIENT_USER, \"cmd_trade_change_price\", 0 }"
+    },
+    {
+        "nArgs":  9,
+        "fun":  "vm_cmdTradeContinueSale",
+        "handlerName":  "handle_vm_cmdTradeContinueSale",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059f58",
+        "handlerCode":  "void handle_vm_cmdTradeContinueSale(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    uint8_t type = body[0];\n    uint16_t count = rd16be(body, 1);\n    uint32_t price = rd32be(body, 3);\n    uint8_t day = body[7];\n    size_t off = 8;\n    if (off \u003e= len) return;\n    uint8_t s1_len = body[off++];\n    if (off + s1_len \u003e len) return;\n    const uint8_t* s1 = body + off;\n    off += s1_len;\n    if (off \u003e= len) return;\n    uint8_t s2_len = body[off++];\n    if (off + s2_len \u003e len) return;\n    const uint8_t* s2 = body + off;\n    off += s2_len;\n    if (off \u003e= len) return;\n    uint8_t i1 = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t i2 = rd32be(body, off);\n    applyLpc(\"cmd_trade_continue_sale\", {make_int(cl.clientNo), make_int(type), make_int(count), make_int(price), make_int(day), make_string(s1, s1_len), make_string(s2, s2_len), make_int(i1), make_int(i2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9252,
+        "lpcFun":  "cmd_trade_continue_sale",
+        "bodyFields":  [
+                           "u8 type",
+                           "u16 BE count",
+                           "u32 BE price",
+                           "u8 day",
+                           "u8len string goods_id",
+                           "u8len string appointer",
+                           "u8 int v15",
+                           "u32 BE v18"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2424, ATTRIB_CLIENT_USER, \"cmd_trade_continue_sale\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdTradeFavorite",
+        "handlerName":  "handle_vm_cmdTradeFavorite",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a124",
+        "handlerCode":  "void handle_vm_cmdTradeFavorite(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t mode = body[0];\n    size_t off = 1;\n    if (off \u003e= len) return;\n    uint8_t s1_len = body[off++];\n    if (off + s1_len \u003e len) return;\n    const uint8_t* s1 = body + off;\n    off += s1_len;\n    if (off + 4 \u003e len) return;\n    uint16_t i1 = rd16be(body, off);\n    uint16_t i2 = rd16be(body, off + 2);\n    applyLpc(\"cmd_trade_favorite\", {make_int(cl.clientNo), make_int(mode), make_string(s1, s1_len), make_int(i1), make_int(i2)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  16664,
+        "lpcFun":  "cmd_trade_favorite",
+        "bodyFields":  [
+                           "u8 mode",
+                           "u8len string goods_id",
+                           "u16 BE int v12",
+                           "u16 BE int v14"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4118, ATTRIB_CLIENT_USER, \"cmd_trade_favorite\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdTradeGetData",
+        "handlerName":  "handle_vm_cmdTradeGetData",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a20c",
+        "handlerCode":  "void handle_vm_cmdTradeGetData(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    uint8_t t = body[0];\n    uint16_t v5 = rd16be(body, 1);\n    uint32_t v7 = rd32be(body, 3);\n    applyLpc(\"cmd_trade_get_data\", {make_int(cl.clientNo), make_int(t), make_int(v5), make_int(v7)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  14090,
+        "lpcFun":  "cmd_trade_get_data",
+        "bodyFields":  [
+                           "u8 t (*a2)",
+                           "u16 BE v5",
+                           "u32 BE v7"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x370A, ATTRIB_CLIENT_USER, \"cmd_trade_get_data\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTradeGetObj",
+        "handlerName":  "handle_vm_cmdTradeGetObj",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a284",
+        "handlerCode":  "void handle_vm_cmdTradeGetObj(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t mode = body[0];\n    size_t off = 1;\n    if (off \u003e= len) return;\n    uint8_t s1_len = body[off++];\n    if (off + s1_len \u003e len) return;\n    const uint8_t* s1 = body + off;\n    applyLpc(\"cmd_trade_get_obj\", {make_int(cl.clientNo), make_int(mode), make_string(s1, s1_len)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4234,
+        "lpcFun":  "cmd_trade_get_obj",
+        "bodyFields":  [
+                           "u8 mode",
+                           "u8len string goods_id"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x108A, ATTRIB_CLIENT_USER, \"cmd_trade_get_obj\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTradeGetObjProp",
+        "handlerName":  "handle_vm_cmdTradeGetObjProp",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a324",
+        "handlerCode":  "void handle_vm_cmdTradeGetObjProp(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t s1_len = body[0];\n    if (1 + s1_len \u003e len) return;\n    const uint8_t* s1 = body + 1;\n    size_t off = 1 + s1_len;\n    if (off + 1 \u003e len) return;\n    uint8_t i1 = body[off];\n    applyLpc(\"cmd_trade_get_obj_prop\", {make_int(cl.clientNo), make_string(s1, s1_len), make_int(i1)});\n}",
+        "typeSeq":  [
+                        357,
+                        88
+                    ],
+        "cmdNo":  2564,
+        "lpcFun":  "cmd_trade_get_obj_prop",
+        "bodyFields":  [
+                           "u8len string goods_id",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x0A04, ATTRIB_CLIENT_USER, \"cmd_trade_get_obj_prop\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdTradeGetRecord",
+        "handlerName":  "handle_vm_cmdTradeGetRecord",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a3c0",
+        "handlerCode":  "void handle_vm_cmdTradeGetRecord(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_trade_get_record\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8436,
+        "lpcFun":  "cmd_trade_get_record",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields; only clientNo passed",
+        "kcmdEntry":  "{ 0x20F4, ATTRIB_CLIENT_USER, \"cmd_trade_get_record\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdTradeIntroduce",
+        "handlerName":  "handle_vm_cmdTradeIntroduce",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a510",
+        "handlerCode":  "void handle_vm_cmdTradeIntroduce(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_trade_introduce\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  10994,
+        "lpcFun":  "cmd_trade_introduce",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields; only clientNo passed",
+        "kcmdEntry":  "{ 0x2AF2, ATTRIB_CLIENT_USER, \"cmd_trade_introduce\", 0 }"
+    }
+]

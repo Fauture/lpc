@@ -1,0 +1,198 @@
+[
+  {
+    "cmdNo": 15888,
+    "fun": "vm_cmdCCDoAction",
+    "type": 1,
+    "addr": "0x8075d9c",
+    "lpcFun": "cmd_cc_do_action",
+    "nArgs": 6,
+    "typeSeq": [88, 88, 88, 88, 88, 357],
+    "bodyFields": [
+      "int u32 BE action",
+      "int u32 BE attacker",
+      "int u32 BE victim",
+      "int u32 BE para",
+      "string u8len para2"
+    ],
+    "handlerName": "handle_vm_cmdCCDoAction",
+    "handlerCode": "void handle_vm_cmdCCDoAction(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 16) return;\n    uint32_t action = rd32be(body);\n    uint32_t attacker = rd32be(body + 4);\n    uint32_t victim = rd32be(body + 8);\n    uint32_t para = rd32be(body + 12);\n    size_t off = 16;\n    if (off >= len) return;\n    uint8_t slen = body[off++];\n    if (off + slen > len) return;\n    std::string para2((const char*)body + off, slen);\n    applyLpc(\"cmd_cc_do_action\", {make_int(cl.clientNo), make_int(action), make_int(attacker), make_int(victim), make_int(para), make_string(para2)});\n}",
+    "kcmdEntry": "{ 0x3E10, ATTRIB_CLIENT_USER, \"cmd_cc_do_action\", 0 }",
+    "status": "ok",
+    "note": ""
+  },
+  {
+    "cmdNo": 8768,
+    "fun": "vm_cmdCCFinishRound",
+    "type": 1,
+    "addr": "0x8075d6c",
+    "lpcFun": "cmd_cc_finish_round",
+    "nArgs": 1,
+    "typeSeq": [88],
+    "bodyFields": [],
+    "handlerName": "handle_vm_cmdCCFinishRound",
+    "handlerCode": "void handle_vm_cmdCCFinishRound(GameClient& cl, const uint8_t* body, size_t len) {\n    (void)body; (void)len;\n    applyLpc(\"cmd_cc_finish_round\", {make_int(cl.clientNo)});\n}",
+    "kcmdEntry": "{ 0x2240, ATTRIB_CLIENT_USER, \"cmd_cc_finish_round\", 0 }",
+    "status": "ok",
+    "note": ""
+  },
+  {
+    "cmdNo": 61638,
+    "fun": "vm_cmdCCSurrender",
+    "type": 1,
+    "addr": "0x80762a8",
+    "lpcFun": "cmd_cc_surrender",
+    "nArgs": 1,
+    "typeSeq": [88],
+    "bodyFields": [],
+    "handlerName": "handle_vm_cmdCCSurrender",
+    "handlerCode": "void handle_vm_cmdCCSurrender(GameClient& cl, const uint8_t* body, size_t len) {\n    (void)body; (void)len;\n    applyLpc(\"cmd_cc_surrender\", {make_int(cl.clientNo)});\n}",
+    "kcmdEntry": "{ 0xF0C6, ATTRIB_CLIENT_USER, \"cmd_cc_surrender\", 0 }",
+    "status": "ok",
+    "note": ""
+  },
+  {
+    "cmdNo": 52994,
+    "fun": "vm_cmdCCSwitchCard",
+    "type": 1,
+    "addr": "0x8075ef4",
+    "lpcFun": "cmd_cc_switch_card",
+    "nArgs": 2,
+    "typeSeq": [88, 936],
+    "bodyFields": [
+      "array u16 BE count of int u16 BE cards (count capped at 63)"
+    ],
+    "handlerName": "handle_vm_cmdCCSwitchCard",
+    "handlerCode": "void handle_vm_cmdCCSwitchCard(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 2) return;\n    uint16_t cnt = rd16be(body);\n    if (cnt > 63 || (size_t)2 + (size_t)cnt * 2 > len) return;\n    auto arr = std::make_shared<ArrayValue>();\n    for (uint16_t i = 0; i < cnt; ++i)\n        arr->items.push_back(make_int(rd16be(body + 2 + i * 2)));\n    applyLpc(\"cmd_cc_switch_card\", {make_int(cl.clientNo), arr});\n}",
+    "kcmdEntry": "{ 0xCF02, ATTRIB_CLIENT_USER, \"cmd_cc_switch_card\", 0 }",
+    "status": "ok",
+    "note": ""
+  },
+  {
+    "cmdNo": 8570,
+    "fun": "vm_cmdCDoAction0",
+    "type": 1,
+    "addr": "0x8051834",
+    "lpcFun": "cmd_c_do_action",
+    "nArgs": 10,
+    "typeSeq": [88, 88, 88, 88, 88, 88, 357, 357, 357, 357],
+    "bodyFields": [
+      "int u32 BE id",
+      "int u32 BE victimId",
+      "int u32 BE action",
+      "int u32 BE para",
+      "string u8len para1",
+      "string u8len para2",
+      "string u8len para3",
+      "string u8len custom_msg"
+    ],
+    "handlerName": "handle_vm_cmdCDoAction0",
+    "handlerCode": "void handle_vm_cmdCDoAction0(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 16) return;\n    uint32_t id = rd32be(body);\n    uint32_t victimId = rd32be(body + 4);\n    uint32_t action = rd32be(body + 8);\n    uint32_t para = rd32be(body + 12);\n    size_t off = 16;\n    std::string para1, para2, para3, custom_msg;\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para1.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para2.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para3.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        custom_msg.assign((const char*)body + off, slen);\n    }\n    applyLpc(\"cmd_c_do_action\", {make_int(0), make_int(cl.clientNo), make_int(id), make_int(victimId), make_int(action), make_int(para), make_string(para1), make_string(para2), make_string(para3), make_string(custom_msg)});\n}",
+    "kcmdEntry": "{ 0x217A, ATTRIB_CLIENT_USER, \"cmd_c_do_action\", 0 }",
+    "status": "ok",
+    "note": "LPC arg order is (cmdGroup, clientNo, id, victimId, action, para, para1, para2, para3, custom_msg): cmdGroup=0 is the first LPC arg (thunk tail-calls vm_cmdCDoAction with eax=clientNo, edx=body, stack=(mlen, cmdGroup)); handler hardcodes cmdGroup=0 before make_int(cl.clientNo)."
+  },
+  {
+    "cmdNo": 4408,
+    "fun": "vm_cmdCDoAction1",
+    "type": 1,
+    "addr": "0x8051850",
+    "lpcFun": "cmd_c_do_action",
+    "nArgs": 10,
+    "typeSeq": [88, 88, 88, 88, 88, 88, 357, 357, 357, 357],
+    "bodyFields": [
+      "int u32 BE id",
+      "int u32 BE victimId",
+      "int u32 BE action",
+      "int u32 BE para",
+      "string u8len para1",
+      "string u8len para2",
+      "string u8len para3",
+      "string u8len custom_msg"
+    ],
+    "handlerName": "handle_vm_cmdCDoAction1",
+    "handlerCode": "void handle_vm_cmdCDoAction1(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 16) return;\n    uint32_t id = rd32be(body);\n    uint32_t victimId = rd32be(body + 4);\n    uint32_t action = rd32be(body + 8);\n    uint32_t para = rd32be(body + 12);\n    size_t off = 16;\n    std::string para1, para2, para3, custom_msg;\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para1.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para2.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para3.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        custom_msg.assign((const char*)body + off, slen);\n    }\n    applyLpc(\"cmd_c_do_action\", {make_int(1), make_int(cl.clientNo), make_int(id), make_int(victimId), make_int(action), make_int(para), make_string(para1), make_string(para2), make_string(para3), make_string(custom_msg)});\n}",
+    "kcmdEntry": "{ 0x1138, ATTRIB_CLIENT_USER, \"cmd_c_do_action\", 0 }",
+    "status": "ok",
+    "note": "LPC arg order is (cmdGroup, clientNo, id, victimId, action, para, para1, para2, para3, custom_msg): cmdGroup=1 is the first LPC arg; handler hardcodes cmdGroup=1 before make_int(cl.clientNo)."
+  },
+  {
+    "cmdNo": 4356,
+    "fun": "vm_cmdCDoAction2",
+    "type": 1,
+    "addr": "0x805186c",
+    "lpcFun": "cmd_c_do_action",
+    "nArgs": 10,
+    "typeSeq": [88, 88, 88, 88, 88, 88, 357, 357, 357, 357],
+    "bodyFields": [
+      "int u32 BE id",
+      "int u32 BE victimId",
+      "int u32 BE action",
+      "int u32 BE para",
+      "string u8len para1",
+      "string u8len para2",
+      "string u8len para3",
+      "string u8len custom_msg"
+    ],
+    "handlerName": "handle_vm_cmdCDoAction2",
+    "handlerCode": "void handle_vm_cmdCDoAction2(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 16) return;\n    uint32_t id = rd32be(body);\n    uint32_t victimId = rd32be(body + 4);\n    uint32_t action = rd32be(body + 8);\n    uint32_t para = rd32be(body + 12);\n    size_t off = 16;\n    std::string para1, para2, para3, custom_msg;\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para1.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para2.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        para3.assign((const char*)body + off, slen);\n        off += slen;\n    }\n    if (off >= len) return;\n    {\n        uint8_t slen = body[off++];\n        if (off + slen > len) return;\n        custom_msg.assign((const char*)body + off, slen);\n    }\n    applyLpc(\"cmd_c_do_action\", {make_int(2), make_int(cl.clientNo), make_int(id), make_int(victimId), make_int(action), make_int(para), make_string(para1), make_string(para2), make_string(para3), make_string(custom_msg)});\n}",
+    "kcmdEntry": "{ 0x1104, ATTRIB_CLIENT_USER, \"cmd_c_do_action\", 0 }",
+    "status": "ok",
+    "note": "LPC arg order is (cmdGroup, clientNo, id, victimId, action, para, para1, para2, para3, custom_msg): cmdGroup=2 is the first LPC arg; handler hardcodes cmdGroup=2 before make_int(cl.clientNo)."
+  },
+  {
+    "cmdNo": 8340,
+    "fun": "vm_cmdCdWishingGoods",
+    "type": 1,
+    "addr": "0x8051ce4",
+    "lpcFun": "cmd_cd_wishing_goods",
+    "nArgs": 3,
+    "typeSeq": [88, 88, 357],
+    "bodyFields": [
+      "int u8 type",
+      "string u8len goods_name"
+    ],
+    "handlerName": "handle_vm_cmdCdWishingGoods",
+    "handlerCode": "void handle_vm_cmdCdWishingGoods(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 1) return;\n    uint32_t type = body[0];\n    size_t off = 1;\n    if (off >= len) return;\n    uint8_t slen = body[off++];\n    if (off + slen > len) return;\n    std::string goods_name((const char*)body + off, slen);\n    applyLpc(\"cmd_cd_wishing_goods\", {make_int(cl.clientNo), make_int(type), make_string(goods_name)});\n}",
+    "kcmdEntry": "{ 0x2094, ATTRIB_CLIENT_USER, \"cmd_cd_wishing_goods\", 0 }",
+    "status": "ok",
+    "note": ""
+  },
+  {
+    "cmdNo": 28842,
+    "fun": "vm_cmdCdWishingRate",
+    "type": 1,
+    "addr": "0x8051d84",
+    "lpcFun": "cmd_cd_wishing_rate",
+    "nArgs": 4,
+    "typeSeq": [88, 88, 357, 88],
+    "bodyFields": [
+      "int u8 type",
+      "string u8len goods_name",
+      "int u16 BE rate"
+    ],
+    "handlerName": "handle_vm_cmdCdWishingRate",
+    "handlerCode": "void handle_vm_cmdCdWishingRate(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 1) return;\n    uint32_t type = body[0];\n    size_t off = 1;\n    if (off >= len) return;\n    uint8_t slen = body[off++];\n    if (off + slen > len) return;\n    std::string goods_name((const char*)body + off, slen);\n    off += slen;\n    if (off + 2 > len) return;\n    uint32_t rate = rd16be(body + off);\n    applyLpc(\"cmd_cd_wishing_rate\", {make_int(cl.clientNo), make_int(type), make_string(goods_name), make_int(rate)});\n}",
+    "kcmdEntry": "{ 0x70AA, ATTRIB_CLIENT_USER, \"cmd_cd_wishing_rate\", 0 }",
+    "status": "ok",
+    "note": ""
+  },
+  {
+    "cmdNo": 20742,
+    "fun": "vm_cmdCdWishingStart",
+    "type": 1,
+    "addr": "0x8051e58",
+    "lpcFun": "cmd_cd_wishing_start",
+    "nArgs": 4,
+    "typeSeq": [88, 88, 357, 88],
+    "bodyFields": [
+      "int u8 type",
+      "string u8len goods_name",
+      "int u16 BE rate"
+    ],
+    "handlerName": "handle_vm_cmdCdWishingStart",
+    "handlerCode": "void handle_vm_cmdCdWishingStart(GameClient& cl, const uint8_t* body, size_t len) {\n    if (len < 1) return;\n    uint32_t type = body[0];\n    size_t off = 1;\n    if (off >= len) return;\n    uint8_t slen = body[off++];\n    if (off + slen > len) return;\n    std::string goods_name((const char*)body + off, slen);\n    off += slen;\n    if (off + 2 > len) return;\n    uint32_t rate = rd16be(body + off);\n    applyLpc(\"cmd_cd_wishing_start\", {make_int(cl.clientNo), make_int(type), make_string(goods_name), make_int(rate)});\n}",
+    "kcmdEntry": "{ 0x5106, ATTRIB_CLIENT_USER, \"cmd_cd_wishing_start\", 0 }",
+    "status": "ok",
+    "note": ""
+  }
+]

@@ -1,0 +1,212 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdDraftVote",
+        "handlerName":  "handle_vm_cmdDraftVote",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070bd8",
+        "handlerCode":  "void handle_vm_cmdDraftVote(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    int stage = 0;\n    int page = 0;\n    std::string account;\n    if (len \u003e= 1) stage = body[0];\n    if (len \u003e= 3) page = rd16be(body, 1);\n    if (len \u003c 4) return;\n    uint8_t slen = body[3];\n    if (4 + slen \u003e len) return;\n    account.assign((const char*)body + 4, slen);\n    applyLpc(\"cmd_draft_vote\", {make_int(cl.clientNo), make_int(stage), make_int(page), make_string(account)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  28700,
+        "lpcFun":  "cmd_draft_vote",
+        "bodyFields":  [
+                           "stage:u8",
+                           "page:u16be",
+                           "account:u8len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x701C, ATTRIB_CLIENT_USER, \"cmd_draft_vote\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdDrawCardRankBonus",
+        "handlerName":  "handle_vm_cmdDrawCardRankBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8076bb8",
+        "handlerCode":  "void handle_vm_cmdDrawCardRankBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t v = rd32be(body);\n    applyLpc(\"cmd_draw_card_rank_bonus\", {make_int(cl.clientNo), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8772,
+        "lpcFun":  "cmd_draw_card_rank_bonus",
+        "bodyFields":  [
+                           "val:u32be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2244, ATTRIB_CLIENT_USER, \"cmd_draw_card_rank_bonus\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdDrop",
+        "handlerName":  "handle_vm_cmdDrop",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80530d0",
+        "handlerCode":  "void handle_vm_cmdDrop(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint8_t v1 = body[0];\n    uint32_t v2 = rd32be(body, 1);\n    applyLpc(\"cmd_drop\", {make_int(cl.clientNo), make_int(v1), make_int(v2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8758,
+        "lpcFun":  "cmd_drop",
+        "bodyFields":  [
+                           "v1:u8",
+                           "v2:u32be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2236, ATTRIB_CLIENT_USER, \"cmd_drop\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdDropChild",
+        "handlerName":  "handle_vm_cmdDropChild",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806ccf8",
+        "handlerCode":  "void handle_vm_cmdDropChild(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t v = rd32be(body);\n    applyLpc(\"cmd_drop_child\", {make_int(cl.clientNo), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  16390,
+        "lpcFun":  "cmd_drop_child",
+        "bodyFields":  [
+                           "val:u32be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4006, ATTRIB_CLIENT_USER, \"cmd_drop_child\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdDropPet",
+        "handlerName":  "handle_vm_cmdDropPet",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053128",
+        "handlerCode":  "void handle_vm_cmdDropPet(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t v = rd32be(body);\n    applyLpc(\"cmd_drop_pet\", {make_int(cl.clientNo), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  13056,
+        "lpcFun":  "cmd_drop_pet",
+        "bodyFields":  [
+                           "val:u32be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3300, ATTRIB_CLIENT_USER, \"cmd_drop_pet\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdDropRandomBoxAward",
+        "handlerName":  "handle_vm_cmdDropRandomBoxAward",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80777d8",
+        "handlerCode":  "void handle_vm_cmdDropRandomBoxAward(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_drop_random_box_award\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  64820,
+        "lpcFun":  "cmd_drop_random_box_award",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD34, ATTRIB_CLIENT_USER, \"cmd_drop_random_box_award\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdDropTask",
+        "handlerName":  "handle_vm_cmdDropTask",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806e0e4",
+        "handlerCode":  "void handle_vm_cmdDropTask(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string name((const char*)body + 1, slen);\n    applyLpc(\"cmd_drop_task\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  16504,
+        "lpcFun":  "cmd_drop_task",
+        "bodyFields":  [
+                           "name:u8len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4078, ATTRIB_CLIENT_USER, \"cmd_drop_task\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdDungeonViewTasks",
+        "handlerName":  "handle_vm_cmdDungeonViewTasks",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d568",
+        "handlerCode":  "void handle_vm_cmdDungeonViewTasks(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_dungeon_view_tasks\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8483,
+        "lpcFun":  "cmd_dungeon_view_tasks",
+        "bodyFields":  [
+                           "val:u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2123, ATTRIB_CLIENT_USER, \"cmd_dungeon_view_tasks\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdEmote",
+        "handlerName":  "handle_vm_cmdEmote",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80532d8",
+        "handlerCode":  "void handle_vm_cmdEmote(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    std::string verb, target, peer;\n    auto readStr = [\u0026](std::string\u0026 s) -\u003e bool {\n        if (off \u003e= len) return false;\n        uint8_t slen = body[off++];\n        if (off + slen \u003e len) return false;\n        s.assign((const char*)body + off, slen);\n        off += slen;\n        return true;\n    };\n    if (!readStr(verb) || !readStr(target)) return;\n    int channel = 0;\n    if (off + 2 \u003c= len) { channel = rd16be(body, off); off += 2; }\n    if (!readStr(peer)) return;\n    applyLpc(\"cmd_emote\", {make_int(cl.clientNo), make_string(verb), make_string(target), make_int(channel), make_string(peer)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  7176,
+        "lpcFun":  "cmd_emote",
+        "bodyFields":  [
+                           "verb:u8len-string",
+                           "target:u8len-string",
+                           "channel:u16be",
+                           "peer:u8len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1C08, ATTRIB_CLIENT_USER, \"cmd_emote\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdEndChallenge",
+        "handlerName":  "handle_vm_cmdEndChallenge",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d22c",
+        "handlerCode":  "void handle_vm_cmdEndChallenge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_end_challenge\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  52996,
+        "lpcFun":  "cmd_end_challenge",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xCF04, ATTRIB_CLIENT_USER, \"cmd_end_challenge\", 0 }"
+    }
+]

@@ -1,0 +1,249 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRevokeConvenant",
+        "handlerName":  "handle_vm_cmdRevokeConvenant",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070578",
+        "handlerCode":  "void handle_vm_cmdRevokeConvenant(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_revoke_convenant\", { make_int(cl.clientNo), make_string(body + off, n) });\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64876,
+        "lpcFun":  "cmd_revoke_convenant",
+        "bodyFields":  [
+                           "u8 len pgid",
+                           "bytes pgid"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD6C, ATTRIB_CLIENT_USER, \"cmd_revoke_convenant\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRewriteChildBook",
+        "handlerName":  "handle_vm_cmdRewriteChildBook",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8071810",
+        "handlerCode":  "void handle_vm_cmdRewriteChildBook(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    applyLpc(\"cmd_rewrite_child_book\", { make_int(cl.clientNo), make_int(rd32be(body, 0)) });\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8372,
+        "lpcFun":  "cmd_rewrite_child_book",
+        "bodyFields":  [
+                           "u32be bookId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20B4, ATTRIB_CLIENT_USER, \"cmd_rewrite_child_book\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSearchChatGroup",
+        "handlerName":  "handle_vm_cmdSearchChatGroup",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8071fbc",
+        "handlerCode":  "void handle_vm_cmdSearchChatGroup(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_search_chat_group\", { make_int(cl.clientNo), make_string(body + off, n) });\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4210,
+        "lpcFun":  "cmd_search_chat_group",
+        "bodyFields":  [
+                           "u8 len group",
+                           "bytes group"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1072, ATTRIB_CLIENT_USER, \"cmd_search_chat_group\", 0 }"
+    },
+    {
+        "nArgs":  10,
+        "fun":  "vm_cmdSearchStallGoods",
+        "handlerName":  "handle_vm_cmdSearchStallGoods",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057b70",
+        "handlerCode":  "void handle_vm_cmdSearchStallGoods(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t type = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen); off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t levelLen = body[off++];\n    if (off + levelLen \u003e len) return;\n    auto level = make_string(body + off, levelLen); off += levelLen;\n    if (off + 1 \u003e len) return;\n    uint8_t qualityLen = body[off++];\n    if (off + qualityLen \u003e len) return;\n    auto quality = make_string(body + off, qualityLen); off += qualityLen;\n    if (off + 1 \u003e len) return;\n    uint8_t subType = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t cookie = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t id = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t point = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t shopLen = body[off++];\n    if (off + shopLen \u003e len) return;\n    auto shopType = make_string(body + off, shopLen); off += shopLen;\n    applyLpc(\"cmd_search_stall_goods\", { make_int(cl.clientNo), make_int(type), name, level, quality, make_int(subType), make_int(cookie), make_int(id), make_int(point), shopType });\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  64824,
+        "lpcFun":  "cmd_search_stall_goods",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 len name",
+                           "bytes name",
+                           "u8 len level",
+                           "bytes level",
+                           "u8 len quality",
+                           "bytes quality",
+                           "u8 subType",
+                           "u32be cookie",
+                           "u32be id",
+                           "u32be point",
+                           "u8 len shop_type",
+                           "bytes shop_type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD38, ATTRIB_CLIENT_USER, \"cmd_search_stall_goods\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdSelectCurrentChild",
+        "handlerName":  "handle_vm_cmdSelectCurrentChild",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806cc94",
+        "handlerCode":  "void handle_vm_cmdSelectCurrentChild(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    applyLpc(\"cmd_select_current_child\", { make_int(cl.clientNo), make_int(rd32be(body, 0)), make_int(rd16be(body, 4)) });\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4178,
+        "lpcFun":  "cmd_select_current_child",
+        "bodyFields":  [
+                           "u32be childId",
+                           "u16be idx"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1052, ATTRIB_CLIENT_USER, \"cmd_select_current_child\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSelectCurrentMount",
+        "handlerName":  "handle_vm_cmdSelectCurrentMount",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057e30",
+        "handlerCode":  "void handle_vm_cmdSelectCurrentMount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    applyLpc(\"cmd_select_current_mount\", { make_int(cl.clientNo), make_int(rd32be(body, 0)) });\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  86,
+        "lpcFun":  "cmd_select_current_mount",
+        "bodyFields":  [
+                           "u32be mountId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x56, ATTRIB_CLIENT_USER, \"cmd_select_current_mount\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdSelectCurrentPet",
+        "handlerName":  "handle_vm_cmdSelectCurrentPet",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057dcc",
+        "handlerCode":  "void handle_vm_cmdSelectCurrentPet(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    applyLpc(\"cmd_select_current_pet\", { make_int(cl.clientNo), make_int(rd32be(body, 0)), make_int(rd16be(body, 4)) });\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8298,
+        "lpcFun":  "cmd_select_current_pet",
+        "bodyFields":  [
+                           "u32be petId",
+                           "u16be idx"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x206A, ATTRIB_CLIENT_USER, \"cmd_select_current_pet\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdSelectMenuItem0",
+        "handlerName":  "handle_vm_cmdSelectMenuItem0",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057fe0",
+        "handlerCode":  "void handle_vm_cmdSelectMenuItem0(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t id = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t itemLen = body[off++];\n    if (off + itemLen \u003e len) return;\n    auto menuItem = make_string(body + off, itemLen); off += itemLen;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = body[off++];\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen); off += paraLen;\n    applyLpc(\"cmd_select_menu_item\", { make_int(0), make_int(cl.clientNo), make_int(id), menuItem, para });\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  4162,
+        "lpcFun":  "cmd_select_menu_item",
+        "bodyFields":  [
+                           "u32be id",
+                           "u8 len menuItem",
+                           "bytes menuItem",
+                           "u8 len para",
+                           "bytes para"
+                       ],
+        "note":  "cmdGroup=0 hardcoded first LPC arg",
+        "kcmdEntry":  "{ 0x1042, ATTRIB_CLIENT_USER, \"cmd_select_menu_item\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdSelectMenuItem1",
+        "handlerName":  "handle_vm_cmdSelectMenuItem1",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057ffc",
+        "handlerCode":  "void handle_vm_cmdSelectMenuItem1(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t id = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t itemLen = body[off++];\n    if (off + itemLen \u003e len) return;\n    auto menuItem = make_string(body + off, itemLen); off += itemLen;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = body[off++];\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen); off += paraLen;\n    applyLpc(\"cmd_select_menu_item\", { make_int(1), make_int(cl.clientNo), make_int(id), menuItem, para });\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  12490,
+        "lpcFun":  "cmd_select_menu_item",
+        "bodyFields":  [
+                           "u32be id",
+                           "u8 len menuItem",
+                           "bytes menuItem",
+                           "u8 len para",
+                           "bytes para"
+                       ],
+        "note":  "cmdGroup=1 hardcoded first LPC arg",
+        "kcmdEntry":  "{ 0x30CA, ATTRIB_CLIENT_USER, \"cmd_select_menu_item\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdSelectMenuItem2",
+        "handlerName":  "handle_vm_cmdSelectMenuItem2",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058018",
+        "handlerCode":  "void handle_vm_cmdSelectMenuItem2(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t id = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t itemLen = body[off++];\n    if (off + itemLen \u003e len) return;\n    auto menuItem = make_string(body + off, itemLen); off += itemLen;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = body[off++];\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen); off += paraLen;\n    applyLpc(\"cmd_select_menu_item\", { make_int(2), make_int(cl.clientNo), make_int(id), menuItem, para });\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8542,
+        "lpcFun":  "cmd_select_menu_item",
+        "bodyFields":  [
+                           "u32be id",
+                           "u8 len menuItem",
+                           "bytes menuItem",
+                           "u8 len para",
+                           "bytes para"
+                       ],
+        "note":  "cmdGroup=2 hardcoded first LPC arg",
+        "kcmdEntry":  "{ 0x215E, ATTRIB_CLIENT_USER, \"cmd_select_menu_item\", 0 }"
+    }
+]

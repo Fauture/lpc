@@ -1,0 +1,254 @@
+﻿[
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgInternalAuth",
+        "handlerName":  "handle_vm_msgInternalAuth",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8061550",
+        "handlerCode":  "void handle_vm_msgInternalAuth(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    uint16_t replyServerType = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string replyServerName((const char*)body + off, n); off += n;\n    uint16_t v12 = rd16be(body, off); off += 2;\n    uint32_t v14 = rd32be(body, off); off += 4;\n    applyLpc(\"msg_internal_auth\", {make_int(cl.clientNo), make_int(replyServerType), make_string(replyServerName.data(), replyServerName.size()), make_int(v12), make_int(v14)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  14850,
+        "lpcFun":  "msg_internal_auth",
+        "bodyFields":  [
+                           "u16be replyServerType",
+                           "u8len replyServerName",
+                           "u16be v12",
+                           "u32be v14"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3A02, ATTRIB_INTERNAL_COMM, \"msg_internal_auth\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLAddFillInfo",
+        "handlerName":  "handle_vm_msgLAddFillInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8061648",
+        "handlerCode":  "void handle_vm_msgLAddFillInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string account((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string gid((const char*)body + off, n2); off += n2;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string type((const char*)body + off, n3); off += n3;\n    applyLpc(\"msg_l_add_fill_info\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_string(gid.data(), gid.size()), make_int(result), make_string(type.data(), type.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  17285,
+        "lpcFun":  "msg_l_add_fill_info",
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len gid",
+                           "u16be result",
+                           "u8len type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4385, ATTRIB_INTERNAL_COMM, \"msg_l_add_fill_info\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLBuyCard",
+        "handlerName":  "handle_vm_msgLBuyCard",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80617a0",
+        "handlerCode":  "void handle_vm_msgLBuyCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string cookie((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string number((const char*)body + off, n2); off += n2;\n    uint32_t v17 = rd32be(body, off); off += 4;\n    uint16_t v18 = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_buy_card\", {make_int(cl.clientNo), make_string(cookie.data(), cookie.size()), make_string(number.data(), number.size()), make_int(v17), make_int(v18)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9085,
+        "lpcFun":  "msg_l_buy_card",
+        "bodyFields":  [
+                           "u8len cookie",
+                           "u8len number",
+                           "u32be v17",
+                           "u16be v18"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x237D, ATTRIB_INTERNAL_COMM, \"msg_l_buy_card\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_msgLChargeResult",
+        "handlerName":  "handle_vm_msgLChargeResult",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80618b4",
+        "handlerCode":  "void handle_vm_msgLChargeResult(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string account((const char*)body + off, n); off += n;\n    uint32_t v13 = rd32be(body, off); off += 4;\n    uint32_t v18 = rd32be(body, off); off += 4;\n    uint16_t v21 = rd16be(body, off); off += 2;\n    uint16_t v22 = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_charge_result\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_int(v13), make_int(v18), make_int(v21), make_int(v22)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  21345,
+        "lpcFun":  "msg_l_charge_result",
+        "bodyFields":  [
+                           "u8len account",
+                           "u32be v13",
+                           "u32be v18",
+                           "u16be v21",
+                           "u16be v22"
+                       ],
+        "note":  "pProgram==v21 (u16) also passed as 5th LPC arg",
+        "kcmdEntry":  "{ 0x5361, ATTRIB_INTERNAL_COMM, \"msg_l_charge_result\", 0 }"
+    },
+    {
+        "nArgs":  7,
+        "fun":  "vm_msgLCostCoin",
+        "handlerName":  "handle_vm_msgLCostCoin",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80619b0",
+        "handlerCode":  "void handle_vm_msgLCostCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string gid((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string account((const char*)body + off, n2); off += n2;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string gs_para1((const char*)body + off, n3); off += n3;\n    if (off + 1 \u003e len) return;\n    uint8_t n4 = body[off++];\n    if (off + n4 \u003e len) return;\n    std::string gs_para2((const char*)body + off, n4); off += n4;\n    uint16_t n5 = rd16be(body, off); off += 2;\n    if (off + n5 \u003e len) return;\n    std::string gs_para3((const char*)body + off, n5); off += n5;\n    applyLpc(\"msg_l_cost_coin\", {make_int(cl.clientNo), make_string(gid.data(), gid.size()), make_string(account.data(), account.size()), make_int(result), make_string(gs_para1.data(), gs_para1.size()), make_string(gs_para2.data(), gs_para2.size()), make_string(gs_para3.data(), gs_para3.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  25461,
+        "lpcFun":  "msg_l_cost_coin",
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8len account",
+                           "u16be result",
+                           "u8len gs_para1",
+                           "u8len gs_para2",
+                           "u16be len+bytes gs_para3"
+                       ],
+        "note":  "last string has u16be length prefix",
+        "kcmdEntry":  "{ 0x6375, ATTRIB_INTERNAL_COMM, \"msg_l_cost_coin\", 0 }"
+    },
+    {
+        "nArgs":  12,
+        "fun":  "vm_msgLAddCoin",
+        "handlerName":  "handle_vm_msgLAddCoin",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8061b90",
+        "handlerCode":  "void handle_vm_msgLAddCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string gid((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string account((const char*)body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string aaa_cookie((const char*)body + off, n3); off += n3;\n    if (off + 1 \u003e len) return;\n    uint8_t n4 = body[off++];\n    if (off + n4 \u003e len) return;\n    std::string gs_para1((const char*)body + off, n4); off += n4;\n    if (off + 1 \u003e len) return;\n    uint8_t n5 = body[off++];\n    if (off + n5 \u003e len) return;\n    std::string gs_para2((const char*)body + off, n5); off += n5;\n    uint16_t result = rd16be(body, off); off += 2;\n    uint32_t v32 = rd32be(body, off); off += 4;\n    uint32_t v36 = rd32be(body, off); off += 4;\n    uint32_t v40 = rd32be(body, off); off += 4;\n    uint32_t v44 = rd32be(body, off); off += 4;\n    uint32_t v46 = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_add_coin\", {make_int(cl.clientNo), make_string(gid.data(), gid.size()), make_string(account.data(), account.size()), make_string(aaa_cookie.data(), aaa_cookie.size()), make_string(gs_para1.data(), gs_para1.size()), make_string(gs_para2.data(), gs_para2.size()), make_int(result), make_int(v32), make_int(v36), make_int(v40), make_int(v44), make_int(v46)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  25465,
+        "lpcFun":  "msg_l_add_coin",
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8len account",
+                           "u8len aaa_cookie",
+                           "u8len gs_para1",
+                           "u8len gs_para2",
+                           "u16be result",
+                           "u32be v1",
+                           "u32be v2",
+                           "u32be v3",
+                           "u32be v4",
+                           "u32be v5"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x6379, ATTRIB_INTERNAL_COMM, \"msg_l_add_coin\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_msgLCostFillInfo",
+        "handlerName":  "handle_vm_msgLCostFillInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8061e0c",
+        "handlerCode":  "void handle_vm_msgLCostFillInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string account((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string gid((const char*)body + off, n2); off += n2;\n    uint16_t times = rd16be(body, off); off += 2;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string type((const char*)body + off, n3); off += n3;\n    applyLpc(\"msg_l_cost_fill_info\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_string(gid.data(), gid.size()), make_int(times), make_int(result), make_string(type.data(), type.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  21379,
+        "lpcFun":  "msg_l_cost_fill_info",
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len gid",
+                           "u16be times",
+                           "u16be result",
+                           "u8len type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5383, ATTRIB_INTERNAL_COMM, \"msg_l_cost_fill_info\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgLEnableAutoLock",
+        "handlerName":  "handle_vm_msgLEnableAutoLock",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8061f9c",
+        "handlerCode":  "void handle_vm_msgLEnableAutoLock(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string account((const char*)body + off, n); off += n;\n    uint16_t v12 = rd16be(body, off); off += 2;\n    uint16_t v13 = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_enable_auto_lock\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_int(v12), make_int(v13)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  13197,
+        "lpcFun":  "msg_l_enable_auto_lock",
+        "bodyFields":  [
+                           "u8len account",
+                           "u16be v12",
+                           "u16be v13"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x338D, ATTRIB_INTERNAL_COMM, \"msg_l_enable_auto_lock\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgLLockAccount",
+        "handlerName":  "handle_vm_msgLLockAccount",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8062064",
+        "handlerCode":  "void handle_vm_msgLLockAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    uint32_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    std::string account((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    std::string ret((const char*)body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    std::string msg((const char*)body + off, n3); off += n3;\n    applyLpc(\"msg_l_lock_account\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_string(ret.data(), ret.size()), make_string(msg.data(), msg.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  13193,
+        "lpcFun":  "msg_l_lock_account",
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len ret",
+                           "u8len msg"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3389, ATTRIB_INTERNAL_COMM, \"msg_l_lock_account\", 0 }"
+    }
+]

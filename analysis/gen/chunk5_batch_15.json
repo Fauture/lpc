@@ -1,0 +1,48 @@
+﻿[
+    {
+        "cmdNo":  20648,
+        "fun":  "vm_cmdActivityOper",
+        "type":  2,
+        "addr":  "0x807729c",
+        "lpcFun":  "cmd_activity_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "command: u8 len + bytes",
+                           "count: u16 BE",
+                           "args[count]: array of string16 (u16 BE len + bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdActivityOper",
+        "handlerCode":  "void handle_vm_cmdActivityOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"cmd_activity_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x50A8, ATTRIB_INTERNAL_COMM, \"cmd_activity_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64055,
+        "fun":  "vm_msgActivityOper",
+        "type":  2,
+        "addr":  "0x80774ac",
+        "lpcFun":  "msg_activity_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "command: u8 len + bytes",
+                           "count: u16 BE",
+                           "args[count]: array of string16 (u16 BE len + bytes)"
+                       ],
+        "handlerName":  "handle_vm_msgActivityOper",
+        "handlerCode":  "void handle_vm_msgActivityOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"msg_activity_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0xFA37, ATTRIB_INTERNAL_COMM, \"msg_activity_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

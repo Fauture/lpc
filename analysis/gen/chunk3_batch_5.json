@@ -1,0 +1,219 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRaidLeaveRaid",
+        "handlerName":  "handle_vm_cmdRaidLeaveRaid",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d4b4",
+        "handlerCode":  "void handle_vm_cmdRaidLeaveRaid(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_raid_leave_raid\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4935,
+        "lpcFun":  "cmd_raid_leave_raid",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1347, ATTRIB_CLIENT_USER, \"cmd_raid_leave_raid\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRandomUserName",
+        "handlerName":  "handle_vm_cmdRandomUserName",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80734a4",
+        "handlerCode":  "void handle_vm_cmdRandomUserName(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_build_random_user_name\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  13202,
+        "lpcFun":  "cmd_build_random_user_name",
+        "bodyFields":  [
+                           "u8 val"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3392, ATTRIB_CLIENT_USER, \"cmd_build_random_user_name\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdReceiveAskTaoShowGift",
+        "handlerName":  "handle_vm_cmdReceiveAskTaoShowGift",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ff04",
+        "handlerCode":  "void handle_vm_cmdReceiveAskTaoShowGift(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t idLen = body[1];\n    if (2 + idLen \u003e len) return;\n    applyLpc(\"cmd_receive_asktao_show_gift\", {make_int(cl.clientNo), make_int(type), make_string(body + 2, idLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8598,
+        "lpcFun":  "cmd_receive_asktao_show_gift",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 len",
+                           "len bytes id"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2196, ATTRIB_CLIENT_USER, \"cmd_receive_asktao_show_gift\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdRecharge",
+        "handlerName":  "handle_vm_cmdRecharge",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ea24",
+        "handlerCode":  "void handle_vm_cmdRecharge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t noLen = body[off++];\n    if (off + noLen \u003e len) return;\n    const uint8_t* ecardNo = body + off; off += noLen;\n    if (off + 1 \u003e len) return;\n    uint8_t pwdLen = body[off++];\n    if (off + pwdLen \u003e len) return;\n    const uint8_t* ecardPwd = body + off; off += pwdLen;\n    if (off + 1 \u003e len) return;\n    uint8_t v15 = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t v20 = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t v17 = body[off];\n    applyLpc(\"cmd_recharge\", {make_int(cl.clientNo), make_string(ecardNo, noLen), make_string(ecardPwd, pwdLen), make_int(v15), make_int((int)v20), make_int(v17)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4700,
+        "lpcFun":  "cmd_recharge",
+        "bodyFields":  [
+                           "u8 len ecard_no",
+                           "ecard_no bytes",
+                           "u8 len ecard_pwd",
+                           "ecard_pwd bytes",
+                           "u8 v15",
+                           "u32 BE v20",
+                           "u8 v17"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x125C, ATTRIB_CLIENT_USER, \"cmd_recharge\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdReciveInstructionTask",
+        "handlerName":  "handle_vm_cmdReciveInstructionTask",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806e168",
+        "handlerCode":  "void handle_vm_cmdReciveInstructionTask(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nameLen = body[0];\n    if (1 + nameLen \u003e len) return;\n    applyLpc(\"cmd_recive_instruction_task\", {make_int(cl.clientNo), make_string(body + 1, nameLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  28,
+        "lpcFun":  "cmd_recive_instruction_task",
+        "bodyFields":  [
+                           "u8 len",
+                           "len bytes name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1C, ATTRIB_CLIENT_USER, \"cmd_recive_instruction_task\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRecoverAskTaoShow",
+        "handlerName":  "handle_vm_cmdRecoverAskTaoShow",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805fc44",
+        "handlerCode":  "void handle_vm_cmdRecoverAskTaoShow(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_recover_asktao_show\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4962,
+        "lpcFun":  "cmd_recover_asktao_show",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1362, ATTRIB_CLIENT_USER, \"cmd_recover_asktao_show\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRecoverChildBook",
+        "handlerName":  "handle_vm_cmdRecoverChildBook",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80717c0",
+        "handlerCode":  "void handle_vm_cmdRecoverChildBook(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    applyLpc(\"cmd_recover_child_book\", {make_int(cl.clientNo), make_int((int)rd32be(body, 0))});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8850,
+        "lpcFun":  "cmd_recover_child_book",
+        "bodyFields":  [
+                           "u32 BE bookId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2292, ATTRIB_CLIENT_USER, \"cmd_recover_child_book\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRecoverMagicPennant",
+        "handlerName":  "handle_vm_cmdRecoverMagicPennant",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070548",
+        "handlerCode":  "void handle_vm_cmdRecoverMagicPennant(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_recover_magic_pennant\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  14340,
+        "lpcFun":  "cmd_recover_magic_pennant",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3804, ATTRIB_CLIENT_USER, \"cmd_recover_magic_pennant\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRefresh",
+        "handlerName":  "handle_vm_cmdRefresh",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057158",
+        "handlerCode":  "void handle_vm_cmdRefresh(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_refresh\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8740,
+        "lpcFun":  "cmd_refresh",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2224, ATTRIB_CLIENT_USER, \"cmd_refresh\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdRefreshFriend",
+        "handlerName":  "handle_vm_cmdRefreshFriend",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80571d8",
+        "handlerCode":  "void handle_vm_cmdRefreshFriend(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gLen = body[off++];\n    if (off + gLen \u003e len) return;\n    const uint8_t* group = body + off; off += gLen;\n    if (off + 1 \u003e len) return;\n    uint8_t nLen = body[off++];\n    if (off + nLen \u003e len) return;\n    const uint8_t* name = body + off; off += nLen;\n    std::string gid;\n    if (off \u003c len)\n    {\n        uint8_t idLen = body[off++];\n        if (off + idLen \u003e len) return;\n        gid.assign((const char*)body + off, idLen);\n    }\n    applyLpc(\"cmd_refresh_friend\", {make_int(cl.clientNo), make_string(group, gLen), make_string(name, nLen), make_string(gid)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  4422,
+        "lpcFun":  "cmd_refresh_friend",
+        "bodyFields":  [
+                           "u8 len group",
+                           "group bytes",
+                           "u8 len name",
+                           "name bytes",
+                           "optional u8 len gid",
+                           "gid bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1146, ATTRIB_CLIENT_USER, \"cmd_refresh_friend\", 0 }"
+    }
+]

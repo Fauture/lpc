@@ -1,0 +1,223 @@
+﻿[
+    {
+        "cmdNo":  4228,
+        "fun":  "vm_cmdReportCheater",
+        "type":  1,
+        "addr":  "0x8077878",
+        "lpcFun":  "cmd_report_cheater",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 nameLen",
+                           "name[nameLen]",
+                           "u8 msgLen",
+                           "msg[msgLen]"
+                       ],
+        "handlerName":  "handle_vm_cmdReportCheater",
+        "handlerCode":  "void handle_vm_cmdReportCheater(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off;\n    off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t msgLen = body[off++];\n    if (off + msgLen \u003e len) return;\n    const uint8_t* msg = body + off;\n    off += msgLen;\n    applyLpc(\"cmd_report_cheater\", {make_int(cl.clientNo), make_string(name, nameLen), make_string(msg, msgLen)});\n}",
+        "kcmdEntry":  "{ 0x1084, ATTRIB_CLIENT_USER, \"cmd_report_cheater\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4636,
+        "fun":  "vm_cmdReportIllegal",
+        "type":  1,
+        "addr":  "0x805e2ac",
+        "lpcFun":  "cmd_report_illegal",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 nameLen",
+                           "name[nameLen]",
+                           "u8 msgLen",
+                           "msg[msgLen]",
+                           "u8 type"
+                       ],
+        "handlerName":  "handle_vm_cmdReportIllegal",
+        "handlerCode":  "void handle_vm_cmdReportIllegal(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off;\n    off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t msgLen = body[off++];\n    if (off + msgLen \u003e len) return;\n    const uint8_t* msg = body + off;\n    off += msgLen;\n    if (off + 1 \u003e len) return;\n    uint8_t type = body[off++];\n    applyLpc(\"cmd_report_illegal\", {make_int(cl.clientNo), make_string(name, nameLen), make_string(msg, msgLen), make_int(type)});\n}",
+        "kcmdEntry":  "{ 0x121C, ATTRIB_CLIENT_USER, \"cmd_report_illegal\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12496,
+        "fun":  "vm_cmdReportIllegalTool",
+        "type":  1,
+        "addr":  "0x805e39c",
+        "lpcFun":  "cmd_report_illegal_tool",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 nameLen",
+                           "name[nameLen]"
+                       ],
+        "handlerName":  "handle_vm_cmdReportIllegalTool",
+        "handlerCode":  "void handle_vm_cmdReportIllegalTool(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    applyLpc(\"cmd_report_illegal_tool\", {make_int(cl.clientNo), make_string(body + off, nameLen)});\n}",
+        "kcmdEntry":  "{ 0x30D0, ATTRIB_CLIENT_USER, \"cmd_report_illegal_tool\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4610,
+        "fun":  "vm_cmdRepurchase",
+        "type":  1,
+        "addr":  "0x805e6c4",
+        "lpcFun":  "cmd_repurchase",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 field",
+                           "u32be field"
+                       ],
+        "handlerName":  "handle_vm_cmdRepurchase",
+        "handlerCode":  "void handle_vm_cmdRepurchase(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint8_t b0 = body[0];\n    uint32_t v7 = rd32be(body, 1);\n    applyLpc(\"cmd_repurchase\", {make_int(cl.clientNo), make_int(b0), make_int(v7)});\n}",
+        "kcmdEntry":  "{ 0x1202, ATTRIB_CLIENT_USER, \"cmd_repurchase\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8600,
+        "fun":  "vm_cmdRequestAddStallPage",
+        "type":  1,
+        "addr":  "0x80604c4",
+        "lpcFun":  "cmd_request_add_stall_page",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRequestAddStallPage",
+        "handlerCode":  "void handle_vm_cmdRequestAddStallPage(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_add_stall_page\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x2198, ATTRIB_CLIENT_USER, \"cmd_request_add_stall_page\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9136,
+        "fun":  "vm_cmdRequestAskTaoShow",
+        "type":  1,
+        "addr":  "0x805fd0c",
+        "lpcFun":  "cmd_request_asktao_show",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 oppLen",
+                           "opponent[oppLen]",
+                           "u8 barLen",
+                           "barcode[barLen]",
+                           "u16be showType"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestAskTaoShow",
+        "handlerCode":  "void handle_vm_cmdRequestAskTaoShow(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t oppLen = body[off++];\n    if (off + oppLen \u003e len) return;\n    const uint8_t* opponent = body + off;\n    off += oppLen;\n    if (off + 1 \u003e len) return;\n    uint8_t barLen = body[off++];\n    if (off + barLen \u003e len) return;\n    const uint8_t* barcode = body + off;\n    off += barLen;\n    if (off + 2 \u003e len) return;\n    uint16_t showType = rd16be(body, off);\n    applyLpc(\"cmd_request_asktao_show\", {make_int(cl.clientNo), make_string(opponent, oppLen), make_string(barcode, barLen), make_int(showType)});\n}",
+        "kcmdEntry":  "{ 0x23B0, ATTRIB_CLIENT_USER, \"cmd_request_asktao_show\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16612,
+        "fun":  "vm_cmdRequestBuildDeck",
+        "type":  1,
+        "addr":  "0x8076088",
+        "lpcFun":  "cmd_request_build_deck",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u16be no",
+                           "u16be count",
+                           "count x (u8 clen, card[clen])"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestBuildDeck",
+        "handlerCode":  "void handle_vm_cmdRequestBuildDeck(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    size_t off = 0;\n    uint16_t no = rd16be(body, off);\n    uint16_t count = rd16be(body, off + 2);\n    off += 4;\n    if (count \u003e 63) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i)\n    {\n        if (off + 1 \u003e len) return;\n        uint8_t clen = body[off++];\n        if (off + clen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, clen));\n        off += clen;\n    }\n    applyLpc(\"cmd_request_build_deck\", {make_int(cl.clientNo), make_int(no), arr});\n}",
+        "kcmdEntry":  "{ 0x40E4, ATTRIB_CLIENT_USER, \"cmd_request_build_deck\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8404,
+        "fun":  "vm_cmdRequestBuyCardPackage",
+        "type":  1,
+        "addr":  "0x8076774",
+        "lpcFun":  "cmd_request_buy_card_package",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u16be field",
+                           "u32be field"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestBuyCardPackage",
+        "handlerCode":  "void handle_vm_cmdRequestBuyCardPackage(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint16_t v6 = rd16be(body, 0);\n    uint32_t v8 = rd32be(body, 2);\n    applyLpc(\"cmd_request_buy_card_package\", {make_int(cl.clientNo), make_int(v6), make_int(v8)});\n}",
+        "kcmdEntry":  "{ 0x20D4, ATTRIB_CLIENT_USER, \"cmd_request_buy_card_package\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13318,
+        "fun":  "vm_cmdRequestCancelMatchCardGame",
+        "type":  1,
+        "addr":  "0x8076570",
+        "lpcFun":  "cmd_request_cancel_match_card_game",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRequestCancelMatchCardGame",
+        "handlerCode":  "void handle_vm_cmdRequestCancelMatchCardGame(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_cancel_match_card_game\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x3406, ATTRIB_CLIENT_USER, \"cmd_request_cancel_match_card_game\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8550,
+        "fun":  "vm_cmdRequestCardActivityList",
+        "type":  1,
+        "addr":  "0x8076adc",
+        "lpcFun":  "cmd_request_card_activity_list",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRequestCardActivityList",
+        "handlerCode":  "void handle_vm_cmdRequestCardActivityList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_card_activity_list\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x2166, ATTRIB_CLIENT_USER, \"cmd_request_card_activity_list\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

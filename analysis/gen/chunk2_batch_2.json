@@ -1,0 +1,223 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdEndRaise",
+        "handlerName":  "handle_vm_cmdEndRaise",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d25c",
+        "handlerCode":  "void handle_vm_cmdEndRaise(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    int id = (int)rd32be(body, 0);\n    int type = body[4];\n    applyLpc(\"cmd_end_raise\", {make_int(cl.clientNo), make_int(id), make_int(type)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64938,
+        "lpcFun":  "cmd_end_raise",
+        "bodyFields":  [
+                           "int u32 id (rd32be)",
+                           "int u8 type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFDAA, ATTRIB_CLIENT_USER, \"cmd_end_raise\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdEndRecruitment",
+        "handlerName":  "handle_vm_cmdEndRecruitment",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053430",
+        "handlerCode":  "void handle_vm_cmdEndRecruitment(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string type((const char*)body + 1, slen);\n    applyLpc(\"cmd_end_recruitment\", {make_int(cl.clientNo), make_string(type)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64808,
+        "lpcFun":  "cmd_end_recruitment",
+        "bodyFields":  [
+                           "string u8len type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD28, ATTRIB_CLIENT_USER, \"cmd_end_recruitment\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdEnterArenaRoom",
+        "handlerName":  "handle_vm_cmdEnterArenaRoom",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806dab0",
+        "handlerCode":  "void handle_vm_cmdEnterArenaRoom(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    int room = body[0];\n    applyLpc(\"cmd_enter_arena_room\", {make_int(cl.clientNo), make_int(room)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  10002,
+        "lpcFun":  "cmd_enter_arena_room",
+        "bodyFields":  [
+                           "int u8 room"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2712, ATTRIB_CLIENT_USER, \"cmd_enter_arena_room\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdEnterRoom0",
+        "handlerName":  "handle_vm_cmdEnterRoom0",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053540",
+        "handlerCode":  "void handle_vm_cmdEnterRoom0(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string newRoom((const char*)body + 1, slen);\n    applyLpc(\"cmd_enter_room\", {make_int(0), make_int(cl.clientNo), make_string(newRoom)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4134,
+        "lpcFun":  "cmd_enter_room",
+        "bodyFields":  [
+                           "string u8len newRoom"
+                       ],
+        "note":  "leading LPC arg is cmdGroup hardcoded 0, then clientNo",
+        "kcmdEntry":  "{ 0x1026, ATTRIB_CLIENT_USER, \"cmd_enter_room\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdEnterRoom1",
+        "handlerName":  "handle_vm_cmdEnterRoom1",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805355c",
+        "handlerCode":  "void handle_vm_cmdEnterRoom1(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string newRoom((const char*)body + 1, slen);\n    applyLpc(\"cmd_enter_room\", {make_int(1), make_int(cl.clientNo), make_string(newRoom)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9034,
+        "lpcFun":  "cmd_enter_room",
+        "bodyFields":  [
+                           "string u8len newRoom"
+                       ],
+        "note":  "leading LPC arg is cmdGroup hardcoded 1, then clientNo",
+        "kcmdEntry":  "{ 0x234A, ATTRIB_CLIENT_USER, \"cmd_enter_room\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdEnterRoom2",
+        "handlerName":  "handle_vm_cmdEnterRoom2",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053578",
+        "handlerCode":  "void handle_vm_cmdEnterRoom2(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string newRoom((const char*)body + 1, slen);\n    applyLpc(\"cmd_enter_room\", {make_int(2), make_int(cl.clientNo), make_string(newRoom)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8722,
+        "lpcFun":  "cmd_enter_room",
+        "bodyFields":  [
+                           "string u8len newRoom"
+                       ],
+        "note":  "leading LPC arg is cmdGroup hardcoded 2, then clientNo",
+        "kcmdEntry":  "{ 0x2212, ATTRIB_CLIENT_USER, \"cmd_enter_room\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdEquip",
+        "handlerName":  "handle_vm_cmdEquip",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053594",
+        "handlerCode":  "void handle_vm_cmdEquip(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    int pos = body[0];\n    int part = body[1];\n    applyLpc(\"cmd_equip\", {make_int(cl.clientNo), make_int(pos), make_int(part)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4648,
+        "lpcFun":  "cmd_equip",
+        "bodyFields":  [
+                           "int u8 pos",
+                           "int u8 part"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1228, ATTRIB_CLIENT_USER, \"cmd_equip\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdEquipInbornStone",
+        "handlerName":  "handle_vm_cmdEquipInbornStone",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073acc",
+        "handlerCode":  "void handle_vm_cmdEquipInbornStone(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    int petId = (int)rd32be(body, 0);\n    int fromPos = rd16be(body, 4);\n    int toPos = rd16be(body, 6);\n    applyLpc(\"cmd_equip_inborn_stone\", {make_int(cl.clientNo), make_int(petId), make_int(fromPos), make_int(toPos)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8322,
+        "lpcFun":  "cmd_equip_inborn_stone",
+        "bodyFields":  [
+                           "int u32 petId (rd32be)",
+                           "int u16 fromPos (rd16be)",
+                           "int u16 toPos (rd16be)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2082, ATTRIB_CLIENT_USER, \"cmd_equip_inborn_stone\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdEquipPetDress",
+        "handlerName":  "handle_vm_cmdEquipPetDress",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073be4",
+        "handlerCode":  "void handle_vm_cmdEquipPetDress(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    int petId = (int)rd32be(body, 0);\n    int pos = rd16be(body, 4);\n    applyLpc(\"cmd_equip_pet_dress\", {make_int(cl.clientNo), make_int(petId), make_int(pos)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8368,
+        "lpcFun":  "cmd_equip_pet_dress",
+        "bodyFields":  [
+                           "int u32 petId (rd32be)",
+                           "int u16 pos (rd16be)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20B0, ATTRIB_CLIENT_USER, \"cmd_equip_pet_dress\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdExchangeAppraise",
+        "handlerName":  "handle_vm_cmdExchangeAppraise",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80535e0",
+        "handlerCode":  "void handle_vm_cmdExchangeAppraise(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    int report = body[0];\n    int star = body[1];\n    size_t off = 2;\n    if (off + 1 \u003e len) return;\n    uint8_t slen = body[off];\n    if (off + 1 + slen \u003e len) return;\n    std::string content((const char*)body + off + 1, slen);\n    off += 1 + slen;\n    if (off + 1 \u003e len) return;\n    slen = body[off];\n    if (off + 1 + slen \u003e len) return;\n    std::string phone((const char*)body + off + 1, slen);\n    off += 1 + slen;\n    if (off + 1 \u003e len) return;\n    slen = body[off];\n    if (off + 1 + slen \u003e len) return;\n    std::string bargainer((const char*)body + off + 1, slen);\n    applyLpc(\"cmd_exchange_appraise\", {make_int(cl.clientNo), make_int(report), make_int(star), make_string(content), make_string(phone), make_string(bargainer)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  64902,
+        "lpcFun":  "cmd_exchange_appraise",
+        "bodyFields":  [
+                           "int u8 report",
+                           "int u8 star",
+                           "string u8len content",
+                           "string u8len phone",
+                           "string u8len bargainer"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD86, ATTRIB_CLIENT_USER, \"cmd_exchange_appraise\", 0 }"
+    }
+]

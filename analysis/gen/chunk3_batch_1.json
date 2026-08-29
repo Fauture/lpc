@@ -1,0 +1,242 @@
+[
+    {
+        "nArgs": 4,
+        "fun": "vm_cmdPartyRelation",
+        "handlerName": "handle_vm_cmdPartyRelation",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x8056b90",
+        "handlerCode": "void handle_vm_cmdPartyRelation(GameClient& cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 > len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen > len) return;\n    const uint8_t* name = body + off; off += nameLen;\n    if (off + 1 > len) return;\n    uint8_t idLen = body[off++];\n    if (off + idLen > len) return;\n    const uint8_t* id = body + off; off += idLen;\n    if (off + 2 > len) return;\n    uint16_t relation = rd16be(body, off);\n    applyLpc(\"cmd_party_relation\", {make_int(cl.clientNo), make_string(name, nameLen), make_string(id, idLen), make_int(relation)});\n}",
+        "typeSeq": [
+            88,
+            357,
+            357,
+            88
+        ],
+        "cmdNo": 8296,
+        "lpcFun": "cmd_party_relation",
+        "bodyFields": [
+            "string name (u8 len)",
+            "string id (u8 len)",
+            "u16 BE relation"
+        ],
+        "note": "decompile pProgram=(v12-2) is register artifact; disasm: no pProgram push, 4 fixed args all 0",
+        "kcmdEntry": "{ 0x2068, ATTRIB_CLIENT_USER, \"cmd_party_relation\", 0 }"
+    },
+    {
+        "nArgs": 1,
+        "fun": "vm_cmdPartyRequestList",
+        "handlerName": "handle_vm_cmdPartyRequestList",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x805685c",
+        "handlerCode": "void handle_vm_cmdPartyRequestList(GameClient& cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_party_request_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq": [
+            88
+        ],
+        "cmdNo": 28840,
+        "lpcFun": "cmd_party_request_list",
+        "bodyFields": [],
+        "note": "",
+        "kcmdEntry": "{ 0x70A8, ATTRIB_CLIENT_USER, \"cmd_party_request_list\", 0 }"
+    },
+    {
+        "nArgs": 1,
+        "fun": "vm_cmdPartySendMessage",
+        "handlerName": "handle_vm_cmdPartySendMessage",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x805e27c",
+        "handlerCode": "void handle_vm_cmdPartySendMessage(GameClient& cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_party_send_message\", {make_int(cl.clientNo)});\n}",
+        "typeSeq": [
+            88
+        ],
+        "cmdNo": 53000,
+        "lpcFun": "cmd_party_send_message",
+        "bodyFields": [],
+        "note": "",
+        "kcmdEntry": "{ 0xCF08, ATTRIB_CLIENT_USER, \"cmd_party_send_message\", 0 }"
+    },
+    {
+        "nArgs": 2,
+        "fun": "vm_cmdPasswordDlg",
+        "handlerName": "handle_vm_cmdPasswordDlg",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x806cb0c",
+        "handlerCode": "void handle_vm_cmdPasswordDlg(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 1) return;\n    uint8_t pwLen = body[0];\n    if (1 + pwLen > len) return;\n    applyLpc(\"cmd_password_dlg\", {make_int(cl.clientNo), make_string(body + 1, pwLen)});\n}",
+        "typeSeq": [
+            88,
+            357
+        ],
+        "cmdNo": 10010,
+        "lpcFun": "cmd_password_dlg",
+        "bodyFields": [
+            "string password (u8 len)"
+        ],
+        "note": "",
+        "kcmdEntry": "{ 0x271A, ATTRIB_CLIENT_USER, \"cmd_password_dlg\", 0 }"
+    },
+    {
+        "nArgs": 2,
+        "fun": "vm_cmdPlaceBox",
+        "handlerName": "handle_vm_cmdPlaceBox",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x806cb90",
+        "handlerCode": "void handle_vm_cmdPlaceBox(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 1) return;\n    uint8_t pLen = body[0];\n    if (1 + pLen > len) return;\n    applyLpc(\"cmd_place_box\", {make_int(cl.clientNo), make_string(body + 1, pLen)});\n}",
+        "typeSeq": [
+            88,
+            357
+        ],
+        "cmdNo": 20502,
+        "lpcFun": "cmd_place_box",
+        "bodyFields": [
+            "string pos_desc (u8 len)"
+        ],
+        "note": "",
+        "kcmdEntry": "{ 0x5016, ATTRIB_CLIENT_USER, \"cmd_place_box\", 0 }"
+    },
+    {
+        "nArgs": 7,
+        "fun": "vm_cmdPlaceFurniture",
+        "handlerName": "handle_vm_cmdPlaceFurniture",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x8055c28",
+        "handlerCode": "void handle_vm_cmdPlaceFurniture(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 9) return;\n    uint16_t pos = rd16be(body, 0);\n    uint16_t x = rd16be(body, 2);\n    uint16_t y = rd16be(body, 4);\n    uint8_t dir = body[6];\n    uint8_t v7 = body[7];\n    uint8_t v8 = body[8];\n    applyLpc(\"cmd_place_furniture\", {make_int(cl.clientNo), make_int(pos), make_int(x), make_int(y), make_int(dir), make_int(v7), make_int(v8)});\n}",
+        "typeSeq": [
+            88,
+            88,
+            88,
+            88,
+            88,
+            88,
+            88
+        ],
+        "cmdNo": 10246,
+        "lpcFun": "cmd_place_furniture",
+        "bodyFields": [
+            "u16 BE pos",
+            "u16 BE x",
+            "u16 BE y",
+            "u8 dir",
+            "u8 v7",
+            "u8 v8"
+        ],
+        "note": "decompile pProgram=body[6] is register artifact; disasm: no pProgram push, 4 fixed args all 0",
+        "kcmdEntry": "{ 0x2806, ATTRIB_CLIENT_USER, \"cmd_place_furniture\", 0 }"
+    },
+    {
+        "nArgs": 6,
+        "fun": "vm_cmdPreAssignAttrib",
+        "handlerName": "handle_vm_cmdPreAssignAttrib",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x8055e38",
+        "handlerCode": "void handle_vm_cmdPreAssignAttrib(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 20) return;\n    uint32_t a1 = rd32be(body, 0);\n    uint32_t a2 = rd32be(body, 4);\n    uint32_t a3 = rd32be(body, 8);\n    uint32_t a4 = rd32be(body, 12);\n    uint32_t a5 = rd32be(body, 16);\n    applyLpc(\"cmd_pre_assign_attrib\", {make_int(cl.clientNo), make_int(a1), make_int(a2), make_int(a3), make_int(a4), make_int(a5)});\n}",
+        "typeSeq": [
+            88,
+            88,
+            88,
+            88,
+            88,
+            88
+        ],
+        "cmdNo": 8804,
+        "lpcFun": "cmd_pre_assign_attrib",
+        "bodyFields": [
+            "u32 BE attrib1",
+            "u32 BE attrib2",
+            "u32 BE attrib3",
+            "u32 BE attrib4",
+            "u32 BE attrib5"
+        ],
+        "note": "decompile pProgram=BE32@4 is register artifact; disasm: no pProgram push, 4 fixed args all 0",
+        "kcmdEntry": "{ 0x2264, ATTRIB_CLIENT_USER, \"cmd_pre_assign_attrib\", 0 }"
+    },
+    {
+        "nArgs": 6,
+        "fun": "vm_cmdPreAssignChildAttrib",
+        "handlerName": "handle_vm_cmdPreAssignChildAttrib",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x8055f08",
+        "handlerCode": "void handle_vm_cmdPreAssignChildAttrib(GameClient& cl, const uint8_t* body, size_t len)\n{\n    if (len < 20) return;\n    uint32_t a1 = rd32be(body, 0);\n    uint32_t a2 = rd32be(body, 4);\n    uint32_t a3 = rd32be(body, 8);\n    uint32_t a4 = rd32be(body, 12);\n    uint32_t a5 = rd32be(body, 16);\n    applyLpc(\"cmd_pre_assign_child_attrib\", {make_int(cl.clientNo), make_int(a1), make_int(a2), make_int(a3), make_int(a4), make_int(a5)});\n}",
+        "typeSeq": [
+            88,
+            88,
+            88,
+            88,
+            88,
+            88
+        ],
+        "cmdNo": 8432,
+        "lpcFun": "cmd_pre_assign_child_attrib",
+        "bodyFields": [
+            "u32 BE attrib1",
+            "u32 BE attrib2",
+            "u32 BE attrib3",
+            "u32 BE attrib4",
+            "u32 BE attrib5"
+        ],
+        "note": "decompile pProgram=BE32@4 is register artifact; disasm: no pProgram push, 4 fixed args all 0",
+        "kcmdEntry": "{ 0x20F0, ATTRIB_CLIENT_USER, \"cmd_pre_assign_child_attrib\", 0 }"
+    },
+    {
+        "nArgs": 5,
+        "fun": "vm_cmdPresentAskTaoShow",
+        "handlerName": "handle_vm_cmdPresentAskTaoShow",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x8060044",
+        "handlerCode": "void handle_vm_cmdPresentAskTaoShow(GameClient& cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 > len) return;\n    uint8_t oppLen = body[off++];\n    if (off + oppLen > len) return;\n    const uint8_t* opponent = body + off; off += oppLen;\n    if (off + 1 > len) return;\n    uint8_t pwdLen = body[off++];\n    if (off + pwdLen > len) return;\n    const uint8_t* coin_pwd = body + off; off += pwdLen;\n    if (off + 1 > len) return;\n    uint8_t barLen = body[off++];\n    if (off + barLen > len) return;\n    const uint8_t* barcode = body + off; off += barLen;\n    if (off + 2 > len) return;\n    uint16_t v18 = rd16be(body, off);\n    applyLpc(\"cmd_present_asktao_show\", {make_int(cl.clientNo), make_string(opponent, oppLen), make_string(coin_pwd, pwdLen), make_string(barcode, barLen), make_int(v18)});\n}",
+        "typeSeq": [
+            88,
+            357,
+            357,
+            357,
+            88
+        ],
+        "cmdNo": 4330,
+        "lpcFun": "cmd_present_asktao_show",
+        "bodyFields": [
+            "string opponent (u8 len)",
+            "string coin_pwd (u8 len)",
+            "string barcode (u8 len)",
+            "u16 BE v18"
+        ],
+        "note": "decompile pProgram=barcode len is register artifact; disasm: no pProgram push, 4 fixed args all 0",
+        "kcmdEntry": "{ 0x10EA, ATTRIB_CLIENT_USER, \"cmd_present_asktao_show\", 0 }"
+    },
+    {
+        "nArgs": 7,
+        "fun": "vm_cmdPresentMusic",
+        "handlerName": "handle_vm_cmdPresentMusic",
+        "type": 1,
+        "status": "ok",
+        "addr": "0x80711dc",
+        "handlerCode": "void handle_vm_cmdPresentMusic(GameClient& cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 > len) return;\n    uint8_t type = body[off++];\n    if (off + 1 > len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen > len) return;\n    const uint8_t* name_info = body + off; off += nameLen;\n    if (off + 1 > len) return;\n    uint8_t coin_type = body[off++];\n    if (off + 1 > len) return;\n    uint8_t msgLen = body[off++];\n    if (off + msgLen > len) return;\n    const uint8_t* wish_msg = body + off; off += msgLen;\n    if (off + 1 > len) return;\n    uint8_t v17 = body[off++];\n    if (off + 4 > len) return;\n    uint32_t v20 = rd32be(body, off);\n    applyLpc(\"cmd_present_music\", {make_int(cl.clientNo), make_int(type), make_string(name_info, nameLen), make_int(coin_type), make_string(wish_msg, msgLen), make_int(v17), make_int(v20)});\n}",
+        "typeSeq": [
+            88,
+            88,
+            357,
+            88,
+            357,
+            88,
+            88
+        ],
+        "cmdNo": 8434,
+        "lpcFun": "cmd_present_music",
+        "bodyFields": [
+            "u8 type",
+            "string name_info (u8 len)",
+            "u8 coin_type",
+            "string wish_msg (u8 len)",
+            "u8 v17",
+            "u32 BE v20"
+        ],
+        "note": "decompile pProgram=(v16-4) is register artifact; disasm: no pProgram push, 4 fixed args all 0",
+        "kcmdEntry": "{ 0x20F2, ATTRIB_CLIENT_USER, \"cmd_present_music\", 0 }"
+    }
+]

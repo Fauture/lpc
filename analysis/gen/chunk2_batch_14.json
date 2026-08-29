@@ -1,0 +1,229 @@
+﻿[
+    {
+        "cmdNo":  8430,
+        "fun":  "vm_cmdLookPlayer",
+        "type":  1,
+        "addr":  "0x805509c",
+        "lpcFun":  "cmd_look_player",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "handlerName":  "handle_vm_cmdLookPlayer",
+        "handlerCode":  "void handle_vm_cmdLookPlayer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if ((size_t)1 + n \u003e len) return;\n    std::string name((const char*)body + 1, n);\n    applyLpc(\"cmd_look_player\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "kcmdEntry":  "{ 0x20EE, ATTRIB_CLIENT_USER, \"cmd_look_player\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10016,
+        "fun":  "vm_cmdLotterySelect",
+        "type":  1,
+        "addr":  "0x8055120",
+        "lpcFun":  "cmd_lottery_select",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        936
+                    ],
+        "bodyFields":  [
+                           "7 x u8 picks (array of 7 ints)"
+                       ],
+        "handlerName":  "handle_vm_cmdLotterySelect",
+        "handlerCode":  "void handle_vm_cmdLotterySelect(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (int i = 0; i \u003c 7; ++i)\n        arr-\u003eitems.push_back(make_int(body[i]));\n    applyLpc(\"cmd_lottery_select\", {make_int(cl.clientNo), arr});\n}",
+        "kcmdEntry":  "{ 0x2720, ATTRIB_CLIENT_USER, \"cmd_lottery_select\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12243,
+        "fun":  "vm_cmdLSetSafeCtrlContent",
+        "type":  1,
+        "addr":  "0x806aed4",
+        "lpcFun":  "cmd_set_safe_ctrl_content",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string type",
+                           "u32be-len string content"
+                       ],
+        "handlerName":  "handle_vm_cmdLSetSafeCtrlContent",
+        "handlerCode":  "void handle_vm_cmdLSetSafeCtrlContent(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n1 = body[0];\n    if ((size_t)1 + n1 \u003e len) return;\n    std::string type((const char*)body + 1, n1);\n    size_t off = 1 + n1;\n    if (off + 4 \u003e len) return;\n    uint32_t n2 = rd32be(body, off);\n    off += 4;\n    if (off + n2 \u003e len) return;\n    std::string content((const char*)body + off, n2);\n    applyLpc(\"cmd_set_safe_ctrl_content\", {make_int(cl.clientNo), make_string(type), make_string(content)});\n}",
+        "kcmdEntry":  "{ 0x2FD3, ATTRIB_CLIENT_USER, \"cmd_set_safe_ctrl_content\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64898,
+        "fun":  "vm_cmdLuckySign",
+        "type":  1,
+        "addr":  "0x80551cc",
+        "lpcFun":  "cmd_lucky_sign",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 val"
+                       ],
+        "handlerName":  "handle_vm_cmdLuckySign",
+        "handlerCode":  "void handle_vm_cmdLuckySign(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_lucky_sign\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "kcmdEntry":  "{ 0xFD82, ATTRIB_CLIENT_USER, \"cmd_lucky_sign\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4150,
+        "fun":  "vm_cmdMakeDecoration",
+        "type":  1,
+        "addr":  "0x8075740",
+        "lpcFun":  "cmd_make_decoration",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string decoration"
+                       ],
+        "handlerName":  "handle_vm_cmdMakeDecoration",
+        "handlerCode":  "void handle_vm_cmdMakeDecoration(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if ((size_t)1 + n \u003e len) return;\n    std::string decoration((const char*)body + 1, n);\n    applyLpc(\"cmd_make_decoration\", {make_int(cl.clientNo), make_string(decoration)});\n}",
+        "kcmdEntry":  "{ 0x1036, ATTRIB_CLIENT_USER, \"cmd_make_decoration\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  21766,
+        "fun":  "vm_cmdMakePill",
+        "type":  1,
+        "addr":  "0x805520c",
+        "lpcFun":  "cmd_make_pill",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        936,
+                        936,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u16be pos1",
+                           "6 x u16be arr1",
+                           "6 x u16be arr2",
+                           "u16be v13"
+                       ],
+        "handlerName":  "handle_vm_cmdMakePill",
+        "handlerCode":  "void handle_vm_cmdMakePill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 28) return;\n    int pos1 = rd16be(body);\n    auto arr1 = std::make_shared\u003cArrayValue\u003e();\n    auto arr2 = std::make_shared\u003cArrayValue\u003e();\n    size_t off = 2;\n    for (int i = 0; i \u003c 6; ++i)\n    {\n        arr1-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n        arr2-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n    }\n    int v13 = rd16be(body, off);\n    applyLpc(\"cmd_make_pill\", {make_int(cl.clientNo), make_int(pos1), arr1, arr2, make_int(v13)});\n}",
+        "kcmdEntry":  "{ 0x5506, ATTRIB_CLIENT_USER, \"cmd_make_pill\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16570,
+        "fun":  "vm_cmdManageCity",
+        "type":  1,
+        "addr":  "0x8074f38",
+        "lpcFun":  "cmd_manage_city",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string city"
+                       ],
+        "handlerName":  "handle_vm_cmdManageCity",
+        "handlerCode":  "void handle_vm_cmdManageCity(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if ((size_t)1 + n \u003e len) return;\n    std::string city((const char*)body + 1, n);\n    applyLpc(\"cmd_manage_city\", {make_int(cl.clientNo), make_string(city)});\n}",
+        "kcmdEntry":  "{ 0x40BA, ATTRIB_CLIENT_USER, \"cmd_manage_city\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4446,
+        "fun":  "vm_cmdManageHouse",
+        "type":  1,
+        "addr":  "0x8055378",
+        "lpcFun":  "cmd_manage_house",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u32be npc_id",
+                           "u8 type",
+                           "u8 oper",
+                           "u8 count",
+                           "count x u32be elements"
+                       ],
+        "handlerName":  "handle_vm_cmdManageHouse",
+        "handlerCode":  "void handle_vm_cmdManageHouse(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    int npc_id = rd32be(body);\n    int type = body[4];\n    int oper = body[5];\n    uint8_t cnt = body[6];\n    if ((size_t)7 + (size_t)cnt * 4 \u003e len) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    size_t off = 7;\n    for (int i = 0; i \u003c cnt; ++i)\n    {\n        arr-\u003eitems.push_back(make_int(rd32be(body, off)));\n        off += 4;\n    }\n    applyLpc(\"cmd_manage_house\", {make_int(cl.clientNo), make_int(npc_id), make_int(type), make_int(oper), arr});\n}",
+        "kcmdEntry":  "{ 0x115E, ATTRIB_CLIENT_USER, \"cmd_manage_house\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64786,
+        "fun":  "vm_cmdManageMpDevice",
+        "type":  1,
+        "addr":  "0x805548c",
+        "lpcFun":  "cmd_manage_mp_device",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 oper",
+                           "u8len string device"
+                       ],
+        "handlerName":  "handle_vm_cmdManageMpDevice",
+        "handlerCode":  "void handle_vm_cmdManageMpDevice(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    int oper = body[0];\n    uint8_t n = body[1];\n    if ((size_t)2 + n \u003e len) return;\n    std::string device((const char*)body + 2, n);\n    applyLpc(\"cmd_manage_mp_device\", {make_int(cl.clientNo), make_int(oper), make_string(device)});\n}",
+        "kcmdEntry":  "{ 0xFD12, ATTRIB_CLIENT_USER, \"cmd_manage_mp_device\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8318,
+        "fun":  "vm_cmdMergeMagicPicture",
+        "type":  1,
+        "addr":  "0x8071634",
+        "lpcFun":  "cmd_merge_magic_picture",
+        "nArgs":  7,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32be id",
+                           "u8 picture_type",
+                           "u8 n",
+                           "u8 v2",
+                           "u8 v3",
+                           "u8 v4"
+                       ],
+        "handlerName":  "handle_vm_cmdMergeMagicPicture",
+        "handlerCode":  "void handle_vm_cmdMergeMagicPicture(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 9) return;\n    int id = rd32be(body);\n    int picture_type = body[4];\n    int n = body[5];\n    int v2 = body[6];\n    int v3 = body[7];\n    int v4 = body[8];\n    applyLpc(\"cmd_merge_magic_picture\", {make_int(cl.clientNo), make_int(id), make_int(picture_type), make_int(n), make_int(v2), make_int(v3), make_int(v4)});\n}",
+        "kcmdEntry":  "{ 0x207E, ATTRIB_CLIENT_USER, \"cmd_merge_magic_picture\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

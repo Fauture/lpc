@@ -1,0 +1,234 @@
+﻿[
+    {
+        "cmdNo":  8380,
+        "fun":  "vm_cmdFriendTellAuth",
+        "type":  1,
+        "addr":  "0x8060d60",
+        "lpcFun":  "cmd_friend_tell_auth",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "handlerName":  "handle_vm_cmdFriendTellAuth",
+        "handlerCode":  "void handle_vm_cmdFriendTellAuth(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    std::string name((const char*)body + off, nameLen);\n    off += nameLen;\n    applyLpc(\"cmd_friend_tell_auth\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "kcmdEntry":  "{ 0x20BC, ATTRIB_CLIENT_USER, \"cmd_friend_tell_auth\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10752,
+        "fun":  "vm_cmdFriendTellEx",
+        "type":  1,
+        "addr":  "0x8053e5c",
+        "lpcFun":  "cmd_friend_tell_ex",
+        "nArgs":  9,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88,
+                        88,
+                        357,
+                        936,
+                        936,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u16 flag",
+                           "u8len string name",
+                           "u16 comp",
+                           "u16 orgLen",
+                           "u16len string msg",
+                           "u16 itemCount",
+                           "per item: u8len string + u8 int",
+                           "trailing u8 v22 (0 if absent)"
+                       ],
+        "handlerName":  "handle_vm_cmdFriendTellEx",
+        "handlerCode":  "void handle_vm_cmdFriendTellEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t flag = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    std::string name((const char*)body + off, nameLen); off += nameLen;\n    if (off + 2 \u003e len) return;\n    uint16_t comp = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t orgLen = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t msgLen = rd16be(body, off); off += 2;\n    if (off + msgLen \u003e len) return;\n    std::string msg((const char*)body + off, msgLen); off += msgLen;\n    if (off + 2 \u003e len) return;\n    uint16_t itemCount = rd16be(body, off); off += 2;\n    auto pArray = std::make_shared\u003cArrayValue\u003e();\n    auto pArrayType = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c itemCount; i++) {\n        if (off + 1 \u003e len) return;\n        uint8_t slen = body[off++];\n        if (off + slen \u003e len) return;\n        pArray-\u003eitems.push_back(make_string(std::string((const char*)body + off, slen)));\n        off += slen;\n        if (off + 1 \u003e len) return;\n        pArrayType-\u003eitems.push_back(make_int(body[off++]));\n    }\n    uint8_t v22 = 0;\n    if (off \u003c len) v22 = body[off++];\n    applyLpc(\"cmd_friend_tell_ex\", {make_int(cl.clientNo), make_int(flag), make_string(name), make_int(comp), make_int(orgLen), make_string(msg), pArray, pArrayType, make_int(v22)});\n}",
+        "kcmdEntry":  "{ 0x2A00, ATTRIB_CLIENT_USER, \"cmd_friend_tell_ex\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8528,
+        "fun":  "vm_cmdGather",
+        "type":  1,
+        "addr":  "0x806da60",
+        "lpcFun":  "cmd_gather",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32 BE int value"
+                       ],
+        "handlerName":  "handle_vm_cmdGather",
+        "handlerCode":  "void handle_vm_cmdGather(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t value = rd32be(body, off); off += 4;\n    applyLpc(\"cmd_gather\", {make_int(cl.clientNo), make_int(value)});\n}",
+        "kcmdEntry":  "{ 0x2150, ATTRIB_CLIENT_USER, \"cmd_gather\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12308,
+        "fun":  "vm_cmdGbuyingBuyGoods",
+        "type":  1,
+        "addr":  "0x80546e8",
+        "lpcFun":  "cmd_gbuying_buy_goods",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len string gbgId",
+                           "u8 int v11",
+                           "u8 int v12"
+                       ],
+        "handlerName":  "handle_vm_cmdGbuyingBuyGoods",
+        "handlerCode":  "void handle_vm_cmdGbuyingBuyGoods(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t idLen = body[off++];\n    if (off + idLen \u003e len) return;\n    std::string gbgId((const char*)body + off, idLen); off += idLen;\n    if (off + 1 \u003e len) return;\n    uint8_t v11 = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t v12 = body[off++];\n    applyLpc(\"cmd_gbuying_buy_goods\", {make_int(cl.clientNo), make_string(gbgId), make_int(v11), make_int(v12)});\n}",
+        "kcmdEntry":  "{ 0x3014, ATTRIB_CLIENT_USER, \"cmd_gbuying_buy_goods\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8720,
+        "fun":  "vm_cmdGbuyingFetchCoin",
+        "type":  1,
+        "addr":  "0x80547f0",
+        "lpcFun":  "cmd_gbuying_fetch_coin",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 int coinType",
+                           "u32 BE int coin"
+                       ],
+        "handlerName":  "handle_vm_cmdGbuyingFetchCoin",
+        "handlerCode":  "void handle_vm_cmdGbuyingFetchCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t coinType = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t coin = rd32be(body, off); off += 4;\n    applyLpc(\"cmd_gbuying_fetch_coin\", {make_int(cl.clientNo), make_int(coinType), make_int(coin)});\n}",
+        "kcmdEntry":  "{ 0x2210, ATTRIB_CLIENT_USER, \"cmd_gbuying_fetch_coin\", 0 }",
+        "status":  "ok",
+        "note":  "pProgram passed in edi register; disasm confirms args2-5=0 and lpcFun at slot 6"
+    },
+    {
+        "cmdNo":  4998,
+        "fun":  "vm_cmdGbuyingFetchGoods",
+        "type":  1,
+        "addr":  "0x8054848",
+        "lpcFun":  "cmd_gbuying_fetch_goods",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len string gbgId",
+                           "u8len string distname"
+                       ],
+        "handlerName":  "handle_vm_cmdGbuyingFetchGoods",
+        "handlerCode":  "void handle_vm_cmdGbuyingFetchGoods(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t idLen = body[off++];\n    if (off + idLen \u003e len) return;\n    std::string gbgId((const char*)body + off, idLen); off += idLen;\n    if (off + 1 \u003e len) return;\n    uint8_t dnLen = body[off++];\n    if (off + dnLen \u003e len) return;\n    std::string distname((const char*)body + off, dnLen); off += dnLen;\n    applyLpc(\"cmd_gbuying_fetch_goods\", {make_int(cl.clientNo), make_string(gbgId), make_string(distname)});\n}",
+        "kcmdEntry":  "{ 0x1386, ATTRIB_CLIENT_USER, \"cmd_gbuying_fetch_goods\", 0 }",
+        "status":  "ok",
+        "note":  "pProgram passed in register; disasm confirms args2-5=0 and lpcFun at slot 6"
+    },
+    {
+        "cmdNo":  5010,
+        "fun":  "vm_cmdGbuyingInjectCoin",
+        "type":  1,
+        "addr":  "0x8054798",
+        "lpcFun":  "cmd_gbuying_inject_coin",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 int coinType",
+                           "u32 BE int coin"
+                       ],
+        "handlerName":  "handle_vm_cmdGbuyingInjectCoin",
+        "handlerCode":  "void handle_vm_cmdGbuyingInjectCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t coinType = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t coin = rd32be(body, off); off += 4;\n    applyLpc(\"cmd_gbuying_inject_coin\", {make_int(cl.clientNo), make_int(coinType), make_int(coin)});\n}",
+        "kcmdEntry":  "{ 0x1392, ATTRIB_CLIENT_USER, \"cmd_gbuying_inject_coin\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12028,
+        "fun":  "vm_cmdGbuyingOpenPage",
+        "type":  1,
+        "addr":  "0x8054638",
+        "lpcFun":  "cmd_gbuying_open_page",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8len string title",
+                           "u8 int v11",
+                           "u8 int v12"
+                       ],
+        "handlerName":  "handle_vm_cmdGbuyingOpenPage",
+        "handlerCode":  "void handle_vm_cmdGbuyingOpenPage(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t titleLen = body[off++];\n    if (off + titleLen \u003e len) return;\n    std::string title((const char*)body + off, titleLen); off += titleLen;\n    if (off + 1 \u003e len) return;\n    uint8_t v11 = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t v12 = body[off++];\n    applyLpc(\"cmd_gbuying_open_page\", {make_int(cl.clientNo), make_string(title), make_int(v11), make_int(v12)});\n}",
+        "kcmdEntry":  "{ 0x2EFC, ATTRIB_CLIENT_USER, \"cmd_gbuying_open_page\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64868,
+        "fun":  "vm_cmdGeneralNotify",
+        "type":  1,
+        "addr":  "0x8050d6c",
+        "lpcFun":  "cmd_general_notify",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u16 BE int type",
+                           "u8len string para1",
+                           "u8len string para2"
+                       ],
+        "handlerName":  "handle_vm_cmdGeneralNotify",
+        "handlerCode":  "void handle_vm_cmdGeneralNotify(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t type = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t p1Len = body[off++];\n    if (off + p1Len \u003e len) return;\n    std::string para1((const char*)body + off, p1Len); off += p1Len;\n    if (off + 1 \u003e len) return;\n    uint8_t p2Len = body[off++];\n    if (off + p2Len \u003e len) return;\n    std::string para2((const char*)body + off, p2Len); off += p2Len;\n    applyLpc(\"cmd_general_notify\", {make_int(cl.clientNo), make_int(type), make_string(para1), make_string(para2)});\n}",
+        "kcmdEntry":  "{ 0xFD64, ATTRIB_CLIENT_USER, \"cmd_general_notify\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  14338,
+        "fun":  "vm_cmdGeneralRequest",
+        "type":  1,
+        "addr":  "0x8054244",
+        "lpcFun":  "cmd_general_request",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u16 BE int value"
+                       ],
+        "handlerName":  "handle_vm_cmdGeneralRequest",
+        "handlerCode":  "void handle_vm_cmdGeneralRequest(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t value = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_general_request\", {make_int(cl.clientNo), make_int(value)});\n}",
+        "kcmdEntry":  "{ 0x3802, ATTRIB_CLIENT_USER, \"cmd_general_request\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

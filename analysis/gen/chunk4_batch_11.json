@@ -1,0 +1,214 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdViewCsMatches",
+        "handlerName":  "handle_vm_cmdViewCsMatches",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805b530",
+        "handlerCode":  "void handle_vm_cmdViewCsMatches(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n0 = body[off++];\n    if (off + n0 \u003e len) return;\n    auto s0 = make_string(body + off, n0);\n    off += n0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    auto s1 = make_string(body + off, n1);\n    off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    auto s2 = make_string(body + off, n2);\n    off += n2;\n    applyLpc(\"cmd_view_cs_matches\", {make_int(cl.clientNo), s0, s1, s2});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  20618,
+        "lpcFun":  "cmd_view_cs_matches",
+        "bodyFields":  [
+                           "u8len string cs_module",
+                           "u8len string season_id",
+                           "u8len string league_id"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x508A, ATTRIB_CLIENT_USER, \"cmd_view_cs_matches\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdViewCsMatchesSummary",
+        "handlerName":  "handle_vm_cmdViewCsMatchesSummary",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805b654",
+        "handlerCode":  "void handle_vm_cmdViewCsMatchesSummary(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n0 = body[off++];\n    if (off + n0 \u003e len) return;\n    auto s0 = make_string(body + off, n0);\n    off += n0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    auto s1 = make_string(body + off, n1);\n    off += n1;\n    applyLpc(\"cmd_view_cs_matches_summary\", {make_int(cl.clientNo), s0, s1});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8756,
+        "lpcFun":  "cmd_view_cs_matches_summary",
+        "bodyFields":  [
+                           "u8len string cs_module",
+                           "u8len string season_id"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2234, ATTRIB_CLIENT_USER, \"cmd_view_cs_matches_summary\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdViewCsPwFixtures",
+        "handlerName":  "handle_vm_cmdViewCsPwFixtures",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805b89c",
+        "handlerCode":  "void handle_vm_cmdViewCsPwFixtures(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_view_cs_pw_fixtures\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8970,
+        "lpcFun":  "cmd_view_cs_pw_fixtures",
+        "bodyFields":  [
+                           "u8 int",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x230A, ATTRIB_CLIENT_USER, \"cmd_view_cs_pw_fixtures\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdViewPartyWarHistory",
+        "handlerName":  "handle_vm_cmdViewPartyWarHistory",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805b8e8",
+        "handlerCode":  "void handle_vm_cmdViewPartyWarHistory(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t v = rd32be(body, 0);\n    applyLpc(\"cmd_view_party_war_history\", {make_int(cl.clientNo), make_int(v), make_int(body[4])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8634,
+        "lpcFun":  "cmd_view_party_war_history",
+        "bodyFields":  [
+                           "u32 BE int (byte-swapped dword)",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21BA, ATTRIB_CLIENT_USER, \"cmd_view_party_war_history\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdViewStall",
+        "handlerName":  "handle_vm_cmdViewStall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805b944",
+        "handlerCode":  "void handle_vm_cmdViewStall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t v = rd32be(body, 0);\n    applyLpc(\"cmd_view_stall\", {make_int(cl.clientNo), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  20482,
+        "lpcFun":  "cmd_view_stall",
+        "bodyFields":  [
+                           "u32 BE int (byte-swapped dword)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5002, ATTRIB_CLIENT_USER, \"cmd_view_stall\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdViewTop",
+        "handlerName":  "handle_vm_cmdViewTop",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805b994",
+        "handlerCode":  "void handle_vm_cmdViewTop(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t v = rd32be(body, 1);\n    applyLpc(\"cmd_view_top\", {make_int(cl.clientNo), make_int(body[0]), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8308,
+        "lpcFun":  "cmd_view_top",
+        "bodyFields":  [
+                           "u8 int",
+                           "u32 BE int at offset 1 (byte-swapped dword)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2074, ATTRIB_CLIENT_USER, \"cmd_view_top\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdWarcraftCancel",
+        "handlerName":  "handle_vm_cmdWarcraftCancel",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d8ec",
+        "handlerCode":  "void handle_vm_cmdWarcraftCancel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    auto s = make_string(body + off, n);\n    off += n;\n    applyLpc(\"cmd_warcraft_cancel\", {make_int(cl.clientNo), s});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9286,
+        "lpcFun":  "cmd_warcraft_cancel",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2446, ATTRIB_CLIENT_USER, \"cmd_warcraft_cancel\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdWarcraftRefresh",
+        "handlerName":  "handle_vm_cmdWarcraftRefresh",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d970",
+        "handlerCode":  "void handle_vm_cmdWarcraftRefresh(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    auto s = make_string(body + off, n);\n    off += n;\n    applyLpc(\"cmd_warcraft_refresh\", {make_int(cl.clientNo), s});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  8148,
+        "lpcFun":  "cmd_warcraft_refresh",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1FD4, ATTRIB_CLIENT_USER, \"cmd_warcraft_refresh\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdWarcraftStart",
+        "handlerName":  "handle_vm_cmdWarcraftStart",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d868",
+        "handlerCode":  "void handle_vm_cmdWarcraftStart(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    auto s = make_string(body + off, n);\n    off += n;\n    applyLpc(\"cmd_warcraft_start\", {make_int(cl.clientNo), s});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  13570,
+        "lpcFun":  "cmd_warcraft_start",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3502, ATTRIB_CLIENT_USER, \"cmd_warcraft_start\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdWarViewCurrentInfo",
+        "handlerName":  "handle_vm_cmdWarViewCurrentInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805da34",
+        "handlerCode":  "void handle_vm_cmdWarViewCurrentInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_view_war_current_info\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  4116,
+        "lpcFun":  "cmd_view_war_current_info",
+        "bodyFields":  [
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1014, ATTRIB_CLIENT_USER, \"cmd_view_war_current_info\", 0 }"
+    }
+]

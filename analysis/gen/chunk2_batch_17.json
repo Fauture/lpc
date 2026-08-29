@@ -1,0 +1,217 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdOpenArenaRoomSeat",
+        "handlerName":  "handle_vm_cmdOpenArenaRoomSeat",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806db5c",
+        "handlerCode":  "void handle_vm_cmdOpenArenaRoomSeat(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint16_t room_id = rd16be(body, 0);\n    uint8_t seat_order = body[2];\n    uint8_t seat_status = body[3];\n    applyLpc(\"cmd_arena_room_open_seat\", {make_int(cl.clientNo), make_int(room_id), make_int(seat_order), make_int(seat_status)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  12802,
+        "lpcFun":  "cmd_arena_room_open_seat",
+        "bodyFields":  [
+                           "room_id u16be",
+                           "seat_order u8",
+                           "seat_status u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3202, ATTRIB_CLIENT_USER, \"cmd_arena_room_open_seat\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdOpenAskTaoShowGiftBox",
+        "handlerName":  "handle_vm_cmdOpenAskTaoShowGiftBox",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805fed4",
+        "handlerCode":  "void handle_vm_cmdOpenAskTaoShowGiftBox(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_open_asktao_show_gift_box\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  236,
+        "lpcFun":  "cmd_open_asktao_show_gift_box",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xEC, ATTRIB_CLIENT_USER, \"cmd_open_asktao_show_gift_box\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdOpenAskTaoShowMall",
+        "handlerName":  "handle_vm_cmdOpenAskTaoShowMall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ee5c",
+        "handlerCode":  "void handle_vm_cmdOpenAskTaoShowMall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if ((size_t)n \u003e len - 1) return;\n    applyLpc(\"cmd_open_asktao_show_mall\", {make_int(cl.clientNo), make_string((const char*)body + 1, n)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  8792,
+        "lpcFun":  "cmd_open_asktao_show_mall",
+        "bodyFields":  [
+                           "name u8len string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2258, ATTRIB_CLIENT_USER, \"cmd_open_asktao_show_mall\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdOpenAuthAllProtect",
+        "handlerName":  "handle_vm_cmdOpenAuthAllProtect",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806c848",
+        "handlerCode":  "void handle_vm_cmdOpenAuthAllProtect(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint32_t seq_no = rd32be(body, 0);\n    uint8_t is_confirm = body[4];\n    uint8_t n1 = body[5];\n    size_t off = 6;\n    if (off + n1 \u003e len) return;\n    std::string passpod((const char*)body + off, n1);\n    off += n1;\n    if (off + 2 \u003e len) return;\n    uint16_t n2 = rd16be(body, off);\n    off += 2;\n    if (off + n2 \u003e len) return;\n    std::string second((const char*)body + off, n2);\n    applyLpc(\"cmd_open_auth_all_protect\", {make_int(cl.clientNo), make_int(seq_no), make_int(is_confirm), make_string(passpod), make_string(second)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  17440,
+        "lpcFun":  "cmd_open_auth_all_protect",
+        "bodyFields":  [
+                           "seq_no u32be",
+                           "is_confirm u8",
+                           "passpod u8len string",
+                           "second u16len string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4420, ATTRIB_CLIENT_USER, \"cmd_open_auth_all_protect\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdOpenBoxAdventrueInterface",
+        "handlerName":  "handle_vm_cmdOpenBoxAdventrueInterface",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8075a64",
+        "handlerCode":  "void handle_vm_cmdOpenBoxAdventrueInterface(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_open_box_adventrue_interface\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  20494,
+        "lpcFun":  "cmd_open_box_adventrue_interface",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x500E, ATTRIB_CLIENT_USER, \"cmd_open_box_adventrue_interface\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOpenBureau",
+        "handlerName":  "handle_vm_cmdOpenBureau",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805f958",
+        "handlerCode":  "void handle_vm_cmdOpenBureau(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    size_t off = 1;\n    if (off + n \u003e len) return;\n    std::string name((const char*)body + off, n);\n    off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t sync = body[off];\n    applyLpc(\"cmd_open_bureau\", {make_int(cl.clientNo), make_string(name), make_int(sync)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  16596,
+        "lpcFun":  "cmd_open_bureau",
+        "bodyFields":  [
+                           "name u8len string",
+                           "sync u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x40D4, ATTRIB_CLIENT_USER, \"cmd_open_bureau\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOpenConfirmDlg",
+        "handlerName":  "handle_vm_cmdOpenConfirmDlg",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e4b8",
+        "handlerCode":  "void handle_vm_cmdOpenConfirmDlg(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t n = body[1];\n    size_t off = 2;\n    if (off + n \u003e len) return;\n    std::string para((const char*)body + off, n);\n    applyLpc(\"cmd_open_confirm_dlg\", {make_int(cl.clientNo), make_int(type), make_string(para)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8530,
+        "lpcFun":  "cmd_open_confirm_dlg",
+        "bodyFields":  [
+                           "type u8",
+                           "para u8len string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2152, ATTRIB_CLIENT_USER, \"cmd_open_confirm_dlg\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOpenMenu0",
+        "handlerName":  "handle_vm_cmdOpenMenu0",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056280",
+        "handlerCode":  "void handle_vm_cmdOpenMenu0(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t id = rd32be(body, 0);\n    applyLpc(\"cmd_open_menu\", {make_int(0), make_int(cl.clientNo), make_int(id)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8292,
+        "lpcFun":  "cmd_open_menu",
+        "bodyFields":  [
+                           "id u32be"
+                       ],
+        "note":  "leading LPC arg is hardcoded menu index 0 (thunk), then clientNo, then id",
+        "kcmdEntry":  "{ 0x2064, ATTRIB_CLIENT_USER, \"cmd_open_menu\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOpenMenu1",
+        "handlerName":  "handle_vm_cmdOpenMenu1",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805629c",
+        "handlerCode":  "void handle_vm_cmdOpenMenu1(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t id = rd32be(body, 0);\n    applyLpc(\"cmd_open_menu\", {make_int(1), make_int(cl.clientNo), make_int(id)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8272,
+        "lpcFun":  "cmd_open_menu",
+        "bodyFields":  [
+                           "id u32be"
+                       ],
+        "note":  "leading LPC arg is hardcoded menu index 1 (thunk), then clientNo, then id",
+        "kcmdEntry":  "{ 0x2050, ATTRIB_CLIENT_USER, \"cmd_open_menu\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOpenMenu2",
+        "handlerName":  "handle_vm_cmdOpenMenu2",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80562b8",
+        "handlerCode":  "void handle_vm_cmdOpenMenu2(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t id = rd32be(body, 0);\n    applyLpc(\"cmd_open_menu\", {make_int(2), make_int(cl.clientNo), make_int(id)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  28690,
+        "lpcFun":  "cmd_open_menu",
+        "bodyFields":  [
+                           "id u32be"
+                       ],
+        "note":  "leading LPC arg is hardcoded menu index 2 (thunk), then clientNo, then id",
+        "kcmdEntry":  "{ 0x7012, ATTRIB_CLIENT_USER, \"cmd_open_menu\", 0 }"
+    }
+]

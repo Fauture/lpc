@@ -1,0 +1,238 @@
+﻿[
+    {
+        "cmdNo":  21357,
+        "fun":  "vm_msgLRequestCoupon",
+        "type":  2,
+        "addr":  "0x80634e8",
+        "lpcFun":  "msg_l_request_coupon",
+        "nArgs":  7,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "gid:u8len-string",
+                           "coupon_type:u8len-string",
+                           "result:u16be-int",
+                           "type:u8len-string",
+                           "para:u8len-string",
+                           "cookie:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_msgLRequestCoupon",
+        "handlerCode":  "void handle_vm_msgLRequestCoupon(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t couponTypeLen = rd8(body, off); off += 1;\n    if (off + couponTypeLen \u003e len) return;\n    auto couponType = make_string(body + off, couponTypeLen); off += couponTypeLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t typeLen = rd8(body, off); off += 1;\n    if (off + typeLen \u003e len) return;\n    auto type = make_string(body + off, typeLen); off += typeLen;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = rd8(body, off); off += 1;\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen); off += paraLen;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = rd8(body, off); off += 1;\n    if (off + cookieLen \u003e len) return;\n    auto cookie = make_string(body + off, cookieLen); off += cookieLen;\n    applyLpc(\"msg_l_request_coupon\", {make_int(cl.clientNo), gid, couponType, make_int(result), type, para, cookie});\n}",
+        "kcmdEntry":  "{ 0x536D, ATTRIB_INTERNAL_COMM, \"msg_l_request_coupon\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13079,
+        "fun":  "vm_msgLChangeCoupon",
+        "type":  2,
+        "addr":  "0x80636dc",
+        "lpcFun":  "msg_l_change_coupon",
+        "nArgs":  7,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "account:u8len-string",
+                           "gid:u8len-string",
+                           "result:u16be-int",
+                           "cost_once:u32be-int",
+                           "para:u8len-string",
+                           "cookie:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_msgLChangeCoupon",
+        "handlerCode":  "void handle_vm_msgLChangeCoupon(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off); off += 1;\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen); off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t costOnce = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = rd8(body, off); off += 1;\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen); off += paraLen;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = rd8(body, off); off += 1;\n    if (off + cookieLen \u003e len) return;\n    auto cookie = make_string(body + off, cookieLen); off += cookieLen;\n    applyLpc(\"msg_l_change_coupon\", {make_int(cl.clientNo), account, gid, make_int(result), make_int(costOnce), para, cookie});\n}",
+        "kcmdEntry":  "{ 0x3317, ATTRIB_INTERNAL_COMM, \"msg_l_change_coupon\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13081,
+        "fun":  "vm_msgLQueryRandomCoupon",
+        "type":  2,
+        "addr":  "0x80638b4",
+        "lpcFun":  "msg_l_query_random_coupon",
+        "nArgs":  6,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "account:u8len-string",
+                           "gid:u8len-string",
+                           "result:u16be-int",
+                           "para:u8len-string",
+                           "value:u32be-int"
+                       ],
+        "handlerName":  "handle_vm_msgLQueryRandomCoupon",
+        "handlerCode":  "void handle_vm_msgLQueryRandomCoupon(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off); off += 1;\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen); off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = rd8(body, off); off += 1;\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen); off += paraLen;\n    if (off + 4 \u003e len) return;\n    uint32_t value = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_query_random_coupon\", {make_int(cl.clientNo), account, gid, make_int(result), para, make_int(value)});\n}",
+        "kcmdEntry":  "{ 0x3319, ATTRIB_INTERNAL_COMM, \"msg_l_query_random_coupon\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64921,
+        "fun":  "vm_msgUpdateFirstCreditBonus",
+        "type":  2,
+        "addr":  "0x8063a34",
+        "lpcFun":  "msg_l_update_first_credit_bonus",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "account:u8len-string",
+                           "gid:u8len-string",
+                           "result_desc:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_msgUpdateFirstCreditBonus",
+        "handlerCode":  "void handle_vm_msgUpdateFirstCreditBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off); off += 1;\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen); off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t descLen = rd8(body, off); off += 1;\n    if (off + descLen \u003e len) return;\n    auto resultDesc = make_string(body + off, descLen); off += descLen;\n    applyLpc(\"msg_l_update_first_credit_bonus\", {make_int(cl.clientNo), account, gid, resultDesc});\n}",
+        "kcmdEntry":  "{ 0xFD99, ATTRIB_INTERNAL_COMM, \"msg_l_update_first_credit_bonus\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64889,
+        "fun":  "vm_msgUpdateRechargeReturnCredit",
+        "type":  2,
+        "addr":  "0x8063b58",
+        "lpcFun":  "msg_l_update_recharge_return_credit",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "account:u8len-string",
+                           "gid:u8len-string",
+                           "val1:u32be-int",
+                           "val2:u32be-int"
+                       ],
+        "handlerName":  "handle_vm_msgUpdateRechargeReturnCredit",
+        "handlerCode":  "void handle_vm_msgUpdateRechargeReturnCredit(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off); off += 1;\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen); off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 4 \u003e len) return;\n    uint32_t val1 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t val2 = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_update_recharge_return_credit\", {make_int(cl.clientNo), account, gid, make_int(val1), make_int(val2)});\n}",
+        "kcmdEntry":  "{ 0xFD79, ATTRIB_INTERNAL_COMM, \"msg_l_update_recharge_return_credit\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9105,
+        "fun":  "vm_msgLUpdateAddiction",
+        "type":  2,
+        "addr":  "0x8063c70",
+        "lpcFun":  "msg_l_update_addiction",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "account:u8len-string",
+                           "result_text:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_msgLUpdateAddiction",
+        "handlerCode":  "void handle_vm_msgLUpdateAddiction(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off); off += 1;\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen); off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t textLen = rd8(body, off); off += 1;\n    if (off + textLen \u003e len) return;\n    auto resultText = make_string(body + off, textLen); off += textLen;\n    applyLpc(\"msg_l_update_addiction\", {make_int(cl.clientNo), account, resultText});\n}",
+        "kcmdEntry":  "{ 0x2391, ATTRIB_INTERNAL_COMM, \"msg_l_update_addiction\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13179,
+        "fun":  "vm_msgLUnlockCard",
+        "type":  2,
+        "addr":  "0x8063d44",
+        "lpcFun":  "msg_l_unlock_card",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "cookie:u8len-string",
+                           "number:u8len-string",
+                           "card_id:u16be-int"
+                       ],
+        "handlerName":  "handle_vm_msgLUnlockCard",
+        "handlerCode":  "void handle_vm_msgLUnlockCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = rd8(body, off); off += 1;\n    if (off + cookieLen \u003e len) return;\n    auto cookie = make_string(body + off, cookieLen); off += cookieLen;\n    if (off + 1 \u003e len) return;\n    uint8_t numberLen = rd8(body, off); off += 1;\n    if (off + numberLen \u003e len) return;\n    auto number = make_string(body + off, numberLen); off += numberLen;\n    if (off + 2 \u003e len) return;\n    uint16_t cardId = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_unlock_card\", {make_int(cl.clientNo), cookie, number, make_int(cardId)});\n}",
+        "kcmdEntry":  "{ 0x337B, ATTRIB_INTERNAL_COMM, \"msg_l_unlock_card\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13161,
+        "fun":  "vm_msgLVerifyPassword",
+        "type":  2,
+        "addr":  "0x8063e40",
+        "lpcFun":  "msg_l_verify_password",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "account:u8len-string",
+                           "gid:u8len-string",
+                           "type:u8len-string",
+                           "result:u16be-int"
+                       ],
+        "handlerName":  "handle_vm_msgLVerifyPassword",
+        "handlerCode":  "void handle_vm_msgLVerifyPassword(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off); off += 1;\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen); off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t typeLen = rd8(body, off); off += 1;\n    if (off + typeLen \u003e len) return;\n    auto type = make_string(body + off, typeLen); off += typeLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_verify_password\", {make_int(cl.clientNo), account, gid, type, make_int(result)});\n}",
+        "kcmdEntry":  "{ 0x3369, ATTRIB_INTERNAL_COMM, \"msg_l_verify_password\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  17255,
+        "fun":  "vm_msgVerifyCodeResult",
+        "type":  2,
+        "addr":  "0x8063f88",
+        "lpcFun":  "msg_verify_code_result",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "gid:u8len-string",
+                           "code:u8len-string",
+                           "type:u8len-string",
+                           "result:u16be-int"
+                       ],
+        "handlerName":  "handle_vm_msgVerifyCodeResult",
+        "handlerCode":  "void handle_vm_msgVerifyCodeResult(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t codeLen = rd8(body, off); off += 1;\n    if (off + codeLen \u003e len) return;\n    auto code = make_string(body + off, codeLen); off += codeLen;\n    if (off + 1 \u003e len) return;\n    uint8_t typeLen = rd8(body, off); off += 1;\n    if (off + typeLen \u003e len) return;\n    auto type = make_string(body + off, typeLen); off += typeLen;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    applyLpc(\"msg_verify_code_result\", {make_int(cl.clientNo), gid, code, type, make_int(result)});\n}",
+        "kcmdEntry":  "{ 0x4367, ATTRIB_INTERNAL_COMM, \"msg_verify_code_result\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

@@ -1,0 +1,227 @@
+﻿[
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdMovToQiankundai",
+        "handlerName":  "handle_vm_cmdMovToQiankundai",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806bd84",
+        "handlerCode":  "void handle_vm_cmdMovToQiankundai(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    std::string name(reinterpret_cast\u003cconst char*\u003e(body + off), nameLen);\n    off += nameLen;\n    if (off + 2 \u003e len) return;\n    uint16_t x = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t y = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t z = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_mov_to_qiankundai\", {make_int(cl.clientNo), make_string(name), make_int(x), make_int(y), make_int(z)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  12309,
+        "lpcFun":  "cmd_mov_to_qiankundai",
+        "bodyFields":  [
+                           "string u8len name",
+                           "int u16 x",
+                           "int u16 y",
+                           "int u16 z"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3015, ATTRIB_CLIENT_USER, \"cmd_mov_to_qiankundai\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdMulAssignAttrib",
+        "handlerName":  "handle_vm_cmdMulAssignAttrib",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8055b58",
+        "handlerCode":  "void handle_vm_cmdMulAssignAttrib(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t a = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t b = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t c = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t d = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t e = rd32be(body, off); off += 4;\n    applyLpc(\"cmd_mul_assign_attrib\", {make_int(cl.clientNo), make_int(a), make_int(b), make_int(c), make_int(d), make_int(e)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4120,
+        "lpcFun":  "cmd_mul_assign_attrib",
+        "bodyFields":  [
+                           "int u32 a",
+                           "int u32 b",
+                           "int u32 c",
+                           "int u32 d",
+                           "int u32 e"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1018, ATTRIB_CLIENT_USER, \"cmd_mul_assign_attrib\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdMulGoodsBuy",
+        "handlerName":  "handle_vm_cmdMulGoodsBuy",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073700",
+        "handlerCode":  "void handle_vm_cmdMulGoodsBuy(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t id = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    if (count == 0 || count \u003e 100 || off + (size_t)count * 6 \u003e len) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i)\n    {\n        arr-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n        arr-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n        arr-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n    }\n    applyLpc(\"cmd_mul_goods_buy\", {make_int(cl.clientNo), make_int(id), make_int(count), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936
+                    ],
+        "cmdNo":  8120,
+        "lpcFun":  "cmd_mul_goods_buy",
+        "bodyFields":  [
+                           "int u32 id",
+                           "int u16 count",
+                           "array of u16 triplets (goodsId,count,price) x count"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1FB8, ATTRIB_CLIENT_USER, \"cmd_mul_goods_buy\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdMultiMoveTo",
+        "handlerName":  "handle_vm_cmdMultiMoveTo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8055964",
+        "handlerCode":  "void handle_vm_cmdMultiMoveTo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t mapId = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    if (count == 0 || count \u003e 13 || off + (size_t)count * 4 \u003e len) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i)\n    {\n        arr-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n        arr-\u003eitems.push_back(make_int(rd16be(body, off))); off += 2;\n    }\n    if (off + 2 \u003e len) return;\n    uint16_t dir = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_multi_move_to\", {make_int(cl.clientNo), make_int(v), make_int(mapId), arr, make_int(dir)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936,
+                        88
+                    ],
+        "cmdNo":  64882,
+        "lpcFun":  "cmd_multi_move_to",
+        "bodyFields":  [
+                           "int u32 v",
+                           "int u32 mapId",
+                           "int u16 count",
+                           "array of u16 pairs (x,y) x count",
+                           "int u16 dir",
+                           "int u32 tick(parsed, not passed)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD72, ATTRIB_CLIENT_USER, \"cmd_multi_move_to\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdMusicList",
+        "handlerName":  "handle_vm_cmdMusicList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x807115c",
+        "handlerCode":  "void handle_vm_cmdMusicList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_music_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  9474,
+        "lpcFun":  "cmd_music_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2502, ATTRIB_CLIENT_USER, \"cmd_music_list\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdNewbieFirstAction",
+        "handlerName":  "handle_vm_cmdNewbieFirstAction",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806c000",
+        "handlerCode":  "void handle_vm_cmdNewbieFirstAction(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_newbie_first_action\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  9736,
+        "lpcFun":  "cmd_newbie_first_action",
+        "bodyFields":  [
+                           "int u8 action"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2608, ATTRIB_CLIENT_USER, \"cmd_newbie_first_action\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdNewbiePlayedDrama",
+        "handlerName":  "handle_vm_cmdNewbiePlayedDrama",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806c040",
+        "handlerCode":  "void handle_vm_cmdNewbiePlayedDrama(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t sLen = body[off++];\n    if (off + sLen \u003e len) return;\n    std::string actionList(reinterpret_cast\u003cconst char*\u003e(body + off), sLen);\n    off += sLen;\n    if (off + 1 \u003e len) return;\n    uint8_t playedCount = body[off++];\n    applyLpc(\"cmd_newbie_played_drama\", {make_int(cl.clientNo), make_string(actionList), make_int(playedCount)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8534,
+        "lpcFun":  "cmd_newbie_played_drama",
+        "bodyFields":  [
+                           "string u8len actionList",
+                           "int u8 playedCount"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2156, ATTRIB_CLIENT_USER, \"cmd_newbie_played_drama\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdNextQuestion",
+        "handlerName":  "handle_vm_cmdNextQuestion",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d9c0",
+        "handlerCode":  "void handle_vm_cmdNextQuestion(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_next_question\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8578,
+        "lpcFun":  "cmd_next_question",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2182, ATTRIB_CLIENT_USER, \"cmd_next_question\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdNotifySendWeibo",
+        "handlerName":  "handle_vm_cmdNotifySendWeibo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8074144",
+        "handlerCode":  "void handle_vm_cmdNotifySendWeibo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_notify_send_weibo\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  19188,
+        "lpcFun":  "cmd_notify_send_weibo",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4AF4, ATTRIB_CLIENT_USER, \"cmd_notify_send_weibo\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdOpenAdventrueBox",
+        "handlerName":  "handle_vm_cmdOpenAdventrueBox",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8075ac4",
+        "handlerCode":  "void handle_vm_cmdOpenAdventrueBox(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t boxId = rd16be(body, 0);\n    applyLpc(\"cmd_open_adventrue_box\", {make_int(cl.clientNo), make_int(boxId)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  4378,
+        "lpcFun":  "cmd_open_adventrue_box",
+        "bodyFields":  [
+                           "int u16 boxId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x111A, ATTRIB_CLIENT_USER, \"cmd_open_adventrue_box\", 0 }"
+    }
+]

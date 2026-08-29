@@ -1,0 +1,232 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSetPennantSkill",
+        "handlerName":  "handle_vm_cmdSetPennantSkill",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058348",
+        "handlerCode":  "void handle_vm_cmdSetPennantSkill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t pennantSkill = rd16be(body, 0);\n    applyLpc(\"cmd_set_pennant_skill\", {make_int(cl.clientNo), make_int(pennantSkill)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  4306,
+        "lpcFun":  "cmd_set_pennant_skill",
+        "bodyFields":  [
+                           "pennantSkill:u16be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10D2, ATTRIB_CLIENT_USER, \"cmd_set_pennant_skill\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdSetPetName",
+        "handlerName":  "handle_vm_cmdSetPetName",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058268",
+        "handlerCode":  "void handle_vm_cmdSetPetName(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t pos = body[0];\n    uint8_t nameLen = body[1];\n    if ((size_t)2 + nameLen \u003e len) return;\n    applyLpc(\"cmd_set_pet_name\", {make_int(cl.clientNo), make_int(pos), make_string(body + 2, nameLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  64854,
+        "lpcFun":  "cmd_set_pet_name",
+        "bodyFields":  [
+                           "pos:u8",
+                           "nameLen:u8",
+                           "name:string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD56, ATTRIB_CLIENT_USER, \"cmd_set_pet_name\", 0 }"
+    },
+    {
+        "nArgs":  7,
+        "fun":  "vm_cmdSetRecommendAttrib",
+        "handlerName":  "handle_vm_cmdSetRecommendAttrib",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058394",
+        "handlerCode":  "void handle_vm_cmdSetRecommendAttrib(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 9) return;\n    uint32_t id = rd32be(body, 0);\n    uint8_t con = body[4];\n    uint8_t wiz = body[5];\n    uint8_t str = body[6];\n    uint8_t dex = body[7];\n    uint8_t isAuto = body[8];\n    applyLpc(\"cmd_set_recommend_attrib\", {make_int(cl.clientNo), make_int(id), make_int(con), make_int(wiz), make_int(str), make_int(dex), make_int(isAuto)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  28692,
+        "lpcFun":  "cmd_set_recommend_attrib",
+        "bodyFields":  [
+                           "id:u32be",
+                           "con:u8",
+                           "wiz:u8",
+                           "str:u8",
+                           "dex:u8",
+                           "isAuto:u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x7014, ATTRIB_CLIENT_USER, \"cmd_set_recommend_attrib\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdSetRecPerson",
+        "handlerName":  "handle_vm_cmdSetRecPerson",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d3e0",
+        "handlerCode":  "void handle_vm_cmdSetRecPerson(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off;\n    off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    applyLpc(\"cmd_set_rec_person\", {make_int(cl.clientNo), make_string(name, nameLen), make_string(body + off, gidLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  61659,
+        "lpcFun":  "cmd_set_rec_person",
+        "bodyFields":  [
+                           "nameLen:u8",
+                           "name:string",
+                           "gidLen:u8",
+                           "gid:string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF0DB, ATTRIB_CLIENT_USER, \"cmd_set_rec_person\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSetRegion",
+        "handlerName":  "handle_vm_cmdSetRegion",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805dbcc",
+        "handlerCode":  "void handle_vm_cmdSetRegion(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t addrLen = body[0];\n    if ((size_t)1 + addrLen \u003e len) return;\n    applyLpc(\"cmd_set_region\", {make_int(cl.clientNo), make_string(body + 1, addrLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64940,
+        "lpcFun":  "cmd_set_region",
+        "bodyFields":  [
+                           "addrLen:u8",
+                           "address:string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFDAC, ATTRIB_CLIENT_USER, \"cmd_set_region\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSetSafeLoginTime",
+        "handlerName":  "handle_vm_cmdSetSafeLoginTime",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806af94",
+        "handlerCode":  "void handle_vm_cmdSetSafeLoginTime(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t safeLoginTime = rd16be(body, 0);\n    applyLpc(\"cmd_set_safe_login_time\", {make_int(cl.clientNo), make_int(safeLoginTime)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8540,
+        "lpcFun":  "cmd_set_safe_login_time",
+        "bodyFields":  [
+                           "safeLoginTime:u16be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x215C, ATTRIB_CLIENT_USER, \"cmd_set_safe_login_time\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdSetSafeMechanism",
+        "handlerName":  "handle_vm_cmdSetSafeMechanism",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806b040",
+        "handlerCode":  "void handle_vm_cmdSetSafeMechanism(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    uint16_t num = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t questionLen = body[off++];\n    if (off + questionLen \u003e len) return;\n    const uint8_t* question = body + off;\n    off += questionLen;\n    if (off + 1 \u003e len) return;\n    uint8_t answerLen = body[off++];\n    if (off + answerLen \u003e len) return;\n    applyLpc(\"cmd_set_safe_mechanism\", {make_int(cl.clientNo), make_int(count), make_int(num), make_string(question, questionLen), make_string(body + off, answerLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  20746,
+        "lpcFun":  "cmd_set_safe_mechanism",
+        "bodyFields":  [
+                           "count:u16be",
+                           "num:u16be",
+                           "questionLen:u8",
+                           "question:string",
+                           "answerLen:u8",
+                           "answer:string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x510A, ATTRIB_CLIENT_USER, \"cmd_set_safe_mechanism\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSetSafeState",
+        "handlerName":  "handle_vm_cmdSetSafeState",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806b17c",
+        "handlerCode":  "void handle_vm_cmdSetSafeState(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t safeState = rd16be(body, 0);\n    applyLpc(\"cmd_set_safe_state\", {make_int(cl.clientNo), make_int(safeState)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  19186,
+        "lpcFun":  "cmd_set_safe_state",
+        "bodyFields":  [
+                           "safeState:u16be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4AF2, ATTRIB_CLIENT_USER, \"cmd_set_safe_state\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdSetSetting",
+        "handlerName":  "handle_vm_cmdSetSetting",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058430",
+        "handlerCode":  "void handle_vm_cmdSetSetting(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t settingLen = body[0];\n    if ((size_t)1 + settingLen + 2 \u003e len) return;\n    const uint8_t* setting = body + 1;\n    uint16_t param = rd16be(body, 1 + settingLen);\n    applyLpc(\"cmd_set_setting\", {make_int(cl.clientNo), make_string(setting, settingLen), make_int(param)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  9032,
+        "lpcFun":  "cmd_set_setting",
+        "bodyFields":  [
+                           "settingLen:u8",
+                           "setting:string",
+                           "param:u16be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2348, ATTRIB_CLIENT_USER, \"cmd_set_setting\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSetSignature",
+        "handlerName":  "handle_vm_cmdSetSignature",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805dcd4",
+        "handlerCode":  "void handle_vm_cmdSetSignature(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t msgLen = body[0];\n    if ((size_t)1 + msgLen \u003e len) return;\n    applyLpc(\"cmd_set_individuality_signature\", {make_int(cl.clientNo), make_string(body + 1, msgLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64253,
+        "lpcFun":  "cmd_set_individuality_signature",
+        "bodyFields":  [
+                           "msgLen:u8",
+                           "msg:string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFAFD, ATTRIB_CLIENT_USER, \"cmd_set_individuality_signature\", 0 }"
+    }
+]

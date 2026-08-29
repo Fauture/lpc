@@ -1,0 +1,204 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgGsLogin",
+        "handlerName":  "handle_vm_msgGsLogin",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80667b0",
+        "handlerCode":  "void handle_vm_msgGsLogin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string id (u8 len)\n    uint8_t idLen = rd8(body, off); off += 1;\n    if (off + idLen \u003e len) return;\n    const uint8_t* id = body + off; off += idLen;\n    // string name (u8 len)\n    uint8_t nameLen = rd8(body, off); off += 1;\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off; off += nameLen;\n    applyLpc(\"msg_gs_login\", {make_int(cl.clientNo), make_string(id, idLen), make_string(name, nameLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  4681,
+        "lpcFun":  "msg_gs_login",
+        "bodyFields":  [
+                           "string id (u8 len)",
+                           "string name (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1249, ATTRIB_INTERNAL_COMM, \"msg_gs_login\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgGsLogout",
+        "handlerName":  "handle_vm_msgGsLogout",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066884",
+        "handlerCode":  "void handle_vm_msgGsLogout(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string id (u8 len)\n    uint8_t idLen = rd8(body, off); off += 1;\n    if (off + idLen \u003e len) return;\n    const uint8_t* id = body + off; off += idLen;\n    // string name (u8 len)\n    uint8_t nameLen = rd8(body, off); off += 1;\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off; off += nameLen;\n    applyLpc(\"msg_gs_logout\", {make_int(cl.clientNo), make_string(id, idLen), make_string(name, nameLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  7701,
+        "lpcFun":  "msg_gs_logout",
+        "bodyFields":  [
+                           "string id (u8 len)",
+                           "string name (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1E15, ATTRIB_INTERNAL_COMM, \"msg_gs_logout\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgGsWorldChannel",
+        "handlerName":  "handle_vm_msgGsWorldChannel",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066c84",
+        "handlerCode":  "void handle_vm_msgGsWorldChannel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string msg (u8 len)\n    uint8_t msgLen = rd8(body, off); off += 1;\n    if (off + msgLen \u003e len) return;\n    const uint8_t* msg = body + off; off += msgLen;\n    applyLpc(\"msg_gs_world_channel\", {make_int(cl.clientNo), make_string(msg, msgLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  61621,
+        "lpcFun":  "msg_gs_world_channel",
+        "bodyFields":  [
+                           "string msg (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF0B5, ATTRIB_INTERNAL_COMM, \"msg_gs_world_channel\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgGsSystemChannel",
+        "handlerName":  "handle_vm_msgGsSystemChannel",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066aa8",
+        "handlerCode":  "void handle_vm_msgGsSystemChannel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string msg (u8 len)\n    uint8_t msgLen = rd8(body, off); off += 1;\n    if (off + msgLen \u003e len) return;\n    const uint8_t* msg = body + off; off += msgLen;\n    applyLpc(\"msg_gs_system_channel\", {make_int(cl.clientNo), make_string(msg, msgLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64789,
+        "lpcFun":  "msg_gs_system_channel",
+        "bodyFields":  [
+                           "string msg (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD15, ATTRIB_INTERNAL_COMM, \"msg_gs_system_channel\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgRpcServerName",
+        "handlerName":  "handle_vm_msgRpcServerName",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80669a8",
+        "handlerCode":  "void handle_vm_msgRpcServerName(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string name (u8 len)\n    uint8_t nameLen = rd8(body, off); off += 1;\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off; off += nameLen;\n    // string version (u8 len)\n    uint8_t versionLen = rd8(body, off); off += 1;\n    if (off + versionLen \u003e len) return;\n    const uint8_t* version = body + off; off += versionLen;\n    // int val (u32 BE)\n    if (off + 4 \u003e len) return;\n    uint32_t val = rd32be(body, off); off += 4;\n    applyLpc(\"msg_rpc_server_name\", {make_int(cl.clientNo), make_string(name, nameLen), make_string(version, versionLen), make_int((int)val)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  5143,
+        "lpcFun":  "msg_rpc_server_name",
+        "bodyFields":  [
+                           "string name (u8 len)",
+                           "string version (u8 len)",
+                           "int val (u32 BE)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1417, ATTRIB_INTERNAL_COMM, \"msg_rpc_server_name\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgIntersvrChannelMsg",
+        "handlerName":  "handle_vm_msgIntersvrChannelMsg",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066d08",
+        "handlerCode":  "void handle_vm_msgIntersvrChannelMsg(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // int channel (u16 BE)\n    uint16_t channel = rd16be(body, off); off += 2;\n    // string sender (u8 len)\n    uint8_t senderLen = rd8(body, off); off += 1;\n    if (off + senderLen \u003e len) return;\n    const uint8_t* sender = body + off; off += senderLen;\n    // buffer data (u16 BE len)\n    uint16_t dataLen = rd16be(body, off); off += 2;\n    if (off + dataLen \u003e len) return;\n    const uint8_t* data = body + off; off += dataLen;\n    // string msg (u16 BE len)\n    uint16_t msgLen = rd16be(body, off); off += 2;\n    if (off + msgLen \u003e len) return;\n    const uint8_t* msg = body + off; off += msgLen;\n    applyLpc(\"msg_intersvr_channel_msg\", {make_int(cl.clientNo), make_int(channel), make_string(sender, senderLen), make_buffer(data, dataLen), make_string(msg, msgLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        228,
+                        357
+                    ],
+        "cmdNo":  8967,
+        "lpcFun":  "msg_intersvr_channel_msg",
+        "bodyFields":  [
+                           "int channel (u16 BE)",
+                           "string sender (u8 len)",
+                           "buffer data (u16 BE len + bytes)",
+                           "string msg (u16 BE len + bytes)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2307, ATTRIB_INTERNAL_COMM, \"msg_intersvr_channel_msg\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgDataMining",
+        "handlerName":  "handle_vm_msgDataMining",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066e18",
+        "handlerCode":  "void handle_vm_msgDataMining(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string type (u8 len)\n    uint8_t typeLen = rd8(body, off); off += 1;\n    if (off + typeLen \u003e len) return;\n    const uint8_t* type = body + off; off += typeLen;\n    // buffer data (u16 BE len)\n    uint16_t dataLen = rd16be(body, off); off += 2;\n    if (off + dataLen \u003e len) return;\n    const uint8_t* data = body + off; off += dataLen;\n    applyLpc(\"msg_data_mining\", {make_int(cl.clientNo), make_string(type, typeLen), make_buffer(data, dataLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        228
+                    ],
+        "cmdNo":  12497,
+        "lpcFun":  "msg_data_mining",
+        "bodyFields":  [
+                           "string type (u8 len)",
+                           "buffer data (u16 BE len + bytes)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x30D1, ATTRIB_INTERNAL_COMM, \"msg_data_mining\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdLeagueOper",
+        "handlerName":  "handle_vm_cmdLeagueOper",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8069a64",
+        "handlerCode":  "void handle_vm_cmdLeagueOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string command (u8 len)\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    const uint8_t* command = body + off; off += cmdLen;\n    // array of strings: u16 BE count, then count x (u16 BE len + bytes)\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        uint16_t elLen = rd16be(body, off); off += 2;\n        if (off + elLen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, elLen));\n        off += elLen;\n    }\n    applyLpc(\"cmd_league_oper\", {make_int(cl.clientNo), make_string(command, cmdLen), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "cmdNo":  12546,
+        "lpcFun":  "cmd_league_oper",
+        "bodyFields":  [
+                           "string command (u8 len)",
+                           "array count (u16 BE)",
+                           "count x string (u16 BE len + bytes)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3102, ATTRIB_INTERNAL_COMM, \"cmd_league_oper\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLeagueOper",
+        "handlerName":  "handle_vm_msgLeagueOper",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8069c74",
+        "handlerCode":  "void handle_vm_msgLeagueOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    // string command (u8 len)\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    const uint8_t* command = body + off; off += cmdLen;\n    // array of strings: u16 BE count, then count x (u16 BE len + bytes)\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        uint16_t elLen = rd16be(body, off); off += 2;\n        if (off + elLen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, elLen));\n        off += elLen;\n    }\n    applyLpc(\"msg_league_oper\", {make_int(cl.clientNo), make_string(command, cmdLen), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "cmdNo":  12545,
+        "lpcFun":  "msg_league_oper",
+        "bodyFields":  [
+                           "string command (u8 len)",
+                           "array count (u16 BE)",
+                           "count x string (u16 BE len + bytes)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3101, ATTRIB_INTERNAL_COMM, \"msg_league_oper\", 0 }"
+    }
+]

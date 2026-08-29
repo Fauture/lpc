@@ -1,0 +1,223 @@
+﻿[
+    {
+        "cmdNo":  4404,
+        "fun":  "vm_cmdRemoveChatGroupMember",
+        "type":  1,
+        "addr":  "0x8071de0",
+        "lpcFun":  "cmd_remove_chat_group_member",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string group (u8 len+bytes)",
+                           "string name (u8 len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdRemoveChatGroupMember",
+        "handlerCode":  "void handle_vm_cmdRemoveChatGroupMember(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t gLen = body[0];\n    if (1 + gLen \u003e len) return;\n    const uint8_t* group = body + 1;\n    size_t off = 1 + gLen;\n    if (off \u003e= len) return;\n    uint8_t nLen = body[off];\n    if (off + 1 + nLen \u003e len) return;\n    const uint8_t* name = body + off + 1;\n    applyLpc(\"cmd_remove_chat_group_member\", {make_int(cl.clientNo), make_string(group, gLen), make_string(name, nLen)});\n}",
+        "kcmdEntry":  "{ 0x1134, ATTRIB_CLIENT_USER, \"cmd_remove_chat_group_member\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4164,
+        "fun":  "vm_cmdRemoveFriend",
+        "type":  1,
+        "addr":  "0x805758c",
+        "lpcFun":  "cmd_remove_friend",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string group (u8 len+bytes)",
+                           "string name (u8 len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdRemoveFriend",
+        "handlerCode":  "void handle_vm_cmdRemoveFriend(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t gLen = body[0];\n    if (1 + gLen \u003e len) return;\n    const uint8_t* group = body + 1;\n    size_t off = 1 + gLen;\n    if (off \u003e= len) return;\n    uint8_t nLen = body[off];\n    if (off + 1 + nLen \u003e len) return;\n    const uint8_t* name = body + off + 1;\n    applyLpc(\"cmd_remove_friend\", {make_int(cl.clientNo), make_string(group, gLen), make_string(name, nLen)});\n}",
+        "kcmdEntry":  "{ 0x1044, ATTRIB_CLIENT_USER, \"cmd_remove_friend\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64842,
+        "fun":  "vm_cmdRenameStall",
+        "type":  1,
+        "addr":  "0x8057660",
+        "lpcFun":  "cmd_rename_stall",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string name (u8 len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdRenameStall",
+        "handlerCode":  "void handle_vm_cmdRenameStall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nLen = body[0];\n    if (1 + nLen \u003e len) return;\n    const uint8_t* name = body + 1;\n    applyLpc(\"cmd_rename_stall\", {make_int(cl.clientNo), make_string(name, nLen)});\n}",
+        "kcmdEntry":  "{ 0xFD4A, ATTRIB_CLIENT_USER, \"cmd_rename_stall\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13582,
+        "fun":  "vm_cmdRepair",
+        "type":  1,
+        "addr":  "0x80576e4",
+        "lpcFun":  "cmd_repair",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32 BE itemId",
+                           "u16 BE repairType"
+                       ],
+        "handlerName":  "handle_vm_cmdRepair",
+        "handlerCode":  "void handle_vm_cmdRepair(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint32_t itemId = rd32be(body, 0);\n    uint16_t repairType = rd16be(body, 4);\n    applyLpc(\"cmd_repair\", {make_int(cl.clientNo), make_int(itemId), make_int(repairType)});\n}",
+        "kcmdEntry":  "{ 0x350E, ATTRIB_CLIENT_USER, \"cmd_repair\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16430,
+        "fun":  "vm_cmdRepairFurniture",
+        "type":  1,
+        "addr":  "0x8057748",
+        "lpcFun":  "cmd_repair_furniture",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 furnitureType",
+                           "u32 BE itemId"
+                       ],
+        "handlerName":  "handle_vm_cmdRepairFurniture",
+        "handlerCode":  "void handle_vm_cmdRepairFurniture(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint8_t furnitureType = body[0];\n    uint32_t itemId = rd32be(body, 1);\n    applyLpc(\"cmd_repair_furniture\", {make_int(cl.clientNo), make_int(furnitureType), make_int(itemId)});\n}",
+        "kcmdEntry":  "{ 0x402E, ATTRIB_CLIENT_USER, \"cmd_repair_furniture\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8644,
+        "fun":  "vm_cmdReplaceLogin",
+        "type":  1,
+        "addr":  "0x80577a0",
+        "lpcFun":  "cmd_replace_login",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdReplaceLogin",
+        "handlerCode":  "void handle_vm_cmdReplaceLogin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_replace_login\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x21C4, ATTRIB_CLIENT_USER, \"cmd_replace_login\", 0 }",
+        "status":  "ok",
+        "note":  "body not read; only clientNo"
+    },
+    {
+        "cmdNo":  8150,
+        "fun":  "vm_cmdReplyClientDoubtInfo",
+        "type":  1,
+        "addr":  "0x80604f4",
+        "lpcFun":  "cmd_reply_client_doubt_info",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 type",
+                           "string name (u8 len+bytes)",
+                           "string msg (u16 BE len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdReplyClientDoubtInfo",
+        "handlerCode":  "void handle_vm_cmdReplyClientDoubtInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t nLen = body[1];\n    if (2 + nLen + 2 \u003e len) return;\n    const uint8_t* name = body + 2;\n    size_t off = 2 + nLen;\n    uint16_t mLen = rd16be(body, off);\n    if (off + 2 + mLen \u003e len) return;\n    const uint8_t* msg = body + off + 2;\n    applyLpc(\"cmd_reply_client_doubt_info\", {make_int(cl.clientNo), make_int(type), make_string(name, nLen), make_string(msg, mLen)});\n}",
+        "kcmdEntry":  "{ 0x1FD6, ATTRIB_CLIENT_USER, \"cmd_reply_client_doubt_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  15892,
+        "fun":  "vm_cmdReplyClientProcessInfo",
+        "type":  1,
+        "addr":  "0x80605e0",
+        "lpcFun":  "cmd_reply_client_process_info",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 type",
+                           "string info (u16 BE len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdReplyClientProcessInfo",
+        "handlerCode":  "void handle_vm_cmdReplyClientProcessInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint8_t type = body[0];\n    uint16_t sLen = rd16be(body, 1);\n    if (3 + sLen \u003e len) return;\n    const uint8_t* info = body + 3;\n    applyLpc(\"cmd_reply_client_process_info\", {make_int(cl.clientNo), make_int(type), make_string(info, sLen)});\n}",
+        "kcmdEntry":  "{ 0x3E14, ATTRIB_CLIENT_USER, \"cmd_reply_client_process_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  53002,
+        "fun":  "vm_cmdReplyFriendVerify",
+        "type":  1,
+        "addr":  "0x806030c",
+        "lpcFun":  "cmd_reply_friend_verify",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string charName (u8 len+bytes)",
+                           "u8 pass",
+                           "string requestMsg (u8 len+bytes)",
+                           "string requested (u8 len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdReplyFriendVerify",
+        "handlerCode":  "void handle_vm_cmdReplyFriendVerify(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nLen = body[0];\n    if (1 + nLen + 1 \u003e len) return;\n    const uint8_t* charName = body + 1;\n    size_t off = 1 + nLen;\n    uint8_t pass = body[off];\n    ++off;\n    if (off \u003e= len) return;\n    uint8_t mLen = body[off];\n    ++off;\n    if (off + mLen \u003e len) return;\n    const uint8_t* reqMsg = body + off;\n    off += mLen;\n    if (off \u003e= len) return;\n    uint8_t rLen = body[off];\n    ++off;\n    if (off + rLen \u003e len) return;\n    const uint8_t* requested = body + off;\n    applyLpc(\"cmd_reply_friend_verify\", {make_int(cl.clientNo), make_string(charName, nLen), make_int(pass), make_string(reqMsg, mLen), make_string(requested, rLen)});\n}",
+        "kcmdEntry":  "{ 0xCF0A, ATTRIB_CLIENT_USER, \"cmd_reply_friend_verify\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4373,
+        "fun":  "vm_cmdReplyRequestAsktaoShow",
+        "type":  1,
+        "addr":  "0x805f0b8",
+        "lpcFun":  "cmd_reply_request_asktao_show",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8 operType",
+                           "string requestIds (u16 BE len+bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdReplyRequestAsktaoShow",
+        "handlerCode":  "void handle_vm_cmdReplyRequestAsktaoShow(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint8_t operType = body[0];\n    uint16_t sLen = rd16be(body, 1);\n    if (3 + sLen \u003e len) return;\n    const uint8_t* ids = body + 3;\n    applyLpc(\"cmd_reply_request_asktao_show\", {make_int(cl.clientNo), make_int(operType), make_string(ids, sLen)});\n}",
+        "kcmdEntry":  "{ 0x1115, ATTRIB_CLIENT_USER, \"cmd_reply_request_asktao_show\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

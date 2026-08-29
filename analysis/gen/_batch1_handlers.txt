@@ -1,0 +1,83 @@
+// ---- filed<->dba first batch (6 commands) ----
+// vm_msgReadContent (0x80674ec): body = [u32 BE a][u32 BE b][u32 BE strLen][str]
+// -> msg_read_content(clientNo, a, b, str)
+void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 12) return;
+    uint32_t a = rd32be(body);
+    uint32_t b = rd32be(body + 4);
+    uint32_t slen = rd32be(body + 8);
+    if (slen > len - 12) return;
+    std::string s(reinterpret_cast<const char*>(body + 12), slen);
+    applyLpc("msg_read_content",
+             {make_int(cl.clientNo), make_int(a), make_int(b), make_string(s)});
+}
+
+// vm_msgWrittenContent (0x8067634): body = [u32 BE a][u32 BE b]
+// -> msg_written_content(clientNo, a, b)
+void handleMsgWrittenContent(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 8) return;
+    uint32_t a = rd32be(body);
+    uint32_t b = rd32be(body + 4);
+    applyLpc("msg_written_content",
+             {make_int(cl.clientNo), make_int(a), make_int(b)});
+}
+
+// vm_msgCreatedGid (0x8067b80): body = [u32 BE cookie][u32 BE result][u8 gidLen][gid]
+// -> msg_created_gid(clientNo, cookie, result, gid)
+void handleMsgCreatedGid(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 9) return;
+    uint32_t cookie = rd32be(body);
+    uint32_t result = rd32be(body + 4);
+    uint32_t glen = body[8];
+    if (glen > len - 9) return;
+    std::string gid(reinterpret_cast<const char*>(body + 9), glen);
+    applyLpc("msg_created_gid",
+             {make_int(cl.clientNo), make_int(cookie), make_int(result), make_string(gid)});
+}
+
+// vm_msgGotGid (0x8067d38): body = [u32 BE cookie][u32 BE result][u8 gidLen][gid]
+// -> msg_got_gid(clientNo, cookie, result, gid)
+void handleMsgGotGid(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 9) return;
+    uint32_t cookie = rd32be(body);
+    uint32_t result = rd32be(body + 4);
+    uint32_t glen = body[8];
+    if (glen > len - 9) return;
+    std::string gid(reinterpret_cast<const char*>(body + 9), glen);
+    applyLpc("msg_got_gid",
+             {make_int(cl.clientNo), make_int(cookie), make_int(result), make_string(gid)});
+}
+
+// vm_msgGotGidArr (0x8067e20): body = [u32 BE a][u32 BE b][u32 BE strLen][str]
+// -> msg_got_gid_arr(clientNo, a, b, str)
+void handleMsgGotGidArr(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 12) return;
+    uint32_t a = rd32be(body);
+    uint32_t b = rd32be(body + 4);
+    uint32_t slen = rd32be(body + 8);
+    if (slen > len - 12) return;
+    std::string s(reinterpret_cast<const char*>(body + 12), slen);
+    applyLpc("msg_got_gid_arr",
+             {make_int(cl.clientNo), make_int(a), make_int(b), make_string(s)});
+}
+
+// vm_msgGotGidInfo (0x8067ec4): body = [u32 BE cookie][u32 BE result]
+//   [u8 typeLen][type][u8 nameLen][name]
+// -> msg_got_gid_info(clientNo, cookie, result, type, name)
+void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 9) return;
+    uint32_t cookie = rd32be(body);
+    uint32_t result = rd32be(body + 4);
+    size_t off = 8;
+    uint32_t tlen = body[off++];
+    if (tlen > len - off) return;
+    std::string type(reinterpret_cast<const char*>(body + off), tlen);
+    off += tlen;
+    if (off >= len) return;
+    uint32_t nlen = body[off++];
+    if (nlen > len - off) return;
+    std::string name(reinterpret_cast<const char*>(body + off), nlen);
+    applyLpc("msg_got_gid_info",
+             {make_int(cl.clientNo), make_int(cookie), make_int(result),
+              make_string(type), make_string(name)});
+}

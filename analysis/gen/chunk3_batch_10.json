@@ -1,0 +1,203 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestDeckInfo",
+        "handlerName":  "handle_vm_cmdRequestDeckInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8076204",
+        "handlerCode":  "void handle_vm_cmdRequestDeckInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t deckId = rd16be(body);\n    applyLpc(\"cmd_request_deck_info\", {make_int(cl.clientNo), make_int(deckId)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  15904,
+        "lpcFun":  "cmd_request_deck_info",
+        "bodyFields":  [
+                           "deckId u16 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E20, ATTRIB_CLIENT_USER, \"cmd_request_deck_info\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestDeckList",
+        "handlerName":  "handle_vm_cmdRequestDeckList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8076250",
+        "handlerCode":  "void handle_vm_cmdRequestDeckList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_deck_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4996,
+        "lpcFun":  "cmd_request_deck_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1384, ATTRIB_CLIENT_USER, \"cmd_request_deck_list\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestDecomposeCard",
+        "handlerName":  "handle_vm_cmdRequestDecomposeCard",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80763a8",
+        "handlerCode":  "void handle_vm_cmdRequestDecomposeCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n \u003e len) return;\n    applyLpc(\"cmd_request_decompose_card\", {make_int(cl.clientNo), make_string(body + 1, n)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4266,
+        "lpcFun":  "cmd_request_decompose_card",
+        "bodyFields":  [
+                           "cardName u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10AA, ATTRIB_CLIENT_USER, \"cmd_request_decompose_card\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestDeleteDeck",
+        "handlerName":  "handle_vm_cmdRequestDeleteDeck",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80762d8",
+        "handlerCode":  "void handle_vm_cmdRequestDeleteDeck(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t deckId = rd16be(body);\n    applyLpc(\"cmd_request_delete_deck\", {make_int(cl.clientNo), make_int(deckId)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  5016,
+        "lpcFun":  "cmd_request_delete_deck",
+        "bodyFields":  [
+                           "deckId u16 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1398, ATTRIB_CLIENT_USER, \"cmd_request_delete_deck\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestDrawCardCompeteBonus",
+        "handlerName":  "handle_vm_cmdRequestDrawCardCompeteBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80766e4",
+        "handlerCode":  "void handle_vm_cmdRequestDrawCardCompeteBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_draw_card_compete_bonus\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  28676,
+        "lpcFun":  "cmd_request_draw_card_compete_bonus",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x7004, ATTRIB_CLIENT_USER, \"cmd_request_draw_card_compete_bonus\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestDropCardTask",
+        "handlerName":  "handle_vm_cmdRequestDropCardTask",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80768f8",
+        "handlerCode":  "void handle_vm_cmdRequestDropCardTask(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n \u003e len) return;\n    applyLpc(\"cmd_request_drop_card_task\", {make_int(cl.clientNo), make_string(body + 1, n)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64076,
+        "lpcFun":  "cmd_request_drop_card_task",
+        "bodyFields":  [
+                           "taskName u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA4C, ATTRIB_CLIENT_USER, \"cmd_request_drop_card_task\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdRequestEnterCitywarRoom",
+        "handlerName":  "handle_vm_cmdRequestEnterCitywarRoom",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8074e64",
+        "handlerCode":  "void handle_vm_cmdRequestEnterCitywarRoom(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off];\n    if (off + 1 + n1 \u003e len) return;\n    const uint8_t* city = body + off + 1;\n    size_t cityLen = n1;\n    off += 1 + n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off];\n    if (off + 1 + n2 \u003e len) return;\n    const uint8_t* building = body + off + 1;\n    size_t buildingLen = n2;\n    applyLpc(\"cmd_request_enter_citywar_room\", {make_int(cl.clientNo), make_string(city, cityLen), make_string(building, buildingLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8246,
+        "lpcFun":  "cmd_request_enter_citywar_room",
+        "bodyFields":  [
+                           "city u8len+bytes",
+                           "building u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2036, ATTRIB_CLIENT_USER, \"cmd_request_enter_citywar_room\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestEnterXGame",
+        "handlerName":  "handle_vm_cmdRequestEnterXGame",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80577d0",
+        "handlerCode":  "void handle_vm_cmdRequestEnterXGame(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n \u003e len) return;\n    applyLpc(\"cmd_request_enter_x_game\", {make_int(cl.clientNo), make_string(body + 1, n)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  62738,
+        "lpcFun":  "cmd_request_enter_x_game",
+        "bodyFields":  [
+                           "xgType u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF512, ATTRIB_CLIENT_USER, \"cmd_request_enter_x_game\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestFinishCardCompete",
+        "handlerName":  "handle_vm_cmdRequestFinishCardCompete",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80766b4",
+        "handlerCode":  "void handle_vm_cmdRequestFinishCardCompete(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_finish_card_compete\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  9128,
+        "lpcFun":  "cmd_request_finish_card_compete",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x23A8, ATTRIB_CLIENT_USER, \"cmd_request_finish_card_compete\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdRequestFriendVerify",
+        "handlerName":  "handle_vm_cmdRequestFriendVerify",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060238",
+        "handlerCode":  "void handle_vm_cmdRequestFriendVerify(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off];\n    if (off + 1 + n1 \u003e len) return;\n    const uint8_t* charName = body + off + 1;\n    size_t charNameLen = n1;\n    off += 1 + n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off];\n    if (off + 1 + n2 \u003e len) return;\n    const uint8_t* reqMsg = body + off + 1;\n    size_t reqMsgLen = n2;\n    applyLpc(\"cmd_request_friend_verify\", {make_int(cl.clientNo), make_string(charName, charNameLen), make_string(reqMsg, reqMsgLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8512,
+        "lpcFun":  "cmd_request_friend_verify",
+        "bodyFields":  [
+                           "charName u8len+bytes",
+                           "requestMsg u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2140, ATTRIB_CLIENT_USER, \"cmd_request_friend_verify\", 0 }"
+    }
+]

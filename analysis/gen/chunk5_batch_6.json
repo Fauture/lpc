@@ -1,0 +1,240 @@
+﻿[
+    {
+        "cmdNo":  9343,
+        "fun":  "vm_msgCfgTtsInfo",
+        "type":  2,
+        "addr":  "0x80660b8",
+        "lpcFun":  "msg_cfg_tts_info",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u16 unused (skipped)",
+                           "u8len name",
+                           "u8len ip",
+                           "u16be port"
+                       ],
+        "handlerName":  "handle_vm_msgCfgTtsInfo",
+        "handlerCode":  "void handle_vm_msgCfgTtsInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    // first 2 body bytes are skipped (unused u16) by the original handler\n    size_t off = 2;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen);\n    off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t ipLen = body[off++];\n    if (off + ipLen \u003e len) return;\n    auto ip = make_string(body + off, ipLen);\n    off += ipLen;\n    if (off + 2 \u003e len) return;\n    uint16_t port = rd16be(body, off);\n    off += 2;\n    (void)off;\n    applyLpc(\"msg_cfg_tts_info\", {make_int(cl.clientNo), ip, make_int(port), name});\n}",
+        "kcmdEntry":  "{ 0x247F, ATTRIB_INTERNAL_COMM, \"msg_cfg_tts_info\", 0 }",
+        "status":  "ok",
+        "note":  "Body read order: 2 bytes skipped, u8len name, u8len ip, u16be port; LPC arg order clientNo, ip, port, name."
+    },
+    {
+        "cmdNo":  9333,
+        "fun":  "vm_msgCfgAHServerInfo",
+        "type":  2,
+        "addr":  "0x80661c4",
+        "lpcFun":  "msg_cfg_ah_server_info",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len ip",
+                           "u16be port",
+                           "u8len name"
+                       ],
+        "handlerName":  "handle_vm_msgCfgAHServerInfo",
+        "handlerCode":  "void handle_vm_msgCfgAHServerInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t ipLen = body[off++];\n    if (off + ipLen \u003e len) return;\n    auto ip = make_string(body + off, ipLen);\n    off += ipLen;\n    if (off + 2 \u003e len) return;\n    uint16_t port = rd16be(body, off);\n    off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen);\n    off += nameLen;\n    (void)off;\n    applyLpc(\"msg_cfg_ah_server_info\", {make_int(cl.clientNo), ip, make_int(port), name});\n}",
+        "kcmdEntry":  "{ 0x2475, ATTRIB_INTERNAL_COMM, \"msg_cfg_ah_server_info\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u8len ip, u16be port, u8len name; LPC args clientNo, ip, port, name."
+    },
+    {
+        "cmdNo":  64849,
+        "fun":  "vm_msgGetGoodsFromTts",
+        "type":  2,
+        "addr":  "0x8066fbc",
+        "lpcFun":  "msg_get_goods_from_tts",
+        "nArgs":  7,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        357,
+                        394
+                    ],
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8 mode",
+                           "u32be storage_fee",
+                           "u16be type",
+                           "u8len goods_id",
+                           "u32be datalen + data"
+                       ],
+        "handlerName":  "handle_vm_msgGetGoodsFromTts",
+        "handlerCode":  "void handle_vm_msgGetGoodsFromTts(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen);\n    off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t mode = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t storageFee = rd32be(body, off);\n    off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t type = rd16be(body, off);\n    off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t goodsIdLen = body[off++];\n    if (off + goodsIdLen \u003e len) return;\n    auto goodsId = make_string(body + off, goodsIdLen);\n    off += goodsIdLen;\n    if (off + 4 \u003e len) return;\n    uint32_t dataLen = rd32be(body, off);\n    off += 4;\n    if (off + dataLen \u003e len) return;\n    auto data = make_buffer(body + off, dataLen);\n    off += dataLen;\n    (void)off;\n    applyLpc(\"msg_get_goods_from_tts\", {make_int(cl.clientNo), gid, make_int(mode),\n        make_int((int)storageFee), make_int(type), goodsId, data});\n}",
+        "kcmdEntry":  "{ 0xFD51, ATTRIB_INTERNAL_COMM, \"msg_get_goods_from_tts\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u8len gid, u8 mode, u32be storage_fee, u16be type, u8len goods_id, u32be len + buffer."
+    },
+    {
+        "cmdNo":  64933,
+        "fun":  "vm_msgCheckRoleOnSale",
+        "type":  2,
+        "addr":  "0x8067160",
+        "lpcFun":  "msg_check_role_on_sale",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        394
+                    ],
+        "bodyFields":  [
+                           "u8len account",
+                           "u32be role_id",
+                           "u32be datalen + data"
+                       ],
+        "handlerName":  "handle_vm_msgCheckRoleOnSale",
+        "handlerCode":  "void handle_vm_msgCheckRoleOnSale(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    if (off + 4 \u003e len) return;\n    uint32_t roleId = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t dataLen = rd32be(body, off);\n    off += 4;\n    if (off + dataLen \u003e len) return;\n    auto data = make_buffer(body + off, dataLen);\n    off += dataLen;\n    (void)off;\n    applyLpc(\"msg_check_role_on_sale\", {make_int(cl.clientNo), account, make_int((int)roleId), data});\n}",
+        "kcmdEntry":  "{ 0xFDA5, ATTRIB_INTERNAL_COMM, \"msg_check_role_on_sale\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u8len account, u32be role_id (also used as pProgram), u32be len + buffer."
+    },
+    {
+        "cmdNo":  64855,
+        "fun":  "vm_msgSellTreasure",
+        "type":  2,
+        "addr":  "0x8067244",
+        "lpcFun":  "msg_sell_treasure",
+        "nArgs":  11,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        357,
+                        357,
+                        394
+                    ],
+        "bodyFields":  [
+                           "u8len id",
+                           "u16be type",
+                           "u16be state",
+                           "u32be sale_start_time",
+                           "u16be day",
+                           "u32be price",
+                           "u32be upset_price",
+                           "u8len seller",
+                           "u8len seller_account",
+                           "u32be datalen + data"
+                       ],
+        "handlerName":  "handle_vm_msgSellTreasure",
+        "handlerCode":  "void handle_vm_msgSellTreasure(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t idLen = body[off++];\n    if (off + idLen \u003e len) return;\n    auto id = make_string(body + off, idLen);\n    off += idLen;\n    if (off + 2 \u003e len) return;\n    uint16_t type = rd16be(body, off);\n    off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t state = rd16be(body, off);\n    off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t saleStartTime = rd32be(body, off);\n    off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t day = rd16be(body, off);\n    off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t price = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t upsetPrice = rd32be(body, off);\n    off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t sellerLen = body[off++];\n    if (off + sellerLen \u003e len) return;\n    auto seller = make_string(body + off, sellerLen);\n    off += sellerLen;\n    if (off + 1 \u003e len) return;\n    uint8_t sellerAccLen = body[off++];\n    if (off + sellerAccLen \u003e len) return;\n    auto sellerAccount = make_string(body + off, sellerAccLen);\n    off += sellerAccLen;\n    if (off + 4 \u003e len) return;\n    uint32_t dataLen = rd32be(body, off);\n    off += 4;\n    if (off + dataLen \u003e len) return;\n    auto data = make_buffer(body + off, dataLen);\n    off += dataLen;\n    (void)off;\n    applyLpc(\"msg_sell_treasure\", {make_int(cl.clientNo), id, make_int(type), make_int(state),\n        make_int((int)saleStartTime), make_int(day), make_int((int)price), make_int((int)upsetPrice),\n        seller, sellerAccount, data});\n}",
+        "kcmdEntry":  "{ 0xFD57, ATTRIB_INTERNAL_COMM, \"msg_sell_treasure\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u8len id, u16be type, u16be state, u32be sale_start_time, u16be day, u32be price, u32be upset_price, u8len seller, u8len seller_account, u32be len + buffer."
+    },
+    {
+        "cmdNo":  11831,
+        "fun":  "vm_msgGetSysEnvelope",
+        "type":  2,
+        "addr":  "0x8067590",
+        "lpcFun":  "msg_get_sys_envelope",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u32be v1",
+                           "u32be v2",
+                           "u32be strlen",
+                           "string bytes"
+                       ],
+        "handlerName":  "handle_vm_msgGetSysEnvelope",
+        "handlerCode":  "void handle_vm_msgGetSysEnvelope(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v1 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t v2 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t strLen = rd32be(body, off);\n    off += 4;\n    if (off + strLen \u003e len) return;\n    auto str = make_string(body + off, strLen);\n    off += strLen;\n    (void)off;\n    applyLpc(\"msg_get_sys_envelope\", {make_int(cl.clientNo), make_int((int)v1), make_int((int)v2), str});\n}",
+        "kcmdEntry":  "{ 0x2E37, ATTRIB_INTERNAL_COMM, \"msg_get_sys_envelope\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u32be, u32be, u32be strlen, string of strlen bytes."
+    },
+    {
+        "cmdNo":  61615,
+        "fun":  "vm_msgIntersvrRpcRet",
+        "type":  2,
+        "addr":  "0x8066b2c",
+        "lpcFun":  "msg_intersvr_rpc_ret",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        394,
+                        394
+                    ],
+        "bodyFields":  [
+                           "u32be cookie",
+                           "u8len owner",
+                           "u16be funclen + func",
+                           "u32be datalen + data (only if \u003e3 bytes remain)"
+                       ],
+        "handlerName":  "handle_vm_msgIntersvrRpcRet",
+        "handlerCode":  "void handle_vm_msgIntersvrRpcRet(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t cookie = rd32be(body, off);\n    off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t ownerLen = body[off++];\n    if (off + ownerLen \u003e len) return;\n    auto owner = make_string(body + off, ownerLen);\n    off += ownerLen;\n    if (off + 2 \u003e len) return;\n    uint16_t funcLen = rd16be(body, off);\n    off += 2;\n    if (off + funcLen \u003e len) return;\n    auto func = make_string(body + off, funcLen);\n    off += funcLen;\n    // trailing data only when more than 3 bytes remain (u32be len + payload)\n    auto data = make_buffer(body + off, 0);\n    if (len - off \u003e 3) {\n        uint32_t dataLen = rd32be(body, off);\n        off += 4;\n        if (off + dataLen \u003e len) return;\n        data = make_buffer(body + off, dataLen);\n        off += dataLen;\n    }\n    (void)off;\n    applyLpc(\"msg_intersvr_rpc_ret\", {make_int(cl.clientNo), make_int((int)cookie), owner, func, data});\n}",
+        "kcmdEntry":  "{ 0xF0AF, ATTRIB_INTERNAL_COMM, \"msg_intersvr_rpc_ret\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u32be cookie, u8len owner, u16be funclen + func, then optional u32be datalen + data when \u003e3 bytes remain, else empty buffer."
+    },
+    {
+        "cmdNo":  13345,
+        "fun":  "vm_msgXgCreateName",
+        "type":  2,
+        "addr":  "0x8068068",
+        "lpcFun":  "msg_xg_create_name",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32be v7",
+                           "u32be v9"
+                       ],
+        "handlerName":  "handle_vm_msgXgCreateName",
+        "handlerCode":  "void handle_vm_msgXgCreateName(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v7 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t v9 = rd32be(body, off);\n    off += 4;\n    (void)off;\n    applyLpc(\"msg_xg_create_name\", {make_int(cl.clientNo), make_int((int)v7), make_int((int)v9)});\n}",
+        "kcmdEntry":  "{ 0x3421, ATTRIB_INTERNAL_COMM, \"msg_xg_create_name\", 0 }",
+        "status":  "ok",
+        "note":  "Body: two u32be ints."
+    },
+    {
+        "cmdNo":  13347,
+        "fun":  "vm_msgXgGetAccount",
+        "type":  2,
+        "addr":  "0x80680d0",
+        "lpcFun":  "msg_xg_get_account",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u32be cookie",
+                           "u32be value",
+                           "u8len account"
+                       ],
+        "handlerName":  "handle_vm_msgXgGetAccount",
+        "handlerCode":  "void handle_vm_msgXgGetAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t cookie = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t value = rd32be(body, off);\n    off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    (void)off;\n    applyLpc(\"msg_xg_get_account\", {make_int(cl.clientNo), make_int((int)cookie), make_int((int)value), account});\n}",
+        "kcmdEntry":  "{ 0x3423, ATTRIB_INTERNAL_COMM, \"msg_xg_get_account\", 0 }",
+        "status":  "ok",
+        "note":  "Body: u32be cookie, u32be value, u8len account."
+    }
+]

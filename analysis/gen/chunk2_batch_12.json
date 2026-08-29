@@ -1,0 +1,220 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLearnZhenfa",
+        "handlerName":  "handle_vm_cmdLearnZhenfa",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8051aec",
+        "handlerCode":  "void handle_vm_cmdLearnZhenfa(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t zhenfaId = rd16be(body, 0);\n    applyLpc(\"cmd_learn_zhenfa\", {make_int(cl.clientNo), make_int(zhenfaId)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  16934,
+        "lpcFun":  "cmd_learn_zhenfa",
+        "bodyFields":  [
+                           "int u16 BE zhenfaId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4226, ATTRIB_CLIENT_USER, \"cmd_learn_zhenfa\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdLeaveArenaRoom",
+        "handlerName":  "handle_vm_cmdLeaveArenaRoom",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806dd54",
+        "handlerCode":  "void handle_vm_cmdLeaveArenaRoom(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint16_t roomId = rd16be(body, 0);\n    uint8_t v = body[2];\n    applyLpc(\"cmd_arena_room_leave\", {make_int(cl.clientNo), make_int(roomId), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64070,
+        "lpcFun":  "cmd_arena_room_leave",
+        "bodyFields":  [
+                           "int u16 BE roomId",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA46, ATTRIB_CLIENT_USER, \"cmd_arena_room_leave\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdLeaveMagicTower",
+        "handlerName":  "handle_vm_cmdLeaveMagicTower",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054cc4",
+        "handlerCode":  "void handle_vm_cmdLeaveMagicTower(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_leave_magictower\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  12374,
+        "lpcFun":  "cmd_leave_magictower",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3056, ATTRIB_CLIENT_USER, \"cmd_leave_magictower\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdLeaveTempTeam",
+        "handlerName":  "handle_vm_cmdLeaveTempTeam",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80549b4",
+        "handlerCode":  "void handle_vm_cmdLeaveTempTeam(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_leave_temp_team\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4170,
+        "lpcFun":  "cmd_leave_temp_team",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x104A, ATTRIB_CLIENT_USER, \"cmd_leave_temp_team\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLGetSafeCtrlContent",
+        "handlerName":  "handle_vm_cmdLGetSafeCtrlContent",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806ad08",
+        "handlerCode":  "void handle_vm_cmdLGetSafeCtrlContent(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n \u003e len) return;\n    std::string type((const char*)body + 1, n);\n    applyLpc(\"cmd_get_safe_ctrl_content\", {make_int(cl.clientNo), make_string(type)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  65521,
+        "lpcFun":  "cmd_get_safe_ctrl_content",
+        "bodyFields":  [
+                           "string u8len type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFFF1, ATTRIB_CLIENT_USER, \"cmd_get_safe_ctrl_content\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdLgxyChallenge",
+        "handlerName":  "handle_vm_cmdLgxyChallenge",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060b78",
+        "handlerCode":  "void handle_vm_cmdLgxyChallenge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n + 2 \u003e len) return;\n    std::string name((const char*)body + 1, n);\n    uint16_t v = rd16be(body, 1 + n);\n    applyLpc(\"cmd_lgxy_challenge\", {make_int(cl.clientNo), make_string(name), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  64250,
+        "lpcFun":  "cmd_lgxy_challenge",
+        "bodyFields":  [
+                           "string u8len name",
+                           "int u16 BE v"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFAFA, ATTRIB_CLIENT_USER, \"cmd_lgxy_challenge\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdLIsConvertBotton",
+        "handlerName":  "handle_vm_cmdLIsConvertBotton",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806ad8c",
+        "handlerCode":  "void handle_vm_cmdLIsConvertBotton(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n + 1 \u003e len) return;\n    std::string type((const char*)body + 1, n);\n    uint8_t v = body[1 + n];\n    applyLpc(\"cmd_is_convert_botton\", {make_int(cl.clientNo), make_string(type), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8448,
+        "lpcFun":  "cmd_is_convert_botton",
+        "bodyFields":  [
+                           "string u8len type",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2100, ATTRIB_CLIENT_USER, \"cmd_is_convert_botton\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdListenMusic",
+        "handlerName":  "handle_vm_cmdListenMusic",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8071040",
+        "handlerCode":  "void handle_vm_cmdListenMusic(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t index = rd32be(body, 0);\n    size_t off = 4;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off]; off += 1;\n    if (off + n \u003e len) return;\n    std::string name((const char*)body + off, n); off += n;\n    if (off + 1 \u003e len) return;\n    uint8_t m = body[off]; off += 1;\n    if (off + m \u003e len) return;\n    std::string link((const char*)body + off, m); off += m;\n    if (off + 1 \u003e len) return;\n    uint8_t v = body[off];\n    applyLpc(\"cmd_listen_music\", {make_int(cl.clientNo), make_int(index), make_string(name), make_string(link), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  14088,
+        "lpcFun":  "cmd_listen_music",
+        "bodyFields":  [
+                           "int u32 BE index",
+                           "string u8len name",
+                           "string u8len link",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3708, ATTRIB_CLIENT_USER, \"cmd_listen_music\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLoadExistedChar",
+        "handlerName":  "handle_vm_cmdLoadExistedChar",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054cf4",
+        "handlerCode":  "void handle_vm_cmdLoadExistedChar(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n \u003e len) return;\n    std::string name((const char*)body + 1, n);\n    applyLpc(\"cmd_load_existed_char\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4192,
+        "lpcFun":  "cmd_load_existed_char",
+        "bodyFields":  [
+                           "string u8len name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1060, ATTRIB_CLIENT_USER, \"cmd_load_existed_char\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdLocalEncryptBorrow",
+        "handlerName":  "handle_vm_cmdLocalEncryptBorrow",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806065c",
+        "handlerCode":  "void handle_vm_cmdLocalEncryptBorrow(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off]; off += 1;\n    if (off + n1 \u003e len) return;\n    std::string account((const char*)body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off]; off += 1;\n    if (off + n2 \u003e len) return;\n    std::string password((const char*)body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t safe_level = body[off]; off += 1;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off]; off += 1;\n    if (off + n3 \u003e len) return;\n    std::string file_name((const char*)body + off, n3); off += n3;\n    if (off + 1 \u003e len) return;\n    uint8_t n4 = body[off]; off += 1;\n    if (off + n4 \u003e len) return;\n    std::string auth_key((const char*)body + off, n4);\n    applyLpc(\"cmd_local_encrypt_borrow\", {make_int(cl.clientNo), make_string(account), make_string(password), make_int(safe_level), make_string(file_name), make_string(auth_key)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8982,
+        "lpcFun":  "cmd_local_encrypt_borrow",
+        "bodyFields":  [
+                           "string u8len account",
+                           "string u8len password",
+                           "int u8 safe_level",
+                           "string u8len file_name",
+                           "string u8len auth_key"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2316, ATTRIB_CLIENT_USER, \"cmd_local_encrypt_borrow\", 0 }"
+    }
+]

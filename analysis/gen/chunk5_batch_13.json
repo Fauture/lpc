@@ -1,0 +1,209 @@
+﻿[
+    {
+        "cmdNo":  8537,
+        "fun":  "vm_msgArenaOper",
+        "type":  2,
+        "addr":  "0x806ea1c",
+        "lpcFun":  "msg_arena_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_msgArenaOper",
+        "handlerCode":  "void handle_vm_msgArenaOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"msg_arena_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x2159, ATTRIB_INTERNAL_COMM, \"msg_arena_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  11729,
+        "fun":  "vm_cmdDraftOper",
+        "type":  2,
+        "addr":  "0x8070680",
+        "lpcFun":  "cmd_draft_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_cmdDraftOper",
+        "handlerCode":  "void handle_vm_cmdDraftOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"cmd_draft_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x2DD1, ATTRIB_INTERNAL_COMM, \"cmd_draft_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64819,
+        "fun":  "vm_msgDraftOper",
+        "type":  2,
+        "addr":  "0x8070890",
+        "lpcFun":  "msg_draft_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_msgDraftOper",
+        "handlerCode":  "void handle_vm_msgDraftOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"msg_draft_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0xFD33, ATTRIB_INTERNAL_COMM, \"msg_draft_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9044,
+        "fun":  "vm_cmdSDDHOper",
+        "type":  2,
+        "addr":  "0x806ec2c",
+        "lpcFun":  "cmd_sddh_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_cmdSDDHOper",
+        "handlerCode":  "void handle_vm_cmdSDDHOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"cmd_sddh_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x2354, ATTRIB_INTERNAL_COMM, \"cmd_sddh_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16645,
+        "fun":  "vm_msgSDDHOper",
+        "type":  2,
+        "addr":  "0x806ee3c",
+        "lpcFun":  "msg_sddh_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_msgSDDHOper",
+        "handlerCode":  "void handle_vm_msgSDDHOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"msg_sddh_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x4105, ATTRIB_INTERNAL_COMM, \"msg_sddh_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4442,
+        "fun":  "vm_cmdCelebrityOper",
+        "type":  2,
+        "addr":  "0x806f04c",
+        "lpcFun":  "cmd_celebrity_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_cmdCelebrityOper",
+        "handlerCode":  "void handle_vm_cmdCelebrityOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"cmd_celebrity_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x115A, ATTRIB_INTERNAL_COMM, \"cmd_celebrity_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4367,
+        "fun":  "vm_msgCelebrityOper",
+        "type":  2,
+        "addr":  "0x806f25c",
+        "lpcFun":  "msg_celebrity_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_msgCelebrityOper",
+        "handlerCode":  "void handle_vm_msgCelebrityOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"msg_celebrity_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x110F, ATTRIB_INTERNAL_COMM, \"msg_celebrity_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8596,
+        "fun":  "vm_cmdSamsungOper",
+        "type":  2,
+        "addr":  "0x806f46c",
+        "lpcFun":  "cmd_samsung_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_cmdSamsungOper",
+        "handlerCode":  "void handle_vm_cmdSamsungOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"cmd_samsung_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0x2194, ATTRIB_INTERNAL_COMM, \"cmd_samsung_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  243,
+        "fun":  "vm_msgSamsungOper",
+        "type":  2,
+        "addr":  "0x806f67c",
+        "lpcFun":  "msg_samsung_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len command",
+                           "u16BE count",
+                           "count*(u16BE slen+bytes) -\u003e array\u003cstring\u003e"
+                       ],
+        "handlerName":  "handle_vm_msgSamsungOper",
+        "handlerCode":  "void handle_vm_msgSamsungOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n  size_t off = 0;\n  if (off + 1 \u003e len) return;\n  uint8_t cmdLen = body[off++];\n  if (off + cmdLen \u003e len) return;\n  const uint8_t* cmd = body + off; off += cmdLen;\n  if (off + 2 \u003e len) return;\n  uint16_t cnt = rd16be(body, off); off += 2;\n  auto arr = std::make_shared\u003cArrayValue\u003e();\n  for (uint16_t i = 0; i \u003c cnt; ++i) {\n    if (off + 2 \u003e len) return;\n    uint16_t slen = rd16be(body, off); off += 2;\n    if (off + slen \u003e len) return;\n    arr-\u003eitems.push_back(make_string(body + off, slen));\n    off += slen;\n  }\n  applyLpc(\"msg_samsung_oper\", {make_int(cl.clientNo), make_string(cmd, cmdLen), arr});\n}",
+        "kcmdEntry":  "{ 0xF3, ATTRIB_INTERNAL_COMM, \"msg_samsung_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

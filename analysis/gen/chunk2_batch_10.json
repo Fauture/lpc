@@ -1,0 +1,205 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGuessBonus",
+        "handlerName":  "handle_vm_cmdGuessBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e01c",
+        "handlerCode":  "void handle_vm_cmdGuessBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_guess_bonus\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4638,
+        "lpcFun":  "cmd_guess_bonus",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x121E, ATTRIB_CLIENT_USER, \"cmd_guess_bonus\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdGuessCheckLocked",
+        "handlerName":  "handle_vm_cmdGuessCheckLocked",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e20c",
+        "handlerCode":  "void handle_vm_cmdGuessCheckLocked(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_guess_check_locked\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8667,
+        "lpcFun":  "cmd_guess_check_locked",
+        "bodyFields":  [
+                           "int u8 lockIdx"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21DB, ATTRIB_CLIENT_USER, \"cmd_guess_check_locked\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGuessEnd",
+        "handlerName":  "handle_vm_cmdGuessEnd",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e04c",
+        "handlerCode":  "void handle_vm_cmdGuessEnd(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_guess_end\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  9001,
+        "lpcFun":  "cmd_guess_end",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2329, ATTRIB_CLIENT_USER, \"cmd_guess_end\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdGuessOk",
+        "handlerName":  "handle_vm_cmdGuessOk",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805df7c",
+        "handlerCode":  "void handle_vm_cmdGuessOk(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    size_t nlen = body[1];\n    if (2 + nlen \u003e len) return;\n    applyLpc(\"cmd_guess_start\", {make_int(cl.clientNo), make_int(type),\n        make_string((const char*)body + 2, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8416,
+        "lpcFun":  "cmd_guess_start",
+        "bodyFields":  [
+                           "int u8 type",
+                           "string u8len guess"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20E0, ATTRIB_CLIENT_USER, \"cmd_guess_start\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdHellDealer",
+        "handlerName":  "handle_vm_cmdHellDealer",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054198",
+        "handlerCode":  "void handle_vm_cmdHellDealer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t nlen = body[0];\n    if (1 + nlen + 4 \u003e len) return;\n    uint32_t hellId = rd32be(body + 1 + nlen);\n    applyLpc(\"cmd_hell_dealer\", {make_int(cl.clientNo),\n        make_string((const char*)body + 1, nlen), make_int(hellId)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  16582,
+        "lpcFun":  "cmd_hell_dealer",
+        "bodyFields":  [
+                           "string u8len name",
+                           "int u32 BE hellId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x40C6, ATTRIB_CLIENT_USER, \"cmd_hell_dealer\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdHsslRequestInfo",
+        "handlerName":  "handle_vm_cmdHsslRequestInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077808",
+        "handlerCode":  "void handle_vm_cmdHsslRequestInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_hssl_request_info\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  15906,
+        "lpcFun":  "cmd_hssl_request_info",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E22, ATTRIB_CLIENT_USER, \"cmd_hssl_request_info\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdHsslStartChallenge",
+        "handlerName":  "handle_vm_cmdHsslStartChallenge",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077838",
+        "handlerCode":  "void handle_vm_cmdHsslStartChallenge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_hssl_start_challeng\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  13058,
+        "lpcFun":  "cmd_hssl_start_challeng",
+        "bodyFields":  [
+                           "int u8 challengeId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3302, ATTRIB_CLIENT_USER, \"cmd_hssl_start_challeng\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdIdentifyEquip",
+        "handlerName":  "handle_vm_cmdIdentifyEquip",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805491c",
+        "handlerCode":  "void handle_vm_cmdIdentifyEquip(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint16_t bagPos = rd16be(body);\n    uint16_t equipPos = rd16be(body + 2);\n    applyLpc(\"cmd_identify_equip\", {make_int(cl.clientNo), make_int(bagPos), make_int(equipPos)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8964,
+        "lpcFun":  "cmd_identify_equip",
+        "bodyFields":  [
+                           "int u16 BE bagPos",
+                           "int u16 BE equipPos"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2304, ATTRIB_CLIENT_USER, \"cmd_identify_equip\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdIgnoreConvenant",
+        "handlerName":  "handle_vm_cmdIgnoreConvenant",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x807045c",
+        "handlerCode":  "void handle_vm_cmdIgnoreConvenant(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t nlen = body[0];\n    if (1 + nlen \u003e len) return;\n    applyLpc(\"cmd_ignore_convenant\", {make_int(cl.clientNo),\n        make_string((const char*)body + 1, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9088,
+        "lpcFun":  "cmd_ignore_convenant",
+        "bodyFields":  [
+                           "string u8len pgid"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2380, ATTRIB_CLIENT_USER, \"cmd_ignore_convenant\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdInvite",
+        "handlerName":  "handle_vm_cmdInvite",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80549e4",
+        "handlerCode":  "void handle_vm_cmdInvite(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t nlen = body[0];\n    if (1 + nlen \u003e len) return;\n    applyLpc(\"cmd_invite\", {make_int(cl.clientNo),\n        make_string((const char*)body + 1, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  8976,
+        "lpcFun":  "cmd_invite",
+        "bodyFields":  [
+                           "string u8len name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2310, ATTRIB_CLIENT_USER, \"cmd_invite\", 0 }"
+    }
+]

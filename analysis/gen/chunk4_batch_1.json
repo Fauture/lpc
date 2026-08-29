@@ -1,0 +1,219 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdShout",
+        "handlerName":  "handle_vm_cmdShout",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058704",
+        "handlerCode":  "void handle_vm_cmdShout(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t mlen = body[0];\n    if (1 + mlen \u003e len) return;\n    applyLpc(\"cmd_shout\", {make_int(cl.clientNo), make_string(body + 1, mlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4612,
+        "lpcFun":  "cmd_shout",
+        "bodyFields":  [
+                           "msg u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1204, ATTRIB_CLIENT_USER, \"cmd_shout\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdShouWuZuDao",
+        "handlerName":  "handle_vm_cmdShouWuZuDao",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80757c4",
+        "handlerCode":  "void handle_vm_cmdShouWuZuDao(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    int mode_type = body[0];\n    int map_id = body[1];\n    int npc_id = rd32be(body, 2);\n    int type = body[6];\n    size_t slen = body[7];\n    if (8 + slen \u003e len) return;\n    applyLpc(\"cmd_shouwu_zudao\", {make_int(cl.clientNo), make_int(mode_type), make_int(map_id), make_int(npc_id), make_int(type), make_string(body + 8, slen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8752,
+        "lpcFun":  "cmd_shouwu_zudao",
+        "bodyFields":  [
+                           "mode_type u8",
+                           "map_id u8",
+                           "npc_id u32be",
+                           "type u8",
+                           "steps u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2230, ATTRIB_CLIENT_USER, \"cmd_shouwu_zudao\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdShowSaleLog",
+        "handlerName":  "handle_vm_cmdShowSaleLog",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805f3c0",
+        "handlerCode":  "void handle_vm_cmdShowSaleLog(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_show_sale_log\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  28674,
+        "lpcFun":  "cmd_show_sale_log",
+        "bodyFields":  [
+                           "arg u8"
+                       ],
+        "note":  "single u8 body field",
+        "kcmdEntry":  "{ 0x7002, ATTRIB_CLIENT_USER, \"cmd_show_sale_log\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdShowUpgradeEquipItems",
+        "handlerName":  "handle_vm_cmdShowUpgradeEquipItems",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058788",
+        "handlerCode":  "void handle_vm_cmdShowUpgradeEquipItems(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_show_upgrade_equip_items\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  57348,
+        "lpcFun":  "cmd_show_upgrade_equip_items",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0xE004, ATTRIB_CLIENT_USER, \"cmd_show_upgrade_equip_items\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdSignIn",
+        "handlerName":  "handle_vm_cmdSignIn",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077fc4",
+        "handlerCode":  "void handle_vm_cmdSignIn(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_sign_in\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  10020,
+        "lpcFun":  "cmd_sign_in",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x2724, ATTRIB_CLIENT_USER, \"cmd_sign_in\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdSignInDraw",
+        "handlerName":  "handle_vm_cmdSignInDraw",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077ff4",
+        "handlerCode":  "void handle_vm_cmdSignInDraw(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_sign_in_draw\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8328,
+        "lpcFun":  "cmd_sign_in_draw",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x2088, ATTRIB_CLIENT_USER, \"cmd_sign_in_draw\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdSignInOpen",
+        "handlerName":  "handle_vm_cmdSignInOpen",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8078024",
+        "handlerCode":  "void handle_vm_cmdSignInOpen(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_sign_in_open\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8790,
+        "lpcFun":  "cmd_sign_in_open",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x2256, ATTRIB_CLIENT_USER, \"cmd_sign_in_open\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdSkillLevelDown",
+        "handlerName":  "handle_vm_cmdSkillLevelDown",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073a24",
+        "handlerCode":  "void handle_vm_cmdSkillLevelDown(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 12) return;\n    int masterId = rd32be(body, 0);\n    int studentId = rd32be(body, 4);\n    int skillId = rd16be(body, 8);\n    int level = rd16be(body, 10);\n    applyLpc(\"cmd_skill_level_down\", {make_int(cl.clientNo), make_int(masterId), make_int(studentId), make_int(skillId), make_int(level)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  5036,
+        "lpcFun":  "cmd_skill_level_down",
+        "bodyFields":  [
+                           "masterId u32be",
+                           "studentId u32be",
+                           "skillId u16be",
+                           "level u16be"
+                       ],
+        "note":  "pProgram in ebx; order confirmed via disasm push sequence",
+        "kcmdEntry":  "{ 0x13AC, ATTRIB_CLIENT_USER, \"cmd_skill_level_down\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdSortpack",
+        "handlerName":  "handle_vm_cmdSortpack",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8058e08",
+        "handlerCode":  "void handle_vm_cmdSortpack(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    int count = rd16be(body, 0);\n    size_t slen = rd16be(body, 2);\n    if (4 + slen + 6 \u003e len) return;\n    int npc_id = rd32be(body, 4 + slen);\n    int u16v = rd16be(body, 8 + slen);\n    applyLpc(\"cmd_sort_pack\", {make_int(cl.clientNo), make_int(count), make_string(body + 4, slen), make_int(npc_id), make_int(u16v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4358,
+        "lpcFun":  "cmd_sort_pack",
+        "bodyFields":  [
+                           "count u16be",
+                           "slen u16be",
+                           "pack string",
+                           "npc_id u32be",
+                           "u16v u16be"
+                       ],
+        "note":  "trailing u16 semantics unknown; pProgram in ebx",
+        "kcmdEntry":  "{ 0x1106, ATTRIB_CLIENT_USER, \"cmd_sort_pack\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdSpecialMoveEvent",
+        "handlerName":  "handle_vm_cmdSpecialMoveEvent",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073d1c",
+        "handlerCode":  "void handle_vm_cmdSpecialMoveEvent(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t nlen = body[0];\n    if (1 + nlen \u003e len) return;\n    applyLpc(\"cmd_special_move_event\", {make_int(cl.clientNo), make_string(body + 1, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  5146,
+        "lpcFun":  "cmd_special_move_event",
+        "bodyFields":  [
+                           "name u8len+bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x141A, ATTRIB_CLIENT_USER, \"cmd_special_move_event\", 0 }"
+    }
+]

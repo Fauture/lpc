@@ -1,0 +1,230 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgXgGetName",
+        "handlerName":  "handle_vm_msgXgGetName",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80681b8",
+        "handlerCode":  "void handle_vm_msgXgGetName(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t cookie = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t result = rd32be(body, off);\n    off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen);\n    off += nameLen;\n    (void)off;\n    applyLpc(\"msg_xg_get_name\", {make_int(cl.clientNo), make_int((int)cookie), make_int((int)result), name});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  13349,
+        "lpcFun":  "msg_xg_get_name",
+        "bodyFields":  [
+                           "u32be cookie",
+                           "u32be result",
+                           "u8len name"
+                       ],
+        "note":  "Body: u32be cookie, u32be result, u8len name; LPC args clientNo, cookie, result, name.",
+        "kcmdEntry":  "{ 0x3425, ATTRIB_INTERNAL_COMM, \"msg_xg_get_name\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgLEcardBusiness",
+        "handlerName":  "handle_vm_msgLEcardBusiness",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80682a0",
+        "handlerCode":  "void handle_vm_msgLEcardBusiness(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t actionLen = body[off++];\n    if (off + actionLen \u003e len) return;\n    auto action = make_string(body + off, actionLen);\n    off += actionLen;\n    if (off + 2 \u003e len) return;\n    uint16_t mapParaLen = rd16be(body, off);\n    off += 2;\n    if (off + mapParaLen \u003e len) return;\n    auto mapPara = make_string(body + off, mapParaLen);\n    off += mapParaLen;\n    if (off + 1 \u003e len) return;\n    uint8_t cookieLen = body[off++];\n    if (off + cookieLen \u003e len) return;\n    auto cookie = make_string(body + off, cookieLen);\n    off += cookieLen;\n    (void)off;\n    applyLpc(\"msg_l_ecard_business\", {make_int(cl.clientNo), action, mapPara, cookie});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  17287,
+        "lpcFun":  "msg_l_ecard_business",
+        "bodyFields":  [
+                           "u8len action",
+                           "u16be map_para",
+                           "u8len cookie"
+                       ],
+        "note":  "Body: u8len action, u16be map_para, u8len cookie; LPC args clientNo, action, map_para, cookie.",
+        "kcmdEntry":  "{ 0x4387, ATTRIB_INTERNAL_COMM, \"msg_l_ecard_business\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLQueryIpArea",
+        "handlerName":  "handle_vm_msgLQueryIpArea",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8068408",
+        "handlerCode":  "void handle_vm_msgLQueryIpArea(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t digitalIpLen = body[off++];\n    if (off + digitalIpLen \u003e len) return;\n    auto digitalIp = make_string(body + off, digitalIpLen);\n    off += digitalIpLen;\n    if (off + 1 \u003e len) return;\n    uint8_t moduleLen = body[off++];\n    if (off + moduleLen \u003e len) return;\n    auto module = make_string(body + off, moduleLen);\n    off += moduleLen;\n    if (off + 1 \u003e len) return;\n    uint8_t resultLen = body[off++];\n    if (off + resultLen \u003e len) return;\n    auto result = make_string(body + off, resultLen);\n    off += resultLen;\n    (void)off;\n    applyLpc(\"msg_l_query_ip_area\", {make_int(cl.clientNo), account, digitalIp, module, result});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  9107,
+        "lpcFun":  "msg_l_query_ip_area",
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len digital_ip",
+                           "u8len module",
+                           "u8len result"
+                       ],
+        "note":  "Body: 4 x u8len strings account, digital_ip, module, result; LPC args clientNo + 4 strings.",
+        "kcmdEntry":  "{ 0x2393, ATTRIB_INTERNAL_COMM, \"msg_l_query_ip_area\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_msgLGetVoteResult",
+        "handlerName":  "handle_vm_msgLGetVoteResult",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806a5ac",
+        "handlerCode":  "void handle_vm_msgLGetVoteResult(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t meLen = body[off++];\n    if (off + meLen \u003e len) return;\n    auto me = make_string(body + off, meLen);\n    off += meLen;\n    if (off + 4 \u003e len) return;\n    uint32_t r1 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t r2 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t r3 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t r4 = rd32be(body, off);\n    off += 4;\n    (void)off;\n    applyLpc(\"msg_l_get_vote_result\", {make_int(cl.clientNo), me, make_int((int)r1), make_int((int)r2), make_int((int)r3), make_int((int)r4)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  62724,
+        "lpcFun":  "msg_l_get_vote_result",
+        "bodyFields":  [
+                           "u8len me",
+                           "u32be result1",
+                           "u32be result2",
+                           "u32be result3",
+                           "u32be result4"
+                       ],
+        "note":  "Body: u8len me, 4 x u32be results; LPC args clientNo, me, result1..result4.",
+        "kcmdEntry":  "{ 0xF504, ATTRIB_INTERNAL_COMM, \"msg_l_get_vote_result\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLCloneAccountResult",
+        "handlerName":  "handle_vm_msgLCloneAccountResult",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806a6b0",
+        "handlerCode":  "void handle_vm_msgLCloneAccountResult(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t insertNameLen = body[off++];\n    if (off + insertNameLen \u003e len) return;\n    auto insertName = make_string(body + off, insertNameLen);\n    off += insertNameLen;\n    if (off + 4 \u003e len) return;\n    uint32_t r1 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t r2 = rd32be(body, off);\n    off += 4;\n    (void)off;\n    applyLpc(\"msg_l_clone_account_result\", {make_int(cl.clientNo), account, insertName, make_int((int)r1), make_int((int)r2)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  13190,
+        "lpcFun":  "msg_l_clone_account_result",
+        "bodyFields":  [
+                           "u8len account",
+                           "u8len insert_name",
+                           "u32be result1",
+                           "u32be result2"
+                       ],
+        "note":  "Body: u8len account, u8len insert_name, 2 x u32be results; LPC args clientNo, account, insert_name, result1, result2.",
+        "kcmdEntry":  "{ 0x3386, ATTRIB_INTERNAL_COMM, \"msg_l_clone_account_result\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLSetSafeCtrlStr",
+        "handlerName":  "handle_vm_msgLSetSafeCtrlStr",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806a7c8",
+        "handlerCode":  "void handle_vm_msgLSetSafeCtrlStr(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t moduleLen = body[off++];\n    if (off + moduleLen \u003e len) return;\n    auto module = make_string(body + off, moduleLen);\n    off += moduleLen;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    if (off + 4 \u003e len) return;\n    uint32_t id = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t strLen = rd32be(body, off);\n    off += 4;\n    if (off + strLen \u003e len) return;\n    auto str = make_string(body + off, strLen);\n    off += strLen;\n    (void)off;\n    applyLpc(\"msg_l_set_safe_ctrl_str\", {make_int(cl.clientNo), module, account, make_int((int)id), str});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9116,
+        "lpcFun":  "msg_l_set_safe_ctrl_str",
+        "bodyFields":  [
+                           "u8len module",
+                           "u8len account",
+                           "u32be id",
+                           "u32be strLen + str"
+                       ],
+        "note":  "Body: u8len module, u8len account, u32be id, u32be strLen + string; LPC args clientNo, module, account, id, str.",
+        "kcmdEntry":  "{ 0x239C, ATTRIB_INTERNAL_COMM, \"msg_l_set_safe_ctrl_str\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLSetSafeCtrlVar",
+        "handlerName":  "handle_vm_msgLSetSafeCtrlVar",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806a8ec",
+        "handlerCode":  "void handle_vm_msgLSetSafeCtrlVar(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t moduleLen = body[off++];\n    if (off + moduleLen \u003e len) return;\n    auto module = make_string(body + off, moduleLen);\n    off += moduleLen;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    if (off + 4 \u003e len) return;\n    uint32_t var1 = rd32be(body, off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t var2 = rd32be(body, off);\n    off += 4;\n    (void)off;\n    applyLpc(\"msg_l_set_safe_ctrl_var\", {make_int(cl.clientNo), module, account, make_int((int)var1), make_int((int)var2)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9117,
+        "lpcFun":  "msg_l_set_safe_ctrl_var",
+        "bodyFields":  [
+                           "u8len module",
+                           "u8len account",
+                           "u32be var1",
+                           "u32be var2"
+                       ],
+        "note":  "Body: u8len module, u8len account, 2 x u32be vars; LPC args clientNo, module, account, var1, var2.",
+        "kcmdEntry":  "{ 0x239D, ATTRIB_INTERNAL_COMM, \"msg_l_set_safe_ctrl_var\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLGetSafeCtrlInfo",
+        "handlerName":  "handle_vm_msgLGetSafeCtrlInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806aa04",
+        "handlerCode":  "void handle_vm_msgLGetSafeCtrlInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t moduleLen = body[off++];\n    if (off + moduleLen \u003e len) return;\n    auto module = make_string(body + off, moduleLen);\n    off += moduleLen;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    auto account = make_string(body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t attribLen = body[off++];\n    if (off + attribLen \u003e len) return;\n    auto attrib = make_string(body + off, attribLen);\n    off += attribLen;\n    if (off + 4 \u003e len) return;\n    uint32_t resultLen = rd32be(body, off);\n    off += 4;\n    if (off + resultLen \u003e len) return;\n    auto result = make_string(body + off, resultLen);\n    off += resultLen;\n    (void)off;\n    applyLpc(\"msg_l_get_safe_ctrl_info\", {make_int(cl.clientNo), module, account, attrib, result});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  9104,
+        "lpcFun":  "msg_l_get_safe_ctrl_info",
+        "bodyFields":  [
+                           "u8len module",
+                           "u8len account",
+                           "u8len attrib",
+                           "u32be resultLen + result"
+                       ],
+        "note":  "Body: u8len module, u8len account, u8len attrib, u32be resultLen + string; LPC args clientNo, module, account, attrib, result.",
+        "kcmdEntry":  "{ 0x2390, ATTRIB_INTERNAL_COMM, \"msg_l_get_safe_ctrl_info\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLGetCreditCoins",
+        "handlerName":  "handle_vm_msgLGetCreditCoins",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806ab60",
+        "handlerCode":  "void handle_vm_msgLGetCreditCoins(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = body[off++];\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen);\n    off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t coinsLen = body[off++];\n    if (off + coinsLen \u003e len) return;\n    auto coins = make_string(body + off, coinsLen);\n    off += coinsLen;\n    (void)off;\n    applyLpc(\"msg_l_get_credit_coins\", {make_int(cl.clientNo), gid, coins});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  25487,
+        "lpcFun":  "msg_l_get_credit_coins",
+        "bodyFields":  [
+                           "u8len gid",
+                           "u8len coins"
+                       ],
+        "note":  "Body: u8len gid, u8len coins; LPC args clientNo, gid, coins.",
+        "kcmdEntry":  "{ 0x638F, ATTRIB_INTERNAL_COMM, \"msg_l_get_credit_coins\", 0 }"
+    }
+]

@@ -237,6 +237,14 @@ Value addValues(const Value& a, const Value& b) {
             r->insert(kv.first, kv.second);
         return r;
     }
+    if (a.index() == 10 || b.index() == 10) {
+        // buffer concatenation: buffer + anything = raw byte concat.
+        auto cat = [](const Value& v) -> std::string {
+            if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+            return to_string(v, false);
+        };
+        return make_buffer(cat(a) + cat(b));
+    }
     if (a.index() == 4 || b.index() == 4)
         return make_string(to_string(a, false) + to_string(b, false));
     if (a.index() == 3 || b.index() == 3)
@@ -2153,6 +2161,9 @@ private:
                 case 6:
                     pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size())));
                     break;
+                case 10:
+                    pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<BufferValue>>(v)->data.size())));
+                    break;
                 default:
                     pushValue(make_int(0));
                     break;
@@ -2996,6 +3007,7 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
     static bool inBroadcast = false;
     if (inBroadcast) return make_int(1);
     inBroadcast = true;
+    setBootLoading(true);
     struct Section { std::string title; std::string dir; };
     std::string op = vfsObjPrefix();
     std::string daemonsDir = "/" + op + "/daemons";
@@ -3057,6 +3069,7 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
         }
     }
     runPostInitFunctions(searchRoot);
+    setBootLoading(false);
     inBroadcast = false;
     return make_int(1);
 }

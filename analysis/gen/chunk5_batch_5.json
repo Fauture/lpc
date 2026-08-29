@@ -1,0 +1,208 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgCfgAaaList",
+        "handlerName":  "handle_vm_msgCfgAaaList",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80640d0",
+        "handlerCode":  "void handle_vm_msgCfgAaaList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto m = std::make_shared\u003cMappingValue\u003e();\n    for (uint16_t i = 0; i \u003c count; i++) {\n        if (off + 1 \u003e len) return;\n        uint8_t nameLen = rd8(body, off); off += 1;\n        if (off + nameLen \u003e len) return;\n        const uint8_t* name = body + off; off += nameLen;\n        if (off + 1 \u003e len) return;\n        uint8_t ipLen = rd8(body, off); off += 1;\n        if (off + ipLen \u003e len) return;\n        const uint8_t* ip = body + off; off += ipLen;\n        if (off + 2 \u003e len) return;\n        uint16_t port = rd16be(body, off); off += 2;\n        if (off + 1 \u003e len) return;\n        uint8_t attribLen = rd8(body, off); off += 1;\n        if (off + attribLen \u003e len) return;\n        const uint8_t* attrib = body + off; off += attribLen;\n        auto arr = std::make_shared\u003cArrayValue\u003e();\n        arr-\u003eitems.push_back(make_string(ip, ipLen));\n        arr-\u003eitems.push_back(make_int(port));\n        arr-\u003eitems.push_back(make_string(attrib, attribLen));\n        m-\u003einsert(make_string(name, nameLen), arr);\n    }\n    applyLpc(\"msg_cfg_aaa_list\", {make_int(cl.clientNo), m});\n}",
+        "typeSeq":  [
+                        88,
+                        453
+                    ],
+        "cmdNo":  9337,
+        "lpcFun":  "msg_cfg_aaa_list",
+        "bodyFields":  [
+                           "u16be count",
+                           "per-entry: u8len name, u8len ip, u16be port, u8len attrib",
+                           "mapping name -\u003e array[ip_str, port_int, attrib_str]"
+                       ],
+        "note":  "mapping of name-\u003e[ip,port,attrib]; array order ip,port,attrib",
+        "kcmdEntry":  "{ 0x2479, ATTRIB_INTERNAL_COMM, \"msg_cfg_aaa_list\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgCfgCcsInfo",
+        "handlerName":  "handle_vm_msgCfgCcsInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806434c",
+        "handlerCode":  "void handle_vm_msgCfgCcsInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t ipLen = rd8(body, off); off += 1;\n    if (off + ipLen \u003e len) return;\n    const uint8_t* ip = body + off; off += ipLen;\n    if (off + 2 \u003e len) return;\n    uint16_t port = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = rd8(body, off); off += 1;\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off; off += nameLen;\n    applyLpc(\"msg_cfg_ccs_info\", {make_int(cl.clientNo), make_string(ip, ipLen), make_int(port), make_string(name, nameLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9063,
+        "lpcFun":  "msg_cfg_ccs_info",
+        "bodyFields":  [
+                           "u8len ip",
+                           "u16be port",
+                           "u8len name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2367, ATTRIB_INTERNAL_COMM, \"msg_cfg_ccs_info\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgCfgDdbList",
+        "handlerName":  "handle_vm_msgCfgDdbList",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80659cc",
+        "handlerCode":  "void handle_vm_msgCfgDdbList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 4; // u32 header, unused by parser\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; i++) {\n        if (off + 1 \u003e len) return;\n        uint8_t sLen = rd8(body, off); off += 1;\n        if (off + sLen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, sLen));\n        off += sLen;\n    }\n    applyLpc(\"msg_cfg_ddb_list\", {make_int(cl.clientNo), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        936
+                    ],
+        "cmdNo":  9059,
+        "lpcFun":  "msg_cfg_ddb_list",
+        "bodyFields":  [
+                           "u32 header skipped (unused)",
+                           "u16be count",
+                           "count x u8len string",
+                           "array of strings"
+                       ],
+        "note":  "first 4 body bytes never read; skipped",
+        "kcmdEntry":  "{ 0x2363, ATTRIB_INTERNAL_COMM, \"msg_cfg_ddb_list\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgCfgDistList",
+        "handlerName":  "handle_vm_msgCfgDistList",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80648e8",
+        "handlerCode":  "void handle_vm_msgCfgDistList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t distNo = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; i++) {\n        if (off + 1 \u003e len) return;\n        uint8_t sLen = rd8(body, off); off += 1;\n        if (off + sLen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, sLen));\n        off += sLen;\n    }\n    applyLpc(\"msg_cfg_dist_list\", {make_int(cl.clientNo), make_int(distNo), make_int(count), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936
+                    ],
+        "cmdNo":  9051,
+        "lpcFun":  "msg_cfg_dist_list",
+        "bodyFields":  [
+                           "u32be distNo",
+                           "u16be count",
+                           "count x u8len string",
+                           "array of strings"
+                       ],
+        "note":  "LPC count arg = entry count",
+        "kcmdEntry":  "{ 0x235B, ATTRIB_INTERNAL_COMM, \"msg_cfg_dist_list\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgCfgEtcPageData",
+        "handlerName":  "handle_vm_msgCfgEtcPageData",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8064a70",
+        "handlerCode":  "void handle_vm_msgCfgEtcPageData(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t pageNo = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t dataLen = rd32be(body, off); off += 4;\n    if (dataLen \u003e len - off) return;\n    applyLpc(\"msg_cfg_etc_page_data\", {make_int(cl.clientNo), make_int(pageNo), make_buffer(body + off, len - off)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        228
+                    ],
+        "cmdNo":  9329,
+        "lpcFun":  "msg_cfg_etc_page_data",
+        "bodyFields":  [
+                           "u32be pageNo",
+                           "u32be dataLen (validated vs remaining)",
+                           "buffer = remaining bytes (len-8)"
+                       ],
+        "note":  "buffer passed as all remaining bytes; dataLen only validated",
+        "kcmdEntry":  "{ 0x2471, ATTRIB_INTERNAL_COMM, \"msg_cfg_etc_page_data\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgCfgMyDist",
+        "handlerName":  "handle_vm_msgCfgMyDist",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8064af0",
+        "handlerCode":  "void handle_vm_msgCfgMyDist(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t sLen = rd8(body, off); off += 1;\n    if (off + sLen \u003e len) return;\n    applyLpc(\"msg_cfg_my_dist\", {make_int(cl.clientNo), make_string(body + off, sLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4957,
+        "lpcFun":  "msg_cfg_my_dist",
+        "bodyFields":  [
+                           "u8len string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x135D, ATTRIB_INTERNAL_COMM, \"msg_cfg_my_dist\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgCfgReadEtc",
+        "handlerName":  "handle_vm_msgCfgReadEtc",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8065dd0",
+        "handlerCode":  "void handle_vm_msgCfgReadEtc(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 8 \u003e len) return;\n    uint32_t pageNo = rd32be(body, off); off += 4;\n    uint32_t dataLen = rd32be(body, off); off += 4;\n    applyLpc(\"msg_cfg_read_etc\", {make_int(cl.clientNo), make_int(pageNo), make_int(dataLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9331,
+        "lpcFun":  "msg_cfg_read_etc",
+        "bodyFields":  [
+                           "u32be pageNo",
+                           "u32be dataLen"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2473, ATTRIB_INTERNAL_COMM, \"msg_cfg_read_etc\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgCfgWriteEtc",
+        "handlerName":  "handle_vm_msgCfgWriteEtc",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8065e38",
+        "handlerCode":  "void handle_vm_msgCfgWriteEtc(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 8 \u003e len) return;\n    uint32_t pageNo = rd32be(body, off); off += 4;\n    uint32_t dataLen = rd32be(body, off); off += 4;\n    applyLpc(\"msg_cfg_write_etc\", {make_int(cl.clientNo), make_int(pageNo), make_int(dataLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9339,
+        "lpcFun":  "msg_cfg_write_etc",
+        "bodyFields":  [
+                           "u32be pageNo",
+                           "u32be dataLen"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x247B, ATTRIB_INTERNAL_COMM, \"msg_cfg_write_etc\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgCfgCsaInfo",
+        "handlerName":  "handle_vm_msgCfgCsaInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8065fac",
+        "handlerCode":  "void handle_vm_msgCfgCsaInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 2; // u16 header, unused by parser\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = rd8(body, off); off += 1;\n    if (off + nameLen \u003e len) return;\n    const uint8_t* name = body + off; off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t ipLen = rd8(body, off); off += 1;\n    if (off + ipLen \u003e len) return;\n    const uint8_t* ip = body + off; off += ipLen;\n    if (off + 2 \u003e len) return;\n    uint16_t port = rd16be(body, off); off += 2;\n    applyLpc(\"msg_cfg_csa_info\", {make_int(cl.clientNo), make_string(ip, ipLen), make_int(port), make_string(name, nameLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9341,
+        "lpcFun":  "msg_cfg_csa_info",
+        "bodyFields":  [
+                           "u16 header skipped (unused)",
+                           "u8len name",
+                           "u8len ip",
+                           "u16be port"
+                       ],
+        "note":  "first 2 body bytes never read; skipped; read order name,ip,port but LPC arg order ip,port,name",
+        "kcmdEntry":  "{ 0x247D, ATTRIB_INTERNAL_COMM, \"msg_cfg_csa_info\", 0 }"
+    }
+]

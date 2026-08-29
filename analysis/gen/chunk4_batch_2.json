@@ -1,0 +1,211 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdStallInputPrice",
+        "handlerName":  "handle_vm_cmdStallInputPrice",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80731c4",
+        "handlerCode":  "void handle_vm_cmdStallInputPrice(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t v1 = rd32be(body, 0);\n    uint8_t v2 = body[4];\n    applyLpc(\"cmd_stall_input_price\", {make_int(cl.clientNo), make_int(v1), make_int(v2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  62322,
+        "lpcFun":  "cmd_stall_input_price",
+        "bodyFields":  [
+                           "u32 BE int",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF372, \"ATTRIB_CLIENT_USER\", \"cmd_stall_input_price\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdStartAutomatismStall",
+        "handlerName":  "handle_vm_cmdStartAutomatismStall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d8a0",
+        "handlerCode":  "void handle_vm_cmdStartAutomatismStall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_start_automatism_stall\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4270,
+        "lpcFun":  "cmd_start_automatism_stall",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields",
+        "kcmdEntry":  "{ 0x10AE, \"ATTRIB_CLIENT_USER\", \"cmd_start_automatism_stall\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdStartBoxAdventrue",
+        "handlerName":  "handle_vm_cmdStartBoxAdventrue",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8075a94",
+        "handlerCode":  "void handle_vm_cmdStartBoxAdventrue(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_start_box_adventrue\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  9738,
+        "lpcFun":  "cmd_start_box_adventrue",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields",
+        "kcmdEntry":  "{ 0x260A, \"ATTRIB_CLIENT_USER\", \"cmd_start_box_adventrue\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdStartCardActivity",
+        "handlerName":  "handle_vm_cmdStartCardActivity",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8076b0c",
+        "handlerCode":  "void handle_vm_cmdStartCardActivity(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nlen = body[0];\n    if (1 + (size_t)nlen + 2 \u003e len) return;\n    auto name = make_string(body + 1, nlen);\n    uint16_t v1 = rd16be(body, 1 + nlen);\n    applyLpc(\"cmd_start_card_activity\", {make_int(cl.clientNo), name, make_int(v1)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8652,
+        "lpcFun":  "cmd_start_card_activity",
+        "bodyFields":  [
+                           "string u8len",
+                           "u16 BE int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21CC, \"ATTRIB_CLIENT_USER\", \"cmd_start_card_activity\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdStartCardDuel",
+        "handlerName":  "handle_vm_cmdStartCardDuel",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80769c8",
+        "handlerCode":  "void handle_vm_cmdStartCardDuel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_start_card_duel\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4132,
+        "lpcFun":  "cmd_start_card_duel",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields",
+        "kcmdEntry":  "{ 0x1024, \"ATTRIB_CLIENT_USER\", \"cmd_start_card_duel\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdStartCardFriendPk",
+        "handlerName":  "handle_vm_cmdStartCardFriendPk",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80769f8",
+        "handlerCode":  "void handle_vm_cmdStartCardFriendPk(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nlen = body[0];\n    if (1 + (size_t)nlen \u003e len) return;\n    applyLpc(\"cmd_start_card_friend_pk\", {make_int(cl.clientNo), make_string(body + 1, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  2576,
+        "lpcFun":  "cmd_start_card_friend_pk",
+        "bodyFields":  [
+                           "string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xA10, \"ATTRIB_CLIENT_USER\", \"cmd_start_card_friend_pk\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdStartCardInstruction",
+        "handlerName":  "handle_vm_cmdStartCardInstruction",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8076a7c",
+        "handlerCode":  "void handle_vm_cmdStartCardInstruction(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_start_card_instruction\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  65502,
+        "lpcFun":  "cmd_start_card_instruction",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields",
+        "kcmdEntry":  "{ 0xFFDE, \"ATTRIB_CLIENT_USER\", \"cmd_start_card_instruction\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdStartPetPractice",
+        "handlerName":  "handle_vm_cmdStartPetPractice",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073e84",
+        "handlerCode":  "void handle_vm_cmdStartPetPractice(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint8_t v1 = body[0];\n    uint8_t v2 = body[1];\n    uint16_t v3 = rd16be(body, 2);\n    uint8_t v4 = body[4];\n    applyLpc(\"cmd_start_pet_practice\", {make_int(cl.clientNo), make_int(v1), make_int(v2), make_int(v3), make_int(v4)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64806,
+        "lpcFun":  "cmd_start_pet_practice",
+        "bodyFields":  [
+                           "u8 int",
+                           "u8 int",
+                           "u16 BE int",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD26, \"ATTRIB_CLIENT_USER\", \"cmd_start_pet_practice\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdStartRaise",
+        "handlerName":  "handle_vm_cmdStartRaise",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806ceb8",
+        "handlerCode":  "void handle_vm_cmdStartRaise(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint32_t id = rd32be(body, 0);\n    uint8_t type = body[4];\n    uint8_t nlen = body[5];\n    if (6 + (size_t)nlen \u003e len) return;\n    applyLpc(\"cmd_start_raise\", {make_int(cl.clientNo), make_int(id), make_int(type), make_string(body + 6, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4630,
+        "lpcFun":  "cmd_start_raise",
+        "bodyFields":  [
+                           "u32 BE int",
+                           "u8 int",
+                           "string u8len"
+                       ],
+        "note":  "len==5 valid only with empty name in orig; handler requires \u003e=6 (orig never applies at 5)",
+        "kcmdEntry":  "{ 0x1216, \"ATTRIB_CLIENT_USER\", \"cmd_start_raise\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdStartStall",
+        "handlerName":  "handle_vm_cmdStartStall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d820",
+        "handlerCode":  "void handle_vm_cmdStartStall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_start_stall\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4288,
+        "lpcFun":  "cmd_start_stall",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body fields",
+        "kcmdEntry":  "{ 0x10C0, \"ATTRIB_CLIENT_USER\", \"cmd_start_stall\", 0 }"
+    }
+]

@@ -1,0 +1,220 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAddAwardTimes",
+        "handlerName":  "handle_vm_cmdAddAwardTimes",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80500f0",
+        "handlerCode":  "void handle_vm_cmdAddAwardTimes(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_add_award_times\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  2572,
+        "lpcFun":  "cmd_add_award_times",
+        "bodyFields":  [
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x0A0C, ATTRIB_CLIENT_USER, \"cmd_add_award_times\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAddBureauPage",
+        "handlerName":  "handle_vm_cmdAddBureauPage",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805fc74",
+        "handlerCode":  "void handle_vm_cmdAddBureauPage(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_add_bureau_page\", {make_int(cl.clientNo), make_int(rd16be(body, 0))});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  20642,
+        "lpcFun":  "cmd_add_bureau_page",
+        "bodyFields":  [
+                           "int u16 be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x50A2, ATTRIB_CLIENT_USER, \"cmd_add_bureau_page\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAddDunwuNimbus",
+        "handlerName":  "handle_vm_cmdAddDunwuNimbus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80745b8",
+        "handlerCode":  "void handle_vm_cmdAddDunwuNimbus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t id = rd32be(body, 0);\n    size_t off = 4;\n    if (off \u003e= len) return;\n    uint8_t sl = body[off++];\n    if (off + sl \u003e len) return;\n    std::string skill((const char*)body + off, sl);\n    applyLpc(\"cmd_add_dunwu_nimbus\", {make_int(cl.clientNo), make_int(id), make_string(skill)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  61634,
+        "lpcFun":  "cmd_add_dunwu_nimbus",
+        "bodyFields":  [
+                           "int u32 be",
+                           "string u8len skill"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF0C2, ATTRIB_CLIENT_USER, \"cmd_add_dunwu_nimbus\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdAddFriend",
+        "handlerName":  "handle_vm_cmdAddFriend",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x804ff54",
+        "handlerCode":  "void handle_vm_cmdAddFriend(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t gl = body[off++];\n    if (off + gl \u003e len) return;\n    std::string group((const char*)body + off, gl);\n    off += gl;\n    if (off \u003e= len) return;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string name((const char*)body + off, nl);\n    off += nl;\n    if (off \u003e= len) return;\n    applyLpc(\"cmd_add_friend\", {make_int(cl.clientNo), make_string(group), make_string(name), make_int(body[off])});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  12376,
+        "lpcFun":  "cmd_add_friend",
+        "bodyFields":  [
+                           "string u8len group",
+                           "string u8len name",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3058, ATTRIB_CLIENT_USER, \"cmd_add_friend\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAddGodbookDirect",
+        "handlerName":  "handle_vm_cmdAddGodbookDirect",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e16c",
+        "handlerCode":  "void handle_vm_cmdAddGodbookDirect(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t id = rd32be(body, 0);\n    size_t off = 4;\n    if (off \u003e= len) return;\n    uint8_t sl = body[off++];\n    if (off + sl \u003e len) return;\n    std::string name((const char*)body + off, sl);\n    applyLpc(\"cmd_add_godbook_direct\", {make_int(cl.clientNo), make_int(id), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  64073,
+        "lpcFun":  "cmd_add_godbook_direct",
+        "bodyFields":  [
+                           "int u32 be",
+                           "string u8len name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA49, ATTRIB_CLIENT_USER, \"cmd_add_godbook_direct\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdAddMaterial",
+        "handlerName":  "handle_vm_cmdAddMaterial",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8050044",
+        "handlerCode":  "void handle_vm_cmdAddMaterial(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 10) return;\n    uint32_t id = rd32be(body, 0);\n    uint16_t qty = rd16be(body, 4);\n    uint16_t v1 = rd16be(body, 6);\n    uint16_t v2 = rd16be(body, 8);\n    applyLpc(\"cmd_add_material\", {make_int(cl.clientNo), make_int(id), make_int(qty), make_int(v1), make_int(v2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8836,
+        "lpcFun":  "cmd_add_material",
+        "bodyFields":  [
+                           "int u32 be id",
+                           "int u16 be qty",
+                           "int u16 be",
+                           "int u16 be"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2284, ATTRIB_CLIENT_USER, \"cmd_add_material\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAddMountItem",
+        "handlerName":  "handle_vm_cmdAddMountItem",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805917c",
+        "handlerCode":  "void handle_vm_cmdAddMountItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_add_mount_item\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8532,
+        "lpcFun":  "cmd_add_mount_item",
+        "bodyFields":  [
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2154, ATTRIB_CLIENT_USER, \"cmd_add_mount_item\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAddSkillEssence",
+        "handlerName":  "handle_vm_cmdAddSkillEssence",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8074658",
+        "handlerCode":  "void handle_vm_cmdAddSkillEssence(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t id = rd32be(body, 0);\n    size_t off = 4;\n    if (off \u003e= len) return;\n    uint8_t sl = body[off++];\n    if (off + sl \u003e len) return;\n    std::string skill((const char*)body + off, sl);\n    applyLpc(\"cmd_add_skill_essence\", {make_int(cl.clientNo), make_int(id), make_string(skill)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4702,
+        "lpcFun":  "cmd_add_skill_essence",
+        "bodyFields":  [
+                           "int u32 be",
+                           "string u8len skill"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x125E, ATTRIB_CLIENT_USER, \"cmd_add_skill_essence\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAdminBroadcast",
+        "handlerName":  "handle_vm_cmdAdminBroadcast",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8068cdc",
+        "handlerCode":  "void handle_vm_cmdAdminBroadcast(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    size_t off = 2;\n    size_t ml = rd16be(body, 0);\n    if (ml \u003e 4095) ml = 4095;\n    if (off + ml \u003e len) return;\n    std::string msg((const char*)body + off, ml);\n    off += ml;\n    if (off \u003e= len) return;\n    uint8_t al = body[off++];\n    if (off + al \u003e len) return;\n    std::string area((const char*)body + off, al);\n    applyLpc(\"cmd_admin_broadcast\", {make_int(cl.clientNo), make_string(msg), make_string(area)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  9028,
+        "lpcFun":  "cmd_admin_broadcast",
+        "bodyFields":  [
+                           "string u16be msg (cap 4095)",
+                           "string u8len area"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2344, ATTRIB_CLIENT_USER, \"cmd_admin_broadcast\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminCommonCommand",
+        "handlerName":  "handle_vm_cmdAdminCommonCommand",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8068e0c",
+        "handlerCode":  "void handle_vm_cmdAdminCommonCommand(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_admin_common_command\", {make_int(cl.clientNo), make_buffer(body, len)});\n}",
+        "typeSeq":  [
+                        88,
+                        228
+                    ],
+        "cmdNo":  8980,
+        "lpcFun":  "cmd_admin_common_command",
+        "bodyFields":  [
+                           "buffer (whole body)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2314, ATTRIB_CLIENT_USER, \"cmd_admin_common_command\", 0 }"
+    }
+]

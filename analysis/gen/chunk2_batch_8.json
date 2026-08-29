@@ -1,0 +1,201 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetPartyChannelDenyList",
+        "handlerName":  "handle_vm_cmdGetPartyChannelDenyList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80608fc",
+        "handlerCode":  "void handle_vm_cmdGetPartyChannelDenyList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_party_channel_deny_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  13574,
+        "lpcFun":  "cmd_get_party_channel_deny_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3506, ATTRIB_CLIENT_USER, \"cmd_get_party_channel_deny_list\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetPartyLog",
+        "handlerName":  "handle_vm_cmdGetPartyLog",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e24c",
+        "handlerCode":  "void handle_vm_cmdGetPartyLog(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_party_log\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8376,
+        "lpcFun":  "cmd_get_party_log",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20B8, ATTRIB_CLIENT_USER, \"cmd_get_party_log\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetPetEvolveList",
+        "handlerName":  "handle_vm_cmdGetPetEvolveList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060ef4",
+        "handlerCode":  "void handle_vm_cmdGetPetEvolveList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_pet_evolve_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4290,
+        "lpcFun":  "cmd_get_pet_evolve_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10C2, ATTRIB_CLIENT_USER, \"cmd_get_pet_evolve_list\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetPhoneAuthBindTime",
+        "handlerName":  "handle_vm_cmdGetPhoneAuthBindTime",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060f24",
+        "handlerCode":  "void handle_vm_cmdGetPhoneAuthBindTime(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_phone_auth_bind_time\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  178,
+        "lpcFun":  "cmd_get_phone_auth_bind_time",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xB2, ATTRIB_CLIENT_USER, \"cmd_get_phone_auth_bind_time\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdGetRaiseBonus",
+        "handlerName":  "handle_vm_cmdGetRaiseBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d05c",
+        "handlerCode":  "void handle_vm_cmdGetRaiseBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint32_t v = rd32be(body);\n    uint8_t b1 = body[4];\n    uint8_t b2 = body[5];\n    applyLpc(\"cmd_get_raise_bonus\", {make_int(cl.clientNo), make_int(v), make_int(b1), make_int(b2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64816,
+        "lpcFun":  "cmd_get_raise_bonus",
+        "bodyFields":  [
+                           "int u32",
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD30, ATTRIB_CLIENT_USER, \"cmd_get_raise_bonus\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdGetRandomBoxAward",
+        "handlerName":  "handle_vm_cmdGetRandomBoxAward",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077738",
+        "handlerCode":  "void handle_vm_cmdGetRandomBoxAward(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t pos = body[0];\n    uint8_t n = body[1];\n    if (2 + n \u003e len) return;\n    std::string coin_type((const char*)body + 2, n);\n    applyLpc(\"cmd_get_random_box_award\", {make_int(cl.clientNo), make_int(pos), make_string(coin_type)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  61650,
+        "lpcFun":  "cmd_get_random_box_award",
+        "bodyFields":  [
+                           "int u8 pos",
+                           "string u8len coin_type"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF0D2, ATTRIB_CLIENT_USER, \"cmd_get_random_box_award\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetSafeQuestion",
+        "handlerName":  "handle_vm_cmdGetSafeQuestion",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806b30c",
+        "handlerCode":  "void handle_vm_cmdGetSafeQuestion(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_safe_question\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4268,
+        "lpcFun":  "cmd_get_safe_question",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10AC, ATTRIB_CLIENT_USER, \"cmd_get_safe_question\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetSafeState",
+        "handlerName":  "handle_vm_cmdGetSafeState",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806b258",
+        "handlerCode":  "void handle_vm_cmdGetSafeState(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_safe_state\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  5024,
+        "lpcFun":  "cmd_get_safe_state",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x13A0, ATTRIB_CLIENT_USER, \"cmd_get_safe_state\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdGetTaskItem",
+        "handlerName":  "handle_vm_cmdGetTaskItem",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805447c",
+        "handlerCode":  "void handle_vm_cmdGetTaskItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t n = body[0];\n    if (1 + n \u003e len) return;\n    std::string item_name((const char*)body + 1, n);\n    applyLpc(\"cmd_get_task_item\", {make_int(cl.clientNo), make_string(item_name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  8640,
+        "lpcFun":  "cmd_get_task_item",
+        "bodyFields":  [
+                           "string u8len item_name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21C0, ATTRIB_CLIENT_USER, \"cmd_get_task_item\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetTodayStat",
+        "handlerName":  "handle_vm_cmdGetTodayStat",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805f928",
+        "handlerCode":  "void handle_vm_cmdGetTodayStat(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_today_stat\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8242,
+        "lpcFun":  "cmd_get_today_stat",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2032, ATTRIB_CLIENT_USER, \"cmd_get_today_stat\", 0 }"
+    }
+]

@@ -1,0 +1,218 @@
+﻿[
+    {
+        "cmdNo":  15924,
+        "fun":  "vm_cmdWLSealInfo",
+        "type":  1,
+        "addr":  "0x80781e4",
+        "lpcFun":  "cmd_world_level_seal_info",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u16be level"
+                       ],
+        "handlerName":  "handle_vm_cmdWLSealInfo",
+        "handlerCode":  "void handle_vm_cmdWLSealInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t level = rd16be(body, 0);\n    applyLpc(\"cmd_world_level_seal_info\", {make_int(cl.clientNo), make_int(level)});\n}",
+        "kcmdEntry":  "{ 0x3E34, ATTRIB_CLIENT_USER, \"cmd_world_level_seal_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  61640,
+        "fun":  "vm_cmdWorkshopBuyOrder",
+        "type":  1,
+        "addr":  "0x8076c8c",
+        "lpcFun":  "cmd_workshop_buy_order",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len orderId",
+                           "u8 count",
+                           "count*u32be ids"
+                       ],
+        "handlerName":  "handle_vm_cmdWorkshopBuyOrder",
+        "handlerCode":  "void handle_vm_cmdWorkshopBuyOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1u + slen \u003e len) return;\n    size_t off = 1u + slen;\n    if (off + 1 \u003e len) return;\n    uint8_t cnt = body[off++];\n    if (off + (size_t)cnt * 4 \u003e len) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint8_t i = 0; i \u003c cnt; ++i) {\n        arr-\u003eitems.push_back(make_int(rd32be(body, off)));\n        off += 4;\n    }\n    applyLpc(\"cmd_workshop_buy_order\", {make_int(cl.clientNo), make_string(body + 1, slen), arr});\n}",
+        "kcmdEntry":  "{ 0xF0C8, ATTRIB_CLIENT_USER, \"cmd_workshop_buy_order\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12394,
+        "fun":  "vm_cmdWorkshopQueryOrderCash",
+        "type":  1,
+        "addr":  "0x8077050",
+        "lpcFun":  "cmd_workshop_query_order_cash",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len orderId",
+                           "u8 count",
+                           "count*u32be ids"
+                       ],
+        "handlerName":  "handle_vm_cmdWorkshopQueryOrderCash",
+        "handlerCode":  "void handle_vm_cmdWorkshopQueryOrderCash(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1u + slen \u003e len) return;\n    size_t off = 1u + slen;\n    if (off + 1 \u003e len) return;\n    uint8_t cnt = body[off++];\n    if (off + (size_t)cnt * 4 \u003e len) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint8_t i = 0; i \u003c cnt; ++i) {\n        arr-\u003eitems.push_back(make_int(rd32be(body, off)));\n        off += 4;\n    }\n    applyLpc(\"cmd_workshop_query_order_cash\", {make_int(cl.clientNo), make_string(body + 1, slen), arr});\n}",
+        "kcmdEntry":  "{ 0x306A, ATTRIB_CLIENT_USER, \"cmd_workshop_query_order_cash\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8626,
+        "fun":  "vm_cmdWorkshopQueryOrderRate",
+        "type":  1,
+        "addr":  "0x8076db8",
+        "lpcFun":  "cmd_workshop_query_order_rate",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8len orderId",
+                           "u8 count",
+                           "count*u32be ids"
+                       ],
+        "handlerName":  "handle_vm_cmdWorkshopQueryOrderRate",
+        "handlerCode":  "void handle_vm_cmdWorkshopQueryOrderRate(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1u + slen \u003e len) return;\n    size_t off = 1u + slen;\n    if (off + 1 \u003e len) return;\n    uint8_t cnt = body[off++];\n    if (off + (size_t)cnt * 4 \u003e len) return;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint8_t i = 0; i \u003c cnt; ++i) {\n        arr-\u003eitems.push_back(make_int(rd32be(body, off)));\n        off += 4;\n    }\n    applyLpc(\"cmd_workshop_query_order_rate\", {make_int(cl.clientNo), make_string(body + 1, slen), arr});\n}",
+        "kcmdEntry":  "{ 0x21B2, ATTRIB_CLIENT_USER, \"cmd_workshop_query_order_rate\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4448,
+        "fun":  "vm_cmdWorkshopReleaseOrder",
+        "type":  1,
+        "addr":  "0x8076ee4",
+        "lpcFun":  "cmd_workshop_release_order",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 arg0",
+                           "u32be arg1",
+                           "u32be arg2"
+                       ],
+        "handlerName":  "handle_vm_cmdWorkshopReleaseOrder",
+        "handlerCode":  "void handle_vm_cmdWorkshopReleaseOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 9) return;\n    uint8_t v0 = body[0];\n    uint32_t v1 = rd32be(body, 1);\n    uint32_t v2 = rd32be(body, 5);\n    applyLpc(\"cmd_workshop_release_order\", {make_int(cl.clientNo), make_int(v0), make_int(v1), make_int(v2)});\n}",
+        "kcmdEntry":  "{ 0x1160, ATTRIB_CLIENT_USER, \"cmd_workshop_release_order\", 0 }",
+        "status":  "ok",
+        "note":  "pProgram slot holds body byte 0 (decompiler quirk); inFd/outFd/retNum/pending all 0"
+    },
+    {
+        "cmdNo":  4274,
+        "fun":  "vm_cmdWudaoAddAttribAuto",
+        "type":  1,
+        "addr":  "0x8077ee0",
+        "lpcFun":  "cmd_wudao_add_attrib_auto",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWudaoAddAttribAuto",
+        "handlerCode":  "void handle_vm_cmdWudaoAddAttribAuto(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_wudao_add_attrib_auto\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x10B2, ATTRIB_CLIENT_USER, \"cmd_wudao_add_attrib_auto\", 0 }",
+        "status":  "ok",
+        "note":  "body ignored"
+    },
+    {
+        "cmdNo":  20994,
+        "fun":  "vm_cmdWuDaoAddAttribRep",
+        "type":  1,
+        "addr":  "0x8077bf8",
+        "lpcFun":  "cmd_wudao_add_attrib_rep",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u32be a",
+                           "u32be b",
+                           "u32be c",
+                           "u32be d"
+                       ],
+        "handlerName":  "handle_vm_cmdWuDaoAddAttribRep",
+        "handlerCode":  "void handle_vm_cmdWuDaoAddAttribRep(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 16) return;\n    uint32_t a = rd32be(body, 0);\n    uint32_t b = rd32be(body, 4);\n    uint32_t c = rd32be(body, 8);\n    uint32_t d = rd32be(body, 12);\n    applyLpc(\"cmd_wudao_add_attrib_rep\", {make_int(cl.clientNo), make_int(a), make_int(b), make_int(c), make_int(d)});\n}",
+        "kcmdEntry":  "{ 0x5202, ATTRIB_CLIENT_USER, \"cmd_wudao_add_attrib_rep\", 0 }",
+        "status":  "ok",
+        "note":  "pProgram slot holds BE u32 at off4 (decompiler quirk); inFd/outFd/retNum/pending all 0"
+    },
+    {
+        "cmdNo":  4692,
+        "fun":  "vm_cmdWudaoBatchAddRep",
+        "type":  1,
+        "addr":  "0x8077f10",
+        "lpcFun":  "cmd_wudao_batch_add_rep",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWudaoBatchAddRep",
+        "handlerCode":  "void handle_vm_cmdWudaoBatchAddRep(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_wudao_batch_add_rep\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x1254, ATTRIB_CLIENT_USER, \"cmd_wudao_batch_add_rep\", 0 }",
+        "status":  "ok",
+        "note":  "body ignored"
+    },
+    {
+        "cmdNo":  8706,
+        "fun":  "vm_cmdWuDaoBuyRepCard",
+        "type":  1,
+        "addr":  "0x8077b74",
+        "lpcFun":  "cmd_wudao_buy_rep_card",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "u8len card"
+                       ],
+        "handlerName":  "handle_vm_cmdWuDaoBuyRepCard",
+        "handlerCode":  "void handle_vm_cmdWuDaoBuyRepCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1u + slen \u003e len) return;\n    applyLpc(\"cmd_wudao_buy_rep_card\", {make_int(cl.clientNo), make_string(body + 1, slen)});\n}",
+        "kcmdEntry":  "{ 0x2202, ATTRIB_CLIENT_USER, \"cmd_wudao_buy_rep_card\", 0 }",
+        "status":  "ok",
+        "note":  "pProgram slot holds len-derived value (decompiler quirk); inFd/outFd/retNum/pending all 0"
+    },
+    {
+        "cmdNo":  8466,
+        "fun":  "vm_cmdWudaoConvertExtraAttrib",
+        "type":  1,
+        "addr":  "0x8077da8",
+        "lpcFun":  "cmd_wudao_convert_extra_attrib",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdWudaoConvertExtraAttrib",
+        "handlerCode":  "void handle_vm_cmdWudaoConvertExtraAttrib(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_wudao_convert_extra_attrib\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x2112, ATTRIB_CLIENT_USER, \"cmd_wudao_convert_extra_attrib\", 0 }",
+        "status":  "ok",
+        "note":  "body ignored"
+    }
+]

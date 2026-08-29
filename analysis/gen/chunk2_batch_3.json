@@ -1,0 +1,216 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdExchangeCancel",
+        "handlerName":  "handle_vm_cmdExchangeCancel",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053754",
+        "handlerCode":  "void handle_vm_cmdExchangeCancel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_exchange_cancel\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  16472,
+        "lpcFun":  "cmd_exchange_cancel",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4058, ATTRIB_CLIENT_USER, \"cmd_exchange_cancel\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdExchangeChildAppellation",
+        "handlerName":  "handle_vm_cmdExchangeChildAppellation",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053784",
+        "handlerCode":  "void handle_vm_cmdExchangeChildAppellation(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint32_t no = body[off++];\n    if (off + 1 \u003e len) return;\n    uint32_t slen = body[off++];\n    if (off + slen \u003e len) return;\n    std::string appellation(reinterpret_cast\u003cconst char*\u003e(body + off), slen);\n    off += slen;\n    applyLpc(\"cmd_exchange_child_appellation\", {make_int(cl.clientNo), make_int(no), make_string(appellation)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8642,
+        "lpcFun":  "cmd_exchange_child_appellation",
+        "bodyFields":  [
+                           "u8 no",
+                           "u8 len",
+                           "string appellation"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x21C2, ATTRIB_CLIENT_USER, \"cmd_exchange_child_appellation\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdExchangeOk",
+        "handlerName":  "handle_vm_cmdExchangeOk",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053824",
+        "handlerCode":  "void handle_vm_cmdExchangeOk(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_exchange_ok\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  20484,
+        "lpcFun":  "cmd_exchange_ok",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5004, ATTRIB_CLIENT_USER, \"cmd_exchange_ok\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdExchangeOpen",
+        "handlerName":  "handle_vm_cmdExchangeOpen",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053854",
+        "handlerCode":  "void handle_vm_cmdExchangeOpen(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t v = rd32be(body, 0);\n    applyLpc(\"cmd_exchange_open\", {make_int(cl.clientNo), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  14086,
+        "lpcFun":  "cmd_exchange_open",
+        "bodyFields":  [
+                           "u32 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3706, ATTRIB_CLIENT_USER, \"cmd_exchange_open\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdExchangeOpenEx",
+        "handlerName":  "handle_vm_cmdExchangeOpenEx",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805def8",
+        "handlerCode":  "void handle_vm_cmdExchangeOpenEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint32_t slen = body[off++];\n    if (off + slen \u003e len) return;\n    std::string name(reinterpret_cast\u003cconst char*\u003e(body + off), slen);\n    off += slen;\n    applyLpc(\"cmd_exchange_open_ex\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64017,
+        "lpcFun":  "cmd_exchange_open_ex",
+        "bodyFields":  [
+                           "u8 len",
+                           "string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA11, ATTRIB_CLIENT_USER, \"cmd_exchange_open_ex\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdExchangeSelect",
+        "handlerName":  "handle_vm_cmdExchangeSelect",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80538a4",
+        "handlerCode":  "void handle_vm_cmdExchangeSelect(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint32_t slen = body[off++];\n    if (off + slen \u003e len) return;\n    std::string type(reinterpret_cast\u003cconst char*\u003e(body + off), slen);\n    off += slen;\n    if (off + 1 \u003e len) return;\n    uint32_t v1 = body[off++];\n    if (off + 1 \u003e len) return;\n    uint32_t v2 = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t v3 = rd32be(body, off);\n    off += 4;\n    applyLpc(\"cmd_exchange_select\", {make_int(cl.clientNo), make_string(type), make_int(v1), make_int(v2), make_int(v3)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4338,
+        "lpcFun":  "cmd_exchange_select",
+        "bodyFields":  [
+                           "u8 len",
+                           "string type",
+                           "u8",
+                           "u8",
+                           "u32 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10F2, ATTRIB_CLIENT_USER, \"cmd_exchange_select\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFeedChild",
+        "handlerName":  "handle_vm_cmdFeedChild",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060ffc",
+        "handlerCode":  "void handle_vm_cmdFeedChild(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_feed_child\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8498,
+        "lpcFun":  "cmd_feed_child",
+        "bodyFields":  [
+                           "u8",
+                           "u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2132, ATTRIB_CLIENT_USER, \"cmd_feed_child\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFeedPet",
+        "handlerName":  "handle_vm_cmdFeedPet",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805396c",
+        "handlerCode":  "void handle_vm_cmdFeedPet(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_feed_pet\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8254,
+        "lpcFun":  "cmd_feed_pet",
+        "bodyFields":  [
+                           "u8",
+                           "u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x203E, ATTRIB_CLIENT_USER, \"cmd_feed_pet\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFeedPetXinfaExp",
+        "handlerName":  "handle_vm_cmdFeedPetXinfaExp",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x807717c",
+        "handlerCode":  "void handle_vm_cmdFeedPetXinfaExp(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_feed_pet_xinfa_exp\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4458,
+        "lpcFun":  "cmd_feed_pet_xinfa_exp",
+        "bodyFields":  [
+                           "u8",
+                           "u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x116A, ATTRIB_CLIENT_USER, \"cmd_feed_pet_xinfa_exp\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdFetchGbuyingCoin",
+        "handlerName":  "handle_vm_cmdFetchGbuyingCoin",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80714fc",
+        "handlerCode":  "void handle_vm_cmdFetchGbuyingCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_fetch_gbuying_coin\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8832,
+        "lpcFun":  "cmd_fetch_gbuying_coin",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2280, ATTRIB_CLIENT_USER, \"cmd_fetch_gbuying_coin\", 0 }"
+    }
+]

@@ -1,0 +1,215 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdPurchaseMultiMatch",
+        "handlerName":  "handle_vm_cmdPurchaseMultiMatch",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ac88",
+        "handlerCode":  "void handle_vm_cmdPurchaseMultiMatch(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t off = 0;\n    uint8_t count = body[off++];\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint8_t i = 0; i \u003c count; i++) {\n        if (off \u003e= len) return;\n        uint8_t slen = body[off++];\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen));\n        off += slen;\n        if (off + 1 \u003e len) return;\n        arr-\u003eitems.push_back(make_int(body[off++]));\n        if (off + 2 \u003e len) return;\n        arr-\u003eitems.push_back(make_int(rd16be(body, off)));\n        off += 2;\n        if (off + 2 \u003e len) return;\n        arr-\u003eitems.push_back(make_int(rd16be(body, off)));\n        off += 2;\n    }\n    applyLpc(\"cmd_purchase_multi_match\",\n        {make_int(cl.clientNo), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        936
+                    ],
+        "cmdNo":  5040,
+        "lpcFun":  "cmd_purchase_multi_match",
+        "bodyFields":  [
+                           "u8 count",
+                           "[count] u8 strLen + string",
+                           "u8 int",
+                           "u16be int",
+                           "u16be int"
+                       ],
+        "note":  "flat array: per entry string,u8,u16be,u16be",
+        "kcmdEntry":  "{ 0x13B0, ATTRIB_CLIENT_USER, \"cmd_purchase_multi_match\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdPutChildItemDown",
+        "handlerName":  "handle_vm_cmdPutChildItemDown",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8055db8",
+        "handlerCode":  "void handle_vm_cmdPutChildItemDown(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    applyLpc(\"cmd_put_child_item_down\",\n        {make_int(cl.clientNo), make_int(rd32be(body, 0))});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  64866,
+        "lpcFun":  "cmd_put_child_item_down",
+        "bodyFields":  [
+                           "u32be itemId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD62, ATTRIB_CLIENT_USER, \"cmd_put_child_item_down\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdPutDown",
+        "handlerName":  "handle_vm_cmdPutDown",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8055e08",
+        "handlerCode":  "void handle_vm_cmdPutDown(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_put_down\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4646,
+        "lpcFun":  "cmd_put_down",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body (mlen\u003e=0 check only)",
+        "kcmdEntry":  "{ 0x1226, ATTRIB_CLIENT_USER, \"cmd_put_down\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdPutInItem",
+        "handlerName":  "handle_vm_cmdPutInItem",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805bf0c",
+        "handlerCode":  "void handle_vm_cmdPutInItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    applyLpc(\"cmd_putin_item\",\n        {make_int(cl.clientNo), make_int(rd32be(body, 0)), make_int(rd32be(body, 4))});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64060,
+        "lpcFun":  "cmd_putin_item",
+        "bodyFields":  [
+                           "u32be itemId",
+                           "u32be childItemId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA3C, ATTRIB_CLIENT_USER, \"cmd_putin_item\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdQueryActivity",
+        "handlerName":  "handle_vm_cmdQueryActivity",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806b8f8",
+        "handlerCode":  "void handle_vm_cmdQueryActivity(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    applyLpc(\"cmd_query_activity\",\n        {make_int(cl.clientNo), make_int(rd16be(body, 0)), make_int(rd16be(body, 2)), make_int(rd16be(body, 4))});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64832,
+        "lpcFun":  "cmd_query_activity",
+        "bodyFields":  [
+                           "u16be activityId",
+                           "u16be field2",
+                           "u16be field3"
+                       ],
+        "note":  "pProgram slot holds parsed u16be body[1]",
+        "kcmdEntry":  "{ 0xFD40, ATTRIB_CLIENT_USER, \"cmd_query_activity\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdQueryPracticeChildren",
+        "handlerName":  "handle_vm_cmdQueryPracticeChildren",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056040",
+        "handlerCode":  "void handle_vm_cmdQueryPracticeChildren(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_query_practice_children\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8240,
+        "lpcFun":  "cmd_query_practice_children",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x2030, ATTRIB_CLIENT_USER, \"cmd_query_practice_children\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdQueryPracticePets",
+        "handlerName":  "handle_vm_cmdQueryPracticePets",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073f00",
+        "handlerCode":  "void handle_vm_cmdQueryPracticePets(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_query_practice_pets\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8960,
+        "lpcFun":  "cmd_query_practice_pets",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x2300, ATTRIB_CLIENT_USER, \"cmd_query_practice_pets\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdQueryRecruitInfo",
+        "handlerName":  "handle_vm_cmdQueryRecruitInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056070",
+        "handlerCode":  "void handle_vm_cmdQueryRecruitInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t tlen = body[off++];\n    if (off + tlen \u003e len) return;\n    const uint8_t* type = body + off;\n    off += tlen;\n    if (off \u003e= len) return;\n    uint8_t nlen = body[off++];\n    if (off + nlen \u003e len) return;\n    applyLpc(\"cmd_query_recruit_info\",\n        {make_int(cl.clientNo), make_string(type, tlen), make_string(body + off, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  6658,
+        "lpcFun":  "cmd_query_recruit_info",
+        "bodyFields":  [
+                           "u8 strLen + type",
+                           "u8 strLen + targetName"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1A02, ATTRIB_CLIENT_USER, \"cmd_query_recruit_info\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdQueryReportInfo",
+        "handlerName":  "handle_vm_cmdQueryReportInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077a20",
+        "handlerCode":  "void handle_vm_cmdQueryReportInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nlen = body[0];\n    if (1 + nlen \u003e len) return;\n    applyLpc(\"cmd_admin_query_report_info\",\n        {make_int(cl.clientNo), make_string(body + 1, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  15872,
+        "lpcFun":  "cmd_admin_query_report_info",
+        "bodyFields":  [
+                           "u8 strLen + name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E00, ATTRIB_CLIENT_USER, \"cmd_admin_query_report_info\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdQueryUpgradeCash",
+        "handlerName":  "handle_vm_cmdQueryUpgradeCash",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056c8c",
+        "handlerCode":  "void handle_vm_cmdQueryUpgradeCash(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    size_t off = 6;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (int i = 0; i \u003c 4; i++) {\n        if (off + 4 \u003e len) return;\n        arr-\u003eitems.push_back(make_int(rd32be(body, off)));\n        off += 4;\n    }\n    applyLpc(\"cmd_query_upgrade_cash\",\n        {make_int(cl.clientNo), make_int(rd32be(body, 0)), make_int(rd16be(body, 4)), arr});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        936
+                    ],
+        "cmdNo":  8712,
+        "lpcFun":  "cmd_query_upgrade_cash",
+        "bodyFields":  [
+                           "u32be npcId",
+                           "u16be type",
+                           "4x u32be upgradeItems"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2208, ATTRIB_CLIENT_USER, \"cmd_query_upgrade_cash\", 0 }"
+    }
+]

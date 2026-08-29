@@ -1,0 +1,239 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOperLongtengShengshi",
+        "handlerName":  "handle_vm_cmdOperLongtengShengshi",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073984",
+        "handlerCode":  "void handle_vm_cmdOperLongtengShengshi(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    int32_t id = rd32be(body, 0);\n    uint8_t slen = body[4];\n    if (5 + slen \u003e len) return;\n    std::string s((const char*)body + 5, slen);\n    applyLpc(\"cmd_oper_longteng_shengshi\", {make_int(cl.clientNo), make_int(id), make_string(s)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4316,
+        "lpcFun":  "cmd_oper_longteng_shengshi",
+        "bodyFields":  [
+                           "int u32 id (BE)",
+                           "string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10DC, ATTRIB_CLIENT_USER, \"cmd_oper_longteng_shengshi\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdOperLotteryTicket",
+        "handlerName":  "handle_vm_cmdOperLotteryTicket",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805651c",
+        "handlerCode":  "void handle_vm_cmdOperLotteryTicket(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_oper_lottery_ticket\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  10022,
+        "lpcFun":  "cmd_oper_lottery_ticket",
+        "bodyFields":  [
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2726, ATTRIB_CLIENT_USER, \"cmd_oper_lottery_ticket\", 0 }"
+    },
+    {
+        "nArgs":  7,
+        "fun":  "vm_cmdOperMagicPicture",
+        "handlerName":  "handle_vm_cmdOperMagicPicture",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x807152c",
+        "handlerCode":  "void handle_vm_cmdOperMagicPicture(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 10) return;\n    int32_t id = rd32be(body, 0);\n    uint8_t b4 = body[4];\n    uint8_t b5 = body[5];\n    uint16_t b6 = rd16be(body, 6);\n    uint8_t b8 = body[8];\n    uint8_t b9 = body[9];\n    applyLpc(\"cmd_oper_magic_picture\", {make_int(cl.clientNo), make_int(id), make_int(b4), make_int(b5), make_int(b6), make_int(b8), make_int(b9)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64790,
+        "lpcFun":  "cmd_oper_magic_picture",
+        "bodyFields":  [
+                           "int u32 (BE)",
+                           "int u8",
+                           "int u8",
+                           "int u16 (BE)",
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD16, ATTRIB_CLIENT_USER, \"cmd_oper_magic_picture\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdOperMaster",
+        "handlerName":  "handle_vm_cmdOperMaster",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056568",
+        "handlerCode":  "void handle_vm_cmdOperMaster(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    int32_t id = rd32be(body, 0);\n    uint16_t flag = rd16be(body, 4);\n    uint8_t slen = body[6];\n    if (7 + slen \u003e len) return;\n    std::string signature((const char*)body + 7, slen);\n    applyLpc(\"cmd_oper_master\", {make_int(cl.clientNo), make_int(id), make_int(flag), make_string(signature)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9284,
+        "lpcFun":  "cmd_oper_master",
+        "bodyFields":  [
+                           "int u32 id (BE)",
+                           "int u16 flag (BE)",
+                           "string u8len signature"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2444, ATTRIB_CLIENT_USER, \"cmd_oper_master\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdoperpackeditem",
+        "handlerName":  "handle_vm_cmdoperpackeditem",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80594ac",
+        "handlerCode":  "void handle_vm_cmdoperpackeditem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    applyLpc(\"cmd_oper_packed_item\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1]), make_int(body[2]), make_int(body[3]), make_int(body[4])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  16394,
+        "lpcFun":  "cmd_oper_packed_item",
+        "bodyFields":  [
+                           "int u8",
+                           "int u8",
+                           "int u8",
+                           "int u8",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x400A, ATTRIB_CLIENT_USER, \"cmd_oper_packed_item\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdOperSecurity",
+        "handlerName":  "handle_vm_cmdOperSecurity",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806bc2c",
+        "handlerCode":  "void handle_vm_cmdOperSecurity(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 7) return;\n    uint16_t v0 = rd16be(body, 0);\n    int32_t v2 = rd32be(body, 2);\n    uint8_t v6 = body[6];\n    applyLpc(\"cmd_oper_security\", {make_int(cl.clientNo), make_int(v0), make_int(v2), make_int(v6)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  15910,
+        "lpcFun":  "cmd_oper_security",
+        "bodyFields":  [
+                           "int u16 (BE)",
+                           "int u32 (BE)",
+                           "int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E26, ATTRIB_CLIENT_USER, \"cmd_oper_security\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdopersixanniinfo",
+        "handlerName":  "handle_vm_cmdopersixanniinfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059590",
+        "handlerCode":  "void handle_vm_cmdopersixanniinfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint8_t b0 = body[0];\n    int32_t b1 = rd32be(body, 1);\n    applyLpc(\"cmd_oper_six_anni_info\", {make_int(cl.clientNo), make_int(b0), make_int(b1)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  16412,
+        "lpcFun":  "cmd_oper_six_anni_info",
+        "bodyFields":  [
+                           "int u8",
+                           "int u32 (BE)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x401C, ATTRIB_CLIENT_USER, \"cmd_oper_six_anni_info\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdOperSortTask",
+        "handlerName":  "handle_vm_cmdOperSortTask",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d2b8",
+        "handlerCode":  "void handle_vm_cmdOperSortTask(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint16_t task_type = rd16be(body, 0);\n    uint8_t oper_type = body[2];\n    uint8_t slen = body[3];\n    if (4 + slen \u003e len) return;\n    std::string para((const char*)body + 4, slen);\n    applyLpc(\"cmd_oper_sort_task\", {make_int(cl.clientNo), make_int(task_type), make_int(oper_type), make_string(para)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8788,
+        "lpcFun":  "cmd_oper_sort_task",
+        "bodyFields":  [
+                           "int u16 task_type (BE)",
+                           "int u8 oper_type",
+                           "string u8len para"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2254, ATTRIB_CLIENT_USER, \"cmd_oper_sort_task\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdoperstrategywar",
+        "handlerName":  "handle_vm_cmdoperstrategywar",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80595e8",
+        "handlerCode":  "void handle_vm_cmdoperstrategywar(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t len1 = body[off++];\n    if (off + len1 \u003e len) return;\n    std::string oper_type((const char*)body + off, len1);\n    off += len1;\n    if (off \u003e= len) return;\n    uint8_t len2 = body[off++];\n    if (off + len2 \u003e len) return;\n    std::string para((const char*)body + off, len2);\n    applyLpc(\"cmd_oper_strategy_war\", {make_int(cl.clientNo), make_string(oper_type), make_string(para)});\n}",
+        "typeSeq":  [
+                        357,
+                        357
+                    ],
+        "cmdNo":  8562,
+        "lpcFun":  "cmd_oper_strategy_war",
+        "bodyFields":  [
+                           "string u8len oper_type",
+                           "string u8len para"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2172, ATTRIB_CLIENT_USER, \"cmd_oper_strategy_war\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdOperTeleportItem",
+        "handlerName":  "handle_vm_cmdOperTeleportItem",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056688",
+        "handlerCode":  "void handle_vm_cmdOperTeleportItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 9) return;\n    int32_t item_id = rd32be(body, 0);\n    uint16_t oper = rd16be(body, 4);\n    int16_t para1 = (int16_t)rd16be(body, 6);\n    uint8_t slen = body[8];\n    if (9 + slen \u003e len) return;\n    std::string para2((const char*)body + 9, slen);\n    applyLpc(\"cmd_oper_teleport_item\", {make_int(cl.clientNo), make_int(item_id), make_int(oper), make_int(para1), make_string(para2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4450,
+        "lpcFun":  "cmd_oper_teleport_item",
+        "bodyFields":  [
+                           "int u32 item_id (BE)",
+                           "int u16 oper (BE)",
+                           "int u16 para1 (BE)",
+                           "string u8len para2"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1162, ATTRIB_CLIENT_USER, \"cmd_oper_teleport_item\", 0 }"
+    }
+]

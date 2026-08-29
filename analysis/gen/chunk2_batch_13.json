@@ -1,0 +1,216 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdLocalEncryptLocked",
+        "handlerName":  "handle_vm_cmdLocalEncryptLocked",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805eca4",
+        "handlerCode":  "void handle_vm_cmdLocalEncryptLocked(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t authKeyLen = body[off++];\n    if (off + authKeyLen \u003e len) return;\n    std::string authKey((const char*)body + off, authKeyLen);\n    off += authKeyLen;\n    applyLpc(\"cmd_local_encrypt_locked\", {make_int(cl.clientNo), make_string(account), make_string(authKey)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  16690,
+        "lpcFun":  "cmd_local_encrypt_locked",
+        "bodyFields":  [
+                           "account string u8len",
+                           "auth_key string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4132, ATTRIB_CLIENT_USER, \"cmd_local_encrypt_locked\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdLocalEncryptLockFailed",
+        "handlerName":  "handle_vm_cmdLocalEncryptLockFailed",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805edfc",
+        "handlerCode":  "void handle_vm_cmdLocalEncryptLockFailed(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_local_encrypt_lock_failed\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  9250,
+        "lpcFun":  "cmd_local_encrypt_lock_failed",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2422, ATTRIB_CLIENT_USER, \"cmd_local_encrypt_lock_failed\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdLocalEncryptRequest",
+        "handlerName":  "handle_vm_cmdLocalEncryptRequest",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ebb4",
+        "handlerCode":  "void handle_vm_cmdLocalEncryptRequest(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t passwordLen = body[off++];\n    if (off + passwordLen \u003e len) return;\n    std::string password((const char*)body + off, passwordLen);\n    off += passwordLen;\n    if (off + 1 \u003e len) return;\n    int encryptType = body[off++];\n    applyLpc(\"cmd_local_encrypt_request\", {make_int(cl.clientNo), make_string(account), make_string(password), make_int(encryptType)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8560,
+        "lpcFun":  "cmd_local_encrypt_request",
+        "bodyFields":  [
+                           "account string u8len",
+                           "password string u8len",
+                           "encryptType int u8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2170, ATTRIB_CLIENT_USER, \"cmd_local_encrypt_request\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLocalEncryptUnlock",
+        "handlerName":  "handle_vm_cmdLocalEncryptUnlock",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805ed78",
+        "handlerCode":  "void handle_vm_cmdLocalEncryptUnlock(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    applyLpc(\"cmd_local_encrypt_unlock\", {make_int(cl.clientNo), make_string(account)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9254,
+        "lpcFun":  "cmd_local_encrypt_unlock",
+        "bodyFields":  [
+                           "account string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2426, ATTRIB_CLIENT_USER, \"cmd_local_encrypt_unlock\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdLockAccount",
+        "handlerName":  "handle_vm_cmdLockAccount",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054d78",
+        "handlerCode":  "void handle_vm_cmdLockAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_lock_account\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4110,
+        "lpcFun":  "cmd_lock_account",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x100E, ATTRIB_CLIENT_USER, \"cmd_lock_account\", 0 }"
+    },
+    {
+        "nArgs":  8,
+        "fun":  "vm_cmdLogin",
+        "handlerName":  "handle_vm_cmdLogin",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054da8",
+        "handlerCode":  "void handle_vm_cmdLogin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = body[off++];\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 4 \u003e len) return;\n    uint32_t authKey = rd32be(body + off);\n    off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t seed = rd32be(body + off);\n    off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t versionLen = body[off++];\n    if (off + versionLen \u003e len) return;\n    std::string version((const char*)body + off, versionLen);\n    off += versionLen;\n    if (off + 1 \u003e len) return;\n    int clientType = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t keyLen = body[off++];\n    if (off + keyLen \u003e len) return;\n    std::string key((const char*)body + off, keyLen);\n    off += keyLen;\n    if (off + 1 \u003e len) return;\n    uint8_t computerIdLen = body[off++];\n    if (off + computerIdLen \u003e len) return;\n    std::string computerId((const char*)body + off, computerIdLen);\n    off += computerIdLen;\n    applyLpc(\"cmd_login\", {make_int(cl.clientNo), make_string(account), make_int((int)authKey), make_int((int)seed), make_string(version), make_int(clientType), make_string(key), make_string(computerId)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  16676,
+        "lpcFun":  "cmd_login",
+        "bodyFields":  [
+                           "account string u8len",
+                           "authKey int u32 BE",
+                           "seed int u32 BE",
+                           "version string u8len",
+                           "clientType int u8",
+                           "key string u8len",
+                           "computerId string u8len"
+                       ],
+        "note":  "arg layout confirmed by disasm; trailing version/clientType/key/computerId lenient in binary",
+        "kcmdEntry":  "{ 0x4124, ATTRIB_CLIENT_USER, \"cmd_login\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdLogout",
+        "handlerName":  "handle_vm_cmdLogout",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054fd4",
+        "handlerCode":  "void handle_vm_cmdLogout(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_logout\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  15914,
+        "lpcFun":  "cmd_logout",
+        "bodyFields":  [
+
+                       ],
+        "note":  "usercall; single LPC arg clientNo confirmed by disasm",
+        "kcmdEntry":  "{ 0x3E2A, ATTRIB_CLIENT_USER, \"cmd_logout\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdLook",
+        "handlerName":  "handle_vm_cmdLook",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805501c",
+        "handlerCode":  "void handle_vm_cmdLook(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_look\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  7174,
+        "lpcFun":  "cmd_look",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1C06, ATTRIB_CLIENT_USER, \"cmd_look\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLookOn",
+        "handlerName":  "handle_vm_cmdLookOn",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805504c",
+        "handlerCode":  "void handle_vm_cmdLookOn(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t target = rd32be(body);\n    applyLpc(\"cmd_look_on\", {make_int(cl.clientNo), make_int((int)target)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  10004,
+        "lpcFun":  "cmd_look_on",
+        "bodyFields":  [
+                           "target int u32 BE"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2714, ATTRIB_CLIENT_USER, \"cmd_look_on\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLookonBroadcastCombat",
+        "handlerName":  "handle_vm_cmdLookonBroadcastCombat",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073f30",
+        "handlerCode":  "void handle_vm_cmdLookonBroadcastCombat(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t idLen = body[off++];\n    if (off + idLen \u003e len) return;\n    std::string id((const char*)body + off, idLen);\n    off += idLen;\n    applyLpc(\"cmd_lookon_broadcast_combat\", {make_int(cl.clientNo), make_string(id)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  12344,
+        "lpcFun":  "cmd_lookon_broadcast_combat",
+        "bodyFields":  [
+                           "id string u8len"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3038, ATTRIB_CLIENT_USER, \"cmd_lookon_broadcast_combat\", 0 }"
+    }
+]

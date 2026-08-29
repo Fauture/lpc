@@ -1,0 +1,206 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestOpenSystemDlg",
+        "handlerName":  "handle_vm_cmdRequestOpenSystemDlg",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806b288",
+        "handlerCode":  "void handle_vm_cmdRequestOpenSystemDlg(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + (size_t)slen \u003e len) return;\n    applyLpc(\"cmd_request_open_system\", {make_int(cl.clientNo), make_string(body + 1, slen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  8220,
+        "lpcFun":  "cmd_request_open_system",
+        "bodyFields":  [
+                           "u8len string: sysType"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x201C, ATTRIB_CLIENT_USER, \"cmd_request_open_system\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestPropertyBind",
+        "handlerName":  "handle_vm_cmdRequestPropertyBind",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e5f4",
+        "handlerCode":  "void handle_vm_cmdRequestPropertyBind(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_property_bind\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  16646,
+        "lpcFun":  "cmd_request_property_bind",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x4106, ATTRIB_CLIENT_USER, \"cmd_request_property_bind\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdRequestReceiveCityTask",
+        "handlerName":  "handle_vm_cmdRequestReceiveCityTask",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8074ca0",
+        "handlerCode":  "void handle_vm_cmdRequestReceiveCityTask(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t cityLen = body[0];\n    if (1 + (size_t)cityLen + 1 \u003e= len) return;\n    size_t off = 1 + cityLen;\n    uint8_t bldLen = body[off];\n    if (off + 1 + (size_t)bldLen \u003e= len) return;\n    off += 1 + bldLen;\n    uint8_t taskIdx = body[off];\n    applyLpc(\"cmd_request_receive_city_task\", {make_int(cl.clientNo), make_string(body + 1, cityLen), make_string(body + 2 + cityLen, bldLen), make_int(taskIdx)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  10260,
+        "lpcFun":  "cmd_request_receive_city_task",
+        "bodyFields":  [
+                           "u8len string: city",
+                           "u8len string: building",
+                           "u8 int: taskIdx"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2814, ATTRIB_CLIENT_USER, \"cmd_request_receive_city_task\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestRecharge",
+        "handlerName":  "handle_vm_cmdRequestRecharge",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805e9e4",
+        "handlerCode":  "void handle_vm_cmdRequestRecharge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_request_recharge\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8538,
+        "lpcFun":  "cmd_request_recharge",
+        "bodyFields":  [
+                           "u8 int: rechargeType"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x215A, ATTRIB_CLIENT_USER, \"cmd_request_recharge\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdRequestRefreshCityTask",
+        "handlerName":  "handle_vm_cmdRequestRefreshCityTask",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8074d90",
+        "handlerCode":  "void handle_vm_cmdRequestRefreshCityTask(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t cityLen = body[0];\n    if (1 + (size_t)cityLen \u003e= len) return;\n    size_t off = 1 + cityLen;\n    uint8_t bldLen = body[off];\n    if (off + 1 + (size_t)bldLen \u003e len) return;\n    applyLpc(\"cmd_request_refresh_city_task\", {make_int(cl.clientNo), make_string(body + 1, cityLen), make_string(body + off + 1, bldLen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  4218,
+        "lpcFun":  "cmd_request_refresh_city_task",
+        "bodyFields":  [
+                           "u8len string: city",
+                           "u8len string: building"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x107A, ATTRIB_CLIENT_USER, \"cmd_request_refresh_city_task\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdRequestRenameDeck",
+        "handlerName":  "handle_vm_cmdRequestRenameDeck",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x807642c",
+        "handlerCode":  "void handle_vm_cmdRequestRenameDeck(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint16_t no = rd16be(body, 0);\n    uint8_t slen = body[2];\n    if (3 + (size_t)slen \u003e len) return;\n    applyLpc(\"cmd_request_rename_deck\", {make_int(cl.clientNo), make_int(no), make_string(body + 3, slen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  13578,
+        "lpcFun":  "cmd_request_rename_deck",
+        "bodyFields":  [
+                           "u16 BE int: deckNo",
+                           "u8len string: name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x350A, ATTRIB_CLIENT_USER, \"cmd_request_rename_deck\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdRequestServerStatus",
+        "handlerName":  "handle_vm_cmdRequestServerStatus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8057ad0",
+        "handlerCode":  "void handle_vm_cmdRequestServerStatus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_request_server_status\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  222,
+        "lpcFun":  "cmd_request_server_status",
+        "bodyFields":  [
+                           "u8 int: status"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xDE, ATTRIB_CLIENT_USER, \"cmd_request_server_status\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestShiling",
+        "handlerName":  "handle_vm_cmdRequestShiling",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805fe08",
+        "handlerCode":  "void handle_vm_cmdRequestShiling(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_shiling\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4418,
+        "lpcFun":  "cmd_request_shiling",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1142, ATTRIB_CLIENT_USER, \"cmd_request_shiling\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestStallList",
+        "handlerName":  "handle_vm_cmdRequestStallList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8074174",
+        "handlerCode":  "void handle_vm_cmdRequestStallList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_stall_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  15916,
+        "lpcFun":  "cmd_request_stall_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E2C, ATTRIB_CLIENT_USER, \"cmd_request_stall_list\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdRequestStartCardCompete",
+        "handlerName":  "handle_vm_cmdRequestStartCardCompete",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80765a0",
+        "handlerCode":  "void handle_vm_cmdRequestStartCardCompete(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_start_card_compete\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  10026,
+        "lpcFun":  "cmd_request_start_card_compete",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x272A, ATTRIB_CLIENT_USER, \"cmd_request_start_card_compete\", 0 }"
+    }
+]

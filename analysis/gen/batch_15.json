@@ -1,0 +1,233 @@
+﻿[
+    {
+        "cmdNo":  15076,
+        "fun":  "vm_cmdChatEx",
+        "type":  1,
+        "addr":  "0x8051fd8",
+        "lpcFun":  "cmd_chat_ex",
+        "nArgs":  7,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        357,
+                        936,
+                        936
+                    ],
+        "bodyFields":  [
+                           "int u16 channelId",
+                           "int u16 comp",
+                           "int u16 orgLen",
+                           "string u16-len msg",
+                           "array u16 count of {string u8-len, int u8}"
+                       ],
+        "handlerName":  "handle_vm_cmdChatEx",
+        "handlerCode":  "void handle_vm_cmdChatEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len \u003c 8) return;\n    uint16_t channelId = rd16be(body + off); off += 2;\n    uint16_t comp = rd16be(body + off); off += 2;\n    uint16_t orgLen = rd16be(body + off); off += 2;\n    uint16_t msgLen = rd16be(body + off); off += 2;\n    if (msgLen \u003e len - off) return;\n    std::string msg((const char*)body + off, msgLen); off += msgLen;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    auto arrType = std::make_shared\u003cArrayValue\u003e();\n    if (len - off == 1) return;\n    if (len - off \u003e= 2)\n    {\n        uint16_t itemCount = rd16be(body + off); off += 2;\n        if (itemCount \u003e 20) return;\n        for (uint16_t i = 0; i \u003c itemCount; ++i)\n        {\n            if (off \u003e= len) return;\n            uint8_t sl = body[off++];\n            if (sl \u003e len - off) return;\n            arr-\u003eitems.push_back(make_string(std::string((const char*)body + off, sl)));\n            off += sl;\n            if (off \u003e= len) return;\n            arrType-\u003eitems.push_back(make_int(body[off++]));\n        }\n    }\n    applyLpc(\"cmd_chat_ex\", {make_int(cl.clientNo), make_int(channelId), make_int(comp), make_int(orgLen), make_string(msg), arr, arrType});\n}",
+        "kcmdEntry":  "{ 0x3AE4, ATTRIB_CLIENT_USER, \"cmd_chat_ex\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4340,
+        "fun":  "vm_cmdChatGroupLog",
+        "type":  1,
+        "addr":  "0x8073220",
+        "lpcFun":  "cmd_request_chat_group_logs",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8-len group"
+                       ],
+        "handlerName":  "handle_vm_cmdChatGroupLog",
+        "handlerCode":  "void handle_vm_cmdChatGroupLog(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t gl = body[0];\n    if (gl \u003e len - 1) return;\n    std::string group((const char*)body + 1, gl);\n    applyLpc(\"cmd_request_chat_group_logs\", {make_int(cl.clientNo), make_string(group)});\n}",
+        "kcmdEntry":  "{ 0x10F4, ATTRIB_CLIENT_USER, \"cmd_request_chat_group_logs\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8848,
+        "fun":  "vm_cmdCheckSafeAnswer",
+        "type":  1,
+        "addr":  "0x806b1c8",
+        "lpcFun":  "cmd_check_safe_answer",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8-len answer"
+                       ],
+        "handlerName":  "handle_vm_cmdCheckSafeAnswer",
+        "handlerCode":  "void handle_vm_cmdCheckSafeAnswer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t al = body[0];\n    if (al \u003e len - 1) return;\n    std::string answer((const char*)body + 1, al);\n    applyLpc(\"cmd_check_safe_answer\", {make_int(cl.clientNo), make_string(answer)});\n}",
+        "kcmdEntry":  "{ 0x2290, ATTRIB_CLIENT_USER, \"cmd_check_safe_answer\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  20744,
+        "fun":  "vm_cmdCheckServer",
+        "type":  1,
+        "addr":  "0x805e420",
+        "lpcFun":  "cmd_check_server",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        228
+                    ],
+        "bodyFields":  [
+                           "buffer u32-len (u32 BE len + bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdCheckServer",
+        "handlerCode":  "void handle_vm_cmdCheckServer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t blen = rd32be(body);\n    if (blen \u003e len - 4) return;\n    applyLpc(\"cmd_check_server\", {make_int(cl.clientNo), make_buffer(body + 4, blen)});\n}",
+        "kcmdEntry":  "{ 0x5108, ATTRIB_CLIENT_USER, \"cmd_check_server\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16674,
+        "fun":  "vm_cmdChildEnterHall",
+        "type":  1,
+        "addr":  "0x806d0cc",
+        "lpcFun":  "cmd_child_enter_hall",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32",
+                           "int u8",
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdChildEnterHall",
+        "handlerCode":  "void handle_vm_cmdChildEnterHall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint32_t v = rd32be(body);\n    uint8_t b4 = body[4];\n    uint8_t b5 = body[5];\n    applyLpc(\"cmd_child_enter_hall\", {make_int(cl.clientNo), make_int((int)v), make_int(b4), make_int(b5)});\n}",
+        "kcmdEntry":  "{ 0x4122, ATTRIB_CLIENT_USER, \"cmd_child_enter_hall\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9142,
+        "fun":  "vm_cmdChildEnterMap",
+        "type":  1,
+        "addr":  "0x806cf8c",
+        "lpcFun":  "cmd_child_enter_map",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32 id",
+                           "string u8-len mapName",
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdChildEnterMap",
+        "handlerCode":  "void handle_vm_cmdChildEnterMap(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len \u003c 5) return;\n    uint32_t id = rd32be(body + off); off += 4;\n    uint8_t nl = body[off++];\n    if (nl \u003e len - off) return;\n    std::string mapName((const char*)body + off, nl); off += nl;\n    if (off \u003e= len) return;\n    applyLpc(\"cmd_child_enter_map\", {make_int(cl.clientNo), make_int((int)id), make_string(mapName), make_int(body[off])});\n}",
+        "kcmdEntry":  "{ 0x23B6, ATTRIB_CLIENT_USER, \"cmd_child_enter_map\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  20488,
+        "fun":  "vm_cmdChildSkillLevelUp",
+        "type":  1,
+        "addr":  "0x8060f94",
+        "lpcFun":  "cmd_child_skill_level_up",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32",
+                           "int u32"
+                       ],
+        "handlerName":  "handle_vm_cmdChildSkillLevelUp",
+        "handlerCode":  "void handle_vm_cmdChildSkillLevelUp(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    uint32_t a = rd32be(body);\n    uint32_t b = rd32be(body + 4);\n    applyLpc(\"cmd_child_skill_level_up\", {make_int(cl.clientNo), make_int((int)a), make_int((int)b)});\n}",
+        "kcmdEntry":  "{ 0x5008, ATTRIB_CLIENT_USER, \"cmd_child_skill_level_up\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  6906,
+        "fun":  "vm_cmdChildUseCombat",
+        "type":  1,
+        "addr":  "0x8071750",
+        "lpcFun":  "cmd_child_use_combat",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32",
+                           "int u8",
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdChildUseCombat",
+        "handlerCode":  "void handle_vm_cmdChildUseCombat(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint32_t v = rd32be(body);\n    uint8_t b4 = body[4];\n    uint8_t b5 = body[5];\n    applyLpc(\"cmd_child_use_combat\", {make_int(cl.clientNo), make_int((int)v), make_int(b4), make_int(b5)});\n}",
+        "kcmdEntry":  "{ 0x1AFA, ATTRIB_CLIENT_USER, \"cmd_child_use_combat\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10240,
+        "fun":  "vm_cmdChildUseSkill",
+        "type":  1,
+        "addr":  "0x80716d0",
+        "lpcFun":  "cmd_child_use_skill",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32",
+                           "int u32",
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdChildUseSkill",
+        "handlerCode":  "void handle_vm_cmdChildUseSkill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 9) return;\n    uint32_t a = rd32be(body);\n    uint32_t b = rd32be(body + 4);\n    uint8_t c = body[8];\n    applyLpc(\"cmd_child_use_skill\", {make_int(cl.clientNo), make_int((int)a), make_int((int)b), make_int(c)});\n}",
+        "kcmdEntry":  "{ 0x2800, ATTRIB_CLIENT_USER, \"cmd_child_use_skill\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  13320,
+        "fun":  "vm_cmdCitywarGiveOrders",
+        "type":  1,
+        "addr":  "0x8076f60",
+        "lpcFun":  "cmd_citywar_give_orders",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string u8-len city",
+                           "string u8-len building",
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdCitywarGiveOrders",
+        "handlerCode":  "void handle_vm_cmdCitywarGiveOrders(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t clen = body[off++];\n    if (clen \u003e len - off) return;\n    std::string city((const char*)body + off, clen); off += clen;\n    if (off \u003e= len) return;\n    uint8_t blen = body[off++];\n    if (blen \u003e len - off) return;\n    std::string building((const char*)body + off, blen); off += blen;\n    if (off \u003e= len) return;\n    applyLpc(\"cmd_citywar_give_orders\", {make_int(cl.clientNo), make_string(city), make_string(building), make_int(body[off])});\n}",
+        "kcmdEntry":  "{ 0x3408, ATTRIB_CLIENT_USER, \"cmd_citywar_give_orders\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

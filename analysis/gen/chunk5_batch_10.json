@@ -1,0 +1,208 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgCcsFriendStatus",
+        "handlerName":  "handle_vm_msgCcsFriendStatus",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80652f8",
+        "handlerCode":  "void handle_vm_msgCcsFriendStatus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t fnlen = body[off++];\n    if (off + fnlen \u003e len) return;\n    auto friend_name = make_string(body + off, fnlen);\n    off += fnlen;\n    if (off \u003e= len) return;\n    uint8_t unlen = body[off++];\n    if (off + unlen \u003e len) return;\n    auto user_name = make_string(body + off, unlen);\n    off += unlen;\n    if (off + 2 \u003e len) return;\n    uint16_t status = rd16be(body, off);\n    off += 2;\n    applyLpc(\"msg_ccs_friend_status\", {make_int(cl.clientNo), friend_name, user_name, make_int(status)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  4163,
+        "lpcFun":  "msg_ccs_friend_status",
+        "bodyFields":  [
+                           "u8len string friend_name",
+                           "u8len string user_name",
+                           "u16be status"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1043, ATTRIB_INTERNAL_COMM, \"msg_ccs_friend_status\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgCcsOnlineFriend",
+        "handlerName":  "handle_vm_msgCcsOnlineFriend",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80653f4",
+        "handlerCode":  "void handle_vm_msgCcsOnlineFriend(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t fnlen = body[off++];\n    if (off + fnlen \u003e len) return;\n    auto friend_name = make_string(body + off, fnlen);\n    off += fnlen;\n    if (off \u003e= len) return;\n    uint8_t unlen = body[off++];\n    if (off + unlen \u003e len) return;\n    auto user_name = make_string(body + off, unlen);\n    off += unlen;\n    applyLpc(\"msg_ccs_online_friend\", {make_int(cl.clientNo), friend_name, user_name});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  9031,
+        "lpcFun":  "msg_ccs_online_friend",
+        "bodyFields":  [
+                           "u8len string friend_name",
+                           "u8len string user_name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2347, ATTRIB_INTERNAL_COMM, \"msg_ccs_online_friend\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgCcsWorldChannel",
+        "handlerName":  "handle_vm_msgCcsWorldChannel",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80655f8",
+        "handlerCode":  "void handle_vm_msgCcsWorldChannel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t mlen = body[off++];\n    if (off + mlen \u003e len) return;\n    auto msg = make_string(body + off, mlen);\n    off += mlen;\n    applyLpc(\"msg_ccs_world_channel\", {make_int(cl.clientNo), msg});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  8119,
+        "lpcFun":  "msg_ccs_world_channel",
+        "bodyFields":  [
+                           "u8len string msg"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1FB7, ATTRIB_INTERNAL_COMM, \"msg_ccs_world_channel\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgCcsSystemChannel",
+        "handlerName":  "handle_vm_msgCcsSystemChannel",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80654c8",
+        "handlerCode":  "void handle_vm_msgCcsSystemChannel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t mlen = body[off++];\n    if (off + mlen \u003e len) return;\n    auto msg = make_string(body + off, mlen);\n    off += mlen;\n    applyLpc(\"msg_ccs_system_channel\", {make_int(cl.clientNo), msg});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64977,
+        "lpcFun":  "msg_ccs_system_channel",
+        "bodyFields":  [
+                           "u8len string msg"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFDD1, ATTRIB_INTERNAL_COMM, \"msg_ccs_system_channel\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgGotServerTime",
+        "handlerName":  "handle_vm_msgGotServerTime",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806554c",
+        "handlerCode":  "void handle_vm_msgGotServerTime(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t nlen = body[off++];\n    if (off + nlen \u003e len) return;\n    auto name = make_string(body + off, nlen);\n    off += nlen;\n    if (off + 4 \u003e len) return;\n    uint32_t time = rd32be(body, off);\n    off += 4;\n    applyLpc(\"msg_got_server_time\", {make_int(cl.clientNo), name, make_int(time)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  11268,
+        "lpcFun":  "msg_got_server_time",
+        "bodyFields":  [
+                           "u8len string name",
+                           "u32be time"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2C04, ATTRIB_INTERNAL_COMM, \"msg_got_server_time\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_msgGsEmoteData",
+        "handlerName":  "handle_vm_msgGsEmoteData",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80662cc",
+        "handlerCode":  "void handle_vm_msgGsEmoteData(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t vlen = body[off++];\n    if (off + vlen \u003e len) return;\n    auto verb = make_string(body + off, vlen);\n    off += vlen;\n    if (off \u003e= len) return;\n    uint8_t tlen = body[off++];\n    if (off + tlen \u003e len) return;\n    auto target = make_string(body + off, tlen);\n    off += tlen;\n    if (off + 2 \u003e len) return;\n    uint16_t channel = rd16be(body, off);\n    off += 2;\n    if (off \u003e= len) return;\n    uint8_t plen = body[off++];\n    if (off + plen \u003e len) return;\n    auto peer = make_string(body + off, plen);\n    off += plen;\n    if (off + 2 \u003e len) return;\n    off += 2; // 2 bytes skipped, never read (per asm add p,2 / sub mlen,2)\n    auto tail = make_string(body + off, len - off);\n    applyLpc(\"msg_gs_emote_data\", {make_int(cl.clientNo), verb, target, make_int(channel), peer, tail});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8811,
+        "lpcFun":  "msg_gs_emote_data",
+        "bodyFields":  [
+                           "u8len string verb",
+                           "u8len string target",
+                           "u16be channel",
+                           "u8len string peer",
+                           "2 bytes skipped (unused)",
+                           "tail raw string to end of body"
+                       ],
+        "note":  "last LPC arg is raw tail string (rest of body after 2 skipped bytes); 2 bytes after peer are consumed but unused",
+        "kcmdEntry":  "{ 0x226B, ATTRIB_INTERNAL_COMM, \"msg_gs_emote_data\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgGsFinger",
+        "handlerName":  "handle_vm_msgGsFinger",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066444",
+        "handlerCode":  "void handle_vm_msgGsFinger(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t nlen = body[off++];\n    if (off + nlen \u003e len) return;\n    auto char_name = make_string(body + off, nlen);\n    off += nlen;\n    applyLpc(\"msg_gs_finger\", {make_int(cl.clientNo), char_name});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4313,
+        "lpcFun":  "msg_gs_finger",
+        "bodyFields":  [
+                           "u8len string char_name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10D9, ATTRIB_INTERNAL_COMM, \"msg_gs_finger\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgGsFriendList",
+        "handlerName":  "handle_vm_msgGsFriendList",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80664c8",
+        "handlerCode":  "void handle_vm_msgGsFriendList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t unlen = body[off++];\n    if (off + unlen \u003e len) return;\n    auto user_name = make_string(body + off, unlen);\n    off += unlen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off);\n    off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off \u003e= len) return;\n        uint8_t flen = body[off++];\n        if (off + flen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, flen));\n        off += flen;\n    }\n    applyLpc(\"msg_gs_friend_list\", {make_int(cl.clientNo), user_name, arr});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "cmdNo":  7667,
+        "lpcFun":  "msg_gs_friend_list",
+        "bodyFields":  [
+                           "u8len string user_name",
+                           "u16be count",
+                           "count x u8len string friend names -\u003e array(936)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1DF3, ATTRIB_INTERNAL_COMM, \"msg_gs_friend_list\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgGsFriendTell",
+        "handlerName":  "handle_vm_msgGsFriendTell",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8066668",
+        "handlerCode":  "void handle_vm_msgGsFriendTell(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t flen = body[off++];\n    if (off + flen \u003e len) return;\n    auto from = make_string(body + off, flen);\n    off += flen;\n    if (off \u003e= len) return;\n    uint8_t tlen = body[off++];\n    if (off + tlen \u003e len) return;\n    auto to = make_string(body + off, tlen);\n    off += tlen;\n    if (off \u003e= len) return;\n    uint8_t mlen = body[off++];\n    if (off + mlen \u003e len) return;\n    auto msg = make_string(body + off, mlen);\n    off += mlen;\n    if (off + 4 \u003e len) return;\n    uint32_t time = rd32be(body, off);\n    off += 4;\n    applyLpc(\"msg_gs_friend_tell\", {make_int(cl.clientNo), from, to, msg, make_int(time)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  14337,
+        "lpcFun":  "msg_gs_friend_tell",
+        "bodyFields":  [
+                           "u8len string from",
+                           "u8len string to",
+                           "u8len string msg",
+                           "u32be time"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3801, ATTRIB_INTERNAL_COMM, \"msg_gs_friend_tell\", 0 }"
+    }
+]

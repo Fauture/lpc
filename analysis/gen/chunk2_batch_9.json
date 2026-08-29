@@ -1,0 +1,225 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGetUpdateNotice",
+        "handlerName":  "handle_vm_cmdGetUpdateNotice",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d6cc",
+        "handlerCode":  "void handle_vm_cmdGetUpdateNotice(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_get_update_notice\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4622,
+        "lpcFun":  "cmd_get_update_notice",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x120E, ATTRIB_CLIENT_USER, \"cmd_get_update_notice\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdGoodsBuy",
+        "handlerName":  "handle_vm_cmdGoodsBuy",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8054500",
+        "handlerCode":  "void handle_vm_cmdGoodsBuy(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 10) return;\n    uint32_t goodsId = rd32be(body, 0);\n    uint16_t n1 = rd16be(body, 4);\n    uint16_t n2 = rd16be(body, 6);\n    uint16_t n3 = rd16be(body, 8);\n    applyLpc(\"cmd_goods_buy\", {make_int(cl.clientNo), make_int(goodsId), make_int(n1), make_int(n2), make_int(n3)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  6892,
+        "lpcFun":  "cmd_goods_buy",
+        "bodyFields":  [
+                           "int u32 goodsId",
+                           "int u16 n1",
+                           "int u16 n2",
+                           "int u16 n3"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1AEC, ATTRIB_CLIENT_USER, \"cmd_goods_buy\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdGoodsSell",
+        "handlerName":  "handle_vm_cmdGoodsSell",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80545ac",
+        "handlerCode":  "void handle_vm_cmdGoodsSell(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 8) return;\n    uint32_t goodsId = rd32be(body, 0);\n    uint16_t n1 = rd16be(body, 4);\n    uint16_t n2 = rd16be(body, 6);\n    applyLpc(\"cmd_goods_sell\", {make_int(cl.clientNo), make_int(goodsId), make_int(n1), make_int(n2)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  20620,
+        "lpcFun":  "cmd_goods_sell",
+        "bodyFields":  [
+                           "int u32 goodsId",
+                           "int u16 n1",
+                           "int u16 n2"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x508C, ATTRIB_CLIENT_USER, \"cmd_goods_sell\", 0 }"
+    },
+    {
+        "nArgs":  7,
+        "fun":  "vm_cmdGroupChannel",
+        "handlerName":  "handle_vm_cmdGroupChannel",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80721cc",
+        "handlerCode":  "void handle_vm_cmdGroupChannel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t nameLen = body[off++];\n    if (nameLen \u003e len - off) return;\n    std::string name((const char*)body + off, nameLen);\n    off += nameLen;\n    if (len - off \u003c 2) return;\n    uint16_t comp = rd16be(body, off); off += 2;\n    if (len - off \u003c 2) return;\n    uint16_t orgLen = rd16be(body, off); off += 2;\n    if (len - off \u003c 2) return;\n    uint16_t msgLen = rd16be(body, off); off += 2;\n    if (msgLen \u003e len - off) return;\n    std::string msg((const char*)body + off, msgLen);\n    off += msgLen;\n    if (len - off \u003c 2) return;\n    uint16_t itemCount = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    auto arrType = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c itemCount; i++)\n    {\n        if (off \u003e= len) return;\n        uint8_t sLen = body[off++];\n        if (sLen \u003e len - off) return;\n        arr-\u003eitems.push_back(make_string(std::string((const char*)body + off, sLen)));\n        off += sLen;\n        if (off \u003e= len) return;\n        uint8_t ty = body[off++];\n        arrType-\u003eitems.push_back(make_int(ty));\n    }\n    applyLpc(\"cmd_group_channel\", {make_int(cl.clientNo), make_string(name), make_int(comp), make_int(orgLen), make_string(msg), arr, arrType});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357,
+                        936,
+                        936
+                    ],
+        "cmdNo":  2570,
+        "lpcFun":  "cmd_group_channel",
+        "bodyFields":  [
+                           "string u8len name",
+                           "int u16 comp",
+                           "int u16 orgLen",
+                           "string u16len msg",
+                           "array u16 itemCount of {string u8len str, int u8 type}"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x0A0A, ATTRIB_CLIENT_USER, \"cmd_group_channel\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdGuardsChangeName",
+        "handlerName":  "handle_vm_cmdGuardsChangeName",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d6c4",
+        "handlerCode":  "void handle_vm_cmdGuardsChangeName(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t guardId = rd32be(body, 0);\n    size_t off = 4;\n    uint8_t nameLen = body[off++];\n    if (nameLen \u003e len - off) return;\n    std::string newname((const char*)body + off, nameLen);\n    applyLpc(\"cmd_guards_change_name\", {make_int(cl.clientNo), make_int(guardId), make_string(newname)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  64809,
+        "lpcFun":  "cmd_guards_change_name",
+        "bodyFields":  [
+                           "int u32 guardId",
+                           "string u8len newname"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD29, ATTRIB_CLIENT_USER, \"cmd_guards_change_name\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdGuardsCheer",
+        "handlerName":  "handle_vm_cmdGuardsCheer",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d7b4",
+        "handlerCode":  "void handle_vm_cmdGuardsCheer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t guardId = rd32be(body, 0);\n    uint8_t cheer = body[4];\n    applyLpc(\"cmd_guards_cheer\", {make_int(cl.clientNo), make_int(guardId), make_int(cheer)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  6925,
+        "lpcFun":  "cmd_guards_cheer",
+        "bodyFields":  [
+                           "int u32 guardId",
+                           "int u8 cheer"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1B0D, ATTRIB_CLIENT_USER, \"cmd_guards_cheer\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdGuardsDropGuard",
+        "handlerName":  "handle_vm_cmdGuardsDropGuard",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d674",
+        "handlerCode":  "void handle_vm_cmdGuardsDropGuard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t guardId = rd32be(body, 0);\n    applyLpc(\"cmd_guards_drop_guard\", {make_int(cl.clientNo), make_int(guardId)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  15877,
+        "lpcFun":  "cmd_guards_drop_guard",
+        "bodyFields":  [
+                           "int u32 guardId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E05, ATTRIB_CLIENT_USER, \"cmd_guards_drop_guard\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdGuardsRecover",
+        "handlerName":  "handle_vm_cmdGuardsRecover",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d764",
+        "handlerCode":  "void handle_vm_cmdGuardsRecover(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t guardId = rd32be(body, 0);\n    applyLpc(\"cmd_guards_recover\", {make_int(cl.clientNo), make_int(guardId)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8403,
+        "lpcFun":  "cmd_guards_recover",
+        "bodyFields":  [
+                           "int u32 guardId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20D3, ATTRIB_CLIENT_USER, \"cmd_guards_recover\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdGuardsRefresh",
+        "handlerName":  "handle_vm_cmdGuardsRefresh",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d5e8",
+        "handlerCode":  "void handle_vm_cmdGuardsRefresh(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_guards_refresh\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  12315,
+        "lpcFun":  "cmd_guards_refresh",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x301B, ATTRIB_CLIENT_USER, \"cmd_guards_refresh\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdGuardsSetTactics",
+        "handlerName":  "handle_vm_cmdGuardsSetTactics",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805d618",
+        "handlerCode":  "void handle_vm_cmdGuardsSetTactics(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t guardId = rd32be(body, 0);\n    uint8_t tactics = body[4];\n    applyLpc(\"cmd_guards_set_tactics\", {make_int(cl.clientNo), make_int(guardId), make_int(tactics)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4345,
+        "lpcFun":  "cmd_guards_set_tactics",
+        "bodyFields":  [
+                           "int u32 guardId",
+                           "int u8 tactics"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x10F9, ATTRIB_CLIENT_USER, \"cmd_guards_set_tactics\", 0 }"
+    }
+]

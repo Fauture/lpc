@@ -1,0 +1,210 @@
+﻿[
+    {
+        "cmdNo":  4709,
+        "fun":  "vm_cmdRequestIcon",
+        "type":  1,
+        "addr":  "0x806110c",
+        "lpcFun":  "cmd_request_icon",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string md5 (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestIcon",
+        "handlerCode":  "void handle_vm_cmdRequestIcon(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_request_icon\", {make_int(cl.clientNo), make_string(body + off, n)});\n}",
+        "kcmdEntry":  "{ 0x1265, ATTRIB_CLIENT_USER, \"cmd_request_icon\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4424,
+        "fun":  "vm_cmdRequestInfo",
+        "type":  1,
+        "addr":  "0x805bb24",
+        "lpcFun":  "cmd_request_info",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "int infoType (u32 BE)",
+                           "string para (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestInfo",
+        "handlerCode":  "void handle_vm_cmdRequestInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t infoType = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_request_info\", {make_int(cl.clientNo), make_int(infoType), make_string(body + off, n)});\n}",
+        "kcmdEntry":  "{ 0x1148, ATTRIB_CLIENT_USER, \"cmd_request_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8569,
+        "fun":  "vm_cmdRequestItemInfo",
+        "type":  1,
+        "addr":  "0x8057854",
+        "lpcFun":  "cmd_request_item_info",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string itemCookie (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestItemInfo",
+        "handlerCode":  "void handle_vm_cmdRequestItemInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_request_item_info\", {make_int(cl.clientNo), make_string(body + off, n)});\n}",
+        "kcmdEntry":  "{ 0x2179, ATTRIB_CLIENT_USER, \"cmd_request_item_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4128,
+        "fun":  "vm_cmdRequestJoin",
+        "type":  1,
+        "addr":  "0x80578d8",
+        "lpcFun":  "cmd_request_join",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string name (u8len)",
+                           "string askType (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestJoin",
+        "handlerCode":  "void handle_vm_cmdRequestJoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    auto name = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    applyLpc(\"cmd_request_join\", {make_int(cl.clientNo), name, make_string(body + off, n2)});\n}",
+        "kcmdEntry":  "{ 0x1020, ATTRIB_CLIENT_USER, \"cmd_request_join\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  14868,
+        "fun":  "vm_cmdRequestJoinRecruitment",
+        "type":  1,
+        "addr":  "0x80579ac",
+        "lpcFun":  "cmd_request_join_recruitment",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string type (u8len)",
+                           "string targetName (u8len)",
+                           "string msg (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestJoinRecruitment",
+        "handlerCode":  "void handle_vm_cmdRequestJoinRecruitment(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = body[off++];\n    if (off + n1 \u003e len) return;\n    auto type = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = body[off++];\n    if (off + n2 \u003e len) return;\n    auto targetName = make_string(body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = body[off++];\n    if (off + n3 \u003e len) return;\n    applyLpc(\"cmd_request_join_recruitment\", {make_int(cl.clientNo), type, targetName, make_string(body + off, n3)});\n}",
+        "kcmdEntry":  "{ 0x3A14, ATTRIB_CLIENT_USER, \"cmd_request_join_recruitment\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12400,
+        "fun":  "vm_cmdRequestLevelUp",
+        "type":  1,
+        "addr":  "0x8078184",
+        "lpcFun":  "cmd_request_levelup",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRequestLevelUp",
+        "handlerCode":  "void handle_vm_cmdRequestLevelUp(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_levelup\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x3070, ATTRIB_CLIENT_USER, \"cmd_request_levelup\", 0 }",
+        "status":  "ok",
+        "note":  "no body fields"
+    },
+    {
+        "cmdNo":  14084,
+        "fun":  "vm_cmdRequestMineralsInMap",
+        "type":  1,
+        "addr":  "0x8076c08",
+        "lpcFun":  "cmd_request_minerals_in_map",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string name (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestMineralsInMap",
+        "handlerCode":  "void handle_vm_cmdRequestMineralsInMap(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_request_minerals_in_map\", {make_int(cl.clientNo), make_string(body + off, n)});\n}",
+        "kcmdEntry":  "{ 0x3704, ATTRIB_CLIENT_USER, \"cmd_request_minerals_in_map\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8630,
+        "fun":  "vm_cmdRequestMyCardPackages",
+        "type":  1,
+        "addr":  "0x8076744",
+        "lpcFun":  "cmd_request_my_card_packages",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRequestMyCardPackages",
+        "handlerCode":  "void handle_vm_cmdRequestMyCardPackages(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_request_my_card_packages\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x21B6, ATTRIB_CLIENT_USER, \"cmd_request_my_card_packages\", 0 }",
+        "status":  "ok",
+        "note":  "no body fields"
+    },
+    {
+        "cmdNo":  9068,
+        "fun":  "vm_cmdRequestNewDeck",
+        "type":  1,
+        "addr":  "0x8075fdc",
+        "lpcFun":  "cmd_request_new_deck",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "int group (u16 BE)",
+                           "string name (u8len)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestNewDeck",
+        "handlerCode":  "void handle_vm_cmdRequestNewDeck(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t group = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t n = body[off++];\n    if (off + n \u003e len) return;\n    applyLpc(\"cmd_request_new_deck\", {make_int(cl.clientNo), make_int(group), make_string(body + off, n)});\n}",
+        "kcmdEntry":  "{ 0x236C, ATTRIB_CLIENT_USER, \"cmd_request_new_deck\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  88,
+        "fun":  "vm_cmdRequestOpenCardPackage",
+        "type":  1,
+        "addr":  "0x80767d8",
+        "lpcFun":  "cmd_request_open_card_package",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int cardPackageId (u16 BE)"
+                       ],
+        "handlerName":  "handle_vm_cmdRequestOpenCardPackage",
+        "handlerCode":  "void handle_vm_cmdRequestOpenCardPackage(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t cardPackageId = rd16be(body, off);\n    applyLpc(\"cmd_request_open_card_package\", {make_int(cl.clientNo), make_int(cardPackageId)});\n}",
+        "kcmdEntry":  "{ 0x58, ATTRIB_CLIENT_USER, \"cmd_request_open_card_package\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

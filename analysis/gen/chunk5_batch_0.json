@@ -1,0 +1,231 @@
+﻿[
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLOperProtectRange",
+        "handlerName":  "handle_vm_msgLOperProtectRange",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c670",
+        "handlerCode":  "void handle_vm_msgLOperProtectRange(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    uint8_t operLen = rd8(body, off);\n    off += 1;\n    if (off + operLen \u003e len) return;\n    std::string oper((const char*)body + off, operLen);\n    off += operLen;\n    if (off + 2 \u003e len) return;\n    int v1 = rd8(body, off);\n    off += 1;\n    int v2 = rd8(body, off);\n    off += 1;\n    applyLpc(\"msg_l_oper_protect_range\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_string(oper.data(), oper.size()), make_int(v1), make_int(v2)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  21761,
+        "lpcFun":  "msg_l_oper_protect_range",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)",
+                           "u8 operLen",
+                           "oper bytes (string)",
+                           "u8 v1 (int)",
+                           "u8 v2 (int)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5501, ATTRIB_INTERNAL_COMM, \"msg_l_oper_protect_range\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLAuthAllProtect",
+        "handlerName":  "handle_vm_msgLAuthAllProtect",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c76c",
+        "handlerCode":  "void handle_vm_msgLAuthAllProtect(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 1 \u003e len) return;\n    int program = rd8(body, off);\n    off += 1;\n    if (off + 4 \u003e len) return;\n    uint32_t value = rd32be(body, off);\n    off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t strLen = rd16be(body, off);\n    off += 2;\n    if (off + strLen \u003e len) return;\n    std::string str((const char*)body + off, strLen);\n    off += strLen;\n    applyLpc(\"msg_l_auth_all_protect\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_int(program), make_int((int)value), make_string(str.data(), str.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  21763,
+        "lpcFun":  "msg_l_auth_all_protect",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)",
+                           "u8 program (int)",
+                           "u32 BE value (int)",
+                           "u16 BE strLen",
+                           "str bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5503, ATTRIB_INTERNAL_COMM, \"msg_l_auth_all_protect\", 0 }"
+    },
+    {
+        "nArgs":  9,
+        "fun":  "vm_cmdIntersvrRpcCall",
+        "handlerName":  "handle_vm_cmdIntersvrRpcCall",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80611f4",
+        "handlerCode":  "void handle_vm_cmdIntersvrRpcCall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 6 \u003e len) return;\n    uint32_t cookie = rd32be(body, off);\n    off += 4;\n    uint16_t method = rd16be(body, off);\n    off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t ownerLen = rd8(body, off);\n    off += 1;\n    if (off + ownerLen \u003e len) return;\n    std::string owner((const char*)body + off, ownerLen);\n    off += ownerLen;\n    if (off + 1 \u003e len) return;\n    uint8_t serverLen = rd8(body, off);\n    off += 1;\n    if (off + serverLen \u003e len) return;\n    std::string server((const char*)body + off, serverLen);\n    off += serverLen;\n    if (off + 1 \u003e len) return;\n    uint8_t obLen = rd8(body, off);\n    off += 1;\n    if (off + obLen \u003e len) return;\n    std::string ob((const char*)body + off, obLen);\n    off += obLen;\n    if (off + 1 \u003e len) return;\n    uint8_t fLen = rd8(body, off);\n    off += 1;\n    if (off + fLen \u003e len) return;\n    std::string f((const char*)body + off, fLen);\n    off += fLen;\n    if (off + 2 \u003e len) return;\n    uint16_t data1Len = rd16be(body, off);\n    off += 2;\n    if (off + data1Len \u003e len) return;\n    std::string data1((const char*)body + off, data1Len);\n    off += data1Len;\n    if (off + 4 \u003e len) return;\n    uint32_t data2Len = rd32be(body, off);\n    off += 4;\n    if (off + data2Len \u003e len) return;\n    std::string data2((const char*)body + off, data2Len);\n    off += data2Len;\n    applyLpc(\"cmd_intersvr_rpc_call\", {make_int(cl.clientNo), make_int((int)cookie), make_int((int)method), make_string(owner.data(), owner.size()), make_string(server.data(), server.size()), make_string(ob.data(), ob.size()), make_string(f.data(), f.size()), make_string(data1.data(), data1.size()), make_string(data2.data(), data2.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        357,
+                        357,
+                        357,
+                        394,
+                        394
+                    ],
+        "cmdNo":  58,
+        "lpcFun":  "cmd_intersvr_rpc_call",
+        "bodyFields":  [
+                           "u32 BE cookie (int)",
+                           "u16 BE method (int)",
+                           "u8 ownerLen",
+                           "owner bytes (string)",
+                           "u8 serverLen",
+                           "server bytes (string)",
+                           "u8 obLen",
+                           "ob bytes (string)",
+                           "u8 fLen",
+                           "f bytes (string)",
+                           "u16 BE data1Len",
+                           "data1 bytes (string)",
+                           "u32 BE data2Len",
+                           "data2 bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3A, ATTRIB_INTERNAL_COMM, \"cmd_intersvr_rpc_call\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdLAgentConnectServer",
+        "handlerName":  "handle_vm_cmdLAgentConnectServer",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806146c",
+        "handlerCode":  "void handle_vm_cmdLAgentConnectServer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 4 \u003e len) return;\n    uint32_t program = rd32be(body, off);\n    off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t srvLen = rd16be(body, off);\n    off += 2;\n    if (off + srvLen \u003e len) return;\n    std::string srv((const char*)body + off, srvLen);\n    off += srvLen;\n    applyLpc(\"cmd_l_agent_connect_server\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_int((int)program), make_string(srv.data(), srv.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        357
+                    ],
+        "cmdNo":  9048,
+        "lpcFun":  "cmd_l_agent_connect_server",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)",
+                           "u32 BE program (int)",
+                           "u16 BE srvLen",
+                           "srv bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2358, ATTRIB_INTERNAL_COMM, \"cmd_l_agent_connect_server\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLPendShop",
+        "handlerName":  "handle_vm_cmdLPendShop",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806b33c",
+        "handlerCode":  "void handle_vm_cmdLPendShop(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    applyLpc(\"cmd_l_pend_shop\", {make_int(cl.clientNo), make_string(account.data(), account.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9216,
+        "lpcFun":  "cmd_l_pend_shop",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2400, ATTRIB_INTERNAL_COMM, \"cmd_l_pend_shop\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLWhenBatchBlockAccount",
+        "handlerName":  "handle_vm_cmdLWhenBatchBlockAccount",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806b3c0",
+        "handlerCode":  "void handle_vm_cmdLWhenBatchBlockAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t accountLen = rd16be(body, off);\n    off += 2;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    applyLpc(\"cmd_l_when_batch_block_account\", {make_int(cl.clientNo), make_string(account.data(), account.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9348,
+        "lpcFun":  "cmd_l_when_batch_block_account",
+        "bodyFields":  [
+                           "u16 BE accountLen",
+                           "account bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2484, ATTRIB_INTERNAL_COMM, \"cmd_l_when_batch_block_account\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLWhenBlockAccount",
+        "handlerName":  "handle_vm_cmdLWhenBlockAccount",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806b46c",
+        "handlerCode":  "void handle_vm_cmdLWhenBlockAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    applyLpc(\"cmd_l_when_block_account\", {make_int(cl.clientNo), make_string(account.data(), account.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9261,
+        "lpcFun":  "cmd_l_when_block_account",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x242D, ATTRIB_INTERNAL_COMM, \"cmd_l_when_block_account\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdLRecycleStall",
+        "handlerName":  "handle_vm_cmdLRecycleStall",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806b4f0",
+        "handlerCode":  "void handle_vm_cmdLRecycleStall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    applyLpc(\"cmd_l_recycle_stall\", {make_int(cl.clientNo), make_string(account.data(), account.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  9344,
+        "lpcFun":  "cmd_l_recycle_stall",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2480, ATTRIB_INTERNAL_COMM, \"cmd_l_recycle_stall\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdLBlockShareStore",
+        "handlerName":  "handle_vm_cmdLBlockShareStore",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806b574",
+        "handlerCode":  "void handle_vm_cmdLBlockShareStore(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t accountLen = rd8(body, off);\n    off += 1;\n    if (off + accountLen \u003e len) return;\n    std::string account((const char*)body + off, accountLen);\n    off += accountLen;\n    if (off + 4 \u003e len) return;\n    uint32_t value = rd32be(body, off);\n    off += 4;\n    applyLpc(\"cmd_l_block_share_store\", {make_int(cl.clientNo), make_string(account.data(), account.size()), make_int((int)value)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  9346,
+        "lpcFun":  "cmd_l_block_share_store",
+        "bodyFields":  [
+                           "u8 accountLen",
+                           "account bytes (string)",
+                           "u32 BE value (int)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2482, ATTRIB_INTERNAL_COMM, \"cmd_l_block_share_store\", 0 }"
+    }
+]

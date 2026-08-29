@@ -1,0 +1,212 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFetchOtherStore",
+        "handlerName":  "handle_vm_cmdFetchOtherStore",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80528d8",
+        "handlerCode":  "void handle_vm_cmdFetchOtherStore(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t storeNo = rd32be(body, 1);\n    applyLpc(\"cmd_fetch_other_store\", {make_int(cl.clientNo), make_int(body[0]), make_int(storeNo)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8146,
+        "lpcFun":  "cmd_fetch_other_store",
+        "bodyFields":  [
+                           "u8 int",
+                           "u32be int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1FD2, ATTRIB_CLIENT_USER, \"cmd_fetch_other_store\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdFight",
+        "handlerName":  "handle_vm_cmdFight",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80539b8",
+        "handlerCode":  "void handle_vm_cmdFight(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nameLen = body[0];\n    if (1 + nameLen \u003e len) return;\n    std::string name((const char*)body + 1, nameLen);\n    applyLpc(\"cmd_fight\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4696,
+        "lpcFun":  "cmd_fight",
+        "bodyFields":  [
+                           "u8 str len",
+                           "str bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1258, ATTRIB_CLIENT_USER, \"cmd_fight\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFinger",
+        "handlerName":  "handle_vm_cmdFinger",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053a3c",
+        "handlerCode":  "void handle_vm_cmdFinger(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nameLen = body[0];\n    if (2 + nameLen \u003e len) return;\n    std::string name((const char*)body + 1, nameLen);\n    uint8_t arg1 = body[1 + nameLen];\n    applyLpc(\"cmd_finger\", {make_int(cl.clientNo), make_string(name), make_int(arg1)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  6902,
+        "lpcFun":  "cmd_finger",
+        "bodyFields":  [
+                           "u8 str len",
+                           "str bytes",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1AF6, ATTRIB_CLIENT_USER, \"cmd_finger\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFinishCombatGuide",
+        "handlerName":  "handle_vm_cmdFinishCombatGuide",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d664",
+        "handlerCode":  "void handle_vm_cmdFinishCombatGuide(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint16_t taskNo = rd16be(body, 0);\n    uint16_t guideIndex = rd16be(body, 2);\n    applyLpc(\"cmd_finish_combat_guide\", {make_int(cl.clientNo), make_int(taskNo), make_int(guideIndex)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  62320,
+        "lpcFun":  "cmd_finish_combat_guide",
+        "bodyFields":  [
+                           "u16be int",
+                           "u16be int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF370, ATTRIB_CLIENT_USER, \"cmd_finish_combat_guide\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdFinishInterfaceGuide",
+        "handlerName":  "handle_vm_cmdFinishInterfaceGuide",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806c0dc",
+        "handlerCode":  "void handle_vm_cmdFinishInterfaceGuide(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_finish_interface_guide\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  53004,
+        "lpcFun":  "cmd_finish_interface_guide",
+        "bodyFields":  [
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xCF0C, ATTRIB_CLIENT_USER, \"cmd_finish_interface_guide\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFinishInterfaceStatus",
+        "handlerName":  "handle_vm_cmdFinishInterfaceStatus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806e098",
+        "handlerCode":  "void handle_vm_cmdFinishInterfaceStatus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    applyLpc(\"cmd_finish_interface_status\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64874,
+        "lpcFun":  "cmd_finish_interface_status",
+        "bodyFields":  [
+                           "u8 int",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD6A, ATTRIB_CLIENT_USER, \"cmd_finish_interface_status\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdFinishQuestion",
+        "handlerName":  "handle_vm_cmdFinishQuestion",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806d9f0",
+        "handlerCode":  "void handle_vm_cmdFinishQuestion(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_finish_question\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  64846,
+        "lpcFun":  "cmd_finish_question",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD4E, ATTRIB_CLIENT_USER, \"cmd_finish_question\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdFinishStall",
+        "handlerName":  "handle_vm_cmdFinishStall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053ad8",
+        "handlerCode":  "void handle_vm_cmdFinishStall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_finish_stall\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  5038,
+        "lpcFun":  "cmd_finish_stall",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x13AE, ATTRIB_CLIENT_USER, \"cmd_finish_stall\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdFishingApplyMultiCard",
+        "handlerName":  "handle_vm_cmdFishingApplyMultiCard",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80756bc",
+        "handlerCode":  "void handle_vm_cmdFishingApplyMultiCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint16_t cardNo = rd16be(body, 1);\n    applyLpc(\"cmd_fishing_apply_multi_card\", {make_int(cl.clientNo), make_int(body[0]), make_int(cardNo)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8472,
+        "lpcFun":  "cmd_fishing_apply_multi_card",
+        "bodyFields":  [
+                           "u8 int",
+                           "u16be int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2118, ATTRIB_CLIENT_USER, \"cmd_fishing_apply_multi_card\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdFishingAutoBuyWeapon",
+        "handlerName":  "handle_vm_cmdFishingAutoBuyWeapon",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80755f8",
+        "handlerCode":  "void handle_vm_cmdFishingAutoBuyWeapon(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_fishing_auto_buy_weapon\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  4388,
+        "lpcFun":  "cmd_fishing_auto_buy_weapon",
+        "bodyFields":  [
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1124, ATTRIB_CLIENT_USER, \"cmd_fishing_auto_buy_weapon\", 0 }"
+    }
+]

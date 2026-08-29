@@ -320,20 +320,21 @@ int runPakOriginal(const std::string& path) {
     std::string absPak = fs::absolute(fs::path(path)).string();
     std::string pakFile = fs::path(path).filename().string();
 
-    // Per-project profile (runaaa vs rundba).  The boot object, the extracted
-    // .o tree, the run directory and the pak mount prefix all differ.
+    // Per-project profile (aaa / dba / ccs / gs).  The boot object, the
+    // extracted .o tree, the run directory and the pak mount prefix all derive
+    // from the pak filename: lib_<prefix>32.pak -> <prefix>.
     std::string objPrefix = "aaa";
-    std::string bootRel = "aaa/start_aaa.o";
-    std::string vfsRoot = "linux/aaa - bak";
-    std::string dataRoot = "linux/aaa";
-    std::string etcDir = "linux/etc";
-    if (pakFile.find("dba") != std::string::npos) {
-        objPrefix = "dba";
-        bootRel = "dba/start_dba.o";
-        vfsRoot = "linux/dba/pack_data/lib_dba32";
-        dataRoot = "linux";
-        etcDir = "linux/dba/pack_data/etc";
+    {
+        std::string pf = pakFile;
+        size_t p = pf.rfind("32.pak");
+        if (p != std::string::npos) pf = pf.substr(0, p);
+        if (pf.rfind("lib_", 0) == 0) pf = pf.substr(4);
+        if (!pf.empty()) objPrefix = pf;
     }
+    std::string bootRel = objPrefix + "/start_" + objPrefix + ".o";
+    std::string vfsRoot = "linux/" + objPrefix + "/pack_data/lib_" + objPrefix + "32";
+    std::string dataRoot = "linux";
+    std::string etcDir = "linux/" + objPrefix + "/pack_data/etc";
     std::string pakPrefix = "/" + objPrefix + "/pack_data/";
     std::string prefix = pakPrefix + pakFile;
     lpc::setVfsProfile(vfsRoot, dataRoot, etcDir, pakPrefix, objPrefix);

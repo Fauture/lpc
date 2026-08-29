@@ -1,0 +1,240 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdTradeOpenUrl",
+        "handlerName":  "handle_vm_cmdTradeOpenUrl",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a540",
+        "handlerCode":  "void handle_vm_cmdTradeOpenUrl(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t goodsLen = body[off++];\n    if (off + goodsLen \u003e len) return;\n    std::string goods_id((const char*)body + off, goodsLen);\n    off += goodsLen;\n    if (off + 2 \u003e len) return;\n    uint16_t v12 = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t v13 = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_trade_open_url\", {make_int(cl.clientNo), make_string(goods_id.data(), goods_id.size()), make_int(v12), make_int(v13)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4180,
+        "lpcFun":  "cmd_trade_open_url",
+        "bodyFields":  [
+                           "u8len goods_id",
+                           "u16be v12",
+                           "u16be v13"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1054, ATTRIB_CLIENT_USER, \"cmd_trade_open_url\", 0 }"
+    },
+    {
+        "nArgs":  9,
+        "fun":  "vm_cmdTradeSale",
+        "handlerName":  "handle_vm_cmdTradeSale",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a608",
+        "handlerCode":  "void handle_vm_cmdTradeSale(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t type = body[off++];\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t price = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t day = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t para = rd32be(body, off); off += 4;\n    if (off + 1 \u003e len) return;\n    uint8_t appLen = body[off++];\n    if (off + appLen \u003e len) return;\n    std::string appointer((const char*)body + off, appLen);\n    off += appLen;\n    if (off + 1 \u003e len) return;\n    uint8_t v11 = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t v14 = rd32be(body, off); off += 4;\n    applyLpc(\"cmd_trade_sale\", {make_int(cl.clientNo), make_int(type), make_int(count), make_int(price), make_int(day), make_int(para), make_string(appointer.data(), appointer.size()), make_int(v11), make_int(v14)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64252,
+        "lpcFun":  "cmd_trade_sale",
+        "bodyFields":  [
+                           "u8 type",
+                           "u16be count",
+                           "u32be price",
+                           "u8 day",
+                           "u32be para",
+                           "u8len appointer",
+                           "u8 v11",
+                           "u32be v14"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFAFC, ATTRIB_CLIENT_USER, \"cmd_trade_sale\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdTradeViewLog",
+        "handlerName":  "handle_vm_cmdTradeViewLog",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a7bc",
+        "handlerCode":  "void handle_vm_cmdTradeViewLog(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_trade_view_log\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  64072,
+        "lpcFun":  "cmd_trade_view_log",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA48, ATTRIB_CLIENT_USER, \"cmd_trade_view_log\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdTrain",
+        "handlerName":  "handle_vm_cmdTrain",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805aebc",
+        "handlerCode":  "void handle_vm_cmdTrain(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v7 = rd32be(body, off); off += 4;\n    applyLpc(\"cmd_train\", {make_int(cl.clientNo), make_int(v7)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  8744,
+        "lpcFun":  "cmd_train",
+        "bodyFields":  [
+                           "u32be v7"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2228, ATTRIB_CLIENT_USER, \"cmd_train\", 0 }"
+    },
+    {
+        "nArgs":  9,
+        "fun":  "vm_cmdTryPlacePattern",
+        "handlerName":  "handle_vm_cmdTryPlacePattern",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805f184",
+        "handlerCode":  "void handle_vm_cmdTryPlacePattern(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t oper_type = body[off++];\n    if (off + 4 \u003e len) return;\n    uint32_t item_id = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t start_time = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t interval = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t x = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t y = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t coinLen = body[off++];\n    if (off + coinLen \u003e len) return;\n    std::string coin_type((const char*)body + off, coinLen);\n    off += coinLen;\n    if (off + 2 \u003e len) return;\n    uint16_t itemLen = rd16be(body, off); off += 2;\n    if (off + itemLen \u003e len) return;\n    std::string item_str((const char*)body + off, itemLen);\n    off += itemLen;\n    applyLpc(\"cmd_try_place_pattern\", {make_int(cl.clientNo), make_int(oper_type), make_int(item_id), make_int(start_time), make_int(interval), make_int(x), make_int(y), make_string(coin_type.data(), coin_type.size()), make_string(item_str.data(), item_str.size())});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  8852,
+        "lpcFun":  "cmd_try_place_pattern",
+        "bodyFields":  [
+                           "u8 oper_type",
+                           "u32be item_id",
+                           "u32be start_time",
+                           "u32be interval",
+                           "u16be x",
+                           "u16be y",
+                           "u8len coin_type",
+                           "u16len item_str"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2294, ATTRIB_CLIENT_USER, \"cmd_try_place_pattern\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTurnDir",
+        "handlerName":  "handle_vm_cmdTurnDir",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805af0c",
+        "handlerCode":  "void handle_vm_cmdTurnDir(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v7 = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t v8 = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_turn_dir\", {make_int(cl.clientNo), make_int(v7), make_int(v8)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4208,
+        "lpcFun":  "cmd_turn_dir",
+        "bodyFields":  [
+                           "u32be v7",
+                           "u16be v8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1070, ATTRIB_CLIENT_USER, \"cmd_turn_dir\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdTxssResetBingo",
+        "handlerName":  "handle_vm_cmdTxssResetBingo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8078154",
+        "handlerCode":  "void handle_vm_cmdTxssResetBingo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_txss_reset_bingo\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4654,
+        "lpcFun":  "cmd_txss_reset_bingo",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x122E, ATTRIB_CLIENT_USER, \"cmd_txss_reset_bingo\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdTxssStartAward",
+        "handlerName":  "handle_vm_cmdTxssStartAward",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8078108",
+        "handlerCode":  "void handle_vm_cmdTxssStartAward(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 2 \u003e len) return;\n    uint16_t v6 = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_txss_start_award\", {make_int(cl.clientNo), make_int(v6)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  4652,
+        "lpcFun":  "cmd_txss_start_award",
+        "bodyFields":  [
+                           "u16be v6"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x122C, ATTRIB_CLIENT_USER, \"cmd_txss_start_award\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdUnequip",
+        "handlerName":  "handle_vm_cmdUnequip",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805af70",
+        "handlerCode":  "void handle_vm_cmdUnequip(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t v0 = body[off++];\n    if (off + 1 \u003e len) return;\n    uint8_t v1 = body[off++];\n    applyLpc(\"cmd_unequip\", {make_int(cl.clientNo), make_int(v0), make_int(v1)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64778,
+        "lpcFun":  "cmd_unequip",
+        "bodyFields":  [
+                           "u8 v0",
+                           "u8 v1"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD0A, ATTRIB_CLIENT_USER, \"cmd_unequip\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdUnequipInbornStone",
+        "handlerName":  "handle_vm_cmdUnequipInbornStone",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073b58",
+        "handlerCode":  "void handle_vm_cmdUnequipInbornStone(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t v6 = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint16_t v7 = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t v8 = rd16be(body, off); off += 2;\n    applyLpc(\"cmd_unequip_inborn_stone\", {make_int(cl.clientNo), make_int(v6), make_int(v7), make_int(v8)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4370,
+        "lpcFun":  "cmd_unequip_inborn_stone",
+        "bodyFields":  [
+                           "u32be v6",
+                           "u16be v7",
+                           "u16be v8"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1112, ATTRIB_CLIENT_USER, \"cmd_unequip_inborn_stone\", 0 }"
+    }
+]

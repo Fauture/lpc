@@ -1,0 +1,222 @@
+﻿[
+    {
+        "cmdNo":  8738,
+        "fun":  "vm_cmdCommonGuessList",
+        "type":  1,
+        "addr":  "0x8075b10",
+        "lpcFun":  "cmd_common_guess_list",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+                           "no body"
+                       ],
+        "handlerName":  "handle_vm_cmdCommonGuessList",
+        "handlerCode":  "void handle_vm_cmdCommonGuessList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_common_guess_list\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x2222, ATTRIB_CLIENT_USER, \"cmd_common_guess_list\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12806,
+        "fun":  "vm_cmdCommonGuessStartGuess",
+        "type":  1,
+        "addr":  "0x8075c98",
+        "lpcFun":  "cmd_common_guess_start_guess",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string guess (u8 len)",
+                           "string result (u8 len)"
+                       ],
+        "handlerName":  "handle_vm_cmdCommonGuessStartGuess",
+        "handlerCode":  "void handle_vm_cmdCommonGuessStartGuess(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t gl = body[off++];\n    if (gl \u003e len - off) return;\n    std::string guess((const char*)body + off, gl); off += gl;\n    if (off \u003e= len) return;\n    uint8_t rl = body[off++];\n    if (rl \u003e len - off) return;\n    std::string result((const char*)body + off, rl); off += rl;\n    applyLpc(\"cmd_common_guess_start_guess\", {make_int(cl.clientNo), make_string(guess), make_string(result)});\n}",
+        "kcmdEntry":  "{ 0x3206, ATTRIB_CLIENT_USER, \"cmd_common_guess_start_guess\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  15920,
+        "fun":  "vm_cmdConfirmTakeProperty",
+        "type":  1,
+        "addr":  "0x805e674",
+        "lpcFun":  "cmd_confirm_take_property",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u32 propId (BE)"
+                       ],
+        "handlerName":  "handle_vm_cmdConfirmTakeProperty",
+        "handlerCode":  "void handle_vm_cmdConfirmTakeProperty(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t propId = rd32be(body);\n    applyLpc(\"cmd_confirm_take_property\", {make_int(cl.clientNo), make_int(propId)});\n}",
+        "kcmdEntry":  "{ 0x3E30, ATTRIB_CLIENT_USER, \"cmd_confirm_take_property\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12016,
+        "fun":  "vm_cmdControlPartyChannel",
+        "type":  1,
+        "addr":  "0x80607f8",
+        "lpcFun":  "cmd_control_party_channel",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string gid (u8 len)",
+                           "string name (u8 len)",
+                           "int u8 ch",
+                           "int u16 chnl (BE)"
+                       ],
+        "handlerName":  "handle_vm_cmdControlPartyChannel",
+        "handlerCode":  "void handle_vm_cmdControlPartyChannel(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t gl = body[off++];\n    if (gl \u003e len - off) return;\n    std::string gid((const char*)body + off, gl); off += gl;\n    if (off \u003e= len) return;\n    uint8_t nl = body[off++];\n    if (nl \u003e len - off) return;\n    std::string name((const char*)body + off, nl); off += nl;\n    if (len - off \u003c 3) return;\n    uint8_t ch = body[off];\n    uint16_t chnl = rd16be(body + off + 1);\n    applyLpc(\"cmd_control_party_channel\", {make_int(cl.clientNo), make_string(gid), make_string(name), make_int(ch), make_int(chnl)});\n}",
+        "kcmdEntry":  "{ 0x2EF0, ATTRIB_CLIENT_USER, \"cmd_control_party_channel\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12398,
+        "fun":  "vm_cmdCreateChatGroup",
+        "type":  1,
+        "addr":  "0x80724bc",
+        "lpcFun":  "cmd_create_chat_group",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string name (u8 len)",
+                           "string declare (u8 len)"
+                       ],
+        "handlerName":  "handle_vm_cmdCreateChatGroup",
+        "handlerCode":  "void handle_vm_cmdCreateChatGroup(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t nl = body[off++];\n    if (nl \u003e len - off) return;\n    std::string name((const char*)body + off, nl); off += nl;\n    if (off \u003e= len) return;\n    uint8_t dl = body[off++];\n    if (dl \u003e len - off) return;\n    std::string declare((const char*)body + off, dl); off += dl;\n    applyLpc(\"cmd_create_chat_group\", {make_int(cl.clientNo), make_string(name), make_string(declare)});\n}",
+        "kcmdEntry":  "{ 0x306E, ATTRIB_CLIENT_USER, \"cmd_create_chat_group\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8284,
+        "fun":  "vm_cmdCreateNewChar",
+        "type":  1,
+        "addr":  "0x8052a2c",
+        "lpcFun":  "cmd_create_new_char",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string name (u8 len)",
+                           "int u8 b1",
+                           "int u8 b2",
+                           "int u8 b3"
+                       ],
+        "handlerName":  "handle_vm_cmdCreateNewChar",
+        "handlerCode":  "void handle_vm_cmdCreateNewChar(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t nl = body[off++];\n    if (nl \u003e len - off) return;\n    std::string name((const char*)body + off, nl); off += nl;\n    if (len - off \u003c 3) return;\n    uint8_t b1 = body[off++];\n    uint8_t b2 = body[off++];\n    uint8_t b3 = body[off++];\n    applyLpc(\"cmd_create_new_char\", {make_int(cl.clientNo), make_string(name), make_int(b1), make_int(b2), make_int(b3)});\n}",
+        "kcmdEntry":  "{ 0x205C, ATTRIB_CLIENT_USER, \"cmd_create_new_char\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8496,
+        "fun":  "vm_cmdCreateNewRaid",
+        "type":  1,
+        "addr":  "0x80776bc",
+        "lpcFun":  "cmd_creat_new_raid",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u8 b0",
+                           "int u16 w1 (BE)",
+                           "int u16 w2 (BE)"
+                       ],
+        "handlerName":  "handle_vm_cmdCreateNewRaid",
+        "handlerCode":  "void handle_vm_cmdCreateNewRaid(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint8_t b0 = body[0];\n    uint16_t w1 = rd16be(body + 1);\n    uint16_t w2 = rd16be(body + 3);\n    applyLpc(\"cmd_creat_new_raid\", {make_int(cl.clientNo), make_int(b0), make_int(w1), make_int(w2)});\n}",
+        "kcmdEntry":  "{ 0x2130, ATTRIB_CLIENT_USER, \"cmd_creat_new_raid\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  36,
+        "fun":  "vm_cmdCscAddSignFee",
+        "type":  1,
+        "addr":  "0x8052ae4",
+        "lpcFun":  "cmd_csc_add_sign_fee",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+                           "no body"
+                       ],
+        "handlerName":  "handle_vm_cmdCscAddSignFee",
+        "handlerCode":  "void handle_vm_cmdCscAddSignFee(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_csc_add_sign_fee\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x24, ATTRIB_CLIENT_USER, \"cmd_csc_add_sign_fee\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64074,
+        "fun":  "vm_cmdCscViewCompeteSort",
+        "type":  1,
+        "addr":  "0x8052b14",
+        "lpcFun":  "cmd_csc_view_compete_sort",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string csc_name (u8 len)"
+                       ],
+        "handlerName":  "handle_vm_cmdCscViewCompeteSort",
+        "handlerCode":  "void handle_vm_cmdCscViewCompeteSort(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (nl \u003e len - 1) return;\n    std::string csc_name((const char*)body + 1, nl);\n    applyLpc(\"cmd_csc_view_compete_sort\", {make_int(cl.clientNo), make_string(csc_name)});\n}",
+        "kcmdEntry":  "{ 0xFA4A, ATTRIB_CLIENT_USER, \"cmd_csc_view_compete_sort\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10,
+        "fun":  "vm_cmdCSelectMenuItem",
+        "type":  1,
+        "addr":  "0x8051908",
+        "lpcFun":  "cmd_c_select_menu_item",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string item (u8 len)",
+                           "string para (u8 len)"
+                       ],
+        "handlerName":  "handle_vm_cmdCSelectMenuItem",
+        "handlerCode":  "void handle_vm_cmdCSelectMenuItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off \u003e= len) return;\n    uint8_t il = body[off++];\n    if (il \u003e len - off) return;\n    std::string item((const char*)body + off, il); off += il;\n    if (off \u003e= len) return;\n    uint8_t pl = body[off++];\n    if (pl \u003e len - off) return;\n    std::string para((const char*)body + off, pl); off += pl;\n    applyLpc(\"cmd_c_select_menu_item\", {make_int(cl.clientNo), make_string(item), make_string(para)});\n}",
+        "kcmdEntry":  "{ 0xA, ATTRIB_CLIENT_USER, \"cmd_c_select_menu_item\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

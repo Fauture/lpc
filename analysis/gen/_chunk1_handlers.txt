@@ -1,0 +1,2196 @@
+﻿// ---- game commands (type=1) generated handlers, chunk 1 ----
+
+void handle_vm_cmd_Apprentice_List(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    int v1 = body[0];
+    applyLpc("cmd_apprentice_list", {make_int(cl.clientNo), make_int(v1)});
+}
+
+void handle_vm_cmd_Recruit_Apprentice(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    int v1 = body[0];
+    applyLpc("cmd_recruit_apprentice", {make_int(cl.clientNo), make_int(v1)});
+}
+
+void handle_vm_cmd_Start_Award(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    int v0 = body[0];
+    int v1 = body[1];
+    applyLpc("cmd_start_award", {make_int(cl.clientNo), make_int(v0), make_int(v1)});
+}
+
+void handle_vm_cmd_StartMultibonus(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_start_multi_bonus", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 10) return;
+    uint32_t time = rd32be(body);
+    uint32_t mapId = rd32be(body + 4);
+    uint16_t n = rd16be(body + 8);
+    if (n == 0 || n > 16) return;
+    if (len < 10u + 4u * n + 2u) return;
+    auto arr = std::make_shared<ArrayValue>();
+    const uint8_t* p = body + 10;
+    for (uint16_t i = 0; i < n; ++i)
+    {
+        arr->items.push_back(make_int(rd16be(p)));
+        arr->items.push_back(make_int(rd16be(p + 2)));
+        p += 4;
+    }
+    int dir = rd16be(p);
+    applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)time), make_int((int)mapId), arr, make_int(dir)});
+}
+
+void handle_vm_cmdAccept(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    size_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string name((const char*)body + off, n1);
+    off += n1;
+    if (off + 1 > len) return;
+    size_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string askType((const char*)body + off, n2);
+    applyLpc("cmd_accept", {make_int(cl.clientNo), make_string(name), make_string(askType)});
+}
+
+void handle_vm_cmdAcceptChatGroupInvite(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    size_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string group((const char*)body + off, n1);
+    off += n1;
+    if (off + 1 > len) return;
+    int v = body[off];
+    applyLpc("cmd_accept_chat_group_invite", {make_int(cl.clientNo), make_string(group), make_int(v)});
+}
+
+void handle_vm_cmdAcceptChatGroupJoin(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    size_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string group((const char*)body + off, n1);
+    off += n1;
+    if (off + 1 > len) return;
+    size_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string name((const char*)body + off, n2);
+    off += n2;
+    if (off + 1 > len) return;
+    int v = body[off];
+    applyLpc("cmd_accept_chat_group_join", {make_int(cl.clientNo), make_string(group), make_string(name), make_int(v)});
+}
+
+void handle_vm_cmdAcceptCommonConvenant(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t n = body[0];
+    if (1 + n > len) return;
+    std::string pgid((const char*)body + 1, n);
+    applyLpc("cmd_accept_common_convenant", {make_int(cl.clientNo), make_string(pgid)});
+}
+
+void handle_vm_cmdAcceptConvenant(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t n = body[0];
+    if (1 + n > len) return;
+    std::string pgid((const char*)body + 1, n);
+    applyLpc("cmd_accept_convenant", {make_int(cl.clientNo), make_string(pgid)});
+}
+
+void handle_vm_cmdAddAwardTimes(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_add_award_times", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdAddBureauPage(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    applyLpc("cmd_add_bureau_page", {make_int(cl.clientNo), make_int(rd16be(body, 0))});
+}
+
+void handle_vm_cmdAddDunwuNimbus(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t id = rd32be(body, 0);
+    size_t off = 4;
+    if (off >= len) return;
+    uint8_t sl = body[off++];
+    if (off + sl > len) return;
+    std::string skill((const char*)body + off, sl);
+    applyLpc("cmd_add_dunwu_nimbus", {make_int(cl.clientNo), make_int(id), make_string(skill)});
+}
+
+void handle_vm_cmdAddFriend(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t gl = body[off++];
+    if (off + gl > len) return;
+    std::string group((const char*)body + off, gl);
+    off += gl;
+    if (off >= len) return;
+    uint8_t nl = body[off++];
+    if (off + nl > len) return;
+    std::string name((const char*)body + off, nl);
+    off += nl;
+    if (off >= len) return;
+    applyLpc("cmd_add_friend", {make_int(cl.clientNo), make_string(group), make_string(name), make_int(body[off])});
+}
+
+void handle_vm_cmdAddGodbookDirect(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t id = rd32be(body, 0);
+    size_t off = 4;
+    if (off >= len) return;
+    uint8_t sl = body[off++];
+    if (off + sl > len) return;
+    std::string name((const char*)body + off, sl);
+    applyLpc("cmd_add_godbook_direct", {make_int(cl.clientNo), make_int(id), make_string(name)});
+}
+
+void handle_vm_cmdAddMaterial(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 10) return;
+    uint32_t id = rd32be(body, 0);
+    uint16_t qty = rd16be(body, 4);
+    uint16_t v1 = rd16be(body, 6);
+    uint16_t v2 = rd16be(body, 8);
+    applyLpc("cmd_add_material", {make_int(cl.clientNo), make_int(id), make_int(qty), make_int(v1), make_int(v2)});
+}
+
+void handle_vm_cmdAddMountItem(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_add_mount_item", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdAddSkillEssence(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t id = rd32be(body, 0);
+    size_t off = 4;
+    if (off >= len) return;
+    uint8_t sl = body[off++];
+    if (off + sl > len) return;
+    std::string skill((const char*)body + off, sl);
+    applyLpc("cmd_add_skill_essence", {make_int(cl.clientNo), make_int(id), make_string(skill)});
+}
+
+void handle_vm_cmdAdminBroadcast(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    size_t off = 2;
+    size_t ml = rd16be(body, 0);
+    if (ml > 4095) ml = 4095;
+    if (off + ml > len) return;
+    std::string msg((const char*)body + off, ml);
+    off += ml;
+    if (off >= len) return;
+    uint8_t al = body[off++];
+    if (off + al > len) return;
+    std::string area((const char*)body + off, al);
+    applyLpc("cmd_admin_broadcast", {make_int(cl.clientNo), make_string(msg), make_string(area)});
+}
+
+void handle_vm_cmdAdminCommonCommand(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_admin_common_command", {make_int(cl.clientNo), make_buffer(body, len)});
+}
+
+void handle_vm_cmdBroadcastCombatList(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_broadcast_combat_list", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdButtonDoubleBonus(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 2) return;
+    int a = body[0];
+    int b = body[1];
+    applyLpc("cmd_button_double_bonus", {make_int(cl.clientNo), make_int(a), make_int(b)});
+}
+
+void handle_vm_cmdBuyCard(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string cardNo((const char*)body + off, n1);
+    off += n1;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string account((const char*)body + off, n2);
+    off += n2;
+    applyLpc("cmd_buy_card", {make_int(cl.clientNo), make_string(cardNo), make_string(account)});
+}
+
+void handle_vm_cmdBuyCustomizePack(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string coinType((const char*)body + off, n1);
+    off += n1;
+    if (off >= len) return;
+    uint8_t count = body[off++];
+    auto arr = std::make_shared<ArrayValue>();
+    for (uint8_t i = 0; i < count; i++) {
+        if (off >= len) return;
+        uint8_t sl = body[off++];
+        if (off + sl > len) return;
+        std::string s((const char*)body + off, sl);
+        off += sl;
+        if (off >= len) return;
+        int v = body[off++];
+        arr->items.push_back(make_string(s));
+        arr->items.push_back(make_int(v));
+    }
+    applyLpc("cmd_buy_customize_package", {make_int(cl.clientNo), arr, make_string(coinType)});
+}
+
+void handle_vm_cmdBuyEcard(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string id((const char*)body + off, n1);
+    off += n1;
+    if (off + 4 > len) return;
+    uint32_t num = rd32be(body + off);
+    off += 4;
+    applyLpc("cmd_buy_ecard", {make_int(cl.clientNo), make_string(id), make_int(num)});
+}
+
+void handle_vm_cmdBuyFromAskTaoShowMall(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string barcode((const char*)body + off, n1);
+    off += n1;
+    if (off + 6 > len) return;
+    uint16_t amount = rd16be(body + off);
+    uint16_t usedDay = rd16be(body + off + 2);
+    uint16_t toPos = rd16be(body + off + 4);
+    off += 6;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string coinPwd((const char*)body + off, n2);
+    off += n2;
+    if (off >= len) return;
+    uint8_t n3 = body[off++];
+    if (off + n3 > len) return;
+    std::string coinType((const char*)body + off, n3);
+    off += n3;
+    applyLpc("cmd_buy_from_asktao_show_mall", {make_int(cl.clientNo), make_string(barcode), make_int(amount), make_int(usedDay), make_int(toPos), make_string(coinPwd), make_string(coinType)});
+}
+
+void handle_vm_cmdBuyFromOnlineMall(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string barcode((const char*)body + off, n1);
+    off += n1;
+    if (off + 2 > len) return;
+    uint16_t amount = rd16be(body + off);
+    off += 2;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string coinPwd((const char*)body + off, n2);
+    off += n2;
+    if (off >= len) return;
+    uint8_t n3 = body[off++];
+    if (off + n3 > len) return;
+    std::string coinType((const char*)body + off, n3);
+    off += n3;
+    if (off >= len) return;
+    uint8_t n4 = body[off++];
+    if (off + n4 > len) return;
+    std::string rebate((const char*)body + off, n4);
+    off += n4;
+    applyLpc("cmd_buy_from_online_mall", {make_int(cl.clientNo), make_string(barcode), make_int(amount), make_string(coinPwd), make_string(coinType), make_string(rebate)});
+}
+
+void handle_vm_cmdBuyFromStall(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string name((const char*)body + off, n1);
+    off += n1;
+    if (off + 10 > len) return;
+    uint32_t v1 = rd32be(body + off);
+    uint16_t v2 = rd16be(body + off + 4);
+    uint32_t v3 = rd32be(body + off + 6);
+    off += 10;
+    applyLpc("cmd_buy_from_stall", {make_int(cl.clientNo), make_string(name), make_int(v1), make_int(v2), make_int(v3)});
+}
+
+void handle_vm_cmdBuyService(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string name((const char*)body + off, n1);
+    off += n1;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string coinType((const char*)body + off, n2);
+    off += n2;
+    applyLpc("cmd_buy_service", {make_int(cl.clientNo), make_string(name), make_string(coinType)});
+}
+
+void handle_vm_cmdCalcMountAttrib(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string petName((const char*)body + off, n1);
+    off += n1;
+    if (off + 2 > len) return;
+    int a = body[off];
+    int b = body[off + 1];
+    off += 2;
+    applyLpc("cmd_calc_mount_attrib", {make_int(cl.clientNo), make_string(petName), make_int(a), make_int(b)});
+}
+
+void handle_vm_cmdCalcPetGrow(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string petName((const char*)body + off, n1);
+    off += n1;
+    if (off + 4 > len) return;
+    int lifeEffect = rd32be(body + off);
+    off += 4;
+    if (off + 4 > len) return;
+    int manaEffect = rd32be(body + off);
+    off += 4;
+    if (off + 4 > len) return;
+    int speedEffect = rd32be(body + off);
+    off += 4;
+    if (off + 4 > len) return;
+    int phyEffect = rd32be(body + off);
+    off += 4;
+    if (off + 4 > len) return;
+    int magEffect = rd32be(body + off);
+    off += 4;
+    if (off + 3 > len) return;
+    int state = body[off];
+    int phyRebuildTimes = body[off + 1];
+    int magRebuildTimes = body[off + 2];
+    off += 3;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string evolvePetName((const char*)body + off, n2);
+    off += n2;
+    if (off + 4 > len) return;
+    int evolveLife = rd32be(body + off);
+    off += 4;
+    if (off + 4 > len) return;
+    int evolveMana = rd32be(body + off);
+    off += 4;
+    applyLpc("cmd_calc_pet_grow", {make_int(cl.clientNo), make_string(petName), make_int(lifeEffect), make_int(manaEffect), make_int(speedEffect), make_int(phyEffect), make_int(magEffect), make_int(state), make_int(phyRebuildTimes), make_int(magRebuildTimes), make_string(evolvePetName), make_int(evolveLife), make_int(evolveMana)});
+}
+
+void handle_vm_cmdCalcUserAttribs(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string para((const char*)body + off, n1);
+    off += n1;
+    applyLpc("cmd_calc_user_attribs", {make_int(cl.clientNo), make_string(para)});
+}
+
+void handle_vm_cmdCancelAuthVipSms(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("vm_cmdCancelAuthVipSms", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCancelReleaseSafeLogin(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_cancel_release_safe_login", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCareItem(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string name((const char*)body + off, n1);
+    off += n1;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string iid((const char*)body + off, n2);
+    off += n2;
+    applyLpc("cmd_care_item", {make_int(cl.clientNo), make_string(name), make_string(iid)});
+}
+
+void handle_vm_cmdCast(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off + 4 > len) return;
+    int victimId = rd32be(body + off);
+    off += 4;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string name((const char*)body + off, n1);
+    off += n1;
+    if (off + 2 > len) return;
+    uint16_t skillId = rd16be(body + off);
+    off += 2;
+    applyLpc("cmd_cast", {make_int(cl.clientNo), make_int(victimId), make_string(name), make_int(skillId)});
+}
+
+void handle_vm_cmdCasualGameDoAction(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off + 4 > len) return;
+    int roomId = rd32be(body + off);
+    off += 4;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string action((const char*)body + off, n1);
+    off += n1;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string para((const char*)body + off, n2);
+    off += n2;
+    if (off >= len) return;
+    uint8_t n3 = body[off++];
+    if (off + n3 > len) return;
+    std::string para1((const char*)body + off, n3);
+    off += n3;
+    if (off >= len) return;
+    uint8_t n4 = body[off++];
+    if (off + n4 > len) return;
+    std::string para2((const char*)body + off, n4);
+    off += n4;
+    applyLpc("cmd_casual_game_do_action", {make_int(cl.clientNo), make_int(roomId), make_string(action), make_string(para), make_string(para1), make_string(para2)});
+}
+
+void handle_vm_cmdCasualOperGame(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    int operType = body[off++];
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string index((const char*)body + off, n1);
+    off += n1;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (off + n2 > len) return;
+    std::string para((const char*)body + off, n2);
+    off += n2;
+    applyLpc("cmd_casual_oper_game", {make_int(cl.clientNo), make_int(operType), make_string(index), make_string(para)});
+}
+
+void handle_vm_cmdCatchPker(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (off + n1 > len) return;
+    std::string name((const char*)body + off, n1);
+    off += n1;
+    applyLpc("cmd_catch_pker", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdCCatchPet(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (off + 4 > len) return;
+    int petId = rd32be(body + off);
+    off += 4;
+    applyLpc("cmd_c_catch_pet", {make_int(cl.clientNo), make_int(petId)});
+}
+
+void handle_vm_cmdCCDoAction(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 16) return;
+    uint32_t action = rd32be(body);
+    uint32_t attacker = rd32be(body + 4);
+    uint32_t victim = rd32be(body + 8);
+    uint32_t para = rd32be(body + 12);
+    size_t off = 16;
+    if (off >= len) return;
+    uint8_t slen = body[off++];
+    if (off + slen > len) return;
+    std::string para2((const char*)body + off, slen);
+    applyLpc("cmd_cc_do_action", {make_int(cl.clientNo), make_int(action), make_int(attacker), make_int(victim), make_int(para), make_string(para2)});
+}
+
+void handle_vm_cmdCCFinishRound(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_cc_finish_round", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCCSurrender(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_cc_surrender", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCCSwitchCard(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 2) return;
+    uint16_t cnt = rd16be(body);
+    if (cnt > 63 || (size_t)2 + (size_t)cnt * 2 > len) return;
+    auto arr = std::make_shared<ArrayValue>();
+    for (uint16_t i = 0; i < cnt; ++i)
+        arr->items.push_back(make_int(rd16be(body + 2 + i * 2)));
+    applyLpc("cmd_cc_switch_card", {make_int(cl.clientNo), arr});
+}
+
+void handle_vm_cmdCDoAction0(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 16) return;
+    uint32_t id = rd32be(body);
+    uint32_t victimId = rd32be(body + 4);
+    uint32_t action = rd32be(body + 8);
+    uint32_t para = rd32be(body + 12);
+    size_t off = 16;
+    std::string para1, para2, para3, custom_msg;
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para1.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para2.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para3.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        custom_msg.assign((const char*)body + off, slen);
+    }
+    applyLpc("cmd_c_do_action", {make_int(0), make_int(cl.clientNo), make_int(id), make_int(victimId), make_int(action), make_int(para), make_string(para1), make_string(para2), make_string(para3), make_string(custom_msg)});
+}
+
+void handle_vm_cmdCDoAction1(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 16) return;
+    uint32_t id = rd32be(body);
+    uint32_t victimId = rd32be(body + 4);
+    uint32_t action = rd32be(body + 8);
+    uint32_t para = rd32be(body + 12);
+    size_t off = 16;
+    std::string para1, para2, para3, custom_msg;
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para1.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para2.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para3.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        custom_msg.assign((const char*)body + off, slen);
+    }
+    applyLpc("cmd_c_do_action", {make_int(1), make_int(cl.clientNo), make_int(id), make_int(victimId), make_int(action), make_int(para), make_string(para1), make_string(para2), make_string(para3), make_string(custom_msg)});
+}
+
+void handle_vm_cmdCDoAction2(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 16) return;
+    uint32_t id = rd32be(body);
+    uint32_t victimId = rd32be(body + 4);
+    uint32_t action = rd32be(body + 8);
+    uint32_t para = rd32be(body + 12);
+    size_t off = 16;
+    std::string para1, para2, para3, custom_msg;
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para1.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para2.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        para3.assign((const char*)body + off, slen);
+        off += slen;
+    }
+    if (off >= len) return;
+    {
+        uint8_t slen = body[off++];
+        if (off + slen > len) return;
+        custom_msg.assign((const char*)body + off, slen);
+    }
+    applyLpc("cmd_c_do_action", {make_int(2), make_int(cl.clientNo), make_int(id), make_int(victimId), make_int(action), make_int(para), make_string(para1), make_string(para2), make_string(para3), make_string(custom_msg)});
+}
+
+void handle_vm_cmdCdWishingGoods(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint32_t type = body[0];
+    size_t off = 1;
+    if (off >= len) return;
+    uint8_t slen = body[off++];
+    if (off + slen > len) return;
+    std::string goods_name((const char*)body + off, slen);
+    applyLpc("cmd_cd_wishing_goods", {make_int(cl.clientNo), make_int(type), make_string(goods_name)});
+}
+
+void handle_vm_cmdCdWishingRate(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint32_t type = body[0];
+    size_t off = 1;
+    if (off >= len) return;
+    uint8_t slen = body[off++];
+    if (off + slen > len) return;
+    std::string goods_name((const char*)body + off, slen);
+    off += slen;
+    if (off + 2 > len) return;
+    uint32_t rate = rd16be(body + off);
+    applyLpc("cmd_cd_wishing_rate", {make_int(cl.clientNo), make_int(type), make_string(goods_name), make_int(rate)});
+}
+
+void handle_vm_cmdCdWishingStart(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint32_t type = body[0];
+    size_t off = 1;
+    if (off >= len) return;
+    uint8_t slen = body[off++];
+    if (off + slen > len) return;
+    std::string goods_name((const char*)body + off, slen);
+    off += slen;
+    if (off + 2 > len) return;
+    uint32_t rate = rd16be(body + off);
+    applyLpc("cmd_cd_wishing_start", {make_int(cl.clientNo), make_int(type), make_string(goods_name), make_int(rate)});
+}
+
+void handle_vm_cmdCEndAnimate(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t v7 = rd32be(body);
+    applyLpc("cmd_c_end_animate", {make_int(cl.clientNo), make_int(v7)});
+}
+
+void handle_vm_cmdCFlee(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_c_flee", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdChallengeAnswer(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 5) return;
+    uint32_t v5 = rd32be(body);
+    uint8_t slen = body[4];
+    if (5 + slen > len) return;
+    std::string info((const char*)body + 5, slen);
+    applyLpc("cmd_challenge_answer", {make_int(cl.clientNo), make_int(v5), make_string(info)});
+}
+
+void handle_vm_cmdChangeArenaRoomSeat(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t seat = rd16be(body);
+    uint32_t a2 = body[2];
+    uint32_t a3 = body[3];
+    applyLpc("cmd_arena_room_change_seat", {make_int(cl.clientNo), make_int(seat), make_int(a2), make_int(a3)});
+}
+
+void handle_vm_cmdChangeAttribPlan(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_change_attrib_plan", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdChangeChatGroupSetting(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t glen = body[0];
+    if (1 + glen + 2 > len) return;
+    std::string group((const char*)body + 1, glen);
+    uint32_t oper = rd16be(body + 1 + glen);
+    uint8_t plen = body[1 + glen + 2];
+    if (1 + glen + 3 + plen > len) return;
+    std::string para((const char*)body + 1 + glen + 3, plen);
+    applyLpc("cmd_change_chat_group_setting", {make_int(cl.clientNo), make_string(group), make_int(oper), make_string(para)});
+}
+
+void handle_vm_cmdChangeFurnitureDir(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 5) return;
+    uint32_t id = rd32be(body);
+    uint32_t dir = body[4];
+    applyLpc("cmd_change_furniture_direction", {make_int(cl.clientNo), make_int(id), make_int(dir)});
+}
+
+void handle_vm_cmdChangeItemAttrib(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint32_t attrib = body[0];
+    applyLpc("cmd_change_item_attrib", {make_int(cl.clientNo), make_int(attrib)});
+}
+
+void handle_vm_cmdChangeTeamLeader(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint8_t nlen = body[0];
+    if (1 + nlen + 1 > len) return;
+    std::string name((const char*)body + 1, nlen);
+    uint32_t leader = body[1 + nlen];
+    applyLpc("cmd_change_team_leader", {make_int(cl.clientNo), make_string(name), make_int(leader)});
+}
+
+void handle_vm_cmdChangeTitle(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t tlen = body[0];
+    if (1 + tlen > len) return;
+    std::string title((const char*)body + 1, tlen);
+    applyLpc("cmd_change_title", {make_int(cl.clientNo), make_string(title)});
+}
+
+void handle_vm_cmdChangeTitleEffect(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t slen = body[0];
+    if (1 + slen > len) return;
+    std::string titleField((const char*)body + 1, slen);
+    applyLpc("cmd_change_title_effect", {make_int(cl.clientNo), make_string(titleField)});
+}
+
+void handle_vm_cmdChangeUpgradeState(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_change_upgrade_state", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdChangeUserState(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_change_user_state", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdChangeZhenfa(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 6) return;
+    uint32_t v7 = rd32be(body);
+    uint16_t v8 = rd16be(body + 4);
+    applyLpc("cmd_change_zhenfa", {make_int(cl.clientNo), make_int(v7), make_int(v8)});
+}
+
+void handle_vm_cmdChargeVendueFetch(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t slen = body[0];
+    if (1 + slen > len) return;
+    std::string keyid((const char*)body + 1, slen);
+    applyLpc("cmd_charge_vendue_fetch", {make_int(cl.clientNo), make_string(keyid)});
+}
+
+void handle_vm_cmdChargeVendueOfferPrice(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 3) return;
+    uint16_t pos = rd16be(body);
+    uint8_t slen = body[2];
+    if (3 + slen > len) return;
+    std::string vendue_iid((const char*)body + 3, slen);
+    applyLpc("cmd_charge_vendue_offer_price", {make_int(cl.clientNo), make_int(pos), make_string(vendue_iid)});
+}
+
+void handle_vm_cmdChargeVendueRefresh(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_charge_vendue_refresh", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdChargeVendueStoreClosed(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_charge_vendue_store_closed", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCharPractice(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint16_t v5 = rd16be(body + 2);
+    applyLpc("cmd_char_practice", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1]), make_int(v5)});
+}
+
+void handle_vm_cmdChat(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 3) return;
+    uint16_t channelId = rd16be(body);
+    uint8_t slen = body[2];
+    if (3 + slen > len) return;
+    std::string msg((const char*)body + 3, slen);
+    applyLpc("cmd_chat", {make_int(cl.clientNo), make_int(channelId), make_string(msg)});
+}
+
+void handle_vm_cmdChatEx(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len < 8) return;
+    uint16_t channelId = rd16be(body + off); off += 2;
+    uint16_t comp = rd16be(body + off); off += 2;
+    uint16_t orgLen = rd16be(body + off); off += 2;
+    uint16_t msgLen = rd16be(body + off); off += 2;
+    if (msgLen > len - off) return;
+    std::string msg((const char*)body + off, msgLen); off += msgLen;
+    auto arr = std::make_shared<ArrayValue>();
+    auto arrType = std::make_shared<ArrayValue>();
+    if (len - off == 1) return;
+    if (len - off >= 2)
+    {
+        uint16_t itemCount = rd16be(body + off); off += 2;
+        if (itemCount > 20) return;
+        for (uint16_t i = 0; i < itemCount; ++i)
+        {
+            if (off >= len) return;
+            uint8_t sl = body[off++];
+            if (sl > len - off) return;
+            arr->items.push_back(make_string(std::string((const char*)body + off, sl)));
+            off += sl;
+            if (off >= len) return;
+            arrType->items.push_back(make_int(body[off++]));
+        }
+    }
+    applyLpc("cmd_chat_ex", {make_int(cl.clientNo), make_int(channelId), make_int(comp), make_int(orgLen), make_string(msg), arr, arrType});
+}
+
+void handle_vm_cmdChatGroupLog(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t gl = body[0];
+    if (gl > len - 1) return;
+    std::string group((const char*)body + 1, gl);
+    applyLpc("cmd_request_chat_group_logs", {make_int(cl.clientNo), make_string(group)});
+}
+
+void handle_vm_cmdCheckSafeAnswer(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t al = body[0];
+    if (al > len - 1) return;
+    std::string answer((const char*)body + 1, al);
+    applyLpc("cmd_check_safe_answer", {make_int(cl.clientNo), make_string(answer)});
+}
+
+void handle_vm_cmdCheckServer(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t blen = rd32be(body);
+    if (blen > len - 4) return;
+    applyLpc("cmd_check_server", {make_int(cl.clientNo), make_buffer(body + 4, blen)});
+}
+
+void handle_vm_cmdChildEnterHall(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 6) return;
+    uint32_t v = rd32be(body);
+    uint8_t b4 = body[4];
+    uint8_t b5 = body[5];
+    applyLpc("cmd_child_enter_hall", {make_int(cl.clientNo), make_int((int)v), make_int(b4), make_int(b5)});
+}
+
+void handle_vm_cmdChildEnterMap(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len < 5) return;
+    uint32_t id = rd32be(body + off); off += 4;
+    uint8_t nl = body[off++];
+    if (nl > len - off) return;
+    std::string mapName((const char*)body + off, nl); off += nl;
+    if (off >= len) return;
+    applyLpc("cmd_child_enter_map", {make_int(cl.clientNo), make_int((int)id), make_string(mapName), make_int(body[off])});
+}
+
+void handle_vm_cmdChildSkillLevelUp(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 8) return;
+    uint32_t a = rd32be(body);
+    uint32_t b = rd32be(body + 4);
+    applyLpc("cmd_child_skill_level_up", {make_int(cl.clientNo), make_int((int)a), make_int((int)b)});
+}
+
+void handle_vm_cmdChildUseCombat(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 6) return;
+    uint32_t v = rd32be(body);
+    uint8_t b4 = body[4];
+    uint8_t b5 = body[5];
+    applyLpc("cmd_child_use_combat", {make_int(cl.clientNo), make_int((int)v), make_int(b4), make_int(b5)});
+}
+
+void handle_vm_cmdChildUseSkill(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 9) return;
+    uint32_t a = rd32be(body);
+    uint32_t b = rd32be(body + 4);
+    uint8_t c = body[8];
+    applyLpc("cmd_child_use_skill", {make_int(cl.clientNo), make_int((int)a), make_int((int)b), make_int(c)});
+}
+
+void handle_vm_cmdCitywarGiveOrders(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t clen = body[off++];
+    if (clen > len - off) return;
+    std::string city((const char*)body + off, clen); off += clen;
+    if (off >= len) return;
+    uint8_t blen = body[off++];
+    if (blen > len - off) return;
+    std::string building((const char*)body + off, blen); off += blen;
+    if (off >= len) return;
+    applyLpc("cmd_citywar_give_orders", {make_int(cl.clientNo), make_string(city), make_string(building), make_int(body[off])});
+}
+
+void handle_vm_cmdCleanRequest(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n = body[off++];
+    if (n > len - off) return;
+    std::string ask_type((const char*)body + off, n);
+    off += n;
+    applyLpc("cmd_clean_request", {make_int(cl.clientNo), make_string(ask_type)});
+}
+
+void handle_vm_cmdClearBag(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    int type = body[off++];
+    if (len - off < 2) return;
+    uint16_t n1 = rd16be(body + off); off += 2;
+    if (n1 > len - off) return;
+    std::string pos_desc((const char*)body + off, n1); off += n1;
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (n2 > len - off) return;
+    std::string para((const char*)body + off, n2); off += n2;
+    applyLpc("cmd_clear_bag", {make_int(cl.clientNo), make_int(type), make_string(pos_desc), make_string(para)});
+}
+
+void handle_vm_cmdClickedLinker(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n = body[off++];
+    if (n > len - off) return;
+    std::string url((const char*)body + off, n);
+    off += n;
+    applyLpc("cmd_clicked_linker", {make_int(cl.clientNo), make_string(url)});
+}
+
+void handle_vm_cmdClientBehavior(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n = body[off++];
+    if (n > len - off) return;
+    std::string behavior_data((const char*)body + off, n);
+    off += n;
+    applyLpc("cmd_client_behavior", {make_int(cl.clientNo), make_string(behavior_data)});
+}
+
+void handle_vm_cmdCloneSpecialEquip(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t n1 = body[off++];
+    if (n1 > len - off) return;
+    std::string equip_name((const char*)body + off, n1); off += n1;
+    if (off >= len) return;
+    int equip_type = body[off++];
+    if (off >= len) return;
+    uint8_t n2 = body[off++];
+    if (n2 > len - off) return;
+    std::string equip_color((const char*)body + off, n2); off += n2;
+    if (len - off < 2) return;
+    uint16_t n3 = rd16be(body + off); off += 2;
+    if (n3 > len - off) return;
+    std::string equip_prop((const char*)body + off, n3); off += n3;
+    if (len - off < 2) return;
+    uint16_t n4 = rd16be(body + off); off += 2;
+    if (n4 > len - off) return;
+    std::string equip_prop2((const char*)body + off, n4); off += n4;
+    if (len - off < 2) return;
+    uint16_t n5 = rd16be(body + off); off += 2;
+    if (n5 > len - off) return;
+    std::string equip_prop3((const char*)body + off, n5); off += n5;
+    if (len - off < 2) return;
+    uint16_t n6 = rd16be(body + off); off += 2;
+    if (n6 > len - off) return;
+    std::string equip_prop4((const char*)body + off, n6); off += n6;
+    applyLpc("cmd_clone_special_equip", {make_int(cl.clientNo), make_string(equip_name), make_int(equip_type), make_string(equip_color), make_string(equip_prop), make_string(equip_prop2), make_string(equip_prop3), make_string(equip_prop4)});
+}
+
+void handle_vm_cmdCloneUpgradeStone(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    int equip_type = body[off++];
+    if (off >= len) return;
+    int level = body[off++];
+    if (off >= len) return;
+    uint8_t n = body[off++];
+    if (n > len - off) return;
+    std::string attrib((const char*)body + off, n); off += n;
+    if (len - off < 4) return;
+    int param = (int)rd32be(body + off); off += 4;
+    if (off >= len) return;
+    int flag = body[off++];
+    applyLpc("cmd_clone_upgrade_stone", {make_int(cl.clientNo), make_int(equip_type), make_int(level), make_string(attrib), make_int(param), make_int(flag)});
+}
+
+void handle_vm_cmdCloseBureau(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_close_bureau", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCloseMenu(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 4) return;
+    int menu_type = (int)rd32be(body + off); off += 4;
+    if (len - off < 4) return;
+    int param = (int)rd32be(body + off); off += 4;
+    applyLpc("cmd_close_menu", {make_int(cl.clientNo), make_int(menu_type), make_int(param)});
+}
+
+void handle_vm_cmdCloseRemoteStore(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 4) return;
+    int store_id = (int)rd32be(body + off); off += 4;
+    applyLpc("cmd_close_remote_store", {make_int(cl.clientNo), make_int(store_id)});
+}
+
+void handle_vm_cmdCloseTalkDrama(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 4) return;
+    int drama_id = (int)rd32be(body + off); off += 4;
+    if (off >= len) return;
+    uint8_t n = body[off++];
+    if (n > len - off) return;
+    std::string para((const char*)body + off, n); off += n;
+    applyLpc("cmd_close_talk_drama", {make_int(cl.clientNo), make_int(drama_id), make_string(para)});
+}
+
+void handle_vm_cmdCloseTaotaotao(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_close_taotaotao", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCoinCancelOrder(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t slen = body[0];
+    if (1 + slen > len) return;
+    std::string order_id((const char*)body + 1, slen);
+    applyLpc("cmd_coin_cancel_order", {make_int(cl.clientNo), make_string(order_id)});
+}
+
+void handle_vm_cmdCoinDealOrder(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 3) return;
+    uint8_t oper = body[0];
+    uint8_t step = body[1];
+    uint8_t slen = body[2];
+    if (3 + slen + 4 > len) return;
+    std::string order_id((const char*)body + 3, slen);
+    uint32_t orderNo = rd32be(body + 3 + slen);
+    applyLpc("cmd_coin_deal_order", {make_int(cl.clientNo), make_int(oper), make_int(step), make_string(order_id), make_int(orderNo)});
+}
+
+void handle_vm_cmdCoinFetchStore(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_coin_fetch_store", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdCoinOpenMall(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_coin_open_mall", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdCoinRefreshMall(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_coin_refresh_mall", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdCoinSubmitOrder(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 9) return;
+    uint8_t storeNo = body[0];
+    uint32_t orderNo = rd32be(body + 1);
+    uint32_t amount = rd32be(body + 5);
+    applyLpc("cmd_coin_submit_order", {make_int(cl.clientNo), make_int(storeNo), make_int(orderNo), make_int(amount)});
+}
+
+void handle_vm_cmdCollectData(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 3) return;
+    uint8_t type = body[0];
+    uint16_t slen = rd16be(body + 1);
+    if (3 + slen > len) return;
+    std::string data((const char*)body + 3, slen);
+    applyLpc("cmd_collect_data", {make_int(cl.clientNo), make_int(type), make_string(data)});
+}
+
+void handle_vm_cmdCommonGuessDrawBonus(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t glen = body[0];
+    if (1 + glen > len) return;
+    std::string guess((const char*)body + 1, glen);
+    size_t off = 1 + glen;
+    if (off >= len) return;
+    uint8_t rlen = body[off];
+    if (off + 1 + rlen > len) return;
+    std::string result((const char*)body + off + 1, rlen);
+    applyLpc("cmd_common_guess_draw_bonus", {make_int(cl.clientNo), make_string(guess), make_string(result)});
+}
+
+void handle_vm_cmdCommonGuessInfo(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t slen = body[0];
+    if (1 + slen > len) return;
+    std::string guess((const char*)body + 1, slen);
+    applyLpc("cmd_common_guess_info", {make_int(cl.clientNo), make_string(guess)});
+}
+
+void handle_vm_cmdCommonGuessList(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_common_guess_list", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCommonGuessStartGuess(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t gl = body[off++];
+    if (gl > len - off) return;
+    std::string guess((const char*)body + off, gl); off += gl;
+    if (off >= len) return;
+    uint8_t rl = body[off++];
+    if (rl > len - off) return;
+    std::string result((const char*)body + off, rl); off += rl;
+    applyLpc("cmd_common_guess_start_guess", {make_int(cl.clientNo), make_string(guess), make_string(result)});
+}
+
+void handle_vm_cmdConfirmTakeProperty(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t propId = rd32be(body);
+    applyLpc("cmd_confirm_take_property", {make_int(cl.clientNo), make_int(propId)});
+}
+
+void handle_vm_cmdControlPartyChannel(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t gl = body[off++];
+    if (gl > len - off) return;
+    std::string gid((const char*)body + off, gl); off += gl;
+    if (off >= len) return;
+    uint8_t nl = body[off++];
+    if (nl > len - off) return;
+    std::string name((const char*)body + off, nl); off += nl;
+    if (len - off < 3) return;
+    uint8_t ch = body[off];
+    uint16_t chnl = rd16be(body + off + 1);
+    applyLpc("cmd_control_party_channel", {make_int(cl.clientNo), make_string(gid), make_string(name), make_int(ch), make_int(chnl)});
+}
+
+void handle_vm_cmdCreateChatGroup(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t nl = body[off++];
+    if (nl > len - off) return;
+    std::string name((const char*)body + off, nl); off += nl;
+    if (off >= len) return;
+    uint8_t dl = body[off++];
+    if (dl > len - off) return;
+    std::string declare((const char*)body + off, dl); off += dl;
+    applyLpc("cmd_create_chat_group", {make_int(cl.clientNo), make_string(name), make_string(declare)});
+}
+
+void handle_vm_cmdCreateNewChar(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t nl = body[off++];
+    if (nl > len - off) return;
+    std::string name((const char*)body + off, nl); off += nl;
+    if (len - off < 3) return;
+    uint8_t b1 = body[off++];
+    uint8_t b2 = body[off++];
+    uint8_t b3 = body[off++];
+    applyLpc("cmd_create_new_char", {make_int(cl.clientNo), make_string(name), make_int(b1), make_int(b2), make_int(b3)});
+}
+
+void handle_vm_cmdCreateNewRaid(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 5) return;
+    uint8_t b0 = body[0];
+    uint16_t w1 = rd16be(body + 1);
+    uint16_t w2 = rd16be(body + 3);
+    applyLpc("cmd_creat_new_raid", {make_int(cl.clientNo), make_int(b0), make_int(w1), make_int(w2)});
+}
+
+void handle_vm_cmdCscAddSignFee(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_csc_add_sign_fee", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdCscViewCompeteSort(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t nl = body[0];
+    if (nl > len - 1) return;
+    std::string csc_name((const char*)body + 1, nl);
+    applyLpc("cmd_csc_view_compete_sort", {make_int(cl.clientNo), make_string(csc_name)});
+}
+
+void handle_vm_cmdCSelectMenuItem(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (off >= len) return;
+    uint8_t il = body[off++];
+    if (il > len - off) return;
+    std::string item((const char*)body + off, il); off += il;
+    if (off >= len) return;
+    uint8_t pl = body[off++];
+    if (pl > len - off) return;
+    std::string para((const char*)body + off, pl); off += pl;
+    applyLpc("cmd_c_select_menu_item", {make_int(cl.clientNo), make_string(item), make_string(para)});
+}
+
+void handle_vm_cmdCSetPos(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_c_set_pos", {make_int(cl.clientNo), make_buffer(body, len)});
+}
+
+void handle_vm_cmdCsExchange(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint16_t itemId = rd16be(body);
+    uint16_t count = rd16be(body + 2);
+    applyLpc("cmd_cs_exchange", {make_int(cl.clientNo), make_int(itemId), make_int(count)});
+}
+
+void handle_vm_cmdCUseStunChildbook(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_c_use_stun_child_book", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdDeleteExistedChar(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t nl = body[off++];
+    if (off + nl > len) return;
+    std::string name((const char*)body + off, nl);
+    off += nl;
+    if (off >= len) return;
+    uint8_t na = body[off++];
+    if (off + na > len) return;
+    std::string accountId((const char*)body + off, na);
+    applyLpc("cmd_delete_existed_char", {make_int(cl.clientNo), make_string(name), make_string(accountId)});
+}
+
+void handle_vm_cmdDeleteMusic(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint32_t musicId = rd32be(body);
+    applyLpc("cmd_delete_music", {make_int(cl.clientNo), make_int(musicId)});
+}
+
+void handle_vm_cmdDeposit(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 8) return;
+    uint32_t itemId = rd32be(body);
+    uint32_t count = rd32be(body + 4);
+    applyLpc("cmd_deposit", {make_int(cl.clientNo), make_int(itemId), make_int(count)});
+}
+
+void handle_vm_cmdDevelopSkill(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 8) return;
+    uint16_t v1 = rd16be(body);
+    uint32_t v2 = rd32be(body + 2);
+    uint16_t v3 = rd16be(body + 6);
+    applyLpc("cmd_develop_skill", {make_int(cl.clientNo), make_int(v1), make_int(v2), make_int(v3)});
+}
+
+void handle_vm_cmdDigPartyFragment(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t nl = body[off++];
+    if (off + nl > len) return;
+    std::string partyId((const char*)body + off, nl);
+    applyLpc("cmd_dig_party_fragment", {make_int(cl.clientNo), make_string(partyId)});
+}
+
+void handle_vm_cmdDismissChatGroup(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t nl = body[off++];
+    if (off + nl > len) return;
+    std::string group((const char*)body + off, nl);
+    applyLpc("cmd_dismiss_chat_group", {make_int(cl.clientNo), make_string(group)});
+}
+
+void handle_vm_cmdDistributeRecruitment(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t nl = body[off++];
+    if (off + nl > len) return;
+    std::string type((const char*)body + off, nl);
+    off += nl;
+    if (off + 2 > len) return;
+    uint16_t minLevel = rd16be(body + off);
+    off += 2;
+    if (off + 2 > len) return;
+    uint16_t maxLevel = rd16be(body + off);
+    off += 2;
+    if (off >= len) return;
+    uint8_t nt = body[off++];
+    if (off + nt > len) return;
+    std::string tip((const char*)body + off, nt);
+    applyLpc("cmd_distribute_recruitment", {make_int(cl.clientNo), make_string(type), make_int(minLevel), make_int(maxLevel), make_string(tip)});
+}
+
+void handle_vm_cmdAdminFetchPics(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_admin_fetch_pics", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdAdminKickoff(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t nl = body[0];
+    if (1 + nl > len) return;
+    std::string name((const char*)body + 1, nl);
+    applyLpc("cmd_admin_kickoff", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdAdminOperSysBroadcast(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint16_t oper = rd16be(body);
+    uint16_t index = rd16be(body + 2);
+    applyLpc("cmd_admin_oper_sys_broadcast", {make_int(cl.clientNo), make_int(oper), make_int(index)});
+}
+
+void handle_vm_cmdAdminPrintScreen(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t nl = body[0];
+    if (1 + nl > len) return;
+    std::string name((const char*)body + 1, nl);
+    applyLpc("cmd_admin_print_screen", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdAdminQueryMap(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t nl = body[0];
+    if (1 + nl > len) return;
+    std::string mapName((const char*)body + 1, nl);
+    applyLpc("cmd_admin_query_map", {make_int(cl.clientNo), make_string(mapName)});
+}
+
+void handle_vm_cmdAdminQueryNetInfo(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint8_t type = body[0];
+    uint8_t nl = body[1];
+    if (2 + nl > len) return;
+    std::string userName((const char*)body + 2, nl);
+    applyLpc("cmd_admin_query_net_info", {make_int(cl.clientNo), make_int(type), make_string(userName)});
+}
+
+void handle_vm_cmdAdminQueryNpc(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 3) return;
+    uint8_t nl = body[0];
+    if (1 + nl + 2 > len) return;
+    std::string name((const char*)body + 1, nl);
+    uint16_t id = rd16be(body + 1 + nl);
+    applyLpc("cmd_admin_query_npc", {make_int(cl.clientNo), make_string(name), make_int(id)});
+}
+
+void handle_vm_cmdAdminQueryPlayer(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t nl = body[0];
+    if (1 + nl > len) return;
+    std::string statement((const char*)body + 1, nl);
+    applyLpc("cmd_admin_query_player", {make_int(cl.clientNo), make_string(statement)});
+}
+
+void handle_vm_cmdAdminQuerySkill(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t nl = body[0];
+    if (1 + nl > len) return;
+    std::string name((const char*)body + 1, nl);
+    applyLpc("cmd_admin_query_skill", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdAdminReboot(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint16_t delay = rd16be(body);
+    applyLpc("cmd_admin_reboot", {make_int(cl.clientNo), make_int(delay)});
+}
+
+void handle_vm_cmdAdminRequestMapList(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_admin_request_map_list", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdAdminSetAttrib(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string mks((const char*)body + off, n1); off += n1;
+    if (len - off < 2) return;
+    uint16_t mks_type = rd16be(body + off); off += 2;
+    if (len - off < 1) return;
+    uint8_t n2 = body[off++];
+    if (len - off < n2) return;
+    std::string attrib((const char*)body + off, n2); off += n2;
+    if (len - off < 1) return;
+    uint8_t n3 = body[off++];
+    if (len - off < n3) return;
+    std::string value((const char*)body + off, n3); off += n3;
+    applyLpc("cmd_admin_set_attrib", {make_int(cl.clientNo), make_string(mks), make_int(mks_type), make_string(attrib), make_string(value)});
+}
+
+void handle_vm_cmdAdminSetSkill(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    if (len - off < 2) return;
+    uint16_t v12 = rd16be(body + off); off += 2;
+    if (len - off < 2) return;
+    uint16_t v15 = rd16be(body + off); off += 2;
+    if (len - off < 2) return;
+    uint16_t v16 = rd16be(body + off); off += 2;
+    applyLpc("cmd_admin_set_skill", {make_int(cl.clientNo), make_string(name), make_int(v12), make_int(v15), make_int(v16)});
+}
+
+void handle_vm_cmdAdminShutChannel(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    if (len - off < 2) return;
+    uint16_t v12 = rd16be(body + off); off += 2;
+    if (len - off < 4) return;
+    uint32_t v16 = rd32be(body + off); off += 4;
+    if (len - off < 2) return;
+    uint16_t v17 = rd16be(body + off); off += 2;
+    applyLpc("cmd_admin_shut_channel", {make_int(cl.clientNo), make_string(name), make_int(v12), make_int(v16), make_int(v17)});
+}
+
+void handle_vm_cmdAdminSniffAt(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    applyLpc("cmd_admin_sniff_at", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdAdminSrmouseClick(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 4) return;
+    uint32_t v7 = rd32be(body);
+    applyLpc("cmd_admin_srmouse_click", {make_int(cl.clientNo), make_int((int)v7)});
+}
+
+void handle_vm_cmdAdminSummon(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    applyLpc("cmd_admin_summon", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdAdminTeleport(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string mapName((const char*)body + off, n1); off += n1;
+    applyLpc("cmd_admin_teleport", {make_int(cl.clientNo), make_string(mapName)});
+}
+
+void handle_vm_cmdAdminThrowInJail(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    if (len - off < 1) return;
+    uint8_t n2 = body[off++];
+    if (len - off < n2) return;
+    std::string ti((const char*)body + off, n2); off += n2;
+    if (len - off < 1) return;
+    uint8_t n3 = body[off++];
+    if (len - off < n3) return;
+    std::string reason((const char*)body + off, n3); off += n3;
+    applyLpc("cmd_admin_throw_in_jail", {make_int(cl.clientNo), make_string(name), make_string(ti), make_string(reason)});
+}
+
+void handle_vm_cmdAdminThrowInJailEx(GameClient& cl, const uint8_t* body, size_t len) {
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    if (len - off < 1) return;
+    uint8_t n2 = body[off++];
+    if (len - off < n2) return;
+    std::string ti((const char*)body + off, n2); off += n2;
+    if (len - off < 1) return;
+    uint8_t n3 = body[off++];
+    if (len - off < n3) return;
+    std::string reason((const char*)body + off, n3); off += n3;
+    applyLpc("cmd_admin_throw_in_jail_ex", {make_int(cl.clientNo), make_string(name), make_string(ti), make_string(reason)});
+}
+
+void handle_vm_cmdAdminTimeBroadcast(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string caption((const char*)body + off, n1); off += n1;
+    if (len - off < 4) return;
+    uint32_t interval = rd32be(body + off); off += 4;
+    if (len - off < 4) return;
+    uint32_t times = rd32be(body + off); off += 4;
+    if (len - off < 2) return;
+    uint16_t n2 = rd16be(body + off); off += 2;
+    if (n2 > 4095) n2 = 4095;
+    if (len - off < n2) return;
+    std::string content((const char*)body + off, n2); off += n2;
+    if (len - off < 1) return;
+    uint8_t n3 = body[off++];
+    if (len - off < n3) return;
+    std::string area((const char*)body + off, n3); off += n3;
+    if (len - off < 1) return;
+    uint8_t last = body[off];
+    applyLpc("cmd_admin_time_broadcast", {make_int(cl.clientNo), make_string(caption), make_int((int)interval), make_int((int)times), make_string(content), make_string(area), make_int(last)});
+}
+
+void handle_vm_cmdAdminTransport(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string name((const char*)body + off, n1); off += n1;
+    if (len - off < 2) return;
+    uint16_t transport = rd16be(body + off); off += 2;
+    applyLpc("cmd_admin_transport", {make_int(cl.clientNo), make_string(name), make_int(transport)});
+}
+
+void handle_vm_cmdAnswerResult(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string answer((const char*)body + off, n1); off += n1;
+    if (len - off < 1) return;
+    uint8_t n2 = body[off++];
+    if (len - off < n2) return;
+    std::string question((const char*)body + off, n2); off += n2;
+    if (len - off < 1) return;
+    uint8_t result = body[off];
+    applyLpc("cmd_answer_result", {make_int(cl.clientNo), make_string(answer), make_string(question), make_int(result)});
+}
+
+void handle_vm_cmdAnswerSurvey(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 4) return;
+    uint32_t npcId = rd32be(body + off); off += 4;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string menu_item((const char*)body + off, n1); off += n1;
+    if (len - off < 1) return;
+    uint8_t count = body[off++];
+    auto arr = std::make_shared<ArrayValue>();
+    for (uint8_t i = 0; i < count; ++i)
+    {
+        if (len - off < 1) return;
+        uint8_t n = body[off++];
+        if (len - off < n) return;
+        arr->items.push_back(make_string(std::string((const char*)body + off, n)));
+        off += n;
+    }
+    applyLpc("cmd_answer_survey", {make_int(cl.clientNo), make_int((int)npcId), make_string(menu_item), arr});
+}
+
+void handle_vm_cmdAntiHackCollect(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string ainfo((const char*)body + off, n1);
+    applyLpc("cmd_anti_hack_collect", {make_int(cl.clientNo), make_string(ainfo)});
+}
+
+void handle_vm_cmdApex(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint16_t n = rd16be(body);
+    if (2 + n > len) return;
+    applyLpc("cmd_apex", {make_int(cl.clientNo), make_buffer(body + 2, n)});
+}
+
+void handle_vm_cmdApply(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_apply", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdApplyCard(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t pos = body[off++];
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string card_name((const char*)body + off, n1); off += n1;
+    if (len - off < 1) return;
+    uint8_t last = body[off];
+    applyLpc("cmd_apply_card", {make_int(cl.clientNo), make_string(card_name), make_int(pos), make_int(last)});
+}
+
+void handle_vm_cmdApplyEx(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_apply_ex", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdApplyExquisite(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    if (len - off < 1) return;
+    uint8_t n1 = body[off++];
+    if (len - off < n1) return;
+    std::string exquisite_name((const char*)body + off, n1); off += n1;
+    if (len - off < 2) return;
+    uint16_t v12 = rd16be(body + off); off += 2;
+    if (len - off < 1) return;
+    uint8_t last = body[off];
+    applyLpc("cmd_apply_exquisite", {make_int(cl.clientNo), make_string(exquisite_name), make_int(v12), make_int(last)});
+}
+
+void handle_vm_cmdApplyOfflineStall(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint8_t v0 = body[0];
+    applyLpc("cmd_apply_offline_stall", {make_int(cl.clientNo), make_int(v0)});
+}
+
+void handle_vm_cmdApplyOnFriend(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 5) return;
+    uint8_t v0 = body[0];
+    uint32_t v1 = rd32be(body + 1);
+    applyLpc("cmd_apply_on_friend", {make_int(cl.clientNo), make_int(v0), make_int(v1)});
+}
+
+void handle_vm_cmdApplyOnItem(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 2) return;
+    uint8_t v0 = body[0];
+    uint8_t v1 = body[1];
+    applyLpc("cmd_apply_on_item", {make_int(cl.clientNo), make_int(v0), make_int(v1)});
+}
+
+void handle_vm_cmdApplyOther(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 5) return;
+    uint8_t v0 = body[0];
+    uint32_t v1 = rd32be(body + 1);
+    applyLpc("cmd_apply_other", {make_int(cl.clientNo), make_int(v0), make_int(v1)});
+}
+
+void handle_vm_cmdApplyQuestionItem(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint8_t v0 = body[0];
+    applyLpc("cmd_apply_question_item", {make_int(cl.clientNo), make_int(v0)});
+}
+
+void handle_vm_cmdArenaEnter(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint8_t v0 = body[0];
+    applyLpc("cmd_arena_enter", {make_int(cl.clientNo), make_int(v0)});
+}
+
+void handle_vm_cmdArenaGoodBuy(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    size_t off = 1;
+    uint8_t slen = body[0];
+    if (off + slen > len) return;
+    std::string itemName(reinterpret_cast<const char*>(body + off), slen);
+    off += slen;
+    if (off + 2 > len) return;
+    uint16_t itemId = rd16be(body + off);
+    applyLpc("cmd_arena_goods_buy", {make_int(cl.clientNo), make_string(itemName), make_int(itemId)});
+}
+
+void handle_vm_cmdArenaGoodlist(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    size_t off = 1;
+    uint8_t slen = body[0];
+    if (off + slen > len) return;
+    std::string clientKey(reinterpret_cast<const char*>(body + off), slen);
+    off += slen;
+    if (off + 1 > len) return;
+    uint8_t v0 = body[off];
+    applyLpc("cmd_arena_goods_list", {make_int(cl.clientNo), make_string(clientKey), make_int(v0)});
+}
+
+void handle_vm_cmdArenaGoodsSell(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 4) return;
+    uint16_t goodsId = rd16be(body);
+    uint16_t amount = rd16be(body + 2);
+    applyLpc("cmd_arena_goods_sell", {make_int(cl.clientNo), make_int(goodsId), make_int(amount)});
+}
+
+void handle_vm_cmdArenaHallExit(GameClient& cl, const uint8_t* body, size_t len) {
+    applyLpc("cmd_arena_hall_exit", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdArenaHallFight(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 1) return;
+    uint8_t slen = body[0];
+    if (len < 1u + slen) return;
+    std::string name(reinterpret_cast<const char*>(body + 1), slen);
+    applyLpc("cmd_arena_hall_fight", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdArenaHallJoinRoom(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 3) return;
+    uint16_t roomNo = rd16be(body);
+    uint8_t v1 = body[2];
+    applyLpc("cmd_arena_hall_join_room", {make_int(cl.clientNo), make_int(roomNo), make_int(v1)});
+}
+
+void handle_vm_cmdArenaHallRequestCI(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 2) return;
+    uint8_t type = body[0];
+    uint8_t slen = body[1];
+    if (len < 2u + slen) return;
+    std::string name(reinterpret_cast<const char*>(body + 2), slen);
+    applyLpc("cmd_arena_hall_request_ci", {make_int(cl.clientNo), make_int(type), make_string(name)});
+}
+
+void handle_vm_cmdArenaHallRequestPL(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_arena_hall_request_pl", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdArenaHallRequestRD(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 2) return;
+    uint16_t v0 = rd16be(body);
+    applyLpc("cmd_arena_hall_request_rd", {make_int(cl.clientNo), make_int(v0)});
+}
+
+void handle_vm_cmdArenaHallRequestRL(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 5) return;
+    uint8_t status = body[0];
+    uint8_t type = body[1];
+    uint8_t listType = body[2];
+    uint16_t startPos = rd16be(body + 3);
+    applyLpc("cmd_arena_hall_request_rl", {make_int(cl.clientNo), make_int(status), make_int(type), make_int(listType), make_int(startPos)});
+}
+
+void handle_vm_cmdArenaLookOn(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 6) return;
+    uint16_t roomId = rd16be(body);
+    uint32_t cookie = rd32be(body + 2);
+    applyLpc("cmd_arena_look_on", {make_int(cl.clientNo), make_int(roomId), make_int(cookie)});
+}
+
+void handle_vm_cmdArenaMatchFixtures(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 2) return;
+    uint16_t v0 = rd16be(body);
+    applyLpc("cmd_arena_match_fixtures", {make_int(cl.clientNo), make_int(v0)});
+}
+
+void handle_vm_cmdArenaMatchJoinRoom(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 4) return;
+    uint16_t matchNo = rd16be(body);
+    uint16_t roomId = rd16be(body + 2);
+    applyLpc("cmd_arena_match_join_room", {make_int(cl.clientNo), make_int(matchNo), make_int(roomId)});
+}
+
+void handle_vm_cmdArenaMatchList(GameClient& cl, const uint8_t* body, size_t len) {
+    (void)body; (void)len;
+    applyLpc("cmd_arena_match_list", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdArenaMatchRoomDetail(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint16_t roomId = rd16be(body);
+    uint16_t detailType = rd16be(body + 2);
+    applyLpc("cmd_arena_match_room_detail", {make_int(cl.clientNo), make_int(roomId), make_int(detailType)});
+}
+
+void handle_vm_cmdArenaMatchRooms(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint16_t page = rd16be(body);
+    applyLpc("cmd_arena_match_rooms", {make_int(cl.clientNo), make_int(page)});
+}
+
+void handle_vm_cmdArenaOpenRank(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_arena_open_rank", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdArenaQueryRankByName(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t nl = body[off++];
+    if (off + nl > len) return;
+    std::string name((const char*)body + off, nl);
+    applyLpc("cmd_arena_query_rank_by_name", {make_int(cl.clientNo), make_string(name)});
+}
+
+void handle_vm_cmdArenaRankList(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 7) return;
+    uint8_t rankType = body[0];
+    uint16_t page = rd16be(body + 1);
+    uint32_t value = rd32be(body + 3);
+    applyLpc("cmd_arena_rank_list", {make_int(cl.clientNo), make_int(rankType), make_int(page), make_int(value)});
+}
+
+void handle_vm_cmdArenaRoom(GameClient& cl, const uint8_t* body, size_t len)
+{
+    size_t off = 0;
+    uint16_t roomId = 0;
+    std::string title, passwd;
+    uint8_t roomType = 0, refuseLook = 0, autoJoin = 0, isLocked = 0;
+    if (len >= 2) { roomId = rd16be(body); off = 2; }
+    if (off < len) { uint8_t tl = body[off++]; if (off + tl > len) return; title.assign((const char*)body + off, tl); off += tl; }
+    if (off < len) roomType = body[off++];
+    if (off < len) refuseLook = body[off++];
+    if (off < len) autoJoin = body[off++];
+    if (off < len) isLocked = body[off++];
+    if (off < len) { uint8_t pl = body[off++]; if (off + pl > len) return; passwd.assign((const char*)body + off, pl); }
+    applyLpc("cmd_arena_room", {make_int(cl.clientNo), make_int(roomId), make_string(title), make_int(roomType), make_int(refuseLook), make_int(autoJoin), make_int(isLocked), make_string(passwd)});
+}
+
+void handle_vm_cmdArenaRoomAction(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 4) return;
+    uint16_t roomId = rd16be(body);
+    uint8_t action = body[2];
+    uint8_t param = body[3];
+    applyLpc("cmd_arena_room_action", {make_int(cl.clientNo), make_int(roomId), make_int(action), make_int(param)});
+}
+
+void handle_vm_cmdArenaRoomKickOut(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t gl = body[off++];
+    if (off + gl > len) return;
+    std::string gid((const char*)body + off, gl);
+    off += gl;
+    if (off + 3 > len) return;
+    uint16_t kickType = rd16be(body + off);
+    uint8_t arg = body[off + 2];
+    applyLpc("cmd_arena_room_kick_out", {make_int(cl.clientNo), make_string(gid), make_int(kickType), make_int(arg)});
+}
+
+void handle_vm_cmdArenaServerList(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_arena_server_list", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdArenaSwitchServer(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    size_t off = 0;
+    uint8_t sl = body[off++];
+    if (off + sl > len) return;
+    std::string server((const char*)body + off, sl);
+    applyLpc("cmd_arena_switch_server", {make_int(cl.clientNo), make_string(server)});
+}
+
+void handle_vm_cmdAskFields(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_ask_fields", {make_int(cl.clientNo)});
+}
+
+
+void handle_vm_cmdAskPill(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 14) return;
+    uint16_t pos1 = rd16be(body + 0);
+    uint16_t pos2 = rd16be(body + 2);
+    uint16_t pos3 = rd16be(body + 4);
+    uint16_t v4 = rd16be(body + 6);
+    uint16_t v5 = rd16be(body + 8);
+    uint16_t v6 = rd16be(body + 10);
+    uint16_t v7 = rd16be(body + 12);
+    applyLpc("cmd_ask_pill", {make_int(cl.clientNo), make_int(pos1), make_int(pos2), make_int(pos3), make_int(v4), make_int(v5), make_int(v6), make_int(v7)});
+}
+
+
+void handle_vm_cmdAskSkillDesc(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint16_t skillId = rd16be(body);
+    applyLpc("cmd_ask_skill_desc", {make_int(cl.clientNo), make_int(skillId)});
+}
+
+
+void handle_vm_cmdAsktaoSound(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_asktao_sound", {make_int(cl.clientNo)});
+}
+
+
+void handle_vm_cmdAssignAttrib(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 5) return;
+    uint32_t attribId = rd32be(body);
+    size_t off = 4;
+    uint8_t n = body[off++];
+    if (off + n > len) return;
+    std::string name(reinterpret_cast<const char*>(body + off), n);
+    applyLpc("cmd_assign_attrib", {make_int(cl.clientNo), make_int(attribId), make_string(name)});
+}
+
+
+void handle_vm_cmdAssignChildAttrib(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 20) return;
+    applyLpc("cmd_assign_child_attrib", {make_int(cl.clientNo), make_int(rd32be(body + 0)), make_int(rd32be(body + 4)), make_int(rd32be(body + 8)), make_int(rd32be(body + 12)), make_int(rd32be(body + 16))});
+}
+
+
+void handle_vm_cmdAssignPolar(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 6) return;
+    uint32_t id = rd32be(body);
+    size_t off = 4;
+    uint8_t n = body[off++];
+    if (off + n + 1 > len) return;
+    std::string name(reinterpret_cast<const char*>(body + off), n);
+    off += n;
+    uint8_t val = body[off];
+    applyLpc("cmd_assign_polar", {make_int(cl.clientNo), make_int(id), make_string(name), make_int(val)});
+}
+
+
+void handle_vm_cmdAssignResist(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 6) return;
+    uint32_t id = rd32be(body);
+    size_t off = 4;
+    uint8_t n = body[off++];
+    if (off + n + 1 > len) return;
+    std::string name(reinterpret_cast<const char*>(body + off), n);
+    off += n;
+    uint8_t val = body[off];
+    applyLpc("cmd_assign_resist", {make_int(cl.clientNo), make_int(id), make_string(name), make_int(val)});
+}
+
+
+void handle_vm_cmdAssignUpgrade(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t n = body[0];
+    if (1 + n > len) return;
+    std::string name(reinterpret_cast<const char*>(body + 1), n);
+    applyLpc("cmd_assign_upgrade", {make_int(cl.clientNo), make_string(name)});
+}
+
+
+void handle_vm_cmdAuthMatrixForGs(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    uint16_t n = rd16be(body);
+    if (2 + n > len) return;
+    std::string name(reinterpret_cast<const char*>(body + 2), n);
+    applyLpc("cmd_auth_matrix_for_gs", {make_int(cl.clientNo), make_string(name)});
+}
+
+
+void handle_vm_cmdAuthRefreshPicForGs(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    applyLpc("cmd_auth_refresh_pic_for_gs", {make_int(cl.clientNo), make_int(body[0])});
+}
+
+void handle_vm_cmdAuthVerifyCode(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t sl = body[0];
+    if (len < 1u + sl) return;
+    std::string s((const char*)body + 1, sl);
+    applyLpc("cmd_auth_verify_code", {make_int(cl.clientNo), make_string(s)});
+}
+
+void handle_vm_cmdAuthVipSms(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t sl = body[0];
+    if (len < 1u + sl) return;
+    std::string s((const char*)body + 1, sl);
+    applyLpc("cmd_auth_vip_sms", {make_int(cl.clientNo), make_string(s)});
+}
+
+void handle_vm_cmdAutoCombatTime(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_auto_combat_time", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdBottleDig(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_bottle_dig", {make_int(cl.clientNo)});
+}
+
+void handle_vm_cmdBottleOpen(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t sl = body[0];
+    if (len < 1u + sl) return;
+    std::string s((const char*)body + 1, sl);
+    applyLpc("cmd_bottle_open", {make_int(cl.clientNo), make_string(s)});
+}
+
+void handle_vm_cmdBottleOpenInterface(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t sl = body[0];
+    if (len < 1u + sl) return;
+    std::string s((const char*)body + 1, sl);
+    applyLpc("cmd_bottle_open_interface", {make_int(cl.clientNo), make_string(s)});
+}
+
+void handle_vm_cmdBottleReply(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t l1 = body[0];
+    if (len < 1u + l1) return;
+    std::string bid((const char*)body + 1, l1);
+    size_t off = 1u + l1;
+    if (off >= len) return;
+    uint8_t l2 = body[off++];
+    if (len < off + l2) return;
+    std::string comment((const char*)body + off, l2);
+    applyLpc("cmd_bottle_reply", {make_int(cl.clientNo), make_string(bid), make_string(comment)});
+}
+
+void handle_vm_cmdBottleThrow(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 3) return;
+    int type = body[0];
+    int v10 = body[1];
+    uint8_t sl = body[2];
+    if (len < 3u + sl) return;
+    std::string comment((const char*)body + 3, sl);
+    applyLpc("cmd_bottle_throw", {make_int(cl.clientNo), make_int(type), make_int(v10), make_string(comment)});
+}
+
+void handle_vm_cmdBottleThrowBack(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 1) return;
+    uint8_t sl = body[0];
+    if (len < 1u + sl) return;
+    std::string s((const char*)body + 1, sl);
+    applyLpc("cmd_bottle_throw_back", {make_int(cl.clientNo), make_string(s)});
+}

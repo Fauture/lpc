@@ -216,6 +216,9 @@ std::string vfsObjPrefix() {
     return vfsProfile().objPrefix;
 }
 
+static std::atomic<bool> g_bootLoading{false};
+void setBootLoading(bool loading) { g_bootLoading.store(loading); }
+
 // Public queue-reference resolver (used by the efun wrappers in this file and
 // by the VM's call_in_efun path in original_vm.cpp).
 int64_t queueResolveId(const Value& v) {
@@ -826,6 +829,20 @@ std::string readVfsFile(const std::string& vpath) {
                     }
                 } catch (...) {
                     continue;
+                }
+            }
+            // Fallback: the unpacked etc directory (<objPrefix>/pack_data/etc)
+            // mirrors etc.pak.  If the pak is missing the entry (e.g. a
+            // reorganized tree dropped comm_desc.txt), read it from there.
+            if (pakName == "etc.pak") {
+                std::string alt = etcRoot() + "/" + entry;
+                if (fs::is_regular_file(alt, ec)) {
+                    std::ifstream in(alt, std::ios::binary);
+                    if (in) {
+                        std::ostringstream ss;
+                        ss << in.rdbuf();
+                        return ss.str();
+                    }
                 }
             }
         }
@@ -1680,6 +1697,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_string("");
     }
+    if (name == "tolower" || name == "toupper") {
+        // vm_f_tolower / vm_f_toupper: case-fold an ASCII string.
+        if (args.empty()) return make_string("");
+        std::string s = as_string(args[0]);
+        for (auto& c : s) {
+            unsigned char uc = static_cast<unsigned char>(c);
+            c = static_cast<char>(name == "tolower" ? tolower(uc) : toupper(uc));
+        }
+        return make_string(s);
+    }
     if (name == "atoi") {
         if (args.empty()) return make_int(0);
         const Value& v = args[0];
@@ -2238,7 +2265,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         //   undefined/null -> 2 zero bytes
         std::string out;
         for (const auto& a : args) padVariableValue(a, out);
-        return make_string(out);
+        return make_buffer(out);
+    }
+    if (name == "pad_buffer") {
+        // vm_f_pad_buffer (efun idx 524): same value-type padding as
+        // pkt_pad_buffer (used by cmd_cfg_get_server_list etc to build a raw
+        // wire body), returns a buffer.
+        std::string out;
+        for (const auto& a : args) padVariableValue(a, out);
+        return make_buffer(out);
     }
     if (name == "pkt_pad_field") {
         // pkt_pad_field(field_type, value): encode one named-type field.  Used
@@ -2688,6 +2723,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     size_t e = s.find_last_not_of(" \t\r\n");
                     return s.substr(b, e - b + 1);
                 };
+                // vm_readIni compares section/key case-insensitively (toupper).
+                auto ieq = [](const std::string& a, const std::string& b) {
+                    if (a.size() != b.size()) return false;
+                    for (size_t i = 0; i < a.size(); ++i)
+                        if (toupper(static_cast<unsigned char>(a[i])) !=
+                            toupper(static_cast<unsigned char>(b[i]))) return false;
+                    return true;
+                };
                 while (std::getline(in, line)) {
                     if (!line.empty() && line.back() == '\r') line.pop_back();
                     size_t s = line.find_first_not_of(" \t");
@@ -2699,10 +2742,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         cur = trim(line.substr(s + 1, e - s - 1));
                         continue;
                     }
-                    if (cur != section) continue;
+                    if (!ieq(cur, section)) continue;
                     size_t eq = line.find('=', s);
                     if (eq == std::string::npos) continue;
-                    if (trim(line.substr(s, eq - s)) == key)
+                    if (ieq(trim(line.substr(s, eq - s)), key))
                         return make_string(trim(line.substr(eq + 1)));
                 }
             } else {
@@ -2878,31 +2921,37 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(-1);
     }
     if (name == "send_to_client") {
-        // vm_f_send_to_client (0x804fdfc): send_to_client(client_no, msg_no,
-        // ...) - pad args[2..] with vm_padStackVariables/vm_padVariable and
-        // write a full packet to the GAME client.  Wire frame:
-        //   MZ(2) + checksum(2)=0 + tick(4)=0 + msgLen(2 BE) + cmdNo(2 BE) +
-        //   padded args; msgLen counts from the cmdNo field (2) through the
-        //   body (vm_clientSocketCallback: bodyLen = msgLen - 2).
-        if (args.size() >= 3 && args[0].index() == 2) {
+        // vm_f_send_to_client (0x804fdfc): two calling forms.
+        //   1) send_to_client(client_no, msg_no, ...) - data = cmdNo(u16 BE) +
+        //      vm_padVariable(args[2..]) (value-type padding).
+        //   2) send_to_client(client_no, buffer)  - buffer already IS the full
+        //      wire body (cmdNo + args), e.g. cmd_cfg_get_server_list builds it
+        //      with pad_buffer() and sends it verbatim.
+        // Wire frame: MZ(2) + checksum(2)=0 + tick(4)=0 + msgLen(2 BE) + data;
+        // msgLen counts the cmdNo field through the body end, so the receiver
+        // reads bodyLen = msgLen - 2.
+        if (args.size() >= 2 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
-            int64_t msgNo = as_int(args[1]);
-            std::string body;
-            for (size_t i = 2; i < args.size(); ++i) padVariableValue(args[i], body);
+            std::string data;
+            if (args.size() >= 3) {
+                int64_t msgNo = as_int(args[1]);
+                data.push_back(static_cast<char>((msgNo >> 8) & 0xFF));
+                data.push_back(static_cast<char>(msgNo & 0xFF));
+                for (size_t i = 2; i < args.size(); ++i) padVariableValue(args[i], data);
+            } else {
+                data = as_string(args[1]);   // raw buffer (already cmdNo + body)
+            }
             std::string pkt;
             pkt += "MZ";
             pkt += std::string(4, '\0');            // checksum(2) + tick[0..1]
             pkt += std::string(2, '\0');            // tick[2..3]
-            uint16_t msgLen = static_cast<uint16_t>(2 + body.size());  // from cmdNo
+            uint16_t msgLen = static_cast<uint16_t>(data.size());
             pkt.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
             pkt.push_back(static_cast<char>(msgLen & 0xFF));
-            uint16_t cmd = static_cast<uint16_t>(msgNo);
-            pkt.push_back(static_cast<char>((cmd >> 8) & 0xFF));
-            pkt.push_back(static_cast<char>(cmd & 0xFF));
-            pkt += body;
+            pkt += data;
             if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[send_to_client] cno=" << cno << " msgNo=" << msgNo
-                          << " body=" << body.size() << " total=" << pkt.size() << "\n";
+                std::cerr << "[send_to_client] cno=" << cno << " body=" << data.size()
+                          << " total=" << pkt.size() << "\n";
             return make_int(lpc::gameServiceSend(cno, pkt) ? 1 : 0);
         }
         return make_int(0);
@@ -3095,11 +3144,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_timer") return make_int(1);
     if (name == "sleep") {
         // The driver's sleep() takes seconds and suspends the calling thread.
+        // During the boot/broadcast phase a daemon's create()-time retry loop
+        // uses sleep() to yield cooperatively; our multithreaded port must
+        // return promptly there so the remaining daemons still load.
         int64_t secs = args.empty() ? 0 : as_int(args[0]);
         if (secs > 0) {
-            std::chrono::seconds d(secs);
-            if (secs > 60) d = std::chrono::seconds(60);   // keep startup responsive
-            std::this_thread::sleep_for(d);
+            if (g_bootLoading.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            } else {
+                std::chrono::seconds d(secs);
+                if (secs > 60) d = std::chrono::seconds(60);   // keep startup responsive
+                std::this_thread::sleep_for(d);
+            }
         }
         return make_int(1);
     }

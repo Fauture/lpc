@@ -31,6 +31,12 @@ void setVfsProfile(const std::string& vfsRoot, const std::string& dataRoot,
 // loader to try "<objPrefix>/x" and "x" variants of a virtual path.
 std::string vfsObjPrefix();
 
+// True while the boot/broadcast phase is loading objects.  sleep() returns
+// almost immediately during this phase so a daemon's create()-time
+// init-retry loop (e.g. share_datad) does not block the whole broadcast and
+// starve the remaining daemons / post_init.
+void setBootLoading(bool loading);
+
 // vm_interSscanf (0x8109908): C-style sscanf.  Parses input against fmt,
 // appends one output Value per conversion (in order) to `out`, and returns the
 // number of successful conversions.  Supports %s %d %u %x %c %f %* (suppress)

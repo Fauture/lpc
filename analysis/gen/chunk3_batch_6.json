@@ -1,0 +1,206 @@
+﻿[
+    {
+        "cmdNo":  61636,
+        "fun":  "vm_cmdrefreshmountattrib",
+        "type":  1,
+        "addr":  "0x8057188",
+        "lpcFun":  "cmd_refresh_mount_attrib",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "mountId:u32be"
+                       ],
+        "handlerName":  "handle_vm_cmdrefreshmountattrib",
+        "handlerCode":  "void handle_vm_cmdrefreshmountattrib(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t mountId = rd32be(body, 0);\n    applyLpc(\"cmd_refresh_mount_attrib\", {make_int(cl.clientNo), make_int(mountId)});\n}",
+        "kcmdEntry":  "{ 0x61636, ATTRIB_CLIENT_USER, \"cmd_refresh_mount_attrib\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8714,
+        "fun":  "vm_cmdRefreshpartyFragment",
+        "type":  1,
+        "addr":  "0x8052e30",
+        "lpcFun":  "cmd_refresh_party_fragment",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRefreshpartyFragment",
+        "handlerCode":  "void handle_vm_cmdRefreshpartyFragment(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_refresh_party_fragment\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x8714, ATTRIB_CLIENT_USER, \"cmd_refresh_party_fragment\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  12388,
+        "fun":  "vm_cmdRefreshPetGodbookSkills",
+        "type":  1,
+        "addr":  "0x805e07c",
+        "lpcFun":  "cmd_refresh_pet_godbook_skills",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "petId:u32be"
+                       ],
+        "handlerName":  "handle_vm_cmdRefreshPetGodbookSkills",
+        "handlerCode":  "void handle_vm_cmdRefreshPetGodbookSkills(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint32_t petId = rd32be(body, 0);\n    applyLpc(\"cmd_refresh_pet_godbook_skills\", {make_int(cl.clientNo), make_int(petId)});\n}",
+        "kcmdEntry":  "{ 0x12388, ATTRIB_CLIENT_USER, \"cmd_refresh_pet_godbook_skills\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64794,
+        "fun":  "vm_cmdRefreshRecruitmentInfo",
+        "type":  1,
+        "addr":  "0x8057314",
+        "lpcFun":  "cmd_refresh_recruitment_info",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "type:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_cmdRefreshRecruitmentInfo",
+        "handlerCode":  "void handle_vm_cmdRefreshRecruitmentInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t tl = body[0];\n    if (1 + tl \u003e len) return;\n    applyLpc(\"cmd_refresh_recruitment_info\", {make_int(cl.clientNo), make_string(body + 1, tl)});\n}",
+        "kcmdEntry":  "{ 0x64794, ATTRIB_CLIENT_USER, \"cmd_refresh_recruitment_info\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4670,
+        "fun":  "vm_cmdRefreshSafeLogin",
+        "type":  1,
+        "addr":  "0x806b010",
+        "lpcFun":  "cmd_refresh_safe_login",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdRefreshSafeLogin",
+        "handlerCode":  "void handle_vm_cmdRefreshSafeLogin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_refresh_safe_login\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x4670, ATTRIB_CLIENT_USER, \"cmd_refresh_safe_login\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64224,
+        "fun":  "vm_cmdRefreshServiceLog",
+        "type":  1,
+        "addr":  "0x8057398",
+        "lpcFun":  "cmd_refresh_service_log",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "serviceName:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_cmdRefreshServiceLog",
+        "handlerCode":  "void handle_vm_cmdRefreshServiceLog(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t sl = body[0];\n    if (1 + sl \u003e len) return;\n    applyLpc(\"cmd_refresh_service_log\", {make_int(cl.clientNo), make_string(body + 1, sl)});\n}",
+        "kcmdEntry":  "{ 0x64224, ATTRIB_CLIENT_USER, \"cmd_refresh_service_log\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8828,
+        "fun":  "vm_cmdRefreshTaskLog",
+        "type":  1,
+        "addr":  "0x805741c",
+        "lpcFun":  "cmd_refresh_task_log",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "taskName:u8len-string",
+                           "value:u8"
+                       ],
+        "handlerName":  "handle_vm_cmdRefreshTaskLog",
+        "handlerCode":  "void handle_vm_cmdRefreshTaskLog(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t tl = body[0];\n    if (len \u003c 2 + tl) return;\n    applyLpc(\"cmd_refresh_task_log\", {make_int(cl.clientNo), make_string(body + 1, tl), make_int(body[1 + tl])});\n}",
+        "kcmdEntry":  "{ 0x8828, ATTRIB_CLIENT_USER, \"cmd_refresh_task_log\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  16502,
+        "fun":  "vm_cmdReject",
+        "type":  1,
+        "addr":  "0x80574b8",
+        "lpcFun":  "cmd_reject",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "bodyFields":  [
+                           "name:u8len-string",
+                           "askType:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_cmdReject",
+        "handlerCode":  "void handle_vm_cmdReject(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (len \u003c 1 + nl) return;\n    const uint8_t* p = body + 1 + nl;\n    size_t rem = len - (1 + nl);\n    if (rem \u003c 1) return;\n    uint8_t al = p[0];\n    if (rem \u003c 1 + al) return;\n    applyLpc(\"cmd_reject\", {make_int(cl.clientNo), make_string(body + 1, nl), make_string(p + 1, al)});\n}",
+        "kcmdEntry":  "{ 0x16502, ATTRIB_CLIENT_USER, \"cmd_reject\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4240,
+        "fun":  "vm_cmdRemoveAskTaoShowGift",
+        "type":  1,
+        "addr":  "0x805ffa4",
+        "lpcFun":  "cmd_remove_asktao_show_gift",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "type:u8",
+                           "id:u8len-string"
+                       ],
+        "handlerName":  "handle_vm_cmdRemoveAskTaoShowGift",
+        "handlerCode":  "void handle_vm_cmdRemoveAskTaoShowGift(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t il = body[1];\n    if (len \u003c 2 + il) return;\n    applyLpc(\"cmd_remove_asktao_show_gift\", {make_int(cl.clientNo), make_int(type), make_string(body + 2, il)});\n}",
+        "kcmdEntry":  "{ 0x4240, ATTRIB_CLIENT_USER, \"cmd_remove_asktao_show_gift\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4639,
+        "fun":  "vm_cmdRemoveBureauItem",
+        "type":  1,
+        "addr":  "0x805fcc0",
+        "lpcFun":  "cmd_remove_bureau_item",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "itemId:u16be"
+                       ],
+        "handlerName":  "handle_vm_cmdRemoveBureauItem",
+        "handlerCode":  "void handle_vm_cmdRemoveBureauItem(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t itemId = rd16be(body, 0);\n    applyLpc(\"cmd_remove_bureau_item\", {make_int(cl.clientNo), make_int(itemId)});\n}",
+        "kcmdEntry":  "{ 0x4639, ATTRIB_CLIENT_USER, \"cmd_remove_bureau_item\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

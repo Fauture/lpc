@@ -1,0 +1,5 @@
+﻿void handle_vm_cmdGetUpdateNotice(GameClient& cl, const uint8_t* body, size_t len)
+{
+    (void)body; (void)len;
+    applyLpc("cmd_get_update_notice", {make_int(cl.clientNo)});
+}

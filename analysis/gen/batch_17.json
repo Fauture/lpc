@@ -1,0 +1,215 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdCloseTaotaotao",
+        "handlerName":  "handle_vm_cmdCloseTaotaotao",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806c990",
+        "handlerCode":  "void handle_vm_cmdCloseTaotaotao(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_close_taotaotao\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8320,
+        "lpcFun":  "cmd_close_taotaotao",
+        "bodyFields":  [
+                           "no body"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2080, ATTRIB_CLIENT_USER, \"cmd_close_taotaotao\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCoinCancelOrder",
+        "handlerName":  "handle_vm_cmdCoinCancelOrder",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805271c",
+        "handlerCode":  "void handle_vm_cmdCoinCancelOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string order_id((const char*)body + 1, slen);\n    applyLpc(\"cmd_coin_cancel_order\", {make_int(cl.clientNo), make_string(order_id)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  10754,
+        "lpcFun":  "cmd_coin_cancel_order",
+        "bodyFields":  [
+                           "string order_id (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2A02, ATTRIB_CLIENT_USER, \"cmd_coin_cancel_order\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdCoinDealOrder",
+        "handlerName":  "handle_vm_cmdCoinDealOrder",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80527a0",
+        "handlerCode":  "void handle_vm_cmdCoinDealOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint8_t oper = body[0];\n    uint8_t step = body[1];\n    uint8_t slen = body[2];\n    if (3 + slen + 4 \u003e len) return;\n    std::string order_id((const char*)body + 3, slen);\n    uint32_t orderNo = rd32be(body + 3 + slen);\n    applyLpc(\"cmd_coin_deal_order\", {make_int(cl.clientNo), make_int(oper), make_int(step), make_string(order_id), make_int(orderNo)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  32262,
+        "lpcFun":  "cmd_coin_deal_order",
+        "bodyFields":  [
+                           "int u8 oper",
+                           "int u8 step",
+                           "string order_id (u8 len)",
+                           "int u32 orderNo (BE)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x7E06, ATTRIB_CLIENT_USER, \"cmd_coin_deal_order\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCoinFetchStore",
+        "handlerName":  "handle_vm_cmdCoinFetchStore",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8052898",
+        "handlerCode":  "void handle_vm_cmdCoinFetchStore(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_coin_fetch_store\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  14342,
+        "lpcFun":  "cmd_coin_fetch_store",
+        "bodyFields":  [
+                           "int u8 storeType"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3806, ATTRIB_CLIENT_USER, \"cmd_coin_fetch_store\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCoinOpenMall",
+        "handlerName":  "handle_vm_cmdCoinOpenMall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8052930",
+        "handlerCode":  "void handle_vm_cmdCoinOpenMall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_coin_open_mall\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  10250,
+        "lpcFun":  "cmd_coin_open_mall",
+        "bodyFields":  [
+                           "int u8 mallId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x280A, ATTRIB_CLIENT_USER, \"cmd_coin_open_mall\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCoinRefreshMall",
+        "handlerName":  "handle_vm_cmdCoinRefreshMall",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8052970",
+        "handlerCode":  "void handle_vm_cmdCoinRefreshMall(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_coin_refresh_mall\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  196,
+        "lpcFun":  "cmd_coin_refresh_mall",
+        "bodyFields":  [
+                           "int u8 mallId"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xC4, ATTRIB_CLIENT_USER, \"cmd_coin_refresh_mall\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdCoinSubmitOrder",
+        "handlerName":  "handle_vm_cmdCoinSubmitOrder",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80529b0",
+        "handlerCode":  "void handle_vm_cmdCoinSubmitOrder(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 9) return;\n    uint8_t storeNo = body[0];\n    uint32_t orderNo = rd32be(body + 1);\n    uint32_t amount = rd32be(body + 5);\n    applyLpc(\"cmd_coin_submit_order\", {make_int(cl.clientNo), make_int(storeNo), make_int(orderNo), make_int(amount)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  64792,
+        "lpcFun":  "cmd_coin_submit_order",
+        "bodyFields":  [
+                           "int u8 storeNo",
+                           "int u32 orderNo (BE)",
+                           "int u32 amount (BE)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD18, ATTRIB_CLIENT_USER, \"cmd_coin_submit_order\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdCollectData",
+        "handlerName":  "handle_vm_cmdCollectData",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805077c",
+        "handlerCode":  "void handle_vm_cmdCollectData(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint8_t type = body[0];\n    uint16_t slen = rd16be(body + 1);\n    if (3 + slen \u003e len) return;\n    std::string data((const char*)body + 3, slen);\n    applyLpc(\"cmd_collect_data\", {make_int(cl.clientNo), make_int(type), make_string(data)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8580,
+        "lpcFun":  "cmd_collect_data",
+        "bodyFields":  [
+                           "int u8 type",
+                           "string data (u16 BE len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2184, ATTRIB_CLIENT_USER, \"cmd_collect_data\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdCommonGuessDrawBonus",
+        "handlerName":  "handle_vm_cmdCommonGuessDrawBonus",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8075bc4",
+        "handlerCode":  "void handle_vm_cmdCommonGuessDrawBonus(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t glen = body[0];\n    if (1 + glen \u003e len) return;\n    std::string guess((const char*)body + 1, glen);\n    size_t off = 1 + glen;\n    if (off \u003e= len) return;\n    uint8_t rlen = body[off];\n    if (off + 1 + rlen \u003e len) return;\n    std::string result((const char*)body + off + 1, rlen);\n    applyLpc(\"cmd_common_guess_draw_bonus\", {make_int(cl.clientNo), make_string(guess), make_string(result)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  84,
+        "lpcFun":  "cmd_common_guess_draw_bonus",
+        "bodyFields":  [
+                           "string guess (u8 len)",
+                           "string result (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x54, ATTRIB_CLIENT_USER, \"cmd_common_guess_draw_bonus\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCommonGuessInfo",
+        "handlerName":  "handle_vm_cmdCommonGuessInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8075b40",
+        "handlerCode":  "void handle_vm_cmdCommonGuessInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (1 + slen \u003e len) return;\n    std::string guess((const char*)body + 1, slen);\n    applyLpc(\"cmd_common_guess_info\", {make_int(cl.clientNo), make_string(guess)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  4136,
+        "lpcFun":  "cmd_common_guess_info",
+        "bodyFields":  [
+                           "string guess (u8 len)"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1028, ATTRIB_CLIENT_USER, \"cmd_common_guess_info\", 0 }"
+    }
+]

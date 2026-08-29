@@ -1,0 +1,214 @@
+﻿[
+    {
+        "cmdNo":  16598,
+        "fun":  "vm_cmdArenaHallFight",
+        "type":  1,
+        "addr":  "0x806fe98",
+        "lpcFun":  "cmd_arena_hall_fight",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaHallFight",
+        "handlerCode":  "void handle_vm_cmdArenaHallFight(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 1) return;\n    uint8_t slen = body[0];\n    if (len \u003c 1u + slen) return;\n    std::string name(reinterpret_cast\u003cconst char*\u003e(body + 1), slen);\n    applyLpc(\"cmd_arena_hall_fight\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "kcmdEntry":  "{ 0x40D6, ATTRIB_CLIENT_USER, \"cmd_arena_hall_fight\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  9256,
+        "fun":  "vm_cmdArenaHallJoinRoom",
+        "type":  1,
+        "addr":  "0x806fe40",
+        "lpcFun":  "cmd_arena_hall_join_room",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u16",
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaHallJoinRoom",
+        "handlerCode":  "void handle_vm_cmdArenaHallJoinRoom(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 3) return;\n    uint16_t roomNo = rd16be(body);\n    uint8_t v1 = body[2];\n    applyLpc(\"cmd_arena_hall_join_room\", {make_int(cl.clientNo), make_int(roomNo), make_int(v1)});\n}",
+        "kcmdEntry":  "{ 0x2428, ATTRIB_CLIENT_USER, \"cmd_arena_hall_join_room\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10254,
+        "fun":  "vm_cmdArenaHallRequestCI",
+        "type":  1,
+        "addr":  "0x806fd54",
+        "lpcFun":  "cmd_arena_hall_request_ci",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "int u8",
+                           "string u8"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaHallRequestCI",
+        "handlerCode":  "void handle_vm_cmdArenaHallRequestCI(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t slen = body[1];\n    if (len \u003c 2u + slen) return;\n    std::string name(reinterpret_cast\u003cconst char*\u003e(body + 2), slen);\n    applyLpc(\"cmd_arena_hall_request_ci\", {make_int(cl.clientNo), make_int(type), make_string(name)});\n}",
+        "kcmdEntry":  "{ 0x280E, ATTRIB_CLIENT_USER, \"cmd_arena_hall_request_ci\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8468,
+        "fun":  "vm_cmdArenaHallRequestPL",
+        "type":  1,
+        "addr":  "0x806fcac",
+        "lpcFun":  "cmd_arena_hall_request_pl",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdArenaHallRequestPL",
+        "handlerCode":  "void handle_vm_cmdArenaHallRequestPL(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    (void)body; (void)len;\n    applyLpc(\"cmd_arena_hall_request_pl\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x2114, ATTRIB_CLIENT_USER, \"cmd_arena_hall_request_pl\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  61608,
+        "fun":  "vm_cmdArenaHallRequestRD",
+        "type":  1,
+        "addr":  "0x806fdf4",
+        "lpcFun":  "cmd_arena_hall_request_rd",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u16"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaHallRequestRD",
+        "handlerCode":  "void handle_vm_cmdArenaHallRequestRD(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 2) return;\n    uint16_t v0 = rd16be(body);\n    applyLpc(\"cmd_arena_hall_request_rd\", {make_int(cl.clientNo), make_int(v0)});\n}",
+        "kcmdEntry":  "{ 0xF0A8, ATTRIB_CLIENT_USER, \"cmd_arena_hall_request_rd\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8236,
+        "fun":  "vm_cmdArenaHallRequestRL",
+        "type":  1,
+        "addr":  "0x806fcdc",
+        "lpcFun":  "cmd_arena_hall_request_rl",
+        "nArgs":  5,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u8",
+                           "int u8",
+                           "int u8",
+                           "int u16"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaHallRequestRL",
+        "handlerCode":  "void handle_vm_cmdArenaHallRequestRL(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 5) return;\n    uint8_t status = body[0];\n    uint8_t type = body[1];\n    uint8_t listType = body[2];\n    uint16_t startPos = rd16be(body + 3);\n    applyLpc(\"cmd_arena_hall_request_rl\", {make_int(cl.clientNo), make_int(status), make_int(type), make_int(listType), make_int(startPos)});\n}",
+        "kcmdEntry":  "{ 0x202C, ATTRIB_CLIENT_USER, \"cmd_arena_hall_request_rl\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  61652,
+        "fun":  "vm_cmdArenaLookOn",
+        "type":  1,
+        "addr":  "0x806dcf0",
+        "lpcFun":  "cmd_arena_look_on",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u16",
+                           "int u32"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaLookOn",
+        "handlerCode":  "void handle_vm_cmdArenaLookOn(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 6) return;\n    uint16_t roomId = rd16be(body);\n    uint32_t cookie = rd32be(body + 2);\n    applyLpc(\"cmd_arena_look_on\", {make_int(cl.clientNo), make_int(roomId), make_int(cookie)});\n}",
+        "kcmdEntry":  "{ 0xF0D4, ATTRIB_CLIENT_USER, \"cmd_arena_look_on\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8226,
+        "fun":  "vm_cmdArenaMatchFixtures",
+        "type":  1,
+        "addr":  "0x806ff4c",
+        "lpcFun":  "cmd_arena_match_fixtures",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u16"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaMatchFixtures",
+        "handlerCode":  "void handle_vm_cmdArenaMatchFixtures(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 2) return;\n    uint16_t v0 = rd16be(body);\n    applyLpc(\"cmd_arena_match_fixtures\", {make_int(cl.clientNo), make_int(v0)});\n}",
+        "kcmdEntry":  "{ 0x2022, ATTRIB_CLIENT_USER, \"cmd_arena_match_fixtures\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8232,
+        "fun":  "vm_cmdArenaMatchJoinRoom",
+        "type":  1,
+        "addr":  "0x806ff98",
+        "lpcFun":  "cmd_arena_match_join_room",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u16",
+                           "int u16"
+                       ],
+        "handlerName":  "handle_vm_cmdArenaMatchJoinRoom",
+        "handlerCode":  "void handle_vm_cmdArenaMatchJoinRoom(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    if (len \u003c 4) return;\n    uint16_t matchNo = rd16be(body);\n    uint16_t roomId = rd16be(body + 2);\n    applyLpc(\"cmd_arena_match_join_room\", {make_int(cl.clientNo), make_int(matchNo), make_int(roomId)});\n}",
+        "kcmdEntry":  "{ 0x2028, ATTRIB_CLIENT_USER, \"cmd_arena_match_join_room\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8248,
+        "fun":  "vm_cmdArenaMatchList",
+        "type":  1,
+        "addr":  "0x8070000",
+        "lpcFun":  "cmd_arena_match_list",
+        "nArgs":  1,
+        "typeSeq":  [
+                        88
+                    ],
+        "bodyFields":  [
+
+                       ],
+        "handlerName":  "handle_vm_cmdArenaMatchList",
+        "handlerCode":  "void handle_vm_cmdArenaMatchList(GameClient\u0026 cl, const uint8_t* body, size_t len) {\n    (void)body; (void)len;\n    applyLpc(\"cmd_arena_match_list\", {make_int(cl.clientNo)});\n}",
+        "kcmdEntry":  "{ 0x2038, ATTRIB_CLIENT_USER, \"cmd_arena_match_list\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

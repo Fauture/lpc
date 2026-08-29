@@ -1,0 +1,229 @@
+﻿[
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdDivide",
+        "handlerName":  "handle_vm_cmdDivide",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8052ee4",
+        "handlerCode":  "void handle_vm_cmdDivide(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 6) return;\n    uint8_t prog = body[0];\n    uint8_t v1 = body[1];\n    uint32_t val = rd32be(body, 2);\n    applyLpc(\"cmd_divide\", {make_int(cl.clientNo), make_int(prog), make_int(v1), make_int(val)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  4416,
+        "lpcFun":  "cmd_divide",
+        "bodyFields":  [
+                           "u8 prog (also pProgram)",
+                           "u8 v1",
+                           "u32 BE val"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1140, ATTRIB_CLIENT_USER, \"cmd_divide\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdDivideInStore",
+        "handlerName":  "handle_vm_cmdDivideInStore",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8053024",
+        "handlerCode":  "void handle_vm_cmdDivideInStore(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 10) return;\n    uint32_t prog = rd32be(body);\n    uint16_t v1 = rd16be(body + 4);\n    uint16_t v2 = rd16be(body + 6);\n    uint16_t v3 = rd16be(body + 8);\n    applyLpc(\"cmd_divide_in_store\", {make_int(cl.clientNo), make_int(prog), make_int(v1), make_int(v2), make_int(v3)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  34,
+        "lpcFun":  "cmd_divide_in_store",
+        "bodyFields":  [
+                           "u32 BE prog (also pProgram)",
+                           "u16 BE v1",
+                           "u16 BE v2",
+                           "u16 BE v3"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x22, ATTRIB_CLIENT_USER, \"cmd_divide_in_store\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdDoucdhChallenge",
+        "handlerName":  "handle_vm_cmdDoucdhChallenge",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060c24",
+        "handlerCode":  "void handle_vm_cmdDoucdhChallenge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    size_t off = 0;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string name((const char*)body + off, nl);\n    off += nl;\n    if (off + 2 \u003e len) return;\n    uint16_t val = rd16be(body + off);\n    applyLpc(\"cmd_doucdh_challenge\", {make_int(cl.clientNo), make_string(name), make_int(val)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8798,
+        "lpcFun":  "cmd_doucdh_challenge",
+        "bodyFields":  [
+                           "string u8len name",
+                           "u16 BE val"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x225E, ATTRIB_CLIENT_USER, \"cmd_doucdh_challenge\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdDraftModifyMyInfo",
+        "handlerName":  "handle_vm_cmdDraftModifyMyInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070f50",
+        "handlerCode":  "void handle_vm_cmdDraftModifyMyInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    size_t off = 1;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string para((const char*)body + off, nl);\n    applyLpc(\"cmd_draft_modify_my_info\", {make_int(cl.clientNo), make_int(type), make_string(para)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  4421,
+        "lpcFun":  "cmd_draft_modify_my_info",
+        "bodyFields":  [
+                           "u8 type",
+                           "string u8len para"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1145, ATTRIB_CLIENT_USER, \"cmd_draft_modify_my_info\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdDraftPresentFlower",
+        "handlerName":  "handle_vm_cmdDraftPresentFlower",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070cb0",
+        "handlerCode":  "void handle_vm_cmdDraftPresentFlower(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint8_t stage = body[0];\n    uint16_t page = rd16be(body + 1);\n    size_t off = 3;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string account((const char*)body + off, nl);\n    off += nl;\n    if (off \u003e= len) return;\n    uint8_t ml = body[off++];\n    if (off + ml \u003e len) return;\n    std::string para((const char*)body + off, ml);\n    applyLpc(\"cmd_draft_present_flower\", {make_int(cl.clientNo), make_int(stage), make_int(page), make_string(account), make_string(para)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  12306,
+        "lpcFun":  "cmd_draft_present_flower",
+        "bodyFields":  [
+                           "u8 stage",
+                           "u16 BE page",
+                           "string u8len account",
+                           "string u8len para"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3012, ATTRIB_CLIENT_USER, \"cmd_draft_present_flower\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdDraftReport",
+        "handlerName":  "handle_vm_cmdDraftReport",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070de0",
+        "handlerCode":  "void handle_vm_cmdDraftReport(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t stage = body[0];\n    size_t off = 1;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string account((const char*)body + off, nl);\n    applyLpc(\"cmd_draft_report\", {make_int(cl.clientNo), make_int(stage), make_string(account)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  15890,
+        "lpcFun":  "cmd_draft_report",
+        "bodyFields":  [
+                           "u8 stage",
+                           "string u8len account"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3E12, ATTRIB_CLIENT_USER, \"cmd_draft_report\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdDraftRequestMyInfo",
+        "handlerName":  "handle_vm_cmdDraftRequestMyInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070f20",
+        "handlerCode":  "void handle_vm_cmdDraftRequestMyInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_draft_request_my_info\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  4614,
+        "lpcFun":  "cmd_draft_request_my_info",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1206, ATTRIB_CLIENT_USER, \"cmd_draft_request_my_info\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdDraftRequestStageInfo",
+        "handlerName":  "handle_vm_cmdDraftRequestStageInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070aa0",
+        "handlerCode":  "void handle_vm_cmdDraftRequestStageInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint8_t stage = body[0];\n    uint16_t pageNo = rd16be(body + 1);\n    size_t off = 3;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string name((const char*)body + off, nl);\n    off += nl;\n    if (off \u003e= len) return;\n    uint8_t tail = body[off];\n    applyLpc(\"cmd_draft_request_stage_info\", {make_int(cl.clientNo), make_int(stage), make_int(pageNo), make_string(name), make_int(tail)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  8796,
+        "lpcFun":  "cmd_draft_request_stage_info",
+        "bodyFields":  [
+                           "u8 stage",
+                           "u16 BE pageNo",
+                           "string u8len name",
+                           "u8 tail"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x225C, ATTRIB_CLIENT_USER, \"cmd_draft_request_stage_info\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdDraftRequestStageRank",
+        "handlerName":  "handle_vm_cmdDraftRequestStageRank",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070b98",
+        "handlerCode":  "void handle_vm_cmdDraftRequestStageRank(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t v = body[0];\n    applyLpc(\"cmd_draft_request_stage_rank\", {make_int(cl.clientNo), make_int(v)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  9132,
+        "lpcFun":  "cmd_draft_request_stage_rank",
+        "bodyFields":  [
+                           "u8 v"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x23AC, ATTRIB_CLIENT_USER, \"cmd_draft_request_stage_rank\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdDraftRoll",
+        "handlerName":  "handle_vm_cmdDraftRoll",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8070e80",
+        "handlerCode":  "void handle_vm_cmdDraftRoll(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t gender = body[0];\n    size_t off = 1;\n    uint8_t nl = body[off++];\n    if (off + nl \u003e len) return;\n    std::string declare((const char*)body + off, nl);\n    applyLpc(\"cmd_draft_roll\", {make_int(cl.clientNo), make_int(gender), make_string(declare)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8736,
+        "lpcFun":  "cmd_draft_roll",
+        "bodyFields":  [
+                           "u8 gender",
+                           "string u8len declare"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2220, ATTRIB_CLIENT_USER, \"cmd_draft_roll\", 0 }"
+    }
+]

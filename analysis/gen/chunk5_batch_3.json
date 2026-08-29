@@ -1,0 +1,202 @@
+﻿[
+    {
+        "nArgs":  6,
+        "fun":  "vm_msgLSendVipSms",
+        "handlerName":  "handle_vm_msgLSendVipSms",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8062df8",
+        "handlerCode":  "void handle_vm_msgLSendVipSms(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t authLen = rd8(body, off); off += 1;\n    if (off + authLen \u003e len) return;\n    auto authType = make_string(body + off, authLen); off += authLen;\n    if (off + 1 \u003e len) return;\n    uint8_t smsTypeLen = rd8(body, off); off += 1;\n    if (off + smsTypeLen \u003e len) return;\n    auto smsType = make_string(body + off, smsTypeLen); off += smsTypeLen;\n    if (off + 1 \u003e len) return;\n    uint8_t smsCodeLen = rd8(body, off); off += 1;\n    if (off + smsCodeLen \u003e len) return;\n    auto smsCode = make_string(body + off, smsCodeLen); off += smsCodeLen;\n    if (off + 2 \u003e len) return;\n    uint16_t vip = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_send_vip_sms\", {make_int(cl.clientNo), gid, authType, smsType, smsCode, make_int(vip)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  25469,
+        "lpcFun":  "msg_l_send_vip_sms",
+        "bodyFields":  [
+                           "gid:u8len-string",
+                           "auth_type:u8len-string",
+                           "sms_type:u8len-string",
+                           "sms_code:u8len-string",
+                           "vip:u16be-int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x637D, ATTRIB_INTERNAL_COMM, \"msg_l_send_vip_sms\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLDoAlipayRecharge",
+        "handlerName":  "handle_vm_msgLDoAlipayRecharge",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8062f90",
+        "handlerCode":  "void handle_vm_msgLDoAlipayRecharge(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 4 \u003e len) return;\n    uint32_t money = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_do_alipay_recharge\", {make_int(cl.clientNo), gid, make_int(money)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  25473,
+        "lpcFun":  "msg_l_do_alipay_recharge",
+        "bodyFields":  [
+                           "gid:u8len-string",
+                           "money:u32be-int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x6381, ATTRIB_INTERNAL_COMM, \"msg_l_do_alipay_recharge\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLSsbCopyAccount",
+        "handlerName":  "handle_vm_msgLSsbCopyAccount",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80632cc",
+        "handlerCode":  "void handle_vm_msgLSsbCopyAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t userLen = rd8(body, off); off += 1;\n    if (off + userLen \u003e len) return;\n    auto userName = make_string(body + off, userLen); off += userLen;\n    if (off + 1 \u003e len) return;\n    uint8_t resLen = rd8(body, off); off += 1;\n    if (off + resLen \u003e len) return;\n    auto result = make_string(body + off, resLen); off += resLen;\n    applyLpc(\"msg_l_ssb_copy_account\", {make_int(cl.clientNo), userName, result});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  13186,
+        "lpcFun":  "msg_l_ssb_copy_account",
+        "bodyFields":  [
+                           "user_name:u8len-string",
+                           "result:u8len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3382, ATTRIB_INTERNAL_COMM, \"msg_l_ssb_copy_account\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLSsbUpdateAccount",
+        "handlerName":  "handle_vm_msgLSsbUpdateAccount",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80631f8",
+        "handlerCode":  "void handle_vm_msgLSsbUpdateAccount(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t userLen = rd8(body, off); off += 1;\n    if (off + userLen \u003e len) return;\n    auto userName = make_string(body + off, userLen); off += userLen;\n    if (off + 1 \u003e len) return;\n    uint8_t resLen = rd8(body, off); off += 1;\n    if (off + resLen \u003e len) return;\n    auto result = make_string(body + off, resLen); off += resLen;\n    applyLpc(\"msg_l_ssb_update_account\", {make_int(cl.clientNo), userName, result});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  13185,
+        "lpcFun":  "msg_l_ssb_update_account",
+        "bodyFields":  [
+                           "user_name:u8len-string",
+                           "result:u8len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3381, ATTRIB_INTERNAL_COMM, \"msg_l_ssb_update_account\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgLGetSsbCombatConf",
+        "handlerName":  "handle_vm_msgLGetSsbCombatConf",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806303c",
+        "handlerCode":  "void handle_vm_msgLGetSsbCombatConf(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t nameLen = rd32be(body, off); off += 4;\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen); off += nameLen;\n    applyLpc(\"msg_l_get_ssb_combatd_conf\", {make_int(cl.clientNo), name});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  13187,
+        "lpcFun":  "msg_l_get_ssb_combatd_conf",
+        "bodyFields":  [
+                           "name:u32be-len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3383, ATTRIB_INTERNAL_COMM, \"msg_l_get_ssb_combatd_conf\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgLGetSsbFinishFlag",
+        "handlerName":  "handle_vm_msgLGetSsbFinishFlag",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80630a4",
+        "handlerCode":  "void handle_vm_msgLGetSsbFinishFlag(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = rd8(body, off); off += 1;\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen); off += nameLen;\n    applyLpc(\"msg_l_get_ssb_finish_flag\", {make_int(cl.clientNo), name});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  13188,
+        "lpcFun":  "msg_l_get_ssb_finish_flag",
+        "bodyFields":  [
+                           "name:u8len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3384, ATTRIB_INTERNAL_COMM, \"msg_l_get_ssb_finish_flag\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgLGetSsbPromptMsg",
+        "handlerName":  "handle_vm_msgLGetSsbPromptMsg",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8063128",
+        "handlerCode":  "void handle_vm_msgLGetSsbPromptMsg(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t nameLen = rd32be(body, off); off += 4;\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen); off += nameLen;\n    applyLpc(\"msg_l_get_ssb_prompt_msg\", {make_int(cl.clientNo), name});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  13189,
+        "lpcFun":  "msg_l_get_ssb_prompt_msg",
+        "bodyFields":  [
+                           "name:u32be-len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3385, ATTRIB_INTERNAL_COMM, \"msg_l_get_ssb_prompt_msg\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_msgLGetSsbCombatRes",
+        "handlerName":  "handle_vm_msgLGetSsbCombatRes",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8063190",
+        "handlerCode":  "void handle_vm_msgLGetSsbCombatRes(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 4 \u003e len) return;\n    uint32_t nameLen = rd32be(body, off); off += 4;\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen); off += nameLen;\n    applyLpc(\"msg_l_get_ssb_combatd_res\", {make_int(cl.clientNo), name});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  13184,
+        "lpcFun":  "msg_l_get_ssb_combatd_res",
+        "bodyFields":  [
+                           "name:u32be-len-string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3380, ATTRIB_INTERNAL_COMM, \"msg_l_get_ssb_combatd_res\", 0 }"
+    },
+    {
+        "nArgs":  5,
+        "fun":  "vm_msgLRequestIpCard",
+        "handlerName":  "handle_vm_msgLRequestIpCard",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x80633a0",
+        "handlerCode":  "void handle_vm_msgLRequestIpCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t gidLen = rd8(body, off); off += 1;\n    if (off + gidLen \u003e len) return;\n    auto gid = make_string(body + off, gidLen); off += gidLen;\n    if (off + 1 \u003e len) return;\n    uint8_t typeLen = rd8(body, off); off += 1;\n    if (off + typeLen \u003e len) return;\n    auto type = make_string(body + off, typeLen); off += typeLen;\n    if (off + 1 \u003e len) return;\n    uint8_t cardLen = rd8(body, off); off += 1;\n    if (off + cardLen \u003e len) return;\n    auto cardNo = make_string(body + off, cardLen); off += cardLen;\n    if (off + 2 \u003e len) return;\n    uint16_t card = rd16be(body, off); off += 2;\n    applyLpc(\"msg_l_request_ip_card\", {make_int(cl.clientNo), gid, type, cardNo, make_int(card)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  21355,
+        "lpcFun":  "msg_l_request_ip_card",
+        "bodyFields":  [
+                           "gid:u8len-string",
+                           "type:u8len-string",
+                           "card_no:u8len-string",
+                           "card:u16be-int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x536B, ATTRIB_INTERNAL_COMM, \"msg_l_request_ip_card\", 0 }"
+    }
+]

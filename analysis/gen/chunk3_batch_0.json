@@ -1,0 +1,239 @@
+﻿[
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdOperTMoodInfo",
+        "handlerName":  "handle_vm_cmdOperTMoodInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056648",
+        "handlerCode":  "void handle_vm_cmdOperTMoodInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_oper_mood_info\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  7172,
+        "lpcFun":  "cmd_oper_mood_info",
+        "bodyFields":  [
+                           "u8 mood"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1C04, ATTRIB_CLIENT_USER, \"cmd_oper_mood_info\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdopervisualpacks",
+        "handlerName":  "handle_vm_cmdopervisualpacks",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059530",
+        "handlerCode":  "void handle_vm_cmdopervisualpacks(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    applyLpc(\"cmd_oper_visual_packs\", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1]), make_int(body[2])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  6904,
+        "lpcFun":  "cmd_oper_visual_packs",
+        "bodyFields":  [
+                           "u8 program",
+                           "u8 slot",
+                           "u8 state"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1AF8, ATTRIB_CLIENT_USER, \"cmd_oper_visual_packs\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdOperXiaobaoSongshenbing",
+        "handlerName":  "handle_vm_cmdOperXiaobaoSongshenbing",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8073884",
+        "handlerCode":  "void handle_vm_cmdOperXiaobaoSongshenbing(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    int type = body[0];\n    uint8_t elen = body[1];\n    if (2 + elen \u003e len) return;\n    const uint8_t* equip = body + 2;\n    size_t off = 2 + elen;\n    if (off \u003e= len) return;\n    uint8_t alen = body[off];\n    off += 1;\n    if (off + alen \u003e len) return;\n    applyLpc(\"cmd_oper_xiaobao_songshenbing\", {make_int(cl.clientNo), make_int(type), make_string(equip, elen), make_string(body + off, alen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  244,
+        "lpcFun":  "cmd_oper_xiaobao_songshenbing",
+        "bodyFields":  [
+                           "u8 type",
+                           "u8 equipLen",
+                           "equip bytes",
+                           "u8 attribLen",
+                           "attrib bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF4, ATTRIB_CLIENT_USER, \"cmd_oper_xiaobao_songshenbing\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdOtherMoveTo",
+        "handlerName":  "handle_vm_cmdOtherMoveTo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056790",
+        "handlerCode":  "void handle_vm_cmdOtherMoveTo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 14) return;\n    uint32_t program = rd32be(body, 0);\n    uint32_t map = rd32be(body, 4);\n    uint16_t x = rd16be(body, 8);\n    uint16_t y = rd16be(body, 10);\n    uint16_t z = rd16be(body, 12);\n    applyLpc(\"cmd_other_move_to\", {make_int(cl.clientNo), make_int(program), make_int(map), make_int(x), make_int(y), make_int(z)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8552,
+        "lpcFun":  "cmd_other_move_to",
+        "bodyFields":  [
+                           "u32be program",
+                           "u32be map",
+                           "u16be x",
+                           "u16be y",
+                           "u16be z"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2168, ATTRIB_CLIENT_USER, \"cmd_other_move_to\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdPartyBlackList",
+        "handlerName":  "handle_vm_cmdPartyBlackList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8078230",
+        "handlerCode":  "void handle_vm_cmdPartyBlackList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    int oper = body[0];\n    uint8_t nlen = body[1];\n    if (2 + nlen \u003e len) return;\n    applyLpc(\"cmd_party_black_list\", {make_int(cl.clientNo), make_int(oper), make_string(body + 2, nlen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  6660,
+        "lpcFun":  "cmd_party_black_list",
+        "bodyFields":  [
+                           "u8 oper",
+                           "u8 nameLen",
+                           "name bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1A04, ATTRIB_CLIENT_USER, \"cmd_party_black_list\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdPartyInfo",
+        "handlerName":  "handle_vm_cmdPartyInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805688c",
+        "handlerCode":  "void handle_vm_cmdPartyInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_party_info\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8410,
+        "lpcFun":  "cmd_party_info",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x20DA, ATTRIB_CLIENT_USER, \"cmd_party_info\", 0 }"
+    },
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdPartyJobPrivilegeList",
+        "handlerName":  "handle_vm_cmdPartyJobPrivilegeList",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060de4",
+        "handlerCode":  "void handle_vm_cmdPartyJobPrivilegeList(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_party_job_privilege_list\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  8118,
+        "lpcFun":  "cmd_party_job_privilege_list",
+        "bodyFields":  [
+
+                       ],
+        "note":  "no body",
+        "kcmdEntry":  "{ 0x1FB6, ATTRIB_CLIENT_USER, \"cmd_party_job_privilege_list\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdPartyMembers",
+        "handlerName":  "handle_vm_cmdPartyMembers",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80568bc",
+        "handlerCode":  "void handle_vm_cmdPartyMembers(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint16_t page = rd16be(body, 0);\n    uint8_t nlen = body[2];\n    if (3 + nlen \u003e len) return;\n    const uint8_t* nm = body + 3;\n    size_t off = 3 + nlen;\n    if (off \u003e= len) return;\n    uint8_t glen = body[off];\n    off += 1;\n    if (off + glen \u003e len) return;\n    applyLpc(\"cmd_party_members\", {make_int(cl.clientNo), make_int(page), make_string(nm, nlen), make_string(body + off, glen)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  204,
+        "lpcFun":  "cmd_party_members",
+        "bodyFields":  [
+                           "u16be page",
+                           "u8 nameLen",
+                           "name bytes",
+                           "u8 gidLen",
+                           "gid bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xCC, ATTRIB_CLIENT_USER, \"cmd_party_members\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdPartyModifyAnnouce",
+        "handlerName":  "handle_vm_cmdPartyModifyAnnouce",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80569c8",
+        "handlerCode":  "void handle_vm_cmdPartyModifyAnnouce(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t slen = rd16be(body, 0);\n    if (2 + slen \u003e len) return;\n    applyLpc(\"cmd_party_modify_annouce\", {make_int(cl.clientNo), make_string(body + 2, slen)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  38,
+        "lpcFun":  "cmd_party_modify_annouce",
+        "bodyFields":  [
+                           "u16be announceLen",
+                           "announce bytes"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x26, ATTRIB_CLIENT_USER, \"cmd_party_modify_annouce\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_cmdPartyModifyMember",
+        "handlerName":  "handle_vm_cmdPartyModifyMember",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8056a2c",
+        "handlerCode":  "void handle_vm_cmdPartyModifyMember(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nlen = body[0];\n    if (1 + nlen \u003e len) return;\n    const uint8_t* nm = body + 1;\n    size_t off = 1 + nlen;\n    if (off \u003e= len) return;\n    uint8_t ilen = body[off];\n    off += 1;\n    if (off + ilen \u003e len) return;\n    const uint8_t* idp = body + off;\n    off += ilen;\n    if (off \u003e= len) return;\n    uint8_t tlen = body[off];\n    off += 1;\n    if (off + tlen + 4 \u003e len) return;\n    const uint8_t* tp = body + off;\n    off += tlen;\n    uint16_t priv = rd16be(body, off);\n    uint16_t flag = rd16be(body, off + 2);\n    applyLpc(\"cmd_party_modify_member\", {make_int(cl.clientNo), make_string(nm, nlen), make_string(idp, ilen), make_string(tp, tlen), make_int(priv), make_int(flag)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        88,
+                        88
+                    ],
+        "cmdNo":  9024,
+        "lpcFun":  "cmd_party_modify_member",
+        "bodyFields":  [
+                           "u8 nameLen",
+                           "name bytes",
+                           "u8 idLen",
+                           "id bytes",
+                           "u8 titleLen",
+                           "title bytes",
+                           "u16be jobPrivilege",
+                           "u16be flag"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2340, ATTRIB_CLIENT_USER, \"cmd_party_modify_member\", 0 }"
+    }
+]

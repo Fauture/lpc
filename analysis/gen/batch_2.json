@@ -1,0 +1,207 @@
+﻿[
+    {
+        "nArgs":  1,
+        "fun":  "vm_cmdAdminFetchPics",
+        "handlerName":  "handle_vm_cmdAdminFetchPics",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806cc14",
+        "handlerCode":  "void handle_vm_cmdAdminFetchPics(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    (void)body; (void)len;\n    applyLpc(\"cmd_admin_fetch_pics\", {make_int(cl.clientNo)});\n}",
+        "typeSeq":  [
+                        88
+                    ],
+        "cmdNo":  12014,
+        "lpcFun":  "cmd_admin_fetch_pics",
+        "bodyFields":  [
+
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2EEE, ATTRIB_CLIENT_USER, \"cmd_admin_fetch_pics\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminKickoff",
+        "handlerName":  "handle_vm_cmdAdminKickoff",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8068e48",
+        "handlerCode":  "void handle_vm_cmdAdminKickoff(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (1 + nl \u003e len) return;\n    std::string name((const char*)body + 1, nl);\n    applyLpc(\"cmd_admin_kickoff\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  52998,
+        "lpcFun":  "cmd_admin_kickoff",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xCF06, ATTRIB_CLIENT_USER, \"cmd_admin_kickoff\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAdminOperSysBroadcast",
+        "handlerName":  "handle_vm_cmdAdminOperSysBroadcast",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8068ecc",
+        "handlerCode":  "void handle_vm_cmdAdminOperSysBroadcast(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 4) return;\n    uint16_t oper = rd16be(body);\n    uint16_t index = rd16be(body + 2);\n    applyLpc(\"cmd_admin_oper_sys_broadcast\", {make_int(cl.clientNo), make_int(oper), make_int(index)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8566,
+        "lpcFun":  "cmd_admin_oper_sys_broadcast",
+        "bodyFields":  [
+                           "int u16 oper",
+                           "int u16 index"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2176, ATTRIB_CLIENT_USER, \"cmd_admin_oper_sys_broadcast\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminPrintScreen",
+        "handlerName":  "handle_vm_cmdAdminPrintScreen",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8077f40",
+        "handlerCode":  "void handle_vm_cmdAdminPrintScreen(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (1 + nl \u003e len) return;\n    std::string name((const char*)body + 1, nl);\n    applyLpc(\"cmd_admin_print_screen\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  14866,
+        "lpcFun":  "cmd_admin_print_screen",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3A12, ATTRIB_CLIENT_USER, \"cmd_admin_print_screen\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminQueryMap",
+        "handlerName":  "handle_vm_cmdAdminQueryMap",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8068f34",
+        "handlerCode":  "void handle_vm_cmdAdminQueryMap(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (1 + nl \u003e len) return;\n    std::string mapName((const char*)body + 1, nl);\n    applyLpc(\"cmd_admin_query_map\", {make_int(cl.clientNo), make_string(mapName)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  6908,
+        "lpcFun":  "cmd_admin_query_map",
+        "bodyFields":  [
+                           "u8len string mapName"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1AFC, ATTRIB_CLIENT_USER, \"cmd_admin_query_map\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAdminQueryNetInfo",
+        "handlerName":  "handle_vm_cmdAdminQueryNetInfo",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8068fb8",
+        "handlerCode":  "void handle_vm_cmdAdminQueryNetInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint8_t type = body[0];\n    uint8_t nl = body[1];\n    if (2 + nl \u003e len) return;\n    std::string userName((const char*)body + 2, nl);\n    applyLpc(\"cmd_admin_query_net_info\", {make_int(cl.clientNo), make_int(type), make_string(userName)});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  8438,
+        "lpcFun":  "cmd_admin_query_net_info",
+        "bodyFields":  [
+                           "int u8 type",
+                           "u8len string userName"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x20F6, ATTRIB_CLIENT_USER, \"cmd_admin_query_net_info\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdAdminQueryNpc",
+        "handlerName":  "handle_vm_cmdAdminQueryNpc",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8069058",
+        "handlerCode":  "void handle_vm_cmdAdminQueryNpc(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 3) return;\n    uint8_t nl = body[0];\n    if (1 + nl + 2 \u003e len) return;\n    std::string name((const char*)body + 1, nl);\n    uint16_t id = rd16be(body + 1 + nl);\n    applyLpc(\"cmd_admin_query_npc\", {make_int(cl.clientNo), make_string(name), make_int(id)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  12316,
+        "lpcFun":  "cmd_admin_query_npc",
+        "bodyFields":  [
+                           "u8len string name",
+                           "int u16 id"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x301C, ATTRIB_CLIENT_USER, \"cmd_admin_query_npc\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminQueryPlayer",
+        "handlerName":  "handle_vm_cmdAdminQueryPlayer",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8069104",
+        "handlerCode":  "void handle_vm_cmdAdminQueryPlayer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (1 + nl \u003e len) return;\n    std::string statement((const char*)body + 1, nl);\n    applyLpc(\"cmd_admin_query_player\", {make_int(cl.clientNo), make_string(statement)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  250,
+        "lpcFun":  "cmd_admin_query_player",
+        "bodyFields":  [
+                           "u8len string statement"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFA, ATTRIB_CLIENT_USER, \"cmd_admin_query_player\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminQuerySkill",
+        "handlerName":  "handle_vm_cmdAdminQuerySkill",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8069188",
+        "handlerCode":  "void handle_vm_cmdAdminQuerySkill(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nl = body[0];\n    if (1 + nl \u003e len) return;\n    std::string name((const char*)body + 1, nl);\n    applyLpc(\"cmd_admin_query_skill\", {make_int(cl.clientNo), make_string(name)});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  10030,
+        "lpcFun":  "cmd_admin_query_skill",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x272E, ATTRIB_CLIENT_USER, \"cmd_admin_query_skill\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdAdminReboot",
+        "handlerName":  "handle_vm_cmdAdminReboot",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x806920c",
+        "handlerCode":  "void handle_vm_cmdAdminReboot(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t delay = rd16be(body);\n    applyLpc(\"cmd_admin_reboot\", {make_int(cl.clientNo), make_int(delay)});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  9282,
+        "lpcFun":  "cmd_admin_reboot",
+        "bodyFields":  [
+                           "int u16 delay"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2442, ATTRIB_CLIENT_USER, \"cmd_admin_reboot\", 0 }"
+    }
+]

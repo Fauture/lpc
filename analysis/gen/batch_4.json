@@ -1,0 +1,230 @@
+﻿[
+    {
+        "cmdNo":  24578,
+        "fun":  "vm_cmdAdminTimeBroadcast",
+        "type":  1,
+        "addr":  "0x806a2dc",
+        "lpcFun":  "cmd_admin_time_broadcast",
+        "nArgs":  7,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string u8 caption",
+                           "int u32 interval",
+                           "int u32 times",
+                           "string u16 content (cap 4095)",
+                           "string u8 area",
+                           "int u8 last"
+                       ],
+        "handlerName":  "handle_vm_cmdAdminTimeBroadcast",
+        "handlerCode":  "void handle_vm_cmdAdminTimeBroadcast(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string caption((const char*)body + off, n1); off += n1;\n    if (len - off \u003c 4) return;\n    uint32_t interval = rd32be(body + off); off += 4;\n    if (len - off \u003c 4) return;\n    uint32_t times = rd32be(body + off); off += 4;\n    if (len - off \u003c 2) return;\n    uint16_t n2 = rd16be(body + off); off += 2;\n    if (n2 \u003e 4095) n2 = 4095;\n    if (len - off \u003c n2) return;\n    std::string content((const char*)body + off, n2); off += n2;\n    if (len - off \u003c 1) return;\n    uint8_t n3 = body[off++];\n    if (len - off \u003c n3) return;\n    std::string area((const char*)body + off, n3); off += n3;\n    if (len - off \u003c 1) return;\n    uint8_t last = body[off];\n    applyLpc(\"cmd_admin_time_broadcast\", {make_int(cl.clientNo), make_string(caption), make_int((int)interval), make_int((int)times), make_string(content), make_string(area), make_int(last)});\n}",
+        "kcmdEntry":  "{ 0x6002, ATTRIB_CLIENT_USER, \"cmd_admin_time_broadcast\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8708,
+        "fun":  "vm_cmdAdminTransport",
+        "type":  1,
+        "addr":  "0x806a500",
+        "lpcFun":  "cmd_admin_transport",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string u8 name",
+                           "int u16 transport"
+                       ],
+        "handlerName":  "handle_vm_cmdAdminTransport",
+        "handlerCode":  "void handle_vm_cmdAdminTransport(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string name((const char*)body + off, n1); off += n1;\n    if (len - off \u003c 2) return;\n    uint16_t transport = rd16be(body + off); off += 2;\n    applyLpc(\"cmd_admin_transport\", {make_int(cl.clientNo), make_string(name), make_int(transport)});\n}",
+        "kcmdEntry":  "{ 0x2204, ATTRIB_CLIENT_USER, \"cmd_admin_transport\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4286,
+        "fun":  "vm_cmdAnswerResult",
+        "type":  1,
+        "addr":  "0x806d8d0",
+        "lpcFun":  "cmd_answer_result",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string u8 answer",
+                           "string u8 question",
+                           "int u8 result"
+                       ],
+        "handlerName":  "handle_vm_cmdAnswerResult",
+        "handlerCode":  "void handle_vm_cmdAnswerResult(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string answer((const char*)body + off, n1); off += n1;\n    if (len - off \u003c 1) return;\n    uint8_t n2 = body[off++];\n    if (len - off \u003c n2) return;\n    std::string question((const char*)body + off, n2); off += n2;\n    if (len - off \u003c 1) return;\n    uint8_t result = body[off];\n    applyLpc(\"cmd_answer_result\", {make_int(cl.clientNo), make_string(answer), make_string(question), make_int(result)});\n}",
+        "kcmdEntry":  "{ 0x10BE, ATTRIB_CLIENT_USER, \"cmd_answer_result\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4366,
+        "fun":  "vm_cmdAnswerSurvey",
+        "type":  1,
+        "addr":  "0x8050130",
+        "lpcFun":  "cmd_answer_survey",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "int u32 npcId",
+                           "string u8 menu_item",
+                           "array u8 count of (string u8 answer)"
+                       ],
+        "handlerName":  "handle_vm_cmdAnswerSurvey",
+        "handlerCode":  "void handle_vm_cmdAnswerSurvey(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 4) return;\n    uint32_t npcId = rd32be(body + off); off += 4;\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string menu_item((const char*)body + off, n1); off += n1;\n    if (len - off \u003c 1) return;\n    uint8_t count = body[off++];\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint8_t i = 0; i \u003c count; ++i)\n    {\n        if (len - off \u003c 1) return;\n        uint8_t n = body[off++];\n        if (len - off \u003c n) return;\n        arr-\u003eitems.push_back(make_string(std::string((const char*)body + off, n)));\n        off += n;\n    }\n    applyLpc(\"cmd_answer_survey\", {make_int(cl.clientNo), make_int((int)npcId), make_string(menu_item), arr});\n}",
+        "kcmdEntry":  "{ 0x110E, ATTRIB_CLIENT_USER, \"cmd_answer_survey\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64814,
+        "fun":  "vm_cmdAntiHackCollect",
+        "type":  1,
+        "addr":  "0x806d390",
+        "lpcFun":  "cmd_anti_hack_collect",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "bodyFields":  [
+                           "string u8 ainfo"
+                       ],
+        "handlerName":  "handle_vm_cmdAntiHackCollect",
+        "handlerCode":  "void handle_vm_cmdAntiHackCollect(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string ainfo((const char*)body + off, n1);\n    applyLpc(\"cmd_anti_hack_collect\", {make_int(cl.clientNo), make_string(ainfo)});\n}",
+        "kcmdEntry":  "{ 0xFD2E, ATTRIB_CLIENT_USER, \"cmd_anti_hack_collect\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  6913,
+        "fun":  "vm_cmdApex",
+        "type":  1,
+        "addr":  "0x8061190",
+        "lpcFun":  "cmd_apex",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        228
+                    ],
+        "bodyFields":  [
+                           "buffer u16 length + bytes"
+                       ],
+        "handlerName":  "handle_vm_cmdApex",
+        "handlerCode":  "void handle_vm_cmdApex(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 2) return;\n    uint16_t n = rd16be(body);\n    if (2 + n \u003e len) return;\n    applyLpc(\"cmd_apex\", {make_int(cl.clientNo), make_buffer(body + 2, n)});\n}",
+        "kcmdEntry":  "{ 0x1B01, ATTRIB_CLIENT_USER, \"cmd_apex\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8716,
+        "fun":  "vm_cmdApply",
+        "type":  1,
+        "addr":  "0x80502d8",
+        "lpcFun":  "cmd_apply",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdApply",
+        "handlerCode":  "void handle_vm_cmdApply(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_apply\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "kcmdEntry":  "{ 0x220C, ATTRIB_CLIENT_USER, \"cmd_apply\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64248,
+        "fun":  "vm_cmdApplyCard",
+        "type":  1,
+        "addr":  "0x805bd88",
+        "lpcFun":  "cmd_apply_card",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u8 pos",
+                           "string u8 card_name",
+                           "int u8 last"
+                       ],
+        "handlerName":  "handle_vm_cmdApplyCard",
+        "handlerCode":  "void handle_vm_cmdApplyCard(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 1) return;\n    uint8_t pos = body[off++];\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string card_name((const char*)body + off, n1); off += n1;\n    if (len - off \u003c 1) return;\n    uint8_t last = body[off];\n    applyLpc(\"cmd_apply_card\", {make_int(cl.clientNo), make_string(card_name), make_int(pos), make_int(last)});\n}",
+        "kcmdEntry":  "{ 0xFAF8, ATTRIB_CLIENT_USER, \"cmd_apply_card\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64822,
+        "fun":  "vm_cmdApplyEx",
+        "type":  1,
+        "addr":  "0x8050318",
+        "lpcFun":  "cmd_apply_ex",
+        "nArgs":  2,
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "int u8"
+                       ],
+        "handlerName":  "handle_vm_cmdApplyEx",
+        "handlerCode":  "void handle_vm_cmdApplyEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_apply_ex\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "kcmdEntry":  "{ 0xFD36, ATTRIB_CLIENT_USER, \"cmd_apply_ex\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  2850,
+        "fun":  "vm_cmdApplyExquisite",
+        "type":  1,
+        "addr":  "0x805be50",
+        "lpcFun":  "cmd_apply_exquisite",
+        "nArgs":  4,
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "string u8 exquisite_name",
+                           "int u16 type",
+                           "int u8 last"
+                       ],
+        "handlerName":  "handle_vm_cmdApplyExquisite",
+        "handlerCode":  "void handle_vm_cmdApplyExquisite(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (len - off \u003c 1) return;\n    uint8_t n1 = body[off++];\n    if (len - off \u003c n1) return;\n    std::string exquisite_name((const char*)body + off, n1); off += n1;\n    if (len - off \u003c 2) return;\n    uint16_t v12 = rd16be(body + off); off += 2;\n    if (len - off \u003c 1) return;\n    uint8_t last = body[off];\n    applyLpc(\"cmd_apply_exquisite\", {make_int(cl.clientNo), make_string(exquisite_name), make_int(v12), make_int(last)});\n}",
+        "kcmdEntry":  "{ 0x0B22, ATTRIB_CLIENT_USER, \"cmd_apply_exquisite\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

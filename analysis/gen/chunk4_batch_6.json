@@ -1,0 +1,241 @@
+﻿[
+    {
+        "nArgs":  5,
+        "fun":  "vm_cmdTeamSeekLeader",
+        "handlerName":  "handle_vm_cmdTeamSeekLeader",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805980c",
+        "handlerCode":  "void handle_vm_cmdTeamSeekLeader(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto target = make_string(body + off, nameLen);\n    off += nameLen;\n    if (off + 2 \u003e len) return;\n    uint16_t v12 = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t v15 = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t v13 = body[off];\n    applyLpc(\"cmd_team_seek_leader\", {make_int(cl.clientNo), target, make_int(v12), make_int(v15), make_int(v13)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8774,
+        "lpcFun":  "cmd_team_seek_leader",
+        "bodyFields":  [
+                           "u8len string target",
+                           "u16BE v12",
+                           "u16BE v15",
+                           "u8 v13"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2246, ATTRIB_CLIENT_USER, \"cmd_team_seek_leader\", 0 }"
+    },
+    {
+        "nArgs":  8,
+        "fun":  "vm_cmdTeamSeekMember",
+        "handlerName":  "handle_vm_cmdTeamSeekMember",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80598e0",
+        "handlerCode":  "void handle_vm_cmdTeamSeekMember(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto target = make_string(body + off, nameLen);\n    off += nameLen;\n    if (off + 2 \u003e len) return;\n    uint16_t minLv = rd16be(body, off); off += 2;\n    if (off + 2 \u003e len) return;\n    uint16_t v14 = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t v19 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t v23 = rd32be(body, off); off += 4;\n    if (off + 2 \u003e len) return;\n    uint8_t v25 = body[off++];\n    uint8_t v26 = body[off];\n    applyLpc(\"cmd_team_seek_member\", {make_int(cl.clientNo), target, make_int(minLv), make_int(v14), make_int(v19), make_int(v23), make_int(v25), make_int(v26)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  8544,
+        "lpcFun":  "cmd_team_seek_member",
+        "bodyFields":  [
+                           "u8len string target",
+                           "u16BE min_lv",
+                           "u16BE v14",
+                           "u32BE v19",
+                           "u32BE v23",
+                           "u8 v25",
+                           "u8 v26"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2160, ATTRIB_CLIENT_USER, \"cmd_team_seek_member\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_cmdTeleportEx",
+        "handlerName":  "handle_vm_cmdTeleportEx",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8060e14",
+        "handlerCode":  "void handle_vm_cmdTeleportEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 6 \u003e len) return;\n    uint32_t itemId = rd32be(body, off); off += 4;\n    uint16_t operType = rd16be(body, off); off += 2;\n    if (off + 1 \u003e len) return;\n    uint8_t paraLen = body[off++];\n    if (off + paraLen \u003e len) return;\n    auto para = make_string(body + off, paraLen);\n    applyLpc(\"cmd_teleport_ex\", {make_int(cl.clientNo), make_int(itemId), make_int(operType), para});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88,
+                        357
+                    ],
+        "cmdNo":  64843,
+        "lpcFun":  "cmd_teleport_ex",
+        "bodyFields":  [
+                           "u32BE item_id",
+                           "u16BE oper_type",
+                           "u8len string para"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD4B, ATTRIB_CLIENT_USER, \"cmd_teleport_ex\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTell",
+        "handlerName":  "handle_vm_cmdTell",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059a0c",
+        "handlerCode":  "void handle_vm_cmdTell(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen);\n    off += nameLen;\n    if (off + 1 \u003e len) return;\n    uint8_t msgLen = body[off++];\n    if (off + msgLen \u003e len) return;\n    auto msg = make_string(body + off, msgLen);\n    applyLpc(\"cmd_tell\", {make_int(cl.clientNo), name, msg});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  16650,
+        "lpcFun":  "cmd_tell",
+        "bodyFields":  [
+                           "u8len string name",
+                           "u8len string msg"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x410A, ATTRIB_CLIENT_USER, \"cmd_tell\", 0 }"
+    },
+    {
+        "nArgs":  7,
+        "fun":  "vm_cmdTellEx",
+        "handlerName":  "handle_vm_cmdTellEx",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8059ae0",
+        "handlerCode":  "void handle_vm_cmdTellEx(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t nameLen = body[off++];\n    if (off + nameLen \u003e len) return;\n    auto name = make_string(body + off, nameLen);\n    off += nameLen;\n    if (off + 6 \u003e len) return;\n    uint16_t comp = rd16be(body, off); off += 2;\n    uint16_t orgLen = rd16be(body, off); off += 2;\n    uint16_t msgLen = rd16be(body, off); off += 2;\n    if (off + msgLen \u003e len) return;\n    auto msg = make_string(body + off, msgLen);\n    off += msgLen;\n    if (off + 2 \u003e len) return;\n    uint16_t itemCount = rd16be(body, off); off += 2;\n    auto arrStr = std::make_shared\u003cArrayValue\u003e();\n    auto arrInt = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c itemCount; i++)\n    {\n        if (off + 1 \u003e len) return;\n        uint8_t sLen = body[off++];\n        if (off + sLen \u003e len) return;\n        arrStr-\u003eitems.push_back(make_string(body + off, sLen));\n        off += sLen;\n        if (off + 1 \u003e len) return;\n        arrInt-\u003eitems.push_back(make_int(body[off++]));\n    }\n    applyLpc(\"cmd_tell_ex\", {make_int(cl.clientNo), name, make_int(comp), make_int(orgLen), msg, arrStr, arrInt});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88,
+                        88,
+                        357,
+                        936,
+                        936
+                    ],
+        "cmdNo":  8594,
+        "lpcFun":  "cmd_tell_ex",
+        "bodyFields":  [
+                           "u8len string name",
+                           "u16BE comp",
+                           "u16BE orgLen",
+                           "u16BE msgLen",
+                           "msg bytes(msgLen)",
+                           "u16BE itemCount",
+                           "per item: u8len string + u8 int"
+                       ],
+        "note":  "msg len from u16BE; two arrays (strings+ints)",
+        "kcmdEntry":  "{ 0x2192, ATTRIB_CLIENT_USER, \"cmd_tell_ex\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdTempNpcEvent",
+        "handlerName":  "handle_vm_cmdTempNpcEvent",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8075638",
+        "handlerCode":  "void handle_vm_cmdTempNpcEvent(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t nameLen = body[0];\n    if (1 + nameLen \u003e len) return;\n    auto name = make_string(body + 1, nameLen);\n    applyLpc(\"cmd_temp_npc_event\", {make_int(cl.clientNo), name});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  12410,
+        "lpcFun":  "cmd_temp_npc_event",
+        "bodyFields":  [
+                           "u8len string name"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x307A, ATTRIB_CLIENT_USER, \"cmd_temp_npc_event\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdTestCsLogin",
+        "handlerName":  "handle_vm_cmdTestCsLogin",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x8078084",
+        "handlerCode":  "void handle_vm_cmdTestCsLogin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t actLen = body[0];\n    if (1 + actLen \u003e len) return;\n    auto activity = make_string(body + 1, actLen);\n    applyLpc(\"cmd_test_cs_login\", {make_int(cl.clientNo), activity});\n}",
+        "typeSeq":  [
+                        88,
+                        357
+                    ],
+        "cmdNo":  64872,
+        "lpcFun":  "cmd_test_cs_login",
+        "bodyFields":  [
+                           "u8len string activity"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD68, ATTRIB_CLIENT_USER, \"cmd_test_cs_login\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdTowerClicked",
+        "handlerName":  "handle_vm_cmdTowerClicked",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x80592b8",
+        "handlerCode":  "void handle_vm_cmdTowerClicked(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    applyLpc(\"cmd_tower_clicked\", {make_int(cl.clientNo), make_int(body[0])});\n}",
+        "typeSeq":  [
+                        88,
+                        88
+                    ],
+        "cmdNo":  4640,
+        "lpcFun":  "cmd_tower_clicked",
+        "bodyFields":  [
+                           "u8 towerIdx"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1220, ATTRIB_CLIENT_USER, \"cmd_tower_clicked\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTowerSelected",
+        "handlerName":  "handle_vm_cmdTowerSelected",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805925c",
+        "handlerCode":  "void handle_vm_cmdTowerSelected(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 5) return;\n    uint32_t towerId = rd32be(body, 0);\n    applyLpc(\"cmd_tower_selected\", {make_int(cl.clientNo), make_int(towerId), make_int(body[4])});\n}",
+        "typeSeq":  [
+                        88,
+                        88,
+                        88
+                    ],
+        "cmdNo":  12808,
+        "lpcFun":  "cmd_tower_selected",
+        "bodyFields":  [
+                           "u32BE towerId",
+                           "u8 sel"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x3208, ATTRIB_CLIENT_USER, \"cmd_tower_selected\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_cmdTradeAddGoods",
+        "handlerName":  "handle_vm_cmdTradeAddGoods",
+        "type":  1,
+        "status":  "ok",
+        "addr":  "0x805a3f0",
+        "handlerCode":  "void handle_vm_cmdTradeAddGoods(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    if (len \u003c 1) return;\n    uint8_t gLen = body[0];\n    if (1 + gLen \u003e len) return;\n    auto goodsId = make_string(body + 1, gLen);\n    size_t off = 1 + gLen;\n    if (off + 1 \u003e len) return;\n    applyLpc(\"cmd_trade_add_goods\", {make_int(cl.clientNo), goodsId, make_int(body[off])});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  20754,
+        "lpcFun":  "cmd_trade_add_goods",
+        "bodyFields":  [
+                           "u8len string goods_id",
+                           "u8 count"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x5112, ATTRIB_CLIENT_USER, \"cmd_trade_add_goods\", 0 }"
+    }
+]

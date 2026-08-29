@@ -1,0 +1,224 @@
+﻿[
+    {
+        "cmdNo":  809,
+        "fun":  "vm_msgEveryonePkOper",
+        "type":  2,
+        "addr":  "0x806f88c",
+        "lpcFun":  "msg_everyone_pk_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_msgEveryonePkOper",
+        "handlerCode":  "void handle_vm_msgEveryonePkOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"msg_everyone_pk_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x329, ATTRIB_INTERNAL_COMM, \"msg_everyone_pk_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  17443,
+        "fun":  "vm_msgTreasureTradingOper",
+        "type":  2,
+        "addr":  "0x806fa9c",
+        "lpcFun":  "msg_treasure_trading_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_msgTreasureTradingOper",
+        "handlerCode":  "void handle_vm_msgTreasureTradingOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"msg_treasure_trading_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x4423, ATTRIB_INTERNAL_COMM, \"msg_treasure_trading_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8505,
+        "fun":  "vm_msgLConvertSilverCoin",
+        "type":  2,
+        "addr":  "0x8072590",
+        "lpcFun":  "msg_l_convert_silver_coin",
+        "nArgs":  11,
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357,
+                        357,
+                        88,
+                        88,
+                        88,
+                        88,
+                        88
+                    ],
+        "bodyFields":  [
+                           "u8 len + gid string",
+                           "u8 len + account string",
+                           "u8 len + aaa_cookie string",
+                           "u8 len + gs_para1 string",
+                           "u8 len + gs_para2 string",
+                           "u16 BE result",
+                           "u32 BE val1",
+                           "u32 BE val2",
+                           "u32 BE val3",
+                           "u32 BE val4"
+                       ],
+        "handlerName":  "handle_vm_msgLConvertSilverCoin",
+        "handlerCode":  "void handle_vm_msgLConvertSilverCoin(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n0 = rd8(body, off); off += 1;\n    if (off + n0 \u003e len) return;\n    auto gid = make_string(body + off, n0); off += n0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off); off += 1;\n    if (off + n1 \u003e len) return;\n    auto account = make_string(body + off, n1); off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off); off += 1;\n    if (off + n2 \u003e len) return;\n    auto aaa_cookie = make_string(body + off, n2); off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off); off += 1;\n    if (off + n3 \u003e len) return;\n    auto gs_para1 = make_string(body + off, n3); off += n3;\n    if (off + 1 \u003e len) return;\n    uint8_t n4 = rd8(body, off); off += 1;\n    if (off + n4 \u003e len) return;\n    auto gs_para2 = make_string(body + off, n4); off += n4;\n    if (off + 2 \u003e len) return;\n    uint16_t result = rd16be(body, off); off += 2;\n    if (off + 4 \u003e len) return;\n    uint32_t v32 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t v36 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t v40 = rd32be(body, off); off += 4;\n    if (off + 4 \u003e len) return;\n    uint32_t v42 = rd32be(body, off); off += 4;\n    applyLpc(\"msg_l_convert_silver_coin\", {make_int(cl.clientNo), gid, account, aaa_cookie, gs_para1, gs_para2, make_int(result), make_int(v32), make_int(v36), make_int(v40), make_int(v42)});\n}",
+        "kcmdEntry":  "{ 0x2139, ATTRIB_INTERNAL_COMM, \"msg_l_convert_silver_coin\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  10244,
+        "fun":  "vm_cmdChannelOper",
+        "type":  2,
+        "addr":  "0x80727e8",
+        "lpcFun":  "cmd_channel_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdChannelOper",
+        "handlerCode":  "void handle_vm_cmdChannelOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"cmd_channel_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x2804, ATTRIB_INTERNAL_COMM, \"cmd_channel_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  8545,
+        "fun":  "vm_msgChannelOper",
+        "type":  2,
+        "addr":  "0x80729f8",
+        "lpcFun":  "msg_channel_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_msgChannelOper",
+        "handlerCode":  "void handle_vm_msgChannelOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"msg_channel_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x2161, ATTRIB_INTERNAL_COMM, \"msg_channel_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  4250,
+        "fun":  "vm_cmdCsaCommonOper",
+        "type":  2,
+        "addr":  "0x8072c08",
+        "lpcFun":  "cmd_csa_common_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdCsaCommonOper",
+        "handlerCode":  "void handle_vm_cmdCsaCommonOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"cmd_csa_common_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x109A, ATTRIB_INTERNAL_COMM, \"cmd_csa_common_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  14801,
+        "fun":  "vm_msgCsaCommonOper",
+        "type":  2,
+        "addr":  "0x8072e18",
+        "lpcFun":  "msg_csa_common_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_msgCsaCommonOper",
+        "handlerCode":  "void handle_vm_msgCsaCommonOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"msg_csa_common_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x39D1, ATTRIB_INTERNAL_COMM, \"msg_csa_common_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  6922,
+        "fun":  "vm_cmdCitywarOper",
+        "type":  2,
+        "addr":  "0x80746f8",
+        "lpcFun":  "cmd_citywar_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_cmdCitywarOper",
+        "handlerCode":  "void handle_vm_cmdCitywarOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"cmd_citywar_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0x1B0A, ATTRIB_INTERNAL_COMM, \"cmd_citywar_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    },
+    {
+        "cmdNo":  64021,
+        "fun":  "vm_msgCitywarOper",
+        "type":  2,
+        "addr":  "0x8074908",
+        "lpcFun":  "msg_citywar_oper",
+        "nArgs":  3,
+        "typeSeq":  [
+                        88,
+                        357,
+                        936
+                    ],
+        "bodyFields":  [
+                           "u8 len + command string",
+                           "u16 BE count",
+                           "count x (u16 BE len + string bytes)"
+                       ],
+        "handlerName":  "handle_vm_msgCitywarOper",
+        "handlerCode":  "void handle_vm_msgCitywarOper(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t cmdLen = rd8(body, off); off += 1;\n    if (off + cmdLen \u003e len) return;\n    auto command = make_string(body + off, cmdLen); off += cmdLen;\n    if (off + 2 \u003e len) return;\n    uint16_t count = rd16be(body, off); off += 2;\n    auto arr = std::make_shared\u003cArrayValue\u003e();\n    for (uint16_t i = 0; i \u003c count; ++i) {\n        if (off + 2 \u003e len) return;\n        uint16_t slen = rd16be(body, off); off += 2;\n        if (off + slen \u003e len) return;\n        arr-\u003eitems.push_back(make_string(body + off, slen)); off += slen;\n    }\n    applyLpc(\"msg_citywar_oper\", {make_int(cl.clientNo), command, arr});\n}",
+        "kcmdEntry":  "{ 0xFA15, ATTRIB_INTERNAL_COMM, \"msg_citywar_oper\", 0 }",
+        "status":  "ok",
+        "note":  ""
+    }
+]

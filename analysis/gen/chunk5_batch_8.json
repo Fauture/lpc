@@ -1,0 +1,210 @@
+﻿[
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLGetProtectInfo",
+        "handlerName":  "handle_vm_msgLGetProtectInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806ac34",
+        "handlerCode":  "void handle_vm_msgLGetProtectInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* account = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    const uint8_t* result = body + off; off += n2;\n    applyLpc(\"msg_l_get_protect_info\", {make_int(cl.clientNo), make_string(account, n1), make_string(result, n2)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  4641,
+        "lpcFun":  "msg_l_get_protect_info",
+        "bodyFields":  [
+                           "u8len account string",
+                           "u8len result string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1221, ATTRIB_INTERNAL_COMM, \"msg_l_get_protect_info\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgLQueryCoupon",
+        "handlerName":  "handle_vm_msgLQueryCoupon",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c11c",
+        "handlerCode":  "void handle_vm_msgLQueryCoupon(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* gid = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    const uint8_t* para = body + off; off += n2;\n    if (off + 2 \u003e len) return;\n    uint16_t n3 = rd16be(body, off);\n    if (off + n3 \u003e len) return;\n    const uint8_t* coupon = body + off; off += n3;\n    applyLpc(\"msg_l_query_coupon\", {make_int(cl.clientNo), make_string(gid, n1), make_string(para, n2), make_string(coupon, n3)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  9217,
+        "lpcFun":  "msg_l_query_coupon",
+        "bodyFields":  [
+                           "u8len gid string",
+                           "u8len para string",
+                           "u16 BE len + string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x2401, ATTRIB_INTERNAL_COMM, \"msg_l_query_coupon\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgLGetLocalEncryptInfo",
+        "handlerName":  "handle_vm_msgLGetLocalEncryptInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c234",
+        "handlerCode":  "void handle_vm_msgLGetLocalEncryptInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* account = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    const uint8_t* password = body + off; off += n2;\n    if (off + 2 \u003e len) return;\n    uint16_t flag = rd16be(body, off);\n    applyLpc(\"msg_l_get_local_encrypt_info\", {make_int(cl.clientNo), make_string(account, n1), make_string(password, n2), make_int(flag)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        88
+                    ],
+        "cmdNo":  5013,
+        "lpcFun":  "msg_l_get_local_encrypt_info",
+        "bodyFields":  [
+                           "u8len account string",
+                           "u8len password string",
+                           "u16 BE int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1395, ATTRIB_INTERNAL_COMM, \"msg_l_get_local_encrypt_info\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLSetLocalEncryptInfo",
+        "handlerName":  "handle_vm_msgLSetLocalEncryptInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c464",
+        "handlerCode":  "void handle_vm_msgLSetLocalEncryptInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* account = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t flag = rd8(body, off);\n    applyLpc(\"msg_l_set_local_encrypt_info\", {make_int(cl.clientNo), make_string(account, n1), make_int(flag)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  5015,
+        "lpcFun":  "msg_l_set_local_encrypt_info",
+        "bodyFields":  [
+                           "u8len account string",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x1397, ATTRIB_INTERNAL_COMM, \"msg_l_set_local_encrypt_info\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgLBorrowLocalEncrypt",
+        "handlerName":  "handle_vm_msgLBorrowLocalEncrypt",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c500",
+        "handlerCode":  "void handle_vm_msgLBorrowLocalEncrypt(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* account = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t flag = rd8(body, off);\n    applyLpc(\"msg_l_borrow_local_encrypt\", {make_int(cl.clientNo), make_string(account, n1), make_int(flag)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        88
+                    ],
+        "cmdNo":  5041,
+        "lpcFun":  "msg_l_borrow_local_encrypt",
+        "bodyFields":  [
+                           "u8len account string",
+                           "u8 int"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x13B1, ATTRIB_INTERNAL_COMM, \"msg_l_borrow_local_encrypt\", 0 }"
+    },
+    {
+        "nArgs":  3,
+        "fun":  "vm_msgSetPhahBonusInfo",
+        "handlerName":  "handle_vm_msgSetPhahBonusInfo",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806c59c",
+        "handlerCode":  "void handle_vm_msgSetPhahBonusInfo(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* account = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    const uint8_t* ret = body + off; off += n2;\n    applyLpc(\"msg_l_set_phah_bonus_info\", {make_int(cl.clientNo), make_string(account, n1), make_string(ret, n2)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357
+                    ],
+        "cmdNo":  64923,
+        "lpcFun":  "msg_l_set_phah_bonus_info",
+        "bodyFields":  [
+                           "u8len account string",
+                           "u8len ret string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xFD9B, ATTRIB_INTERNAL_COMM, \"msg_l_set_phah_bonus_info\", 0 }"
+    },
+    {
+        "nArgs":  6,
+        "fun":  "vm_msgLQueryCitys",
+        "handlerName":  "handle_vm_msgLQueryCitys",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806857c",
+        "handlerCode":  "void handle_vm_msgLQueryCitys(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* gid = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    const uint8_t* module = body + off; off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off);\n    if (off + n3 \u003e len) return;\n    const uint8_t* country = body + off; off += n3;\n    if (off + 1 \u003e len) return;\n    uint8_t n4 = rd8(body, off);\n    if (off + n4 \u003e len) return;\n    const uint8_t* province = body + off; off += n4;\n    if (off + 4 \u003e len) return;\n    uint32_t n5 = rd32be(body, off);\n    if (off + n5 \u003e len) return;\n    const uint8_t* citys = body + off; off += n5;\n    applyLpc(\"msg_l_query_citys\", {make_int(cl.clientNo), make_string(gid, n1), make_string(module, n2), make_string(country, n3), make_string(province, n4), make_string(citys, n5)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  9121,
+        "lpcFun":  "msg_l_query_citys",
+        "bodyFields":  [
+                           "u8len gid string",
+                           "u8len module string",
+                           "u8len country string",
+                           "u8len province string",
+                           "u32 BE len + string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x23A1, ATTRIB_INTERNAL_COMM, \"msg_l_query_citys\", 0 }"
+    },
+    {
+        "nArgs":  4,
+        "fun":  "vm_msgLGetAccCompChar",
+        "handlerName":  "handle_vm_msgLGetAccCompChar",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x806872c",
+        "handlerCode":  "void handle_vm_msgLGetAccCompChar(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    size_t off = 0;\n    if (off + 1 \u003e len) return;\n    uint8_t n1 = rd8(body, off);\n    if (off + n1 \u003e len) return;\n    const uint8_t* gid = body + off; off += n1;\n    if (off + 1 \u003e len) return;\n    uint8_t n2 = rd8(body, off);\n    if (off + n2 \u003e len) return;\n    const uint8_t* comp = body + off; off += n2;\n    if (off + 1 \u003e len) return;\n    uint8_t n3 = rd8(body, off);\n    if (off + n3 \u003e len) return;\n    const uint8_t* m_str = body + off; off += n3;\n    applyLpc(\"msg_l_get_acc_comp_char\", {make_int(cl.clientNo), make_string(gid, n1), make_string(comp, n2), make_string(m_str, n3)});\n}",
+        "typeSeq":  [
+                        88,
+                        357,
+                        357,
+                        357
+                    ],
+        "cmdNo":  5027,
+        "lpcFun":  "msg_l_get_acc_comp_char",
+        "bodyFields":  [
+                           "u8len gid string",
+                           "u8len comp string",
+                           "u8len m_str string"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0x13A3, ATTRIB_INTERNAL_COMM, \"msg_l_get_acc_comp_char\", 0 }"
+    },
+    {
+        "nArgs":  2,
+        "fun":  "vm_cmdCtaToServer",
+        "handlerName":  "handle_vm_cmdCtaToServer",
+        "type":  2,
+        "status":  "ok",
+        "addr":  "0x8068850",
+        "handlerCode":  "void handle_vm_cmdCtaToServer(GameClient\u0026 cl, const uint8_t* body, size_t len)\n{\n    applyLpc(\"cmd_cta_to_server\", {make_int(cl.clientNo), make_buffer(body, len)});\n}",
+        "typeSeq":  [
+                        88,
+                        228
+                    ],
+        "cmdNo":  63747,
+        "lpcFun":  "cmd_cta_to_server",
+        "bodyFields":  [
+                           "buffer = whole body"
+                       ],
+        "note":  "",
+        "kcmdEntry":  "{ 0xF903, ATTRIB_INTERNAL_COMM, \"cmd_cta_to_server\", 0 }"
+    }
+]

@@ -1,0 +1,4432 @@
+﻿[
+    {
+        "fun":  "vm_cmd_Apprentice_List",
+        "type":  1,
+        "cmdNo":  28680
+    },
+    {
+        "fun":  "vm_cmd_Recruit_Apprentice",
+        "type":  1,
+        "cmdNo":  20498
+    },
+    {
+        "fun":  "vm_cmd_Start_Award",
+        "type":  1,
+        "cmdNo":  8638
+    },
+    {
+        "fun":  "vm_cmd_StartMultibonus",
+        "type":  1,
+        "cmdNo":  28838
+    },
+    {
+        "fun":  "vm_cmdAccelerateMoveTo",
+        "type":  1,
+        "cmdNo":  8770
+    },
+    {
+        "fun":  "vm_cmdAccept",
+        "type":  1,
+        "cmdNo":  246
+    },
+    {
+        "fun":  "vm_cmdAcceptChatGroupInvite",
+        "type":  1,
+        "cmdNo":  8548
+    },
+    {
+        "fun":  "vm_cmdAcceptChatGroupJoin",
+        "type":  1,
+        "cmdNo":  8536
+    },
+    {
+        "fun":  "vm_cmdAcceptCommonConvenant",
+        "type":  1,
+        "cmdNo":  8646
+    },
+    {
+        "fun":  "vm_cmdAcceptConvenant",
+        "type":  1,
+        "cmdNo":  25600
+    },
+    {
+        "fun":  "vm_cmdAddAwardTimes",
+        "type":  1,
+        "cmdNo":  2572
+    },
+    {
+        "fun":  "vm_cmdAddBureauPage",
+        "type":  1,
+        "cmdNo":  20642
+    },
+    {
+        "fun":  "vm_cmdAddDunwuNimbus",
+        "type":  1,
+        "cmdNo":  61634
+    },
+    {
+        "fun":  "vm_cmdAddFriend",
+        "type":  1,
+        "cmdNo":  12376
+    },
+    {
+        "fun":  "vm_cmdAddGodbookDirect",
+        "type":  1,
+        "cmdNo":  64073
+    },
+    {
+        "fun":  "vm_cmdAddMaterial",
+        "type":  1,
+        "cmdNo":  8836
+    },
+    {
+        "fun":  "vm_cmdAddMountItem",
+        "type":  1,
+        "cmdNo":  8532
+    },
+    {
+        "fun":  "vm_cmdAddSkillEssence",
+        "type":  1,
+        "cmdNo":  4702
+    },
+    {
+        "fun":  "vm_cmdAdminBroadcast",
+        "type":  1,
+        "cmdNo":  9028
+    },
+    {
+        "fun":  "vm_cmdAdminCommonCommand",
+        "type":  1,
+        "cmdNo":  8980
+    },
+    {
+        "fun":  "vm_cmdAdminFetchPics",
+        "type":  1,
+        "cmdNo":  12014
+    },
+    {
+        "fun":  "vm_cmdAdminKickoff",
+        "type":  1,
+        "cmdNo":  52998
+    },
+    {
+        "fun":  "vm_cmdAdminOperSysBroadcast",
+        "type":  1,
+        "cmdNo":  8566
+    },
+    {
+        "fun":  "vm_cmdAdminPrintScreen",
+        "type":  1,
+        "cmdNo":  14866
+    },
+    {
+        "fun":  "vm_cmdAdminQueryMap",
+        "type":  1,
+        "cmdNo":  6908
+    },
+    {
+        "fun":  "vm_cmdAdminQueryNetInfo",
+        "type":  1,
+        "cmdNo":  8438
+    },
+    {
+        "fun":  "vm_cmdAdminQueryNpc",
+        "type":  1,
+        "cmdNo":  12316
+    },
+    {
+        "fun":  "vm_cmdAdminQueryPlayer",
+        "type":  1,
+        "cmdNo":  250
+    },
+    {
+        "fun":  "vm_cmdAdminQuerySkill",
+        "type":  1,
+        "cmdNo":  10030
+    },
+    {
+        "fun":  "vm_cmdAdminReboot",
+        "type":  1,
+        "cmdNo":  9282
+    },
+    {
+        "fun":  "vm_cmdAdminRequestMapList",
+        "type":  1,
+        "cmdNo":  28682
+    },
+    {
+        "fun":  "vm_cmdAdminSetAttrib",
+        "type":  1,
+        "cmdNo":  4964
+    },
+    {
+        "fun":  "vm_cmdAdminSetSkill",
+        "type":  1,
+        "cmdNo":  10264
+    },
+    {
+        "fun":  "vm_cmdAdminShutChannel",
+        "type":  1,
+        "cmdNo":  64856
+    },
+    {
+        "fun":  "vm_cmdAdminSniffAt",
+        "type":  1,
+        "cmdNo":  64812
+    },
+    {
+        "fun":  "vm_cmdAdminSrmouseClick",
+        "type":  1,
+        "cmdNo":  8776
+    },
+    {
+        "fun":  "vm_cmdAdminSummon",
+        "type":  1,
+        "cmdNo":  8824
+    },
+    {
+        "fun":  "vm_cmdAdminTeleport",
+        "type":  1,
+        "cmdNo":  90
+    },
+    {
+        "fun":  "vm_cmdAdminThrowInJail",
+        "type":  1,
+        "cmdNo":  4246
+    },
+    {
+        "fun":  "vm_cmdAdminThrowInJailEx",
+        "type":  1,
+        "cmdNo":  8382
+    },
+    {
+        "fun":  "vm_cmdAdminTimeBroadcast",
+        "type":  1,
+        "cmdNo":  24578
+    },
+    {
+        "fun":  "vm_cmdAdminTransport",
+        "type":  1,
+        "cmdNo":  8708
+    },
+    {
+        "fun":  "vm_cmdAnswerResult",
+        "type":  1,
+        "cmdNo":  4286
+    },
+    {
+        "fun":  "vm_cmdAnswerSurvey",
+        "type":  1,
+        "cmdNo":  4366
+    },
+    {
+        "fun":  "vm_cmdAntiHackCollect",
+        "type":  1,
+        "cmdNo":  64814
+    },
+    {
+        "fun":  "vm_cmdApex",
+        "type":  1,
+        "cmdNo":  6913
+    },
+    {
+        "fun":  "vm_cmdApply",
+        "type":  1,
+        "cmdNo":  8716
+    },
+    {
+        "fun":  "vm_cmdApplyCard",
+        "type":  1,
+        "cmdNo":  64248
+    },
+    {
+        "fun":  "vm_cmdApplyEx",
+        "type":  1,
+        "cmdNo":  64822
+    },
+    {
+        "fun":  "vm_cmdApplyExquisite",
+        "type":  1,
+        "cmdNo":  2850
+    },
+    {
+        "fun":  "vm_cmdApplyOfflineStall",
+        "type":  1,
+        "cmdNo":  4310
+    },
+    {
+        "fun":  "vm_cmdApplyOnFriend",
+        "type":  1,
+        "cmdNo":  10242
+    },
+    {
+        "fun":  "vm_cmdApplyOnItem",
+        "type":  1,
+        "cmdNo":  8300
+    },
+    {
+        "fun":  "vm_cmdApplyOther",
+        "type":  1,
+        "cmdNo":  9734
+    },
+    {
+        "fun":  "vm_cmdApplyQuestionItem",
+        "type":  1,
+        "cmdNo":  14864
+    },
+    {
+        "fun":  "vm_cmdArenaEnter",
+        "type":  1,
+        "cmdNo":  16640
+    },
+    {
+        "fun":  "vm_cmdArenaGoodBuy",
+        "type":  1,
+        "cmdNo":  8136
+    },
+    {
+        "fun":  "vm_cmdArenaGoodlist",
+        "type":  1,
+        "cmdNo":  4412
+    },
+    {
+        "fun":  "vm_cmdArenaGoodsSell",
+        "type":  1,
+        "cmdNo":  2578
+    },
+    {
+        "fun":  "vm_cmdArenaHallExit",
+        "type":  1,
+        "cmdNo":  4390
+    },
+    {
+        "fun":  "vm_cmdArenaHallFight",
+        "type":  1,
+        "cmdNo":  16598
+    },
+    {
+        "fun":  "vm_cmdArenaHallJoinRoom",
+        "type":  1,
+        "cmdNo":  9256
+    },
+    {
+        "fun":  "vm_cmdArenaHallRequestCI",
+        "type":  1,
+        "cmdNo":  10254
+    },
+    {
+        "fun":  "vm_cmdArenaHallRequestPL",
+        "type":  1,
+        "cmdNo":  8468
+    },
+    {
+        "fun":  "vm_cmdArenaHallRequestRD",
+        "type":  1,
+        "cmdNo":  61608
+    },
+    {
+        "fun":  "vm_cmdArenaHallRequestRL",
+        "type":  1,
+        "cmdNo":  8236
+    },
+    {
+        "fun":  "vm_cmdArenaLookOn",
+        "type":  1,
+        "cmdNo":  61652
+    },
+    {
+        "fun":  "vm_cmdArenaMatchFixtures",
+        "type":  1,
+        "cmdNo":  8226
+    },
+    {
+        "fun":  "vm_cmdArenaMatchJoinRoom",
+        "type":  1,
+        "cmdNo":  8232
+    },
+    {
+        "fun":  "vm_cmdArenaMatchList",
+        "type":  1,
+        "cmdNo":  8248
+    },
+    {
+        "fun":  "vm_cmdArenaMatchRoomDetail",
+        "type":  1,
+        "cmdNo":  8230
+    },
+    {
+        "fun":  "vm_cmdArenaMatchRooms",
+        "type":  1,
+        "cmdNo":  8228
+    },
+    {
+        "fun":  "vm_cmdArenaOpenRank",
+        "type":  1,
+        "cmdNo":  9026
+    },
+    {
+        "fun":  "vm_cmdArenaQueryRankByName",
+        "type":  1,
+        "cmdNo":  8412
+    },
+    {
+        "fun":  "vm_cmdArenaRankList",
+        "type":  1,
+        "cmdNo":  8800
+    },
+    {
+        "fun":  "vm_cmdArenaRoom",
+        "type":  1,
+        "cmdNo":  4230
+    },
+    {
+        "fun":  "vm_cmdArenaRoomAction",
+        "type":  1,
+        "cmdNo":  8234
+    },
+    {
+        "fun":  "vm_cmdArenaRoomKickOut",
+        "type":  1,
+        "cmdNo":  10018
+    },
+    {
+        "fun":  "vm_cmdArenaServerList",
+        "type":  1,
+        "cmdNo":  12804
+    },
+    {
+        "fun":  "vm_cmdArenaSwitchServer",
+        "type":  1,
+        "cmdNo":  8356
+    },
+    {
+        "fun":  "vm_cmdAskFields",
+        "type":  1,
+        "cmdNo":  28686
+    },
+    {
+        "fun":  "vm_cmdAskPill",
+        "type":  1,
+        "cmdNo":  2828
+    },
+    {
+        "fun":  "vm_cmdAskSkillDesc",
+        "type":  1,
+        "cmdNo":  4966
+    },
+    {
+        "fun":  "vm_cmdAsktaoSound",
+        "type":  1,
+        "cmdNo":  4465
+    },
+    {
+        "fun":  "vm_cmdAssignAttrib",
+        "type":  1,
+        "cmdNo":  16610
+    },
+    {
+        "fun":  "vm_cmdAssignChildAttrib",
+        "type":  1,
+        "cmdNo":  64884
+    },
+    {
+        "fun":  "vm_cmdAssignPolar",
+        "type":  1,
+        "cmdNo":  9122
+    },
+    {
+        "fun":  "vm_cmdAssignResist",
+        "type":  1,
+        "cmdNo":  8786
+    },
+    {
+        "fun":  "vm_cmdAssignUpgrade",
+        "type":  1,
+        "cmdNo":  61646
+    },
+    {
+        "fun":  "vm_cmdAuthMatrixForGs",
+        "type":  1,
+        "cmdNo":  64919
+    },
+    {
+        "fun":  "vm_cmdAuthRefreshPicForGs",
+        "type":  1,
+        "cmdNo":  12312
+    },
+    {
+        "fun":  "vm_cmdAuthVerifyCode",
+        "type":  1,
+        "cmdNo":  248
+    },
+    {
+        "fun":  "vm_cmdAuthVipSms",
+        "type":  1,
+        "cmdNo":  62324
+    },
+    {
+        "fun":  "vm_cmdAutoCombatTime",
+        "type":  1,
+        "cmdNo":  61601
+    },
+    {
+        "fun":  "vm_cmdBottleDig",
+        "type":  1,
+        "cmdNo":  64896
+    },
+    {
+        "fun":  "vm_cmdBottleOpen",
+        "type":  1,
+        "cmdNo":  64818
+    },
+    {
+        "fun":  "vm_cmdBottleOpenInterface",
+        "type":  1,
+        "cmdNo":  8592
+    },
+    {
+        "fun":  "vm_cmdBottleReply",
+        "type":  1,
+        "cmdNo":  16392
+    },
+    {
+        "fun":  "vm_cmdBottleThrow",
+        "type":  1,
+        "cmdNo":  4992
+    },
+    {
+        "fun":  "vm_cmdBottleThrowBack",
+        "type":  1,
+        "cmdNo":  8264
+    },
+    {
+        "fun":  "vm_cmdBroadcastCombatList",
+        "type":  1,
+        "cmdNo":  8574
+    },
+    {
+        "fun":  "vm_cmdButtonDoubleBonus",
+        "type":  1,
+        "cmdNo":  63752
+    },
+    {
+        "fun":  "vm_cmdBuyCard",
+        "type":  1,
+        "cmdNo":  20590
+    },
+    {
+        "fun":  "vm_cmdBuyCustomizePack",
+        "type":  1,
+        "cmdNo":  8978
+    },
+    {
+        "fun":  "vm_cmdBuyEcard",
+        "type":  1,
+        "cmdNo":  16660
+    },
+    {
+        "fun":  "vm_cmdBuyFromAskTaoShowMall",
+        "type":  1,
+        "cmdNo":  8648
+    },
+    {
+        "fun":  "vm_cmdBuyFromOnlineMall",
+        "type":  1,
+        "cmdNo":  4454
+    },
+    {
+        "fun":  "vm_cmdBuyFromStall",
+        "type":  1,
+        "cmdNo":  13580
+    },
+    {
+        "fun":  "vm_cmdBuyService",
+        "type":  1,
+        "cmdNo":  10268
+    },
+    {
+        "fun":  "vm_cmdCalcMountAttrib",
+        "type":  1,
+        "cmdNo":  8586
+    },
+    {
+        "fun":  "vm_cmdCalcPetGrow",
+        "type":  1,
+        "cmdNo":  8726
+    },
+    {
+        "fun":  "vm_cmdCalcUserAttribs",
+        "type":  1,
+        "cmdNo":  10262
+    },
+    {
+        "fun":  "vm_cmdCancelAuthVipSms",
+        "type":  1,
+        "cmdNo":  4706
+    },
+    {
+        "fun":  "vm_cmdCancelReleaseSafeLogin",
+        "type":  1,
+        "cmdNo":  8636
+    },
+    {
+        "fun":  "vm_cmdCareItem",
+        "type":  1,
+        "cmdNo":  4248
+    },
+    {
+        "fun":  "vm_cmdCast",
+        "type":  1,
+        "cmdNo":  4438
+    },
+    {
+        "fun":  "vm_cmdCasualGameDoAction",
+        "type":  1,
+        "cmdNo":  4372
+    },
+    {
+        "fun":  "vm_cmdCasualOperGame",
+        "type":  1,
+        "cmdNo":  20644
+    },
+    {
+        "fun":  "vm_cmdCatchPker",
+        "type":  1,
+        "cmdNo":  6662
+    },
+    {
+        "fun":  "vm_cmdCCatchPet",
+        "type":  1,
+        "cmdNo":  8810
+    },
+    {
+        "fun":  "vm_cmdCCDoAction",
+        "type":  1,
+        "cmdNo":  15888
+    },
+    {
+        "fun":  "vm_cmdCCFinishRound",
+        "type":  1,
+        "cmdNo":  8768
+    },
+    {
+        "fun":  "vm_cmdCCSurrender",
+        "type":  1,
+        "cmdNo":  61638
+    },
+    {
+        "fun":  "vm_cmdCCSwitchCard",
+        "type":  1,
+        "cmdNo":  52994
+    },
+    {
+        "fun":  "vm_cmdCDoAction0",
+        "type":  1,
+        "cmdNo":  8570
+    },
+    {
+        "fun":  "vm_cmdCDoAction1",
+        "type":  1,
+        "cmdNo":  4408
+    },
+    {
+        "fun":  "vm_cmdCDoAction2",
+        "type":  1,
+        "cmdNo":  4356
+    },
+    {
+        "fun":  "vm_cmdCdWishingGoods",
+        "type":  1,
+        "cmdNo":  8340
+    },
+    {
+        "fun":  "vm_cmdCdWishingRate",
+        "type":  1,
+        "cmdNo":  28842
+    },
+    {
+        "fun":  "vm_cmdCdWishingStart",
+        "type":  1,
+        "cmdNo":  20742
+    },
+    {
+        "fun":  "vm_cmdCEndAnimate",
+        "type":  1,
+        "cmdNo":  16644
+    },
+    {
+        "fun":  "vm_cmdCFlee",
+        "type":  1,
+        "cmdNo":  4360
+    },
+    {
+        "fun":  "vm_cmdChallengeAnswer",
+        "type":  1,
+        "cmdNo":  8568
+    },
+    {
+        "fun":  "vm_cmdChangeArenaRoomSeat",
+        "type":  1,
+        "cmdNo":  4278
+    },
+    {
+        "fun":  "vm_cmdChangeAttribPlan",
+        "type":  1,
+        "cmdNo":  64934
+    },
+    {
+        "fun":  "vm_cmdChangeChatGroupSetting",
+        "type":  1,
+        "cmdNo":  4122
+    },
+    {
+        "fun":  "vm_cmdChangeFurnitureDir",
+        "type":  1,
+        "cmdNo":  9014
+    },
+    {
+        "fun":  "vm_cmdChangeItemAttrib",
+        "type":  1,
+        "cmdNo":  8476
+    },
+    {
+        "fun":  "vm_cmdChangeTeamLeader",
+        "type":  1,
+        "cmdNo":  8628
+    },
+    {
+        "fun":  "vm_cmdChangeTitle",
+        "type":  1,
+        "cmdNo":  10984
+    },
+    {
+        "fun":  "vm_cmdChangeTitleEffect",
+        "type":  1,
+        "cmdNo":  4354
+    },
+    {
+        "fun":  "vm_cmdChangeUpgradeState",
+        "type":  1,
+        "cmdNo":  16508
+    },
+    {
+        "fun":  "vm_cmdChangeUserState",
+        "type":  1,
+        "cmdNo":  64804
+    },
+    {
+        "fun":  "vm_cmdChangeZhenfa",
+        "type":  1,
+        "cmdNo":  12386
+    },
+    {
+        "fun":  "vm_cmdChargeVendueFetch",
+        "type":  1,
+        "cmdNo":  61661
+    },
+    {
+        "fun":  "vm_cmdChargeVendueOfferPrice",
+        "type":  1,
+        "cmdNo":  9139
+    },
+    {
+        "fun":  "vm_cmdChargeVendueRefresh",
+        "type":  1,
+        "cmdNo":  13569
+    },
+    {
+        "fun":  "vm_cmdChargeVendueStoreClosed",
+        "type":  1,
+        "cmdNo":  4319
+    },
+    {
+        "fun":  "vm_cmdCharPractice",
+        "type":  1,
+        "cmdNo":  5034
+    },
+    {
+        "fun":  "vm_cmdChat",
+        "type":  1,
+        "cmdNo":  8822
+    },
+    {
+        "fun":  "vm_cmdChatEx",
+        "type":  1,
+        "cmdNo":  15076
+    },
+    {
+        "fun":  "vm_cmdChatGroupLog",
+        "type":  1,
+        "cmdNo":  4340
+    },
+    {
+        "fun":  "vm_cmdCheckSafeAnswer",
+        "type":  1,
+        "cmdNo":  8848
+    },
+    {
+        "fun":  "vm_cmdCheckServer",
+        "type":  1,
+        "cmdNo":  20744
+    },
+    {
+        "fun":  "vm_cmdChildEnterHall",
+        "type":  1,
+        "cmdNo":  16674
+    },
+    {
+        "fun":  "vm_cmdChildEnterMap",
+        "type":  1,
+        "cmdNo":  9142
+    },
+    {
+        "fun":  "vm_cmdChildSkillLevelUp",
+        "type":  1,
+        "cmdNo":  20488
+    },
+    {
+        "fun":  "vm_cmdChildUseCombat",
+        "type":  1,
+        "cmdNo":  6906
+    },
+    {
+        "fun":  "vm_cmdChildUseSkill",
+        "type":  1,
+        "cmdNo":  10240
+    },
+    {
+        "fun":  "vm_cmdCitywarGiveOrders",
+        "type":  1,
+        "cmdNo":  13320
+    },
+    {
+        "fun":  "vm_cmdCleanRequest",
+        "type":  1,
+        "cmdNo":  6668
+    },
+    {
+        "fun":  "vm_cmdClearBag",
+        "type":  1,
+        "cmdNo":  8116
+    },
+    {
+        "fun":  "vm_cmdClickedLinker",
+        "type":  1,
+        "cmdNo":  8755
+    },
+    {
+        "fun":  "vm_cmdClientBehavior",
+        "type":  1,
+        "cmdNo":  4406
+    },
+    {
+        "fun":  "vm_cmdCloneSpecialEquip",
+        "type":  1,
+        "cmdNo":  26
+    },
+    {
+        "fun":  "vm_cmdCloneUpgradeStone",
+        "type":  1,
+        "cmdNo":  97
+    },
+    {
+        "fun":  "vm_cmdCloseBureau",
+        "type":  1,
+        "cmdNo":  4414
+    },
+    {
+        "fun":  "vm_cmdCloseMenu",
+        "type":  1,
+        "cmdNo":  64928
+    },
+    {
+        "fun":  "vm_cmdCloseRemoteStore",
+        "type":  1,
+        "cmdNo":  16648
+    },
+    {
+        "fun":  "vm_cmdCloseTalkDrama",
+        "type":  1,
+        "cmdNo":  8968
+    },
+    {
+        "fun":  "vm_cmdCloseTaotaotao",
+        "type":  1,
+        "cmdNo":  8320
+    },
+    {
+        "fun":  "vm_cmdCoinCancelOrder",
+        "type":  1,
+        "cmdNo":  10754
+    },
+    {
+        "fun":  "vm_cmdCoinDealOrder",
+        "type":  1,
+        "cmdNo":  32262
+    },
+    {
+        "fun":  "vm_cmdCoinFetchStore",
+        "type":  1,
+        "cmdNo":  14342
+    },
+    {
+        "fun":  "vm_cmdCoinOpenMall",
+        "type":  1,
+        "cmdNo":  10250
+    },
+    {
+        "fun":  "vm_cmdCoinRefreshMall",
+        "type":  1,
+        "cmdNo":  196
+    },
+    {
+        "fun":  "vm_cmdCoinSubmitOrder",
+        "type":  1,
+        "cmdNo":  64792
+    },
+    {
+        "fun":  "vm_cmdCollectData",
+        "type":  1,
+        "cmdNo":  8580
+    },
+    {
+        "fun":  "vm_cmdCommonGuessDrawBonus",
+        "type":  1,
+        "cmdNo":  84
+    },
+    {
+        "fun":  "vm_cmdCommonGuessInfo",
+        "type":  1,
+        "cmdNo":  4136
+    },
+    {
+        "fun":  "vm_cmdCommonGuessList",
+        "type":  1,
+        "cmdNo":  8738
+    },
+    {
+        "fun":  "vm_cmdCommonGuessStartGuess",
+        "type":  1,
+        "cmdNo":  12806
+    },
+    {
+        "fun":  "vm_cmdConfirmTakeProperty",
+        "type":  1,
+        "cmdNo":  15920
+    },
+    {
+        "fun":  "vm_cmdControlPartyChannel",
+        "type":  1,
+        "cmdNo":  12016
+    },
+    {
+        "fun":  "vm_cmdCreateChatGroup",
+        "type":  1,
+        "cmdNo":  12398
+    },
+    {
+        "fun":  "vm_cmdCreateNewChar",
+        "type":  1,
+        "cmdNo":  8284
+    },
+    {
+        "fun":  "vm_cmdCreateNewRaid",
+        "type":  1,
+        "cmdNo":  8496
+    },
+    {
+        "fun":  "vm_cmdCscAddSignFee",
+        "type":  1,
+        "cmdNo":  36
+    },
+    {
+        "fun":  "vm_cmdCscViewCompeteSort",
+        "type":  1,
+        "cmdNo":  64074
+    },
+    {
+        "fun":  "vm_cmdCSelectMenuItem",
+        "type":  1,
+        "cmdNo":  10
+    },
+    {
+        "fun":  "vm_cmdCSetPos",
+        "type":  1,
+        "cmdNo":  4620
+    },
+    {
+        "fun":  "vm_cmdCsExchange",
+        "type":  1,
+        "cmdNo":  10028
+    },
+    {
+        "fun":  "vm_cmdCUseStunChildbook",
+        "type":  1,
+        "cmdNo":  8474
+    },
+    {
+        "fun":  "vm_cmdDeleteExistedChar",
+        "type":  1,
+        "cmdNo":  4698
+    },
+    {
+        "fun":  "vm_cmdDeleteMusic",
+        "type":  1,
+        "cmdNo":  10270
+    },
+    {
+        "fun":  "vm_cmdDeposit",
+        "type":  1,
+        "cmdNo":  8294
+    },
+    {
+        "fun":  "vm_cmdDevelopSkill",
+        "type":  1,
+        "cmdNo":  64864
+    },
+    {
+        "fun":  "vm_cmdDigPartyFragment",
+        "type":  1,
+        "cmdNo":  4380
+    },
+    {
+        "fun":  "vm_cmdDismissChatGroup",
+        "type":  1,
+        "cmdNo":  11722
+    },
+    {
+        "fun":  "vm_cmdDistributeRecruitment",
+        "type":  1,
+        "cmdNo":  12356
+    },
+    {
+        "fun":  "vm_cmdDivide",
+        "type":  1,
+        "cmdNo":  4416
+    },
+    {
+        "fun":  "vm_cmdDivideInStore",
+        "type":  1,
+        "cmdNo":  34
+    },
+    {
+        "fun":  "vm_cmdDoucdhChallenge",
+        "type":  1,
+        "cmdNo":  8798
+    },
+    {
+        "fun":  "vm_cmdDraftModifyMyInfo",
+        "type":  1,
+        "cmdNo":  4421
+    },
+    {
+        "fun":  "vm_cmdDraftPresentFlower",
+        "type":  1,
+        "cmdNo":  12306
+    },
+    {
+        "fun":  "vm_cmdDraftReport",
+        "type":  1,
+        "cmdNo":  15890
+    },
+    {
+        "fun":  "vm_cmdDraftRequestMyInfo",
+        "type":  1,
+        "cmdNo":  4614
+    },
+    {
+        "fun":  "vm_cmdDraftRequestStageInfo",
+        "type":  1,
+        "cmdNo":  8796
+    },
+    {
+        "fun":  "vm_cmdDraftRequestStageRank",
+        "type":  1,
+        "cmdNo":  9132
+    },
+    {
+        "fun":  "vm_cmdDraftRoll",
+        "type":  1,
+        "cmdNo":  8736
+    },
+    {
+        "fun":  "vm_cmdDraftVote",
+        "type":  1,
+        "cmdNo":  28700
+    },
+    {
+        "fun":  "vm_cmdDrawCardRankBonus",
+        "type":  1,
+        "cmdNo":  8772
+    },
+    {
+        "fun":  "vm_cmdDrop",
+        "type":  1,
+        "cmdNo":  8758
+    },
+    {
+        "fun":  "vm_cmdDropChild",
+        "type":  1,
+        "cmdNo":  16390
+    },
+    {
+        "fun":  "vm_cmdDropPet",
+        "type":  1,
+        "cmdNo":  13056
+    },
+    {
+        "fun":  "vm_cmdDropRandomBoxAward",
+        "type":  1,
+        "cmdNo":  64820
+    },
+    {
+        "fun":  "vm_cmdDropTask",
+        "type":  1,
+        "cmdNo":  16504
+    },
+    {
+        "fun":  "vm_cmdDungeonViewTasks",
+        "type":  1,
+        "cmdNo":  8483
+    },
+    {
+        "fun":  "vm_cmdEmote",
+        "type":  1,
+        "cmdNo":  7176
+    },
+    {
+        "fun":  "vm_cmdEndChallenge",
+        "type":  1,
+        "cmdNo":  52996
+    },
+    {
+        "fun":  "vm_cmdEndRaise",
+        "type":  1,
+        "cmdNo":  64938
+    },
+    {
+        "fun":  "vm_cmdEndRecruitment",
+        "type":  1,
+        "cmdNo":  64808
+    },
+    {
+        "fun":  "vm_cmdEnterArenaRoom",
+        "type":  1,
+        "cmdNo":  10002
+    },
+    {
+        "fun":  "vm_cmdEnterRoom0",
+        "type":  1,
+        "cmdNo":  4134
+    },
+    {
+        "fun":  "vm_cmdEnterRoom1",
+        "type":  1,
+        "cmdNo":  9034
+    },
+    {
+        "fun":  "vm_cmdEnterRoom2",
+        "type":  1,
+        "cmdNo":  8722
+    },
+    {
+        "fun":  "vm_cmdEquip",
+        "type":  1,
+        "cmdNo":  4648
+    },
+    {
+        "fun":  "vm_cmdEquipInbornStone",
+        "type":  1,
+        "cmdNo":  8322
+    },
+    {
+        "fun":  "vm_cmdEquipPetDress",
+        "type":  1,
+        "cmdNo":  8368
+    },
+    {
+        "fun":  "vm_cmdExchangeAppraise",
+        "type":  1,
+        "cmdNo":  64902
+    },
+    {
+        "fun":  "vm_cmdExchangeCancel",
+        "type":  1,
+        "cmdNo":  16472
+    },
+    {
+        "fun":  "vm_cmdExchangeChildAppellation",
+        "type":  1,
+        "cmdNo":  8642
+    },
+    {
+        "fun":  "vm_cmdExchangeOk",
+        "type":  1,
+        "cmdNo":  20484
+    },
+    {
+        "fun":  "vm_cmdExchangeOpen",
+        "type":  1,
+        "cmdNo":  14086
+    },
+    {
+        "fun":  "vm_cmdExchangeOpenEx",
+        "type":  1,
+        "cmdNo":  64017
+    },
+    {
+        "fun":  "vm_cmdExchangeSelect",
+        "type":  1,
+        "cmdNo":  4338
+    },
+    {
+        "fun":  "vm_cmdFeedChild",
+        "type":  1,
+        "cmdNo":  8498
+    },
+    {
+        "fun":  "vm_cmdFeedPet",
+        "type":  1,
+        "cmdNo":  8254
+    },
+    {
+        "fun":  "vm_cmdFeedPetXinfaExp",
+        "type":  1,
+        "cmdNo":  4458
+    },
+    {
+        "fun":  "vm_cmdFetchGbuyingCoin",
+        "type":  1,
+        "cmdNo":  8832
+    },
+    {
+        "fun":  "vm_cmdFetchOtherStore",
+        "type":  1,
+        "cmdNo":  8146
+    },
+    {
+        "fun":  "vm_cmdFight",
+        "type":  1,
+        "cmdNo":  4696
+    },
+    {
+        "fun":  "vm_cmdFinger",
+        "type":  1,
+        "cmdNo":  6902
+    },
+    {
+        "fun":  "vm_cmdFinishCombatGuide",
+        "type":  1,
+        "cmdNo":  62320
+    },
+    {
+        "fun":  "vm_cmdFinishInterfaceGuide",
+        "type":  1,
+        "cmdNo":  53004
+    },
+    {
+        "fun":  "vm_cmdFinishInterfaceStatus",
+        "type":  1,
+        "cmdNo":  64874
+    },
+    {
+        "fun":  "vm_cmdFinishQuestion",
+        "type":  1,
+        "cmdNo":  64846
+    },
+    {
+        "fun":  "vm_cmdFinishStall",
+        "type":  1,
+        "cmdNo":  5038
+    },
+    {
+        "fun":  "vm_cmdFishingApplyMultiCard",
+        "type":  1,
+        "cmdNo":  8472
+    },
+    {
+        "fun":  "vm_cmdFishingAutoBuyWeapon",
+        "type":  1,
+        "cmdNo":  4388
+    },
+    {
+        "fun":  "vm_cmdFishingBuyWeapon",
+        "type":  1,
+        "cmdNo":  8998
+    },
+    {
+        "fun":  "vm_cmdFishingChangeWeapon",
+        "type":  1,
+        "cmdNo":  16944
+    },
+    {
+        "fun":  "vm_cmdFishingFireBullet",
+        "type":  1,
+        "cmdNo":  9030
+    },
+    {
+        "fun":  "vm_cmdFishingOpenRemoteStore",
+        "type":  1,
+        "cmdNo":  9036
+    },
+    {
+        "fun":  "vm_cmdFishingQuit",
+        "type":  1,
+        "cmdNo":  4960
+    },
+    {
+        "fun":  "vm_cmdFishSwallowDie",
+        "type":  1,
+        "cmdNo":  4456
+    },
+    {
+        "fun":  "vm_cmdFishSwallowFinish",
+        "type":  1,
+        "cmdNo":  16594
+    },
+    {
+        "fun":  "vm_cmdFriendDrinkInvite",
+        "type":  1,
+        "cmdNo":  8588
+    },
+    {
+        "fun":  "vm_cmdFriendDrinkRefresh",
+        "type":  1,
+        "cmdNo":  4632
+    },
+    {
+        "fun":  "vm_cmdFriendTell",
+        "type":  1,
+        "cmdNo":  8966
+    },
+    {
+        "fun":  "vm_cmdFriendTellAuth",
+        "type":  1,
+        "cmdNo":  8380
+    },
+    {
+        "fun":  "vm_cmdFriendTellEx",
+        "type":  1,
+        "cmdNo":  10752
+    },
+    {
+        "fun":  "vm_cmdGather",
+        "type":  1,
+        "cmdNo":  8528
+    },
+    {
+        "fun":  "vm_cmdGbuyingBuyGoods",
+        "type":  1,
+        "cmdNo":  12308
+    },
+    {
+        "fun":  "vm_cmdGbuyingFetchCoin",
+        "type":  1,
+        "cmdNo":  8720
+    },
+    {
+        "fun":  "vm_cmdGbuyingFetchGoods",
+        "type":  1,
+        "cmdNo":  4998
+    },
+    {
+        "fun":  "vm_cmdGbuyingInjectCoin",
+        "type":  1,
+        "cmdNo":  5010
+    },
+    {
+        "fun":  "vm_cmdGbuyingOpenPage",
+        "type":  1,
+        "cmdNo":  12028
+    },
+    {
+        "fun":  "vm_cmdGeneralNotify",
+        "type":  1,
+        "cmdNo":  64868
+    },
+    {
+        "fun":  "vm_cmdGeneralRequest",
+        "type":  1,
+        "cmdNo":  14338
+    },
+    {
+        "fun":  "vm_cmdGet",
+        "type":  1,
+        "cmdNo":  9000
+    },
+    {
+        "fun":  "vm_cmdGetAchieveBonus",
+        "type":  1,
+        "cmdNo":  16402
+    },
+    {
+        "fun":  "vm_cmdGetAwardInfo",
+        "type":  1,
+        "cmdNo":  10024
+    },
+    {
+        "fun":  "vm_cmdGetClientAction",
+        "type":  1,
+        "cmdNo":  4377
+    },
+    {
+        "fun":  "vm_cmdGetClientPerformance",
+        "type":  1,
+        "cmdNo":  64013
+    },
+    {
+        "fun":  "vm_cmdGetClientPhyConfig",
+        "type":  1,
+        "cmdNo":  10511
+    },
+    {
+        "fun":  "vm_cmdGetDailyLoop",
+        "type":  1,
+        "cmdNo":  8576
+    },
+    {
+        "fun":  "vm_cmdGetImage",
+        "type":  1,
+        "cmdNo":  8992
+    },
+    {
+        "fun":  "vm_cmdGetNameByGid",
+        "type":  1,
+        "cmdNo":  64930
+    },
+    {
+        "fun":  "vm_cmdGetOrderRank",
+        "type":  1,
+        "cmdNo":  20485
+    },
+    {
+        "fun":  "vm_cmdGetPartyChannelDenyList",
+        "type":  1,
+        "cmdNo":  13574
+    },
+    {
+        "fun":  "vm_cmdGetPartyLog",
+        "type":  1,
+        "cmdNo":  8376
+    },
+    {
+        "fun":  "vm_cmdGetPetEvolveList",
+        "type":  1,
+        "cmdNo":  4290
+    },
+    {
+        "fun":  "vm_cmdGetPhoneAuthBindTime",
+        "type":  1,
+        "cmdNo":  178
+    },
+    {
+        "fun":  "vm_cmdGetRaiseBonus",
+        "type":  1,
+        "cmdNo":  64816
+    },
+    {
+        "fun":  "vm_cmdGetRandomBoxAward",
+        "type":  1,
+        "cmdNo":  61650
+    },
+    {
+        "fun":  "vm_cmdGetSafeQuestion",
+        "type":  1,
+        "cmdNo":  4268
+    },
+    {
+        "fun":  "vm_cmdGetSafeState",
+        "type":  1,
+        "cmdNo":  5024
+    },
+    {
+        "fun":  "vm_cmdGetTaskItem",
+        "type":  1,
+        "cmdNo":  8640
+    },
+    {
+        "fun":  "vm_cmdGetTodayStat",
+        "type":  1,
+        "cmdNo":  8242
+    },
+    {
+        "fun":  "vm_cmdGetUpdateNotice",
+        "type":  1,
+        "cmdNo":  4622
+    },
+    {
+        "fun":  "vm_cmdGoodsBuy",
+        "type":  1,
+        "cmdNo":  6892
+    },
+    {
+        "fun":  "vm_cmdGoodsSell",
+        "type":  1,
+        "cmdNo":  20620
+    },
+    {
+        "fun":  "vm_cmdGroupChannel",
+        "type":  1,
+        "cmdNo":  2570
+    },
+    {
+        "fun":  "vm_cmdGuardsChangeName",
+        "type":  1,
+        "cmdNo":  64809
+    },
+    {
+        "fun":  "vm_cmdGuardsCheer",
+        "type":  1,
+        "cmdNo":  6925
+    },
+    {
+        "fun":  "vm_cmdGuardsDropGuard",
+        "type":  1,
+        "cmdNo":  15877
+    },
+    {
+        "fun":  "vm_cmdGuardsRecover",
+        "type":  1,
+        "cmdNo":  8403
+    },
+    {
+        "fun":  "vm_cmdGuardsRefresh",
+        "type":  1,
+        "cmdNo":  12315
+    },
+    {
+        "fun":  "vm_cmdGuardsSetTactics",
+        "type":  1,
+        "cmdNo":  4345
+    },
+    {
+        "fun":  "vm_cmdGuessBonus",
+        "type":  1,
+        "cmdNo":  4638
+    },
+    {
+        "fun":  "vm_cmdGuessCheckLocked",
+        "type":  1,
+        "cmdNo":  8667
+    },
+    {
+        "fun":  "vm_cmdGuessEnd",
+        "type":  1,
+        "cmdNo":  9001
+    },
+    {
+        "fun":  "vm_cmdGuessOk",
+        "type":  1,
+        "cmdNo":  8416
+    },
+    {
+        "fun":  "vm_cmdHellDealer",
+        "type":  1,
+        "cmdNo":  16582
+    },
+    {
+        "fun":  "vm_cmdHsslRequestInfo",
+        "type":  1,
+        "cmdNo":  15906
+    },
+    {
+        "fun":  "vm_cmdHsslStartChallenge",
+        "type":  1,
+        "cmdNo":  13058
+    },
+    {
+        "fun":  "vm_cmdIdentifyEquip",
+        "type":  1,
+        "cmdNo":  8964
+    },
+    {
+        "fun":  "vm_cmdIgnoreConvenant",
+        "type":  1,
+        "cmdNo":  9088
+    },
+    {
+        "fun":  "vm_cmdInvite",
+        "type":  1,
+        "cmdNo":  8976
+    },
+    {
+        "fun":  "vm_cmdInviteChatGroupMember",
+        "type":  1,
+        "cmdNo":  11834
+    },
+    {
+        "fun":  "vm_cmdJoinChatGroup",
+        "type":  1,
+        "cmdNo":  8808
+    },
+    {
+        "fun":  "vm_cmdJoinSystemGroup",
+        "type":  1,
+        "cmdNo":  6894
+    },
+    {
+        "fun":  "vm_cmdKickout",
+        "type":  1,
+        "cmdNo":  14082
+    },
+    {
+        "fun":  "vm_cmdKill",
+        "type":  1,
+        "cmdNo":  64834
+    },
+    {
+        "fun":  "vm_cmdKillEx",
+        "type":  1,
+        "cmdNo":  4397
+    },
+    {
+        "fun":  "vm_cmdLaunchConvenant",
+        "type":  1,
+        "cmdNo":  8224
+    },
+    {
+        "fun":  "vm_cmdLcDoAction",
+        "type":  1,
+        "cmdNo":  25476
+    },
+    {
+        "fun":  "vm_cmdLearnCooking",
+        "type":  1,
+        "cmdNo":  8144
+    },
+    {
+        "fun":  "vm_cmdLearnSkill",
+        "type":  1,
+        "cmdNo":  8546
+    },
+    {
+        "fun":  "vm_cmdLearnZhenfa",
+        "type":  1,
+        "cmdNo":  16934
+    },
+    {
+        "fun":  "vm_cmdLeaveArenaRoom",
+        "type":  1,
+        "cmdNo":  64070
+    },
+    {
+        "fun":  "vm_cmdLeaveMagicTower",
+        "type":  1,
+        "cmdNo":  12374
+    },
+    {
+        "fun":  "vm_cmdLeaveTempTeam",
+        "type":  1,
+        "cmdNo":  4170
+    },
+    {
+        "fun":  "vm_cmdLGetSafeCtrlContent",
+        "type":  1,
+        "cmdNo":  65521
+    },
+    {
+        "fun":  "vm_cmdLgxyChallenge",
+        "type":  1,
+        "cmdNo":  64250
+    },
+    {
+        "fun":  "vm_cmdLIsConvertBotton",
+        "type":  1,
+        "cmdNo":  8448
+    },
+    {
+        "fun":  "vm_cmdListenMusic",
+        "type":  1,
+        "cmdNo":  14088
+    },
+    {
+        "fun":  "vm_cmdLoadExistedChar",
+        "type":  1,
+        "cmdNo":  4192
+    },
+    {
+        "fun":  "vm_cmdLocalEncryptBorrow",
+        "type":  1,
+        "cmdNo":  8982
+    },
+    {
+        "fun":  "vm_cmdLocalEncryptLocked",
+        "type":  1,
+        "cmdNo":  16690
+    },
+    {
+        "fun":  "vm_cmdLocalEncryptLockFailed",
+        "type":  1,
+        "cmdNo":  9250
+    },
+    {
+        "fun":  "vm_cmdLocalEncryptRequest",
+        "type":  1,
+        "cmdNo":  8560
+    },
+    {
+        "fun":  "vm_cmdLocalEncryptUnlock",
+        "type":  1,
+        "cmdNo":  9254
+    },
+    {
+        "fun":  "vm_cmdLockAccount",
+        "type":  1,
+        "cmdNo":  4110
+    },
+    {
+        "fun":  "vm_cmdLogin",
+        "type":  1,
+        "cmdNo":  16676
+    },
+    {
+        "fun":  "vm_cmdLogout",
+        "type":  1,
+        "cmdNo":  15914
+    },
+    {
+        "fun":  "vm_cmdLook",
+        "type":  1,
+        "cmdNo":  7174
+    },
+    {
+        "fun":  "vm_cmdLookOn",
+        "type":  1,
+        "cmdNo":  10004
+    },
+    {
+        "fun":  "vm_cmdLookonBroadcastCombat",
+        "type":  1,
+        "cmdNo":  12344
+    },
+    {
+        "fun":  "vm_cmdLookPlayer",
+        "type":  1,
+        "cmdNo":  8430
+    },
+    {
+        "fun":  "vm_cmdLotterySelect",
+        "type":  1,
+        "cmdNo":  10016
+    },
+    {
+        "fun":  "vm_cmdLSetSafeCtrlContent",
+        "type":  1,
+        "cmdNo":  12243
+    },
+    {
+        "fun":  "vm_cmdLuckySign",
+        "type":  1,
+        "cmdNo":  64898
+    },
+    {
+        "fun":  "vm_cmdMakeDecoration",
+        "type":  1,
+        "cmdNo":  4150
+    },
+    {
+        "fun":  "vm_cmdMakePill",
+        "type":  1,
+        "cmdNo":  21766
+    },
+    {
+        "fun":  "vm_cmdManageCity",
+        "type":  1,
+        "cmdNo":  16570
+    },
+    {
+        "fun":  "vm_cmdManageHouse",
+        "type":  1,
+        "cmdNo":  4446
+    },
+    {
+        "fun":  "vm_cmdManageMpDevice",
+        "type":  1,
+        "cmdNo":  64786
+    },
+    {
+        "fun":  "vm_cmdMergeMagicPicture",
+        "type":  1,
+        "cmdNo":  8318
+    },
+    {
+        "fun":  "vm_cmdMobileOperTask",
+        "type":  1,
+        "cmdNo":  61644
+    },
+    {
+        "fun":  "vm_cmdMobileRequestNpcList",
+        "type":  1,
+        "cmdNo":  5142
+    },
+    {
+        "fun":  "vm_cmdModifyCustomNpcList",
+        "type":  1,
+        "cmdNo":  15912
+    },
+    {
+        "fun":  "vm_cmdModifyItemRemark",
+        "type":  1,
+        "cmdNo":  64788
+    },
+    {
+        "fun":  "vm_cmdModifySchedule",
+        "type":  1,
+        "cmdNo":  12023
+    },
+    {
+        "fun":  "vm_cmdMountInbornStoneList",
+        "type":  1,
+        "cmdNo":  61166
+    },
+    {
+        "fun":  "vm_cmdMoveChildItem",
+        "type":  1,
+        "cmdNo":  64796
+    },
+    {
+        "fun":  "vm_cmdMoveOnCarpet",
+        "type":  1,
+        "cmdNo":  8582
+    },
+    {
+        "fun":  "vm_cmdMoveTo",
+        "type":  1,
+        "cmdNo":  16688
+    },
+    {
+        "fun":  "vm_cmdMovFromQiankundai",
+        "type":  1,
+        "cmdNo":  4690
+    },
+    {
+        "fun":  "vm_cmdMovToQiankundai",
+        "type":  1,
+        "cmdNo":  12309
+    },
+    {
+        "fun":  "vm_cmdMulAssignAttrib",
+        "type":  1,
+        "cmdNo":  4120
+    },
+    {
+        "fun":  "vm_cmdMulGoodsBuy",
+        "type":  1,
+        "cmdNo":  8120
+    },
+    {
+        "fun":  "vm_cmdMultiMoveTo",
+        "type":  1,
+        "cmdNo":  64882
+    },
+    {
+        "fun":  "vm_cmdMusicList",
+        "type":  1,
+        "cmdNo":  9474
+    },
+    {
+        "fun":  "vm_cmdNewbieFirstAction",
+        "type":  1,
+        "cmdNo":  9736
+    },
+    {
+        "fun":  "vm_cmdNewbiePlayedDrama",
+        "type":  1,
+        "cmdNo":  8534
+    },
+    {
+        "fun":  "vm_cmdNextQuestion",
+        "type":  1,
+        "cmdNo":  8578
+    },
+    {
+        "fun":  "vm_cmdNotifySendWeibo",
+        "type":  1,
+        "cmdNo":  19188
+    },
+    {
+        "fun":  "vm_cmdOpenAdventrueBox",
+        "type":  1,
+        "cmdNo":  4378
+    },
+    {
+        "fun":  "vm_cmdOpenArenaRoomSeat",
+        "type":  1,
+        "cmdNo":  12802
+    },
+    {
+        "fun":  "vm_cmdOpenAskTaoShowGiftBox",
+        "type":  1,
+        "cmdNo":  236
+    },
+    {
+        "fun":  "vm_cmdOpenAskTaoShowMall",
+        "type":  1,
+        "cmdNo":  8792
+    },
+    {
+        "fun":  "vm_cmdOpenAuthAllProtect",
+        "type":  1,
+        "cmdNo":  17440
+    },
+    {
+        "fun":  "vm_cmdOpenBoxAdventrueInterface",
+        "type":  1,
+        "cmdNo":  20494
+    },
+    {
+        "fun":  "vm_cmdOpenBureau",
+        "type":  1,
+        "cmdNo":  16596
+    },
+    {
+        "fun":  "vm_cmdOpenConfirmDlg",
+        "type":  1,
+        "cmdNo":  8530
+    },
+    {
+        "fun":  "vm_cmdOpenMenu0",
+        "type":  1,
+        "cmdNo":  8292
+    },
+    {
+        "fun":  "vm_cmdOpenMenu1",
+        "type":  1,
+        "cmdNo":  8272
+    },
+    {
+        "fun":  "vm_cmdOpenMenu2",
+        "type":  1,
+        "cmdNo":  28690
+    },
+    {
+        "fun":  "vm_cmdOpenMountInbornSkills",
+        "type":  1,
+        "cmdNo":  8812
+    },
+    {
+        "fun":  "vm_cmdOpenMusic",
+        "type":  1,
+        "cmdNo":  20490
+    },
+    {
+        "fun":  "vm_cmdOpenOnlineMall",
+        "type":  1,
+        "cmdNo":  15908
+    },
+    {
+        "fun":  "vm_cmdOpenSafeSetting",
+        "type":  1,
+        "cmdNo":  8624
+    },
+    {
+        "fun":  "vm_cmdOperatePetStore",
+        "type":  1,
+        "cmdNo":  20480
+    },
+    {
+        "fun":  "vm_cmdOperCasualGame",
+        "type":  1,
+        "cmdNo":  8962
+    },
+    {
+        "fun":  "vm_cmdOperDiscoverEvent",
+        "type":  1,
+        "cmdNo":  8124
+    },
+    {
+        "fun":  "vm_cmdOperElixir",
+        "type":  1,
+        "cmdNo":  4650
+    },
+    {
+        "fun":  "vm_cmdOperEnvelope",
+        "type":  1,
+        "cmdNo":  8794
+    },
+    {
+        "fun":  "vm_cmdoperlockexp",
+        "type":  1,
+        "cmdNo":  9488
+    },
+    {
+        "fun":  "vm_cmdOperLongtengShengshi",
+        "type":  1,
+        "cmdNo":  4316
+    },
+    {
+        "fun":  "vm_cmdOperLotteryTicket",
+        "type":  1,
+        "cmdNo":  10022
+    },
+    {
+        "fun":  "vm_cmdOperMagicPicture",
+        "type":  1,
+        "cmdNo":  64790
+    },
+    {
+        "fun":  "vm_cmdOperMaster",
+        "type":  1,
+        "cmdNo":  9284
+    },
+    {
+        "fun":  "vm_cmdoperpackeditem",
+        "type":  1,
+        "cmdNo":  16394
+    },
+    {
+        "fun":  "vm_cmdOperSecurity",
+        "type":  1,
+        "cmdNo":  15910
+    },
+    {
+        "fun":  "vm_cmdopersixanniinfo",
+        "type":  1,
+        "cmdNo":  16412
+    },
+    {
+        "fun":  "vm_cmdOperSortTask",
+        "type":  1,
+        "cmdNo":  8788
+    },
+    {
+        "fun":  "vm_cmdoperstrategywar",
+        "type":  1,
+        "cmdNo":  8562
+    },
+    {
+        "fun":  "vm_cmdOperTeleportItem",
+        "type":  1,
+        "cmdNo":  4450
+    },
+    {
+        "fun":  "vm_cmdOperTMoodInfo",
+        "type":  1,
+        "cmdNo":  7172
+    },
+    {
+        "fun":  "vm_cmdopervisualpacks",
+        "type":  1,
+        "cmdNo":  6904
+    },
+    {
+        "fun":  "vm_cmdOperXiaobaoSongshenbing",
+        "type":  1,
+        "cmdNo":  244
+    },
+    {
+        "fun":  "vm_cmdOtherMoveTo",
+        "type":  1,
+        "cmdNo":  8552
+    },
+    {
+        "fun":  "vm_cmdPartyBlackList",
+        "type":  1,
+        "cmdNo":  6660
+    },
+    {
+        "fun":  "vm_cmdPartyInfo",
+        "type":  1,
+        "cmdNo":  8410
+    },
+    {
+        "fun":  "vm_cmdPartyJobPrivilegeList",
+        "type":  1,
+        "cmdNo":  8118
+    },
+    {
+        "fun":  "vm_cmdPartyMembers",
+        "type":  1,
+        "cmdNo":  204
+    },
+    {
+        "fun":  "vm_cmdPartyModifyAnnouce",
+        "type":  1,
+        "cmdNo":  38
+    },
+    {
+        "fun":  "vm_cmdPartyModifyMember",
+        "type":  1,
+        "cmdNo":  9024
+    },
+    {
+        "fun":  "vm_cmdPartyRelation",
+        "type":  1,
+        "cmdNo":  8296
+    },
+    {
+        "fun":  "vm_cmdPartyRequestList",
+        "type":  1,
+        "cmdNo":  28840
+    },
+    {
+        "fun":  "vm_cmdPartySendMessage",
+        "type":  1,
+        "cmdNo":  53000
+    },
+    {
+        "fun":  "vm_cmdPasswordDlg",
+        "type":  1,
+        "cmdNo":  10010
+    },
+    {
+        "fun":  "vm_cmdPlaceBox",
+        "type":  1,
+        "cmdNo":  20502
+    },
+    {
+        "fun":  "vm_cmdPlaceFurniture",
+        "type":  1,
+        "cmdNo":  10246
+    },
+    {
+        "fun":  "vm_cmdPreAssignAttrib",
+        "type":  1,
+        "cmdNo":  8804
+    },
+    {
+        "fun":  "vm_cmdPreAssignChildAttrib",
+        "type":  1,
+        "cmdNo":  8432
+    },
+    {
+        "fun":  "vm_cmdPresentAskTaoShow",
+        "type":  1,
+        "cmdNo":  4330
+    },
+    {
+        "fun":  "vm_cmdPresentMusic",
+        "type":  1,
+        "cmdNo":  8434
+    },
+    {
+        "fun":  "vm_cmdPreviewPetPracticeBonus",
+        "type":  1,
+        "cmdNo":  9740
+    },
+    {
+        "fun":  "vm_cmdPrompt",
+        "type":  1,
+        "cmdNo":  64900
+    },
+    {
+        "fun":  "vm_cmdPromptBeforeLeave",
+        "type":  1,
+        "cmdNo":  16672
+    },
+    {
+        "fun":  "vm_cmdPurchaseAddOrder",
+        "type":  1,
+        "cmdNo":  12018
+    },
+    {
+        "fun":  "vm_cmdPurchaseCancleOrder",
+        "type":  1,
+        "cmdNo":  8834
+    },
+    {
+        "fun":  "vm_cmdPurchaseFetchCash",
+        "type":  1,
+        "cmdNo":  9124
+    },
+    {
+        "fun":  "vm_cmdPurchaseFetchItem",
+        "type":  1,
+        "cmdNo":  20496
+    },
+    {
+        "fun":  "vm_cmdPurchaseGetObjProp",
+        "type":  1,
+        "cmdNo":  8440
+    },
+    {
+        "fun":  "vm_cmdPurchaseGetOrderList",
+        "type":  1,
+        "cmdNo":  12358
+    },
+    {
+        "fun":  "vm_cmdPurchaseMatchOrder",
+        "type":  1,
+        "cmdNo":  62736
+    },
+    {
+        "fun":  "vm_cmdPurchaseMultiMatch",
+        "type":  1,
+        "cmdNo":  5040
+    },
+    {
+        "fun":  "vm_cmdPutChildItemDown",
+        "type":  1,
+        "cmdNo":  64866
+    },
+    {
+        "fun":  "vm_cmdPutDown",
+        "type":  1,
+        "cmdNo":  4646
+    },
+    {
+        "fun":  "vm_cmdPutInItem",
+        "type":  1,
+        "cmdNo":  64060
+    },
+    {
+        "fun":  "vm_cmdQueryActivity",
+        "type":  1,
+        "cmdNo":  64832
+    },
+    {
+        "fun":  "vm_cmdQueryPracticeChildren",
+        "type":  1,
+        "cmdNo":  8240
+    },
+    {
+        "fun":  "vm_cmdQueryPracticePets",
+        "type":  1,
+        "cmdNo":  8960
+    },
+    {
+        "fun":  "vm_cmdQueryRecruitInfo",
+        "type":  1,
+        "cmdNo":  6658
+    },
+    {
+        "fun":  "vm_cmdQueryReportInfo",
+        "type":  1,
+        "cmdNo":  15872
+    },
+    {
+        "fun":  "vm_cmdQueryUpgradeCash",
+        "type":  1,
+        "cmdNo":  8712
+    },
+    {
+        "fun":  "vm_cmdQueryUpgradeCashEx",
+        "type":  1,
+        "cmdNo":  16678
+    },
+    {
+        "fun":  "vm_cmdQueryUpgradeCoin",
+        "type":  1,
+        "cmdNo":  4626
+    },
+    {
+        "fun":  "vm_cmdQuitChatGroup",
+        "type":  1,
+        "cmdNo":  16522
+    },
+    {
+        "fun":  "vm_cmdQuitLookOn",
+        "type":  1,
+        "cmdNo":  12310
+    },
+    {
+        "fun":  "vm_cmdQuitLookonCombat",
+        "type":  1,
+        "cmdNo":  4156
+    },
+    {
+        "fun":  "vm_cmdQuitTeam",
+        "type":  1,
+        "cmdNo":  4112
+    },
+    {
+        "fun":  "vm_cmdRaceFeedNpc",
+        "type":  1,
+        "cmdNo":  30
+    },
+    {
+        "fun":  "vm_cmdRaceHitNpc",
+        "type":  1,
+        "cmdNo":  4694
+    },
+    {
+        "fun":  "vm_cmdRaceRequestBonus",
+        "type":  1,
+        "cmdNo":  8996
+    },
+    {
+        "fun":  "vm_cmdRaidKickoutMember",
+        "type":  1,
+        "cmdNo":  12017
+    },
+    {
+        "fun":  "vm_cmdRaidLeaveRaid",
+        "type":  1,
+        "cmdNo":  4935
+    },
+    {
+        "fun":  "vm_cmdRandomUserName",
+        "type":  1,
+        "cmdNo":  13202
+    },
+    {
+        "fun":  "vm_cmdReceiveAskTaoShowGift",
+        "type":  1,
+        "cmdNo":  8598
+    },
+    {
+        "fun":  "vm_cmdRecharge",
+        "type":  1,
+        "cmdNo":  4700
+    },
+    {
+        "fun":  "vm_cmdReciveInstructionTask",
+        "type":  1,
+        "cmdNo":  28
+    },
+    {
+        "fun":  "vm_cmdRecoverAskTaoShow",
+        "type":  1,
+        "cmdNo":  4962
+    },
+    {
+        "fun":  "vm_cmdRecoverChildBook",
+        "type":  1,
+        "cmdNo":  8850
+    },
+    {
+        "fun":  "vm_cmdRecoverMagicPennant",
+        "type":  1,
+        "cmdNo":  14340
+    },
+    {
+        "fun":  "vm_cmdRefresh",
+        "type":  1,
+        "cmdNo":  8740
+    },
+    {
+        "fun":  "vm_cmdRefreshFriend",
+        "type":  1,
+        "cmdNo":  4422
+    },
+    {
+        "fun":  "vm_cmdrefreshmountattrib",
+        "type":  1,
+        "cmdNo":  61636
+    },
+    {
+        "fun":  "vm_cmdRefreshpartyFragment",
+        "type":  1,
+        "cmdNo":  8714
+    },
+    {
+        "fun":  "vm_cmdRefreshPetGodbookSkills",
+        "type":  1,
+        "cmdNo":  12388
+    },
+    {
+        "fun":  "vm_cmdRefreshRecruitmentInfo",
+        "type":  1,
+        "cmdNo":  64794
+    },
+    {
+        "fun":  "vm_cmdRefreshSafeLogin",
+        "type":  1,
+        "cmdNo":  4670
+    },
+    {
+        "fun":  "vm_cmdRefreshServiceLog",
+        "type":  1,
+        "cmdNo":  64224
+    },
+    {
+        "fun":  "vm_cmdRefreshTaskLog",
+        "type":  1,
+        "cmdNo":  8828
+    },
+    {
+        "fun":  "vm_cmdReject",
+        "type":  1,
+        "cmdNo":  16502
+    },
+    {
+        "fun":  "vm_cmdRemoveAskTaoShowGift",
+        "type":  1,
+        "cmdNo":  4240
+    },
+    {
+        "fun":  "vm_cmdRemoveBureauItem",
+        "type":  1,
+        "cmdNo":  4639
+    },
+    {
+        "fun":  "vm_cmdRemoveChatGroupMember",
+        "type":  1,
+        "cmdNo":  4404
+    },
+    {
+        "fun":  "vm_cmdRemoveFriend",
+        "type":  1,
+        "cmdNo":  4164
+    },
+    {
+        "fun":  "vm_cmdRenameStall",
+        "type":  1,
+        "cmdNo":  64842
+    },
+    {
+        "fun":  "vm_cmdRepair",
+        "type":  1,
+        "cmdNo":  13582
+    },
+    {
+        "fun":  "vm_cmdRepairFurniture",
+        "type":  1,
+        "cmdNo":  16430
+    },
+    {
+        "fun":  "vm_cmdReplaceLogin",
+        "type":  1,
+        "cmdNo":  8644
+    },
+    {
+        "fun":  "vm_cmdReplyClientDoubtInfo",
+        "type":  1,
+        "cmdNo":  8150
+    },
+    {
+        "fun":  "vm_cmdReplyClientProcessInfo",
+        "type":  1,
+        "cmdNo":  15892
+    },
+    {
+        "fun":  "vm_cmdReplyFriendVerify",
+        "type":  1,
+        "cmdNo":  53002
+    },
+    {
+        "fun":  "vm_cmdReplyRequestAsktaoShow",
+        "type":  1,
+        "cmdNo":  4373
+    },
+    {
+        "fun":  "vm_cmdReportCheater",
+        "type":  1,
+        "cmdNo":  4228
+    },
+    {
+        "fun":  "vm_cmdReportIllegal",
+        "type":  1,
+        "cmdNo":  4636
+    },
+    {
+        "fun":  "vm_cmdReportIllegalTool",
+        "type":  1,
+        "cmdNo":  12496
+    },
+    {
+        "fun":  "vm_cmdRepurchase",
+        "type":  1,
+        "cmdNo":  4610
+    },
+    {
+        "fun":  "vm_cmdRequestAddStallPage",
+        "type":  1,
+        "cmdNo":  8600
+    },
+    {
+        "fun":  "vm_cmdRequestAskTaoShow",
+        "type":  1,
+        "cmdNo":  9136
+    },
+    {
+        "fun":  "vm_cmdRequestBuildDeck",
+        "type":  1,
+        "cmdNo":  16612
+    },
+    {
+        "fun":  "vm_cmdRequestBuyCardPackage",
+        "type":  1,
+        "cmdNo":  8404
+    },
+    {
+        "fun":  "vm_cmdRequestCancelMatchCardGame",
+        "type":  1,
+        "cmdNo":  13318
+    },
+    {
+        "fun":  "vm_cmdRequestCardActivityList",
+        "type":  1,
+        "cmdNo":  8550
+    },
+    {
+        "fun":  "vm_cmdRequestCardGameSortDeck",
+        "type":  1,
+        "cmdNo":  8256
+    },
+    {
+        "fun":  "vm_cmdRequestCardGameSortList",
+        "type":  1,
+        "cmdNo":  4382
+    },
+    {
+        "fun":  "vm_cmdRequestCardList",
+        "type":  1,
+        "cmdNo":  16400
+    },
+    {
+        "fun":  "vm_cmdRequestCardTodayStat",
+        "type":  1,
+        "cmdNo":  9280
+    },
+    {
+        "fun":  "vm_cmdRequestChatGroupInfo",
+        "type":  1,
+        "cmdNo":  61642
+    },
+    {
+        "fun":  "vm_cmdRequestCityBuildingInfo",
+        "type":  1,
+        "cmdNo":  14
+    },
+    {
+        "fun":  "vm_cmdRequestCityInfo",
+        "type":  1,
+        "cmdNo":  12396
+    },
+    {
+        "fun":  "vm_cmdRequestCityList",
+        "type":  1,
+        "cmdNo":  4656
+    },
+    {
+        "fun":  "vm_cmdRequestCombatDeckList",
+        "type":  1,
+        "cmdNo":  32258
+    },
+    {
+        "fun":  "vm_cmdRequestComposeCard",
+        "type":  1,
+        "cmdNo":  28844
+    },
+    {
+        "fun":  "vm_cmdRequestDeckInfo",
+        "type":  1,
+        "cmdNo":  15904
+    },
+    {
+        "fun":  "vm_cmdRequestDeckList",
+        "type":  1,
+        "cmdNo":  4996
+    },
+    {
+        "fun":  "vm_cmdRequestDecomposeCard",
+        "type":  1,
+        "cmdNo":  4266
+    },
+    {
+        "fun":  "vm_cmdRequestDeleteDeck",
+        "type":  1,
+        "cmdNo":  5016
+    },
+    {
+        "fun":  "vm_cmdRequestDrawCardCompeteBonus",
+        "type":  1,
+        "cmdNo":  28676
+    },
+    {
+        "fun":  "vm_cmdRequestDropCardTask",
+        "type":  1,
+        "cmdNo":  64076
+    },
+    {
+        "fun":  "vm_cmdRequestEnterCitywarRoom",
+        "type":  1,
+        "cmdNo":  8246
+    },
+    {
+        "fun":  "vm_cmdRequestEnterXGame",
+        "type":  1,
+        "cmdNo":  62738
+    },
+    {
+        "fun":  "vm_cmdRequestFinishCardCompete",
+        "type":  1,
+        "cmdNo":  9128
+    },
+    {
+        "fun":  "vm_cmdRequestFriendVerify",
+        "type":  1,
+        "cmdNo":  8512
+    },
+    {
+        "fun":  "vm_cmdRequestIcon",
+        "type":  1,
+        "cmdNo":  4709
+    },
+    {
+        "fun":  "vm_cmdRequestInfo",
+        "type":  1,
+        "cmdNo":  4424
+    },
+    {
+        "fun":  "vm_cmdRequestItemInfo",
+        "type":  1,
+        "cmdNo":  8569
+    },
+    {
+        "fun":  "vm_cmdRequestJoin",
+        "type":  1,
+        "cmdNo":  4128
+    },
+    {
+        "fun":  "vm_cmdRequestJoinRecruitment",
+        "type":  1,
+        "cmdNo":  14868
+    },
+    {
+        "fun":  "vm_cmdRequestLevelUp",
+        "type":  1,
+        "cmdNo":  12400
+    },
+    {
+        "fun":  "vm_cmdRequestMineralsInMap",
+        "type":  1,
+        "cmdNo":  14084
+    },
+    {
+        "fun":  "vm_cmdRequestMyCardPackages",
+        "type":  1,
+        "cmdNo":  8630
+    },
+    {
+        "fun":  "vm_cmdRequestNewDeck",
+        "type":  1,
+        "cmdNo":  9068
+    },
+    {
+        "fun":  "vm_cmdRequestOpenCardPackage",
+        "type":  1,
+        "cmdNo":  88
+    },
+    {
+        "fun":  "vm_cmdRequestOpenSystemDlg",
+        "type":  1,
+        "cmdNo":  8220
+    },
+    {
+        "fun":  "vm_cmdRequestPropertyBind",
+        "type":  1,
+        "cmdNo":  16646
+    },
+    {
+        "fun":  "vm_cmdRequestReceiveCityTask",
+        "type":  1,
+        "cmdNo":  10260
+    },
+    {
+        "fun":  "vm_cmdRequestRecharge",
+        "type":  1,
+        "cmdNo":  8538
+    },
+    {
+        "fun":  "vm_cmdRequestRefreshCityTask",
+        "type":  1,
+        "cmdNo":  4218
+    },
+    {
+        "fun":  "vm_cmdRequestRenameDeck",
+        "type":  1,
+        "cmdNo":  13578
+    },
+    {
+        "fun":  "vm_cmdRequestServerStatus",
+        "type":  1,
+        "cmdNo":  222
+    },
+    {
+        "fun":  "vm_cmdRequestShiling",
+        "type":  1,
+        "cmdNo":  4418
+    },
+    {
+        "fun":  "vm_cmdRequestStallList",
+        "type":  1,
+        "cmdNo":  15916
+    },
+    {
+        "fun":  "vm_cmdRequestStartCardCompete",
+        "type":  1,
+        "cmdNo":  10026
+    },
+    {
+        "fun":  "vm_cmdRequestStartMatchCardGame",
+        "type":  1,
+        "cmdNo":  4634
+    },
+    {
+        "fun":  "vm_cmdRequestTakeProperty",
+        "type":  1,
+        "cmdNo":  28696
+    },
+    {
+        "fun":  "vm_cmdRequestToBeTeamLeader",
+        "type":  1,
+        "cmdNo":  8854
+    },
+    {
+        "fun":  "vm_cmdRequestTopTaoPage",
+        "type":  1,
+        "cmdNo":  4704
+    },
+    {
+        "fun":  "vm_cmdReselectChar",
+        "type":  1,
+        "cmdNo":  16388
+    },
+    {
+        "fun":  "vm_cmdReselectVerifyCode",
+        "type":  1,
+        "cmdNo":  20486
+    },
+    {
+        "fun":  "vm_cmdResendVipSms",
+        "type":  1,
+        "cmdNo":  4296
+    },
+    {
+        "fun":  "vm_cmdResetAppellationTaskDue",
+        "type":  1,
+        "cmdNo":  4402
+    },
+    {
+        "fun":  "vm_cmdResetAppellationTaskMode",
+        "type":  1,
+        "cmdNo":  28694
+    },
+    {
+        "fun":  "vm_cmdReturnTeam",
+        "type":  1,
+        "cmdNo":  12
+    },
+    {
+        "fun":  "vm_cmdRevokeConvenant",
+        "type":  1,
+        "cmdNo":  64876
+    },
+    {
+        "fun":  "vm_cmdRewriteChildBook",
+        "type":  1,
+        "cmdNo":  8372
+    },
+    {
+        "fun":  "vm_cmdSearchChatGroup",
+        "type":  1,
+        "cmdNo":  4210
+    },
+    {
+        "fun":  "vm_cmdSearchStallGoods",
+        "type":  1,
+        "cmdNo":  64824
+    },
+    {
+        "fun":  "vm_cmdSelectCurrentChild",
+        "type":  1,
+        "cmdNo":  4178
+    },
+    {
+        "fun":  "vm_cmdSelectCurrentMount",
+        "type":  1,
+        "cmdNo":  86
+    },
+    {
+        "fun":  "vm_cmdSelectCurrentPet",
+        "type":  1,
+        "cmdNo":  8298
+    },
+    {
+        "fun":  "vm_cmdSelectMenuItem0",
+        "type":  1,
+        "cmdNo":  4162
+    },
+    {
+        "fun":  "vm_cmdSelectMenuItem1",
+        "type":  1,
+        "cmdNo":  12490
+    },
+    {
+        "fun":  "vm_cmdSelectMenuItem2",
+        "type":  1,
+        "cmdNo":  8542
+    },
+    {
+        "fun":  "vm_cmdSelectSpecifiedCombatDeck",
+        "type":  1,
+        "cmdNo":  5144
+    },
+    {
+        "fun":  "vm_cmdSelectVisibleChild",
+        "type":  1,
+        "cmdNo":  8826
+    },
+    {
+        "fun":  "vm_cmdSelectVisiblePet",
+        "type":  1,
+        "cmdNo":  6890
+    },
+    {
+        "fun":  "vm_cmdSendEnvelope",
+        "type":  1,
+        "cmdNo":  64066
+    },
+    {
+        "fun":  "vm_cmdSendFriendCard",
+        "type":  1,
+        "cmdNo":  4362
+    },
+    {
+        "fun":  "vm_cmdSetAchieveTrace",
+        "type":  1,
+        "cmdNo":  8602
+    },
+    {
+        "fun":  "vm_cmdSetAttention",
+        "type":  1,
+        "cmdNo":  4114
+    },
+    {
+        "fun":  "vm_cmdSetAutoMsg",
+        "type":  1,
+        "cmdNo":  61559
+    },
+    {
+        "fun":  "vm_cmdSetBirthday",
+        "type":  1,
+        "cmdNo":  4336
+    },
+    {
+        "fun":  "vm_cmdSetCardTopmost",
+        "type":  1,
+        "cmdNo":  4400
+    },
+    {
+        "fun":  "vm_cmdSetChildName",
+        "type":  1,
+        "cmdNo":  28678
+    },
+    {
+        "fun":  "vm_cmdSetDecoration",
+        "type":  1,
+        "cmdNo":  28702
+    },
+    {
+        "fun":  "vm_cmdSetDoucdhPetPos",
+        "type":  1,
+        "cmdNo":  15086
+    },
+    {
+        "fun":  "vm_cmdSetFireworksReleaseTime",
+        "type":  1,
+        "cmdNo":  4444
+    },
+    {
+        "fun":  "vm_cmdSetFriendRemark",
+        "type":  1,
+        "cmdNo":  9012
+    },
+    {
+        "fun":  "vm_cmdSetGcslAttribs",
+        "type":  1,
+        "cmdNo":  4616
+    },
+    {
+        "fun":  "vm_cmdSetHotkeys",
+        "type":  1,
+        "cmdNo":  8806
+    },
+    {
+        "fun":  "vm_cmdSetImage",
+        "type":  1,
+        "cmdNo":  57345
+    },
+    {
+        "fun":  "vm_cmdSetpass",
+        "type":  1,
+        "cmdNo":  24592
+    },
+    {
+        "fun":  "vm_cmdSetPassword",
+        "type":  1,
+        "cmdNo":  13314
+    },
+    {
+        "fun":  "vm_cmdSetPennantSkill",
+        "type":  1,
+        "cmdNo":  4306
+    },
+    {
+        "fun":  "vm_cmdSetPetName",
+        "type":  1,
+        "cmdNo":  64854
+    },
+    {
+        "fun":  "vm_cmdSetRecommendAttrib",
+        "type":  1,
+        "cmdNo":  28692
+    },
+    {
+        "fun":  "vm_cmdSetRecPerson",
+        "type":  1,
+        "cmdNo":  61659
+    },
+    {
+        "fun":  "vm_cmdSetRegion",
+        "type":  1,
+        "cmdNo":  64940
+    },
+    {
+        "fun":  "vm_cmdSetSafeLoginTime",
+        "type":  1,
+        "cmdNo":  8540
+    },
+    {
+        "fun":  "vm_cmdSetSafeMechanism",
+        "type":  1,
+        "cmdNo":  20746
+    },
+    {
+        "fun":  "vm_cmdSetSafeState",
+        "type":  1,
+        "cmdNo":  19186
+    },
+    {
+        "fun":  "vm_cmdSetSetting",
+        "type":  1,
+        "cmdNo":  9032
+    },
+    {
+        "fun":  "vm_cmdSetSignature",
+        "type":  1,
+        "cmdNo":  64253
+    },
+    {
+        "fun":  "vm_cmdSetStallGoods",
+        "type":  1,
+        "cmdNo":  8584
+    },
+    {
+        "fun":  "vm_cmdSetTaskTrace",
+        "type":  1,
+        "cmdNo":  8760
+    },
+    {
+        "fun":  "vm_cmdSetUserMood",
+        "type":  1,
+        "cmdNo":  8470
+    },
+    {
+        "fun":  "vm_cmdSetUserState",
+        "type":  1,
+        "cmdNo":  10695
+    },
+    {
+        "fun":  "vm_cmdSetWeddingList",
+        "type":  1,
+        "cmdNo":  6926
+    },
+    {
+        "fun":  "vm_cmdSetWeddingPacket",
+        "type":  1,
+        "cmdNo":  8608
+    },
+    {
+        "fun":  "vm_cmdSetWeiboInfo",
+        "type":  1,
+        "cmdNo":  9496
+    },
+    {
+        "fun":  "vm_cmdSetXinfaSkillStatus",
+        "type":  1,
+        "cmdNo":  16590
+    },
+    {
+        "fun":  "vm_cmdShift",
+        "type":  1,
+        "cmdNo":  32264
+    },
+    {
+        "fun":  "vm_cmdShopAdEnter",
+        "type":  1,
+        "cmdNo":  7177
+    },
+    {
+        "fun":  "vm_cmdShopAdFill",
+        "type":  1,
+        "cmdNo":  21765
+    },
+    {
+        "fun":  "vm_cmdShopBuyProduct",
+        "type":  1,
+        "cmdNo":  9043
+    },
+    {
+        "fun":  "vm_cmdShopBuyShop",
+        "type":  1,
+        "cmdNo":  13201
+    },
+    {
+        "fun":  "vm_cmdShopChangeInfo",
+        "type":  1,
+        "cmdNo":  64067
+    },
+    {
+        "fun":  "vm_cmdShopDoBusiness",
+        "type":  1,
+        "cmdNo":  24097
+    },
+    {
+        "fun":  "vm_cmdShopEnterShop",
+        "type":  1,
+        "cmdNo":  9053
+    },
+    {
+        "fun":  "vm_cmdShopEnterShopType",
+        "type":  1,
+        "cmdNo":  4219
+    },
+    {
+        "fun":  "vm_cmdShopFavorite",
+        "type":  1,
+        "cmdNo":  64991
+    },
+    {
+        "fun":  "vm_cmdShopManageCounter",
+        "type":  1,
+        "cmdNo":  8817
+    },
+    {
+        "fun":  "vm_cmdShopManageMoney",
+        "type":  1,
+        "cmdNo":  8835
+    },
+    {
+        "fun":  "vm_cmdShopMoveMerch",
+        "type":  1,
+        "cmdNo":  64033
+    },
+    {
+        "fun":  "vm_cmdShopQueryCounter",
+        "type":  1,
+        "cmdNo":  24580
+    },
+    {
+        "fun":  "vm_cmdShopReqRunnings",
+        "type":  1,
+        "cmdNo":  64019
+    },
+    {
+        "fun":  "vm_cmdShopReqVendues",
+        "type":  1,
+        "cmdNo":  9237
+    },
+    {
+        "fun":  "vm_cmdShopSale",
+        "type":  1,
+        "cmdNo":  4679
+    },
+    {
+        "fun":  "vm_cmdShopSearch",
+        "type":  1,
+        "cmdNo":  8597
+    },
+    {
+        "fun":  "vm_cmdShopSubmit",
+        "type":  1,
+        "cmdNo":  9092
+    },
+    {
+        "fun":  "vm_cmdShopVendueShop",
+        "type":  1,
+        "cmdNo":  8411
+    },
+    {
+        "fun":  "vm_cmdShopViewOwnShop",
+        "type":  1,
+        "cmdNo":  10243
+    },
+    {
+        "fun":  "vm_cmdShopViewSaleLog",
+        "type":  1,
+        "cmdNo":  4275
+    },
+    {
+        "fun":  "vm_cmdShout",
+        "type":  1,
+        "cmdNo":  4612
+    },
+    {
+        "fun":  "vm_cmdShouWuZuDao",
+        "type":  1,
+        "cmdNo":  8752
+    },
+    {
+        "fun":  "vm_cmdShowSaleLog",
+        "type":  1,
+        "cmdNo":  28674
+    },
+    {
+        "fun":  "vm_cmdShowUpgradeEquipItems",
+        "type":  1,
+        "cmdNo":  57348
+    },
+    {
+        "fun":  "vm_cmdSignIn",
+        "type":  1,
+        "cmdNo":  10020
+    },
+    {
+        "fun":  "vm_cmdSignInDraw",
+        "type":  1,
+        "cmdNo":  8328
+    },
+    {
+        "fun":  "vm_cmdSignInOpen",
+        "type":  1,
+        "cmdNo":  8790
+    },
+    {
+        "fun":  "vm_cmdSkillLevelDown",
+        "type":  1,
+        "cmdNo":  5036
+    },
+    {
+        "fun":  "vm_cmdSortpack",
+        "type":  1,
+        "cmdNo":  4358
+    },
+    {
+        "fun":  "vm_cmdSpecialMoveEvent",
+        "type":  1,
+        "cmdNo":  5146
+    },
+    {
+        "fun":  "vm_cmdStallInputPrice",
+        "type":  1,
+        "cmdNo":  62322
+    },
+    {
+        "fun":  "vm_cmdStartAutomatismStall",
+        "type":  1,
+        "cmdNo":  4270
+    },
+    {
+        "fun":  "vm_cmdStartBoxAdventrue",
+        "type":  1,
+        "cmdNo":  9738
+    },
+    {
+        "fun":  "vm_cmdStartCardActivity",
+        "type":  1,
+        "cmdNo":  8652
+    },
+    {
+        "fun":  "vm_cmdStartCardDuel",
+        "type":  1,
+        "cmdNo":  4132
+    },
+    {
+        "fun":  "vm_cmdStartCardFriendPk",
+        "type":  1,
+        "cmdNo":  2576
+    },
+    {
+        "fun":  "vm_cmdStartCardInstruction",
+        "type":  1,
+        "cmdNo":  65502
+    },
+    {
+        "fun":  "vm_cmdStartPetPractice",
+        "type":  1,
+        "cmdNo":  64806
+    },
+    {
+        "fun":  "vm_cmdStartRaise",
+        "type":  1,
+        "cmdNo":  4630
+    },
+    {
+        "fun":  "vm_cmdStartStall",
+        "type":  1,
+        "cmdNo":  4288
+    },
+    {
+        "fun":  "vm_cmdStartTaotaotaoRun",
+        "type":  1,
+        "cmdNo":  20492
+    },
+    {
+        "fun":  "vm_cmdStore",
+        "type":  1,
+        "cmdNo":  62326
+    },
+    {
+        "fun":  "vm_cmdSubmitConfirmDlg",
+        "type":  1,
+        "cmdNo":  16662
+    },
+    {
+        "fun":  "vm_cmdSubmitIcon",
+        "type":  1,
+        "cmdNo":  63937
+    },
+    {
+        "fun":  "vm_cmdSubmitImage",
+        "type":  1,
+        "cmdNo":  4967
+    },
+    {
+        "fun":  "vm_cmdSubmitPasspodOrder",
+        "type":  1,
+        "cmdNo":  8802
+    },
+    {
+        "fun":  "vm_cmdSwitchBackEquip",
+        "type":  1,
+        "cmdNo":  8464
+    },
+    {
+        "fun":  "vm_cmdSwitchChildItem",
+        "type":  1,
+        "cmdNo":  12370
+    },
+    {
+        "fun":  "vm_cmdSwitchGroup",
+        "type":  1,
+        "cmdNo":  158
+    },
+    {
+        "fun":  "vm_cmdSwitchGroupEx",
+        "type":  1,
+        "cmdNo":  16936
+    },
+    {
+        "fun":  "vm_cmdSwitchInStore",
+        "type":  1,
+        "cmdNo":  12384
+    },
+    {
+        "fun":  "vm_cmdSwitchItem",
+        "type":  1,
+        "cmdNo":  4436
+    },
+    {
+        "fun":  "vm_cmdSwitchServer",
+        "type":  1,
+        "cmdNo":  4308
+    },
+    {
+        "fun":  "vm_cmdSysPurchaseBuy",
+        "type":  1,
+        "cmdNo":  63750
+    },
+    {
+        "fun":  "vm_cmdSysPurchaseSell",
+        "type":  1,
+        "cmdNo":  61648
+    },
+    {
+        "fun":  "vm_cmdSysPurchaseViewHistory",
+        "type":  1,
+        "cmdNo":  20646
+    },
+    {
+        "fun":  "vm_cmdSysPurchaseViewOrders",
+        "type":  1,
+        "cmdNo":  32260
+    },
+    {
+        "fun":  "vm_cmdTake",
+        "type":  1,
+        "cmdNo":  13572
+    },
+    {
+        "fun":  "vm_cmdTakeChildItemUp",
+        "type":  1,
+        "cmdNo":  28684
+    },
+    {
+        "fun":  "vm_cmdTakeoutCard",
+        "type":  1,
+        "cmdNo":  12492
+    },
+    {
+        "fun":  "vm_cmdTakeoutGodbook",
+        "type":  1,
+        "cmdNo":  16642
+    },
+    {
+        "fun":  "vm_cmdTakeoutItem",
+        "type":  1,
+        "cmdNo":  12030
+    },
+    {
+        "fun":  "vm_cmdTakeStallCash",
+        "type":  1,
+        "cmdNo":  4420
+    },
+    {
+        "fun":  "vm_cmdTakeStoringCash",
+        "type":  1,
+        "cmdNo":  12392
+    },
+    {
+        "fun":  "vm_cmdTakeUp",
+        "type":  1,
+        "cmdNo":  9498
+    },
+    {
+        "fun":  "vm_cmdTaskScoreExchangeBonus",
+        "type":  1,
+        "cmdNo":  13098
+    },
+    {
+        "fun":  "vm_cmdTeamCancelSeek",
+        "type":  1,
+        "cmdNo":  6886
+    },
+    {
+        "fun":  "vm_cmdTeamMatchSeek",
+        "type":  1,
+        "cmdNo":  32266
+    },
+    {
+        "fun":  "vm_cmdTeamOpenPlatform",
+        "type":  1,
+        "cmdNo":  12372
+    },
+    {
+        "fun":  "vm_cmdTeamRequestTask",
+        "type":  1,
+        "cmdNo":  28846
+    },
+    {
+        "fun":  "vm_cmdTeamSeekLeader",
+        "type":  1,
+        "cmdNo":  8774
+    },
+    {
+        "fun":  "vm_cmdTeamSeekMember",
+        "type":  1,
+        "cmdNo":  8544
+    },
+    {
+        "fun":  "vm_cmdTeleportEx",
+        "type":  1,
+        "cmdNo":  64843
+    },
+    {
+        "fun":  "vm_cmdTell",
+        "type":  1,
+        "cmdNo":  16650
+    },
+    {
+        "fun":  "vm_cmdTellEx",
+        "type":  1,
+        "cmdNo":  8594
+    },
+    {
+        "fun":  "vm_cmdTempNpcEvent",
+        "type":  1,
+        "cmdNo":  12410
+    },
+    {
+        "fun":  "vm_cmdTestCsLogin",
+        "type":  1,
+        "cmdNo":  64872
+    },
+    {
+        "fun":  "vm_cmdTowerClicked",
+        "type":  1,
+        "cmdNo":  4640
+    },
+    {
+        "fun":  "vm_cmdTowerSelected",
+        "type":  1,
+        "cmdNo":  12808
+    },
+    {
+        "fun":  "vm_cmdTradeAddGoods",
+        "type":  1,
+        "cmdNo":  20754
+    },
+    {
+        "fun":  "vm_cmdTradeBuyService",
+        "type":  1,
+        "cmdNo":  4440
+    },
+    {
+        "fun":  "vm_cmdTradeCancelSale",
+        "type":  1,
+        "cmdNo":  16386
+    },
+    {
+        "fun":  "vm_cmdTradeChangePrice",
+        "type":  1,
+        "cmdNo":  10258
+    },
+    {
+        "fun":  "vm_cmdTradeContinueSale",
+        "type":  1,
+        "cmdNo":  9252
+    },
+    {
+        "fun":  "vm_cmdTradeFavorite",
+        "type":  1,
+        "cmdNo":  16664
+    },
+    {
+        "fun":  "vm_cmdTradeGetData",
+        "type":  1,
+        "cmdNo":  14090
+    },
+    {
+        "fun":  "vm_cmdTradeGetObj",
+        "type":  1,
+        "cmdNo":  4234
+    },
+    {
+        "fun":  "vm_cmdTradeGetObjProp",
+        "type":  1,
+        "cmdNo":  2564
+    },
+    {
+        "fun":  "vm_cmdTradeGetRecord",
+        "type":  1,
+        "cmdNo":  8436
+    },
+    {
+        "fun":  "vm_cmdTradeIntroduce",
+        "type":  1,
+        "cmdNo":  10994
+    },
+    {
+        "fun":  "vm_cmdTradeOpenUrl",
+        "type":  1,
+        "cmdNo":  4180
+    },
+    {
+        "fun":  "vm_cmdTradeSale",
+        "type":  1,
+        "cmdNo":  64252
+    },
+    {
+        "fun":  "vm_cmdTradeViewLog",
+        "type":  1,
+        "cmdNo":  64072
+    },
+    {
+        "fun":  "vm_cmdTrain",
+        "type":  1,
+        "cmdNo":  8744
+    },
+    {
+        "fun":  "vm_cmdTryPlacePattern",
+        "type":  1,
+        "cmdNo":  8852
+    },
+    {
+        "fun":  "vm_cmdTurnDir",
+        "type":  1,
+        "cmdNo":  4208
+    },
+    {
+        "fun":  "vm_cmdTxssResetBingo",
+        "type":  1,
+        "cmdNo":  4654
+    },
+    {
+        "fun":  "vm_cmdTxssStartAward",
+        "type":  1,
+        "cmdNo":  4652
+    },
+    {
+        "fun":  "vm_cmdUnequip",
+        "type":  1,
+        "cmdNo":  64778
+    },
+    {
+        "fun":  "vm_cmdUnequipInbornStone",
+        "type":  1,
+        "cmdNo":  4370
+    },
+    {
+        "fun":  "vm_cmdUnequipPetDress",
+        "type":  1,
+        "cmdNo":  9130
+    },
+    {
+        "fun":  "vm_cmdUpgrade",
+        "type":  1,
+        "cmdNo":  8270
+    },
+    {
+        "fun":  "vm_cmdUpgradeByAmount",
+        "type":  1,
+        "cmdNo":  64880
+    },
+    {
+        "fun":  "vm_cmdUpgradeEx",
+        "type":  1,
+        "cmdNo":  60
+    },
+    {
+        "fun":  "vm_cmdUpgradeMagicPicture",
+        "type":  1,
+        "cmdNo":  8366
+    },
+    {
+        "fun":  "vm_cmdVendueCancel",
+        "type":  1,
+        "cmdNo":  64777
+    },
+    {
+        "fun":  "vm_cmdVendueCanVendue",
+        "type":  1,
+        "cmdNo":  24581
+    },
+    {
+        "fun":  "vm_cmdVendueFetch",
+        "type":  1,
+        "cmdNo":  64835
+    },
+    {
+        "fun":  "vm_cmdVendueManage",
+        "type":  1,
+        "cmdNo":  8577
+    },
+    {
+        "fun":  "vm_cmdVendueOffer",
+        "type":  1,
+        "cmdNo":  8637
+    },
+    {
+        "fun":  "vm_cmdVendueRefresh",
+        "type":  1,
+        "cmdNo":  11733
+    },
+    {
+        "fun":  "vm_cmdVendueStoreClosed",
+        "type":  1,
+        "cmdNo":  10499
+    },
+    {
+        "fun":  "vm_cmdVendueTryVendue",
+        "type":  1,
+        "cmdNo":  64009
+    },
+    {
+        "fun":  "vm_cmdVendueVendueMerch",
+        "type":  1,
+        "cmdNo":  4285
+    },
+    {
+        "fun":  "vm_cmdVerifyCharName",
+        "type":  1,
+        "cmdNo":  4452
+    },
+    {
+        "fun":  "vm_cmdViewAchieve",
+        "type":  1,
+        "cmdNo":  8742
+    },
+    {
+        "fun":  "vm_cmdViewAchieveOverview",
+        "type":  1,
+        "cmdNo":  5148
+    },
+    {
+        "fun":  "vm_cmdViewCouponShow",
+        "type":  1,
+        "cmdNo":  57346
+    },
+    {
+        "fun":  "vm_cmdViewCsFixtures",
+        "type":  1,
+        "cmdNo":  16404
+    },
+    {
+        "fun":  "vm_cmdViewCsMatchDetail",
+        "type":  1,
+        "cmdNo":  4332
+    },
+    {
+        "fun":  "vm_cmdViewCsMatches",
+        "type":  1,
+        "cmdNo":  20618
+    },
+    {
+        "fun":  "vm_cmdViewCsMatchesSummary",
+        "type":  1,
+        "cmdNo":  8756
+    },
+    {
+        "fun":  "vm_cmdViewCsPwFixtures",
+        "type":  1,
+        "cmdNo":  8970
+    },
+    {
+        "fun":  "vm_cmdViewPartyWarHistory",
+        "type":  1,
+        "cmdNo":  8634
+    },
+    {
+        "fun":  "vm_cmdViewStall",
+        "type":  1,
+        "cmdNo":  20482
+    },
+    {
+        "fun":  "vm_cmdViewTop",
+        "type":  1,
+        "cmdNo":  8308
+    },
+    {
+        "fun":  "vm_cmdWarcraftCancel",
+        "type":  1,
+        "cmdNo":  9286
+    },
+    {
+        "fun":  "vm_cmdWarcraftRefresh",
+        "type":  1,
+        "cmdNo":  8148
+    },
+    {
+        "fun":  "vm_cmdWarcraftStart",
+        "type":  1,
+        "cmdNo":  13570
+    },
+    {
+        "fun":  "vm_cmdWarViewCurrentInfo",
+        "type":  1,
+        "cmdNo":  4116
+    },
+    {
+        "fun":  "vm_cmdWarViewHistoryInfo",
+        "type":  1,
+        "cmdNo":  6664
+    },
+    {
+        "fun":  "vm_cmdWearAskTaoShow",
+        "type":  1,
+        "cmdNo":  5028
+    },
+    {
+        "fun":  "vm_cmdWho",
+        "type":  1,
+        "cmdNo":  10248
+    },
+    {
+        "fun":  "vm_cmdWindowSizeChange",
+        "type":  1,
+        "cmdNo":  25474
+    },
+    {
+        "fun":  "vm_cmdWishing",
+        "type":  1,
+        "cmdNo":  16482
+    },
+    {
+        "fun":  "vm_cmdWishingBuyItem",
+        "type":  1,
+        "cmdNo":  12366
+    },
+    {
+        "fun":  "vm_cmdWishingOpen",
+        "type":  1,
+        "cmdNo":  8724
+    },
+    {
+        "fun":  "vm_cmdWishingSaleItem",
+        "type":  1,
+        "cmdNo":  6910
+    },
+    {
+        "fun":  "vm_cmdWithdraw",
+        "type":  1,
+        "cmdNo":  8650
+    },
+    {
+        "fun":  "vm_cmdWLResetSeal",
+        "type":  1,
+        "cmdNo":  15922
+    },
+    {
+        "fun":  "vm_cmdWLSealInfo",
+        "type":  1,
+        "cmdNo":  15924
+    },
+    {
+        "fun":  "vm_cmdWorkshopBuyOrder",
+        "type":  1,
+        "cmdNo":  61640
+    },
+    {
+        "fun":  "vm_cmdWorkshopQueryOrderCash",
+        "type":  1,
+        "cmdNo":  12394
+    },
+    {
+        "fun":  "vm_cmdWorkshopQueryOrderRate",
+        "type":  1,
+        "cmdNo":  8626
+    },
+    {
+        "fun":  "vm_cmdWorkshopReleaseOrder",
+        "type":  1,
+        "cmdNo":  4448
+    },
+    {
+        "fun":  "vm_cmdWudaoAddAttribAuto",
+        "type":  1,
+        "cmdNo":  4274
+    },
+    {
+        "fun":  "vm_cmdWuDaoAddAttribRep",
+        "type":  1,
+        "cmdNo":  20994
+    },
+    {
+        "fun":  "vm_cmdWudaoBatchAddRep",
+        "type":  1,
+        "cmdNo":  4692
+    },
+    {
+        "fun":  "vm_cmdWuDaoBuyRepCard",
+        "type":  1,
+        "cmdNo":  8706
+    },
+    {
+        "fun":  "vm_cmdWudaoConvertExtraAttrib",
+        "type":  1,
+        "cmdNo":  8466
+    },
+    {
+        "fun":  "vm_cmdWuDaoDrawRepCard",
+        "type":  1,
+        "cmdNo":  8358
+    },
+    {
+        "fun":  "vm_cmdWuDaoPreAddAttribRep",
+        "type":  1,
+        "cmdNo":  8632
+    },
+    {
+        "fun":  "vm_cmdWudaoSetAttribStatus",
+        "type":  1,
+        "cmdNo":  13200
+    },
+    {
+        "fun":  "vm_cmdWuDaoStageInfo",
+        "type":  1,
+        "cmdNo":  9730
+    },
+    {
+        "fun":  "vm_cmdXSetSetting",
+        "type":  1,
+        "cmdNo":  8754
+    },
+    {
+        "fun":  "vm_doubleBonusTime",
+        "type":  1,
+        "cmdNo":  64798
+    },
+    {
+        "fun":  "vm_getInstructionBonus",
+        "type":  1,
+        "cmdNo":  20504
+    },
+    {
+        "fun":  "vm_operGardenInstruction",
+        "type":  1,
+        "cmdNo":  13576
+    },
+    {
+        "fun":  "vm_operHellInstruction",
+        "type":  1,
+        "cmdNo":  13096
+    },
+    {
+        "fun":  "vm_msgLOperProtectRange",
+        "type":  2,
+        "cmdNo":  21761
+    },
+    {
+        "fun":  "vm_msgLAuthAllProtect",
+        "type":  2,
+        "cmdNo":  21763
+    },
+    {
+        "fun":  "vm_cmdIntersvrRpcCall",
+        "type":  2,
+        "cmdNo":  58
+    },
+    {
+        "fun":  "vm_cmdLAgentConnectServer",
+        "type":  2,
+        "cmdNo":  9048
+    },
+    {
+        "fun":  "vm_cmdLPendShop",
+        "type":  2,
+        "cmdNo":  9216
+    },
+    {
+        "fun":  "vm_cmdLWhenBatchBlockAccount",
+        "type":  2,
+        "cmdNo":  9348
+    },
+    {
+        "fun":  "vm_cmdLWhenBlockAccount",
+        "type":  2,
+        "cmdNo":  9261
+    },
+    {
+        "fun":  "vm_cmdLRecycleStall",
+        "type":  2,
+        "cmdNo":  9344
+    },
+    {
+        "fun":  "vm_cmdLBlockShareStore",
+        "type":  2,
+        "cmdNo":  9346
+    },
+    {
+        "fun":  "vm_msgInternalAuth",
+        "type":  2,
+        "cmdNo":  14850
+    },
+    {
+        "fun":  "vm_msgLAddFillInfo",
+        "type":  2,
+        "cmdNo":  17285
+    },
+    {
+        "fun":  "vm_msgLBuyCard",
+        "type":  2,
+        "cmdNo":  9085
+    },
+    {
+        "fun":  "vm_msgLChargeResult",
+        "type":  2,
+        "cmdNo":  21345
+    },
+    {
+        "fun":  "vm_msgLCostCoin",
+        "type":  2,
+        "cmdNo":  25461
+    },
+    {
+        "fun":  "vm_msgLAddCoin",
+        "type":  2,
+        "cmdNo":  25465
+    },
+    {
+        "fun":  "vm_msgLCostFillInfo",
+        "type":  2,
+        "cmdNo":  21379
+    },
+    {
+        "fun":  "vm_msgLEnableAutoLock",
+        "type":  2,
+        "cmdNo":  13197
+    },
+    {
+        "fun":  "vm_msgLLockAccount",
+        "type":  2,
+        "cmdNo":  13193
+    },
+    {
+        "fun":  "vm_msgLLockCard",
+        "type":  2,
+        "cmdNo":  13177
+    },
+    {
+        "fun":  "vm_msgLManageVipSms",
+        "type":  2,
+        "cmdNo":  25467
+    },
+    {
+        "fun":  "vm_msgLManageMpDevice",
+        "type":  2,
+        "cmdNo":  25479
+    },
+    {
+        "fun":  "vm_msgLPrecostCoin",
+        "type":  2,
+        "cmdNo":  25463
+    },
+    {
+        "fun":  "vm_msgLQueryAccountState",
+        "type":  2,
+        "cmdNo":  9099
+    },
+    {
+        "fun":  "vm_msgLQueryCard",
+        "type":  2,
+        "cmdNo":  21375
+    },
+    {
+        "fun":  "vm_msgLQueryCoin",
+        "type":  2,
+        "cmdNo":  25459
+    },
+    {
+        "fun":  "vm_msgLQueryFillInfo",
+        "type":  2,
+        "cmdNo":  17281
+    },
+    {
+        "fun":  "vm_msgLQueryAddiction",
+        "type":  2,
+        "cmdNo":  9103
+    },
+    {
+        "fun":  "vm_msgLSendVipSms",
+        "type":  2,
+        "cmdNo":  25469
+    },
+    {
+        "fun":  "vm_msgLDoAlipayRecharge",
+        "type":  2,
+        "cmdNo":  25473
+    },
+    {
+        "fun":  "vm_msgLSsbCopyAccount",
+        "type":  2,
+        "cmdNo":  13186
+    },
+    {
+        "fun":  "vm_msgLSsbUpdateAccount",
+        "type":  2,
+        "cmdNo":  13185
+    },
+    {
+        "fun":  "vm_msgLGetSsbCombatConf",
+        "type":  2,
+        "cmdNo":  13187
+    },
+    {
+        "fun":  "vm_msgLGetSsbFinishFlag",
+        "type":  2,
+        "cmdNo":  13188
+    },
+    {
+        "fun":  "vm_msgLGetSsbPromptMsg",
+        "type":  2,
+        "cmdNo":  13189
+    },
+    {
+        "fun":  "vm_msgLGetSsbCombatRes",
+        "type":  2,
+        "cmdNo":  13184
+    },
+    {
+        "fun":  "vm_msgLRequestIpCard",
+        "type":  2,
+        "cmdNo":  21355
+    },
+    {
+        "fun":  "vm_msgLRequestCoupon",
+        "type":  2,
+        "cmdNo":  21357
+    },
+    {
+        "fun":  "vm_msgLChangeCoupon",
+        "type":  2,
+        "cmdNo":  13079
+    },
+    {
+        "fun":  "vm_msgLQueryRandomCoupon",
+        "type":  2,
+        "cmdNo":  13081
+    },
+    {
+        "fun":  "vm_msgUpdateFirstCreditBonus",
+        "type":  2,
+        "cmdNo":  64921
+    },
+    {
+        "fun":  "vm_msgUpdateRechargeReturnCredit",
+        "type":  2,
+        "cmdNo":  64889
+    },
+    {
+        "fun":  "vm_msgLUpdateAddiction",
+        "type":  2,
+        "cmdNo":  9105
+    },
+    {
+        "fun":  "vm_msgLUnlockCard",
+        "type":  2,
+        "cmdNo":  13179
+    },
+    {
+        "fun":  "vm_msgLVerifyPassword",
+        "type":  2,
+        "cmdNo":  13161
+    },
+    {
+        "fun":  "vm_msgVerifyCodeResult",
+        "type":  2,
+        "cmdNo":  17255
+    },
+    {
+        "fun":  "vm_msgCfgAaaList",
+        "type":  2,
+        "cmdNo":  9337
+    },
+    {
+        "fun":  "vm_msgCfgCcsInfo",
+        "type":  2,
+        "cmdNo":  9063
+    },
+    {
+        "fun":  "vm_msgCfgDdbList",
+        "type":  2,
+        "cmdNo":  9059
+    },
+    {
+        "fun":  "vm_msgCfgDistList",
+        "type":  2,
+        "cmdNo":  9051
+    },
+    {
+        "fun":  "vm_msgCfgEtcPageData",
+        "type":  2,
+        "cmdNo":  9329
+    },
+    {
+        "fun":  "vm_msgCfgMyDist",
+        "type":  2,
+        "cmdNo":  4957
+    },
+    {
+        "fun":  "vm_msgCfgReadEtc",
+        "type":  2,
+        "cmdNo":  9331
+    },
+    {
+        "fun":  "vm_msgCfgWriteEtc",
+        "type":  2,
+        "cmdNo":  9339
+    },
+    {
+        "fun":  "vm_msgCfgCsaInfo",
+        "type":  2,
+        "cmdNo":  9341
+    },
+    {
+        "fun":  "vm_msgCfgTtsInfo",
+        "type":  2,
+        "cmdNo":  9343
+    },
+    {
+        "fun":  "vm_msgCfgAHServerInfo",
+        "type":  2,
+        "cmdNo":  9333
+    },
+    {
+        "fun":  "vm_msgGetGoodsFromTts",
+        "type":  2,
+        "cmdNo":  64849
+    },
+    {
+        "fun":  "vm_msgCheckRoleOnSale",
+        "type":  2,
+        "cmdNo":  64933
+    },
+    {
+        "fun":  "vm_msgSellTreasure",
+        "type":  2,
+        "cmdNo":  64855
+    },
+    {
+        "fun":  "vm_msgGetSysEnvelope",
+        "type":  2,
+        "cmdNo":  11831
+    },
+    {
+        "fun":  "vm_msgIntersvrRpcRet",
+        "type":  2,
+        "cmdNo":  61615
+    },
+    {
+        "fun":  "vm_msgXgCreateName",
+        "type":  2,
+        "cmdNo":  13345
+    },
+    {
+        "fun":  "vm_msgXgGetAccount",
+        "type":  2,
+        "cmdNo":  13347
+    },
+    {
+        "fun":  "vm_msgXgGetName",
+        "type":  2,
+        "cmdNo":  13349
+    },
+    {
+        "fun":  "vm_msgLEcardBusiness",
+        "type":  2,
+        "cmdNo":  17287
+    },
+    {
+        "fun":  "vm_msgLQueryIpArea",
+        "type":  2,
+        "cmdNo":  9107
+    },
+    {
+        "fun":  "vm_msgLGetVoteResult",
+        "type":  2,
+        "cmdNo":  62724
+    },
+    {
+        "fun":  "vm_msgLCloneAccountResult",
+        "type":  2,
+        "cmdNo":  13190
+    },
+    {
+        "fun":  "vm_msgLSetSafeCtrlStr",
+        "type":  2,
+        "cmdNo":  9116
+    },
+    {
+        "fun":  "vm_msgLSetSafeCtrlVar",
+        "type":  2,
+        "cmdNo":  9117
+    },
+    {
+        "fun":  "vm_msgLGetSafeCtrlInfo",
+        "type":  2,
+        "cmdNo":  9104
+    },
+    {
+        "fun":  "vm_msgLGetCreditCoins",
+        "type":  2,
+        "cmdNo":  25487
+    },
+    {
+        "fun":  "vm_msgLGetProtectInfo",
+        "type":  2,
+        "cmdNo":  4641
+    },
+    {
+        "fun":  "vm_msgLQueryCoupon",
+        "type":  2,
+        "cmdNo":  9217
+    },
+    {
+        "fun":  "vm_msgLGetLocalEncryptInfo",
+        "type":  2,
+        "cmdNo":  5013
+    },
+    {
+        "fun":  "vm_msgLSetLocalEncryptInfo",
+        "type":  2,
+        "cmdNo":  5015
+    },
+    {
+        "fun":  "vm_msgLBorrowLocalEncrypt",
+        "type":  2,
+        "cmdNo":  5041
+    },
+    {
+        "fun":  "vm_msgSetPhahBonusInfo",
+        "type":  2,
+        "cmdNo":  64923
+    },
+    {
+        "fun":  "vm_msgLQueryCitys",
+        "type":  2,
+        "cmdNo":  9121
+    },
+    {
+        "fun":  "vm_msgLGetAccCompChar",
+        "type":  2,
+        "cmdNo":  5027
+    },
+    {
+        "fun":  "vm_cmdCtaToServer",
+        "type":  2,
+        "cmdNo":  63747
+    },
+    {
+        "fun":  "vm_cmdMaOper",
+        "type":  2,
+        "cmdNo":  16630
+    },
+    {
+        "fun":  "vm_cmdCcsShutdownBySpa",
+        "type":  2,
+        "cmdNo":  4256
+    },
+    {
+        "fun":  "vm_cmdMaSet",
+        "type":  2,
+        "cmdNo":  16632
+    },
+    {
+        "fun":  "vm_msgSpaBusy",
+        "type":  2,
+        "cmdNo":  1540
+    },
+    {
+        "fun":  "vm_msgCcsRebootResult",
+        "type":  2,
+        "cmdNo":  64791
+    },
+    {
+        "fun":  "vm_cmdGetServerTime",
+        "type":  2,
+        "cmdNo":  7171
+    },
+    {
+        "fun":  "vm_msgCcsEmoteData",
+        "type":  2,
+        "cmdNo":  9091
+    },
+    {
+        "fun":  "vm_msgCcsFingerRes",
+        "type":  2,
+        "cmdNo":  8519
+    },
+    {
+        "fun":  "vm_msgCcsFriendTell",
+        "type":  2,
+        "cmdNo":  10245
+    },
+    {
+        "fun":  "vm_msgCcsFriendStatus",
+        "type":  2,
+        "cmdNo":  4163
+    },
+    {
+        "fun":  "vm_msgCcsOnlineFriend",
+        "type":  2,
+        "cmdNo":  9031
+    },
+    {
+        "fun":  "vm_msgCcsWorldChannel",
+        "type":  2,
+        "cmdNo":  8119
+    },
+    {
+        "fun":  "vm_msgCcsSystemChannel",
+        "type":  2,
+        "cmdNo":  64977
+    },
+    {
+        "fun":  "vm_msgGotServerTime",
+        "type":  2,
+        "cmdNo":  11268
+    },
+    {
+        "fun":  "vm_msgGsEmoteData",
+        "type":  2,
+        "cmdNo":  8811
+    },
+    {
+        "fun":  "vm_msgGsFinger",
+        "type":  2,
+        "cmdNo":  4313
+    },
+    {
+        "fun":  "vm_msgGsFriendList",
+        "type":  2,
+        "cmdNo":  7667
+    },
+    {
+        "fun":  "vm_msgGsFriendTell",
+        "type":  2,
+        "cmdNo":  14337
+    },
+    {
+        "fun":  "vm_msgGsLogin",
+        "type":  2,
+        "cmdNo":  4681
+    },
+    {
+        "fun":  "vm_msgGsLogout",
+        "type":  2,
+        "cmdNo":  7701
+    },
+    {
+        "fun":  "vm_msgGsWorldChannel",
+        "type":  2,
+        "cmdNo":  61621
+    },
+    {
+        "fun":  "vm_msgGsSystemChannel",
+        "type":  2,
+        "cmdNo":  64789
+    },
+    {
+        "fun":  "vm_msgRpcServerName",
+        "type":  2,
+        "cmdNo":  5143
+    },
+    {
+        "fun":  "vm_msgIntersvrChannelMsg",
+        "type":  2,
+        "cmdNo":  8967
+    },
+    {
+        "fun":  "vm_msgDataMining",
+        "type":  2,
+        "cmdNo":  12497
+    },
+    {
+        "fun":  "vm_cmdLeagueOper",
+        "type":  2,
+        "cmdNo":  12546
+    },
+    {
+        "fun":  "vm_msgLeagueOper",
+        "type":  2,
+        "cmdNo":  12545
+    },
+    {
+        "fun":  "vm_cmdBottleOper",
+        "type":  2,
+        "cmdNo":  12548
+    },
+    {
+        "fun":  "vm_msgBottleOper",
+        "type":  2,
+        "cmdNo":  12547
+    },
+    {
+        "fun":  "vm_cmdXGameOper",
+        "type":  2,
+        "cmdNo":  12460
+    },
+    {
+        "fun":  "vm_msgXGameOper",
+        "type":  2,
+        "cmdNo":  9131
+    },
+    {
+        "fun":  "vm_msgDoInquiry",
+        "type":  2,
+        "cmdNo":  13095
+    },
+    {
+        "fun":  "vm_msgDoRecharge",
+        "type":  2,
+        "cmdNo":  13093
+    },
+    {
+        "fun":  "vm_cmdPartywarOper",
+        "type":  2,
+        "cmdNo":  8326
+    },
+    {
+        "fun":  "vm_msgPartywarOper",
+        "type":  2,
+        "cmdNo":  64795
+    },
+    {
+        "fun":  "vm_cmdArenaOper",
+        "type":  2,
+        "cmdNo":  12364
+    },
+    {
+        "fun":  "vm_msgArenaOper",
+        "type":  2,
+        "cmdNo":  8537
+    },
+    {
+        "fun":  "vm_cmdDraftOper",
+        "type":  2,
+        "cmdNo":  11729
+    },
+    {
+        "fun":  "vm_msgDraftOper",
+        "type":  2,
+        "cmdNo":  64819
+    },
+    {
+        "fun":  "vm_cmdSDDHOper",
+        "type":  2,
+        "cmdNo":  9044
+    },
+    {
+        "fun":  "vm_msgSDDHOper",
+        "type":  2,
+        "cmdNo":  16645
+    },
+    {
+        "fun":  "vm_cmdCelebrityOper",
+        "type":  2,
+        "cmdNo":  4442
+    },
+    {
+        "fun":  "vm_msgCelebrityOper",
+        "type":  2,
+        "cmdNo":  4367
+    },
+    {
+        "fun":  "vm_cmdSamsungOper",
+        "type":  2,
+        "cmdNo":  8596
+    },
+    {
+        "fun":  "vm_msgSamsungOper",
+        "type":  2,
+        "cmdNo":  243
+    },
+    {
+        "fun":  "vm_msgEveryonePkOper",
+        "type":  2,
+        "cmdNo":  809
+    },
+    {
+        "fun":  "vm_msgTreasureTradingOper",
+        "type":  2,
+        "cmdNo":  17443
+    },
+    {
+        "fun":  "vm_msgLConvertSilverCoin",
+        "type":  2,
+        "cmdNo":  8505
+    },
+    {
+        "fun":  "vm_cmdChannelOper",
+        "type":  2,
+        "cmdNo":  10244
+    },
+    {
+        "fun":  "vm_msgChannelOper",
+        "type":  2,
+        "cmdNo":  8545
+    },
+    {
+        "fun":  "vm_cmdCsaCommonOper",
+        "type":  2,
+        "cmdNo":  4250
+    },
+    {
+        "fun":  "vm_msgCsaCommonOper",
+        "type":  2,
+        "cmdNo":  14801
+    },
+    {
+        "fun":  "vm_cmdCitywarOper",
+        "type":  2,
+        "cmdNo":  6922
+    },
+    {
+        "fun":  "vm_msgCitywarOper",
+        "type":  2,
+        "cmdNo":  64021
+    },
+    {
+        "fun":  "vm_cmdActivityOper",
+        "type":  2,
+        "cmdNo":  20648
+    },
+    {
+        "fun":  "vm_msgActivityOper",
+        "type":  2,
+        "cmdNo":  64055
+    }
+]
