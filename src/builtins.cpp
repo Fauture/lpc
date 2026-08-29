@@ -3400,16 +3400,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_string("");
     }
     if (name == "read_whole_ini") {
-        // Parse an INI file into { section : { key : value } }.
+        // vm_f_read_whole_ini (0x80d9f5c): parses the INI CONTENT string passed
+        // as the argument (not a file path!) into { section : { key : value } }.
+        // The caller does read_whole_ini(read_etc_file("x.ini")) - i.e. the
+        // file's CONTENT is the argument.  Treating it as a path produced
+        // bogus "cannot open linux/.../0" / ".../[dist]" logs (the content's
+        // first line / section header became the "path").
         if (args.empty()) return make_int(0);
-        std::string path = resolveVfsPath(as_string(args[0]));
-        std::ifstream in(path);
-        if (!in) {
-            std::cout << "read_whole_ini: cannot open " << path << "\n";
-            return make_int(0);
-        }
+        std::string content = as_string(args[0]);
         auto root = std::make_shared<MappingValue>();
         std::shared_ptr<MappingValue> cur;
+        std::istringstream is(content);
         std::string line;
         auto trim = [](const std::string& s) {
             size_t b = s.find_first_not_of(" \t\r\n");
@@ -3417,7 +3418,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             size_t e = s.find_last_not_of(" \t\r\n");
             return s.substr(b, e - b + 1);
         };
-        while (std::getline(in, line)) {
+        while (std::getline(is, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
             size_t s = line.find_first_not_of(" \t");
             if (s == std::string::npos) continue;
