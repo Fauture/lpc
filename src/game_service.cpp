@@ -11641,6 +11641,8 @@ void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
     uint32_t slen = rd32be(body + 8);
     if (slen > len - 12) return;
     std::string s(reinterpret_cast<const char*>(body + 12), slen);
+    std::cerr << "[readcontent] client=" << cl.clientNo << " cookie=" << a
+              << " result=" << (int)b << " len=" << slen << "\n";
     applyLpc("msg_read_content",
              {make_int(cl.clientNo), make_int(a), make_int(b), make_string(s)});
 }
@@ -12846,9 +12848,22 @@ int startGameService(int port) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     }
                 }
+                {
+                    auto root = lpc::masterSearchRoot();
+                    Value agent = callMasterProgramFunction("find_agent_by_client",
+                                                           {make_int(clientNo)}, root);
+                    std::cerr << "[accept] client=" << clientNo << " agent-type="
+                              << static_cast<int>(agent.index()) << "\n";
+                }
                 char buf[4096];
                 for (;;) {
                     int n = recv(c, buf, sizeof(buf), 0);
+                    {
+                        std::string hex;
+                        static const char* hx = "0123456789ABCDEF";
+                        for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
+                        std::cerr << "[recv-accept] client=" << clientNo << " n=" << n << " " << hex << "\n";
+                    }
                     if (n <= 0) break;
                     GameClient* cur;
                     {
@@ -12910,17 +12925,22 @@ bool gameServiceSend(int clientNo, const std::string& data) {
     {
         std::lock_guard<std::mutex> lk(gameMutex());
         auto it = gameClients().find(clientNo);
-        if (it == gameClients().end()) return false;
+        if (it == gameClients().end()) { if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n"; return false; }
         fd = it->second.fd;
     }
-    if (fd < 0) return false;
+    if (fd < 0) { if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " bad-fd\n"; return false; }
     int sent = 0;
     while (sent < static_cast<int>(data.size())) {
         int n = send(static_cast<SOCKET>(fd), data.data() + sent,
                      static_cast<int>(data.size()) - sent, 0);
-        if (n <= 0) return false;
+        if (n <= 0) {
+            int err = WSAGetLastError();
+            if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " fail n=" << n << " err=" << err << "\n";
+            return false;
+        }
         sent += n;
     }
+    if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " sent=" << sent << "\n";
     return true;
 }
 
@@ -12942,6 +12962,12 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
         char buf[4096];
         for (;;) {
             int n = recv(static_cast<SOCKET>(fd), buf, sizeof(buf), 0);
+            {
+                std::string hex;
+                static const char* hx = "0123456789ABCDEF";
+                for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
+                std::cerr << "[recv] fd=" << fd << " cno=" << clientNo << " n=" << n << " " << hex << "\n";
+            }
             if (n <= 0) break;
             GameClient* cur;
             {

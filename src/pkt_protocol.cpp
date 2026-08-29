@@ -252,11 +252,21 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
 } // namespace
 
 std::string pktPadInterface(uint16_t msgNo, const Value& args) {
+    if (msgNo == 0x4401 || msgNo == 0x2403)
+        std::cerr << "[pad-enter] msgNo=0x" << std::hex << msgNo << std::dec
+                  << " tid=" << std::this_thread::get_id() << "\n";
     std::lock_guard<std::recursive_mutex> lk(pktMutex());
+    if (msgNo == 0x4401 || msgNo == 0x2403)
+        std::cerr << "[pad-locked] msgNo=0x" << std::hex << msgNo << std::dec
+                  << " tid=" << std::this_thread::get_id() << "\n";
     auto it = pktState().interfaces.find(msgNo);
-    if (it == pktState().interfaces.end()) return "";
+    if (it == pktState().interfaces.end()) {
+        if (msgNo == 0x4401 || msgNo == 0x2403)
+            std::cerr << "[pad] iface 0x" << std::hex << msgNo << std::dec << " NOT FOUND\n";
+        return "";
+    }
     const PktInterface& pi = it->second;
-    if (std::getenv("LPCVM_TRACE"))
+    if (msgNo == 0x4401 || msgNo == 0x2403)
         std::cerr << "[pad] iface 0x" << std::hex << msgNo << std::dec
                   << " name=" << pi.name << " encap=" << pi.encapType
                   << " fields=" << pi.fields.size()
@@ -331,7 +341,17 @@ const PktInterface* pktFindInterface(uint16_t cmdNo) {
 
 int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
                const uint8_t* body, size_t len) {
-    std::lock_guard<std::recursive_mutex> lk(pktMutex());
+    std::unique_lock<std::recursive_mutex> lk(pktMutex());
+    if (cmdNo == 0x3400 || cmdNo == 0x4401 || cmdNo == 0x3411 || cmdNo == 0x3415 ||
+        cmdNo == 0x4419 || cmdNo == 0x4417 || cmdNo == 0x3A01 || cmdNo == 0x3A02) {
+        std::string hex;
+        static const char* hx = "0123456789ABCDEF";
+        for (size_t i = 0; i < len && i < 64; ++i) { hex += hx[body[i] >> 4]; hex += hx[body[i] & 15]; }
+        std::cerr << "[pkt-filed] cmd=0x" << std::hex << cmdNo << std::dec
+                  << " client=" << clientNo << " attrib=" << attrib
+                  << " len=" << len << " tid=" << std::this_thread::get_id()
+                  << " body=" << hex << "\n";
+    }
     auto it = pktState().interfaces.find(cmdNo);
     if (it == pktState().interfaces.end()) {
         if (std::getenv("LPCVM_TRACE"))
@@ -408,25 +428,37 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
                   << " bodyLen=" << len
                   << " fields=[" << fdbg << "]\n";
     }
-    if (pi.func.index() == 8) {
-        auto cl = std::get<std::shared_ptr<ClosureValue>>(pi.func);
+    if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
+        std::cerr << "[pkt-filed] dispatch " << pi.name << " funcType=" << static_cast<int>(pi.func.index()) << "\n";
+    // Release the interface-table lock BEFORE invoking the LPC callback: the
+    // callback may run on a DIFFERENT thread (cross-object call) and itself
+    // call pkt_pad_interface -> pktPadInterface, which re-locks pktMutex.  A
+    // non-recursive-owner deadlock results if we hold it across the callback.
+    Value func = pi.func;
+    lk.unlock();
+    if (func.index() == 8) {
+        auto cl = std::get<std::shared_ptr<ClosureValue>>(func);
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[pkt] calling closure " << cl->functionName
                       << " boundArgs=" << cl->boundArgs.size() << "\n";
         std::vector<Value> all = cl->boundArgs;
         all.insert(all.end(), args.begin(), args.end());
         if (cl->functionName.empty()) return 1;
-        applyClosureOnOwner(pi.func, args);
+        applyClosureOnOwner(func, args);
+        if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
+            std::cerr << "[pkt-filed] closure " << cl->functionName << " returned\n";
         return 1;
     }
-    if (pi.func.index() == 4) {
+    if (func.index() == 4) {
         if (std::getenv("LPCVM_TRACE"))
-            std::cerr << "[pkt] calling string fn " << std::get<std::string>(pi.func) << "\n";
-        callMasterProgramFunction(std::get<std::string>(pi.func), args, lpc::masterSearchRoot());
+            std::cerr << "[pkt] calling string fn " << std::get<std::string>(func) << "\n";
+        callMasterProgramFunction(std::get<std::string>(func), args, lpc::masterSearchRoot());
+        if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
+            std::cerr << "[pkt-filed] string fn " << std::get<std::string>(func) << " returned\n";
         return 1;
     }
     if (std::getenv("LPCVM_TRACE"))
-        std::cerr << "[pkt] func type=" << static_cast<int>(pi.func.index()) << " not callable\n";
+        std::cerr << "[pkt] func type=" << static_cast<int>(func.index()) << " not callable\n";
     return 1;
 }
 

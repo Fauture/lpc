@@ -1648,8 +1648,46 @@ void padVariableValue(const Value& v, std::string& out) {
     }
 }
 
+static Value dupValue(const Value& v) {
+    switch (v.index()) {
+    case 5: { // array -> deep copy
+        auto src = std::get<std::shared_ptr<ArrayValue>>(v);
+        auto r = std::make_shared<ArrayValue>();
+        r->items.reserve(src->items.size());
+        for (const auto& e : src->items) r->items.push_back(dupValue(e));
+        return r;
+    }
+    case 6: { // mapping -> deep copy
+        auto src = std::get<std::shared_ptr<MappingValue>>(v);
+        auto r = std::make_shared<MappingValue>();
+        for (const auto& kv : src->items()) r->insert(dupValue(kv.first), dupValue(kv.second));
+        return r;
+    }
+    case 10: { // buffer -> deep copy
+        return make_buffer(std::get<std::shared_ptr<BufferValue>>(v)->data);
+    }
+    default:
+        return v;   // int/float/string/object/closure/nil/undefined
+    }
+}
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
+
+    if (name == "dup") {
+        // vm_f_dup (0x80d588c): deep copy of a value.  Used by filed's
+        // process_request to snapshot the request mapping before mutate/send.
+        return args.empty() ? make_int(0) : dupValue(args[0]);
+    }
+    if (name == "create_check_sum") {
+        // vm_f_create_check_sum was patched in the original to a fixed value of
+        // 1 (the content checksum check is bypassed), so return 1 unconditionally.
+        return make_int(1);
+    }
+    if (name == "int32") {
+        // vm_f_int32 (0x80d7b5c): cast to int32 (vm_getArgument with type 2).
+        return args.empty() ? make_int(0) : make_int(as_int(args[0]));
+    }
 
     if (name == "write" || name == "printf" || name == "dump_file") {
         if (!args.empty()) {
@@ -2251,9 +2289,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 1) {
             int64_t msgNo = as_int(args[0]);
             Value values = (args.size() >= 2) ? args[1] : Value(UndefinedTag{});
-            return make_string(lpc::pktPadInterface(static_cast<uint16_t>(msgNo), values));
+            if (msgNo == 0x4401 || msgNo == 0x2403)
+                std::cerr << "[pad-efun] msgNo=0x" << std::hex << msgNo << std::dec
+                          << " argc=" << args.size()
+                          << " valuesType=" << static_cast<int>(values.index()) << "\n";
+            // vm_f_pkt_pad_interface returns a BUFFER (raw wire bytes), not a
+            // string: send_message feeds it straight into send_to_client's
+            // value-type padding, and a string there gets a spurious u8 length
+            // prefix (the "1A" seen in msg_cfg_ccs_info) whereas a buffer is
+            // emitted verbatim.
+            return make_buffer(lpc::pktPadInterface(static_cast<uint16_t>(msgNo), values));
         }
-        return make_string("");
+        return make_buffer("");
     }
     if (name == "pkt_pad_buffer") {
         // vm_f_pkt_pad_buffer (0x80e2428): serialize each argument per
@@ -2273,6 +2320,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // wire body), returns a buffer.
         std::string out;
         for (const auto& a : args) padVariableValue(a, out);
+        if (std::getenv("LPCVM_TRACE")) {
+            std::string hex;
+            static const char* hx = "0123456789ABCDEF";
+            for (unsigned char c : out) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+            std::cerr << "[pad_buffer] argc=" << args.size() << " out(" << out.size()
+                      << ")=" << hex << "\n";
+        }
         return make_buffer(out);
     }
     if (name == "pkt_pad_field") {
@@ -2933,13 +2987,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 2 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
             std::string data;
+            int64_t msgNo = 0;
             if (args.size() >= 3) {
-                int64_t msgNo = as_int(args[1]);
+                msgNo = as_int(args[1]);
                 data.push_back(static_cast<char>((msgNo >> 8) & 0xFF));
                 data.push_back(static_cast<char>(msgNo & 0xFF));
                 for (size_t i = 2; i < args.size(); ++i) padVariableValue(args[i], data);
             } else {
                 data = as_string(args[1]);   // raw buffer (already cmdNo + body)
+            }
+            if (args.size() >= 3 && (msgNo == 0x4401 || msgNo == 0x2403)) {
+                std::string hex;
+                static const char* hx = "0123456789ABCDEF";
+                for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+                std::cerr << "[send-filed] cno=" << cno << " msgNo=0x" << std::hex << msgNo << std::dec
+                          << " data(" << data.size() << ")=" << hex << "\n";
             }
             std::string pkt;
             pkt += "MZ";

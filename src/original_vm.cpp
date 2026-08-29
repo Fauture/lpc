@@ -1499,11 +1499,15 @@ private:
         // execMutex_ -> master execMutex_ for set_dynamic_key).
         if (flags & 0x80) {
             if (const OriginalFunction* gfn = findMasterFunction(index)) {
-                if (std::getenv("LPCVM_TRACE"))
+                if (std::getenv("LPCVM_TRACE") || index >= 600 || gfn->name == "mysql_select" ||
+                    gfn->name == "mixed_mysql_select")
                     std::cerr << "[gfn] inline global fn=" << gfn->name << " idx=" << index
                               << " argc=" << (flags & 0x3F) << " vm=" << this
                               << " obj=" << objName_ << "\n";
-                return executeFunctionOnStack(*gfn, false, flags & 0x3F);
+                Value gr = executeFunctionOnStack(*gfn, false, flags & 0x3F);
+                if (gfn->name == "mysql_select" || gfn->name == "mixed_mysql_select")
+                    std::cerr << "[gfn] " << gfn->name << " -> " << to_string(gr, false).substr(0, 80) << "\n";
+                return gr;
             }
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[gfn] global fn idx=" << index << " NOT FOUND in master\n";
@@ -1512,6 +1516,9 @@ private:
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
             const OriginalFunction& fn = *it->second;
+            if ((index >= 50 && index <= 60) || (objName_.find("connectiond") != std::string::npos && index <= 15))
+                std::cerr << "[cfu] local fn=" << fn.name << " idx=" << index
+                          << " obj=" << objName_ << " code=" << fn.code.size() << "\n";
             // A nodes==0 entry is a forward declaration (dlt reference) whose
             // bytecode lives in the program that actually implements it (e.g.
             // feature/common/agent.o declares get_client_no/set_client_no/
@@ -1544,16 +1551,25 @@ private:
                            impl->name == "fetch_config_list" || impl->name == "assure_connection" ||
                            impl->name == "mysql_select" || impl->name == "update_config" ||
                            impl->name == "choose_one_url" || impl->name == "do_init";
-            if (std::getenv("LPCVM_TRACE") && traceMe) {
-                std::string msg = "[xret] " + impl->name + " start argc=" + std::to_string(impl->argCount) + "\n";
-                std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+            bool authTrace = impl->name == "register_auth" || impl->name == "register_ban" ||
+                             impl->name == "do_when_new_connection" || impl->name == "auth_connection" ||
+                             impl->name == "register_disconnect" || impl->name == "auth_in_config_list" ||
+                             impl->name == "auth_in_config_info" || impl->name == "mysql_select" ||
+                             impl->name == "mixed_mysql_select";
+            if (authTrace) {
+                int ac = flags & 0x3F;
+                std::string adbg;
+                for (int k = 0; k < ac && k < 6; ++k) {
+                    if (k) adbg += ",";
+                    size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                    adbg += (si < stack_.size()) ? to_string(stack_[si].value, false).substr(0, 40) : "?";
+                }
+                std::cerr << "[auth] " << impl->name << " obj=" << objName_
+                          << " argc=" << ac << " args=[" << adbg << "]\n";
             }
             Value r = executeFunctionOnStack(*impl, false, flags & 0x3F);
-            if (std::getenv("LPCVM_TRACE") && traceMe) {
-                std::string msg = "[xret] " + impl->name + " result=" + to_string(r, false) + "\n";
-                std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
-                std::cerr.flush();
-            }
+            if (authTrace)
+                std::cerr << "[auth] " << impl->name << " -> " << to_string(r, false).substr(0, 60) << "\n";
             return r;
         }
         // Cross-object function table fallback (inherited/global functions).
@@ -2364,7 +2380,8 @@ private:
                         int64_t qid = queueResolveId(qv);
                         bool ok = queueSend(qid, v);
                         if (std::getenv("LPCVM_TRACE"))
-                            std::cerr << "[queue] send qid=" << qid << " ok=" << ok << "\n";
+                            std::cerr << "[queue] send qid=" << qid << " ok=" << ok
+                                      << " val=" << to_string(v, false) << "\n";
                         pushValue(make_int(ok ? 0 : -101));
                     } else {
                         pushValue(make_int(-101));
@@ -2442,6 +2459,13 @@ private:
                         }
                     }
                 };
+                if (funName == "process_command" || funName == "cmd_internal_auth" ||
+                    funName == "relay_agent" || funName == "main" || funName == "send_message") {
+                    std::string pv = pathVal.index() == 4 ? std::get<std::string>(pathVal)
+                        : (pathVal.index() == 7 ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName : "?");
+                    std::cerr << "[case8] " << objName_ << " -> " << pv << "::" << funName
+                              << " argc=" << args.size() << "\n";
+                }
                 if (pathVal.index() == 4) {
                     std::string path = std::get<std::string>(pathVal);
                     if (path.empty() || path == "<this>" || path == ".") {
@@ -2530,6 +2554,13 @@ private:
                 Value result = make_int(0);
                 if (funItem.value.index() == 8) {
                     auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
+                    if (cl->functionName == "do_when_new_connection" ||
+                        cl->functionName == "register_auth" || cl->functionName == "register_ban" ||
+                        cl->functionName == "auth_connection") {
+                        std::cerr << "[auth] call_fun_ptr " << cl->functionName
+                                  << " obj=" << objName_ << " bound=" << cl->boundArgs.size()
+                                  << " args=" << args.size() << "\n";
+                    }
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
                     const OriginalFunction* fn = nullptr;
