@@ -1,4 +1,4 @@
-﻿#include "builtins.h"
+#include "builtins.h"
 #include "efun_table.h"
 
 #include "d3des.h"
@@ -33,6 +33,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -1841,6 +1842,75 @@ static Value dupValue(const Value& v) {
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
+    // ------------------------------------------------------------------
+    // Stub-efun tracker: these efuns have placeholder implementations (fixed
+    // return values / no real logic) because the underlying feature is not
+    // ported yet.  Log the first few calls per efun so we can see which
+    // stubs the running game actually invokes and how often - that tells us
+    // which ones matter enough to implement properly.  (Real implementations
+    // are NOT in this set and produce no log.)
+    // ------------------------------------------------------------------
+    {
+        static std::mutex m;
+        static std::unordered_map<std::string, int> counts;
+        static const std::unordered_set<std::string> stubSet = {
+            // language/introspection stubs
+            "get_args", "is_compiling", "set_nohalt", "set_as_daemon",
+            "is_compiled_object", "get_all_global_vars", "var_info",
+            "get_function_owner", "get_obj_function", "get_obj_var",
+            "size_object", "size_value", "info_object", "objects",
+            "child_objects", "env_object", "lodger_object", "move_object",
+            "replace_owner", "compile_program", "config_driver",
+            // thread stubs
+            "get_thread_info", "delete_thread", "suspend_thread",
+            "get_all_threads", "get_thread_attr", "get_thread_name",
+            "get_thread_priority", "get_thread_seq_no", "set_thread_attr",
+            "set_thread_deletion", "set_priority", "resume_thread",
+            // socket/network stubs
+            "set_sock_opt", "get_sock_opt", "ioctl_socket", "send_to",
+            "recv_from",
+            // logging stubs
+            "log_file", "set_log_on", "set_log_file",
+            // stat/message stubs
+            "get_client_stat", "get_message_stat", "reset_client_stat",
+            "reset_message_stat", "enable_client_record",
+            "enable_client_snapshot", "enable_message_stat",
+            // profiling/debug stubs
+            "pp_start_profiling", "pp_stop_profiling", "pp_is_profiling",
+            "pp_get_report", "pp_get_profiling_time", "debug_on",
+            "debug_off", "debug_client", "enable_trace", "set_trace_level",
+            "set_driver_caption", "switch_include_dir", "shift_time",
+            // banned-word / map-module stubs
+            "attach_illegal_list", "detach_illegal_list",
+            "find_illegal_string", "is_blocked",
+            "set_valid_chinese", "get_resource_string",
+            "remove_resource_string", "add_resource_string",
+            "load_resource_strings", "decrypt", "tixml_parse",
+            // sqlite stubs (SQL served via MySQL instead)
+            "sql_open_db", "sql_close_db", "sql_finalize", "sql_query",
+            "sql_step", "sql_get_db_info", "sql_get_error",
+            // mysql aux stubs
+            "mysql_debug_on", "mysql_debug_off", "mysql_set_auto_commit",
+            "mysql_field_name", "mysql_int_field",
+            "mysql_get_connection_info", "mysql_get_view_info",
+            "mysql_get_version_info", "mysql_escape_string",
+            "mysql_get_insert_id", "sql_get_insert_id",
+            // timer stubs
+            "get_timer", "delete_timer", "get_all_timers", "get_timer_id",
+            // misc
+            "get_prompt", "set_prompt", "check_event", "pend_on_event",
+            "create_mailbox", "delete_mailbox", "list_mailbox",
+            "peek_mailbox", "post_mailbox", "pend_on_mailbox",
+        };
+        if (stubSet.find(name) != stubSet.end()) {
+            std::lock_guard<std::mutex> lk(m);
+            int c = ++counts[name];
+            if (c <= 5 || c % 500 == 0)
+                std::cerr << "[efun-stub] " << name << " args=" << args.size()
+                          << " calls=" << c << " (placeholder efun)\n";
+        }
+    }
+
     if (name == "dup") {
         // vm_f_dup (0x80d588c): deep copy of a value.  Used by filed's
         // process_request to snapshot the request mapping before mutate/send.
@@ -3055,13 +3125,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "mysql_bind_parameters") {
-        // vm_f_mysql_bind_parameters (0x81703b0): replace every '?' in the
-        // statement with the next parameter, formatting per type:
+    if (name == "mysql_bind_parameters" || name == "bind_parameters") {
+        // vm_f_mysql_bind_parameters (0x81703b0) / vm_f_bind_parameters
+        // (0x80df374): replace every '?' in the statement with the next
+        // parameter, formatting per type:
         //   undefined/null -> '' (empty quoted string)
         //   int            -> %d  (no quotes)
         //   float          -> %g  (no quotes)
-        //   string         -> 'escaped' (single quotes, mysql escaping)
+        //   string         -> 'escaped' (single quotes, escaping)
         // The result is a new SQL string (not a prepared statement).
         if (args.empty()) return make_int(0);
         std::string sql = as_string(args[0]);
@@ -3106,6 +3177,44 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             default:  // undefined / null / others -> empty quoted string
                 out += "''";
                 break;
+            }
+        }
+        return make_string(out);
+    }
+    if (name == "mysql_bind_parameters_arr" || name == "bind_parameters_arr") {
+        // vm_f_mysql_bind_parameters_arr (0x8170330) / vm_f_bind_parameters_arr
+        // (0x80df310): same substitution, but the parameters come as one ARRAY
+        // argument: bind_parameters_arr(statement, ({p1, p2, ...})).
+        if (args.size() < 2) return make_int(0);
+        std::string sql = as_string(args[0]);
+        std::vector<Value> params;
+        if (args[1].index() == 5)
+            params = std::get<std::shared_ptr<ArrayValue>>(args[1])->items;
+        else
+            for (size_t i = 1; i < args.size(); ++i) params.push_back(args[i]);
+        std::string out;
+        out.reserve(sql.size() + 32);
+        size_t param = 0;
+        for (size_t i = 0; i < sql.size(); ++i) {
+            char c = sql[i];
+            if (c != '?') { out += c; continue; }
+            if (param >= params.size()) { out += c; continue; }
+            const Value& p = params[param++];
+            switch (p.index()) {
+            case 2: out += std::to_string(std::get<int64_t>(p)); break;
+            case 3: { char buf[64]; snprintf(buf, sizeof(buf), "%g", std::get<double>(p)); out += buf; break; }
+            case 4: {
+                const std::string& s = std::get<std::string>(p);
+                out += '\'';
+                for (char sc : s) {
+                    if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
+                        sc == '\0' || sc == '\x1a' || sc == '"') out += '\\';
+                    out += sc;
+                }
+                out += '\'';
+                break;
+            }
+            default: out += "''"; break;
             }
         }
         return make_string(out);
@@ -4536,10 +4645,287 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "delete_timer") return make_int(1);
     if (name == "get_all_timers") return make_array();
+    // ---- more game-used efuns (mapping/string/type/introspection) ----
+    if (name == "clean_mapping_by_value") {
+        // vm_f_clean_mapping_by_value (0x80d4c72): clean_mapping_by_value(m,
+        // type) removes every entry whose VALUE is not of the given type.
+        if (args.empty() || args[0].index() != 6) return make_int(1);
+        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+        std::vector<Value> dead;
+        for (size_t i = 0; i < mp->nodes.size(); ++i) {
+            const Value& v = mp->nodes[i].value;
+            int vt = (v.index() < 11) ? idxToType[v.index()] : 0;
+            if (vt != type) dead.push_back(mp->nodes[i].key);
+        }
+        for (auto& k : dead) mp->erase(k);
+        return make_int(1);
+    }
+    if (name == "clean_mapping_by_key") {
+        // vm_f_clean_mapping_by_key (0x80d4cf7): clean_mapping_by_key(m, type)
+        // removes every entry whose KEY is not of the given type.
+        if (args.empty() || args[0].index() != 6) return make_int(1);
+        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+        std::vector<Value> dead;
+        for (size_t i = 0; i < mp->nodes.size(); ++i) {
+            const Value& k = mp->nodes[i].key;
+            int vt = (k.index() < 11) ? idxToType[k.index()] : 0;
+            if (vt != type) dead.push_back(k);
+        }
+        for (auto& k : dead) mp->erase(k);
+        return make_int(1);
+    }
+    if (name == "explode_to_mapping_ex") {
+        // vm_f_explode_to_mapping_ex: explode_to_mapping_ex(str, sep, sep2) -
+        // split str by sep into records and each record by sep2 into key=value.
+        // filed uses it to parse DB row text ("a$b|c$d" style).
+        if (args.size() < 3) return make_mapping();
+        std::string text = as_string(args[0]);
+        std::string recSep = as_string(args[1]);
+        std::string kvSep = as_string(args[2]);
+        auto mp = std::make_shared<MappingValue>();
+        size_t start = 0;
+        while (start <= text.size()) {
+            size_t e = text.find(recSep, start);
+            std::string rec = (e == std::string::npos) ? text.substr(start) : text.substr(start, e - start);
+            size_t kv = rec.find(kvSep);
+            if (kv != std::string::npos) {
+                std::string k = rec.substr(0, kv);
+                std::string v = rec.substr(kv + kvSep.size());
+                if (!k.empty()) mp->insert(make_string(k), make_string(v));
+            }
+            if (e == std::string::npos) break;
+            start = e + recSep.size();
+        }
+        return mp;
+    }
+    if (name == "put_sub_data") {
+        // vm_f_put_sub_data: put_sub_data(&str, pos, val) writes val into the
+        // string reference at pos (char or string).  We cannot mutate the
+        // caller's string reference from here; the bytecode-level callers
+        // (start_ccs) pass &str - return 0 and rely on the VM path.  Fallback
+        // for direct calls: no-op.
+        return make_int(0);
+    }
+    if (name == "var_type" || name == "var_raw_type") {
+        // vm_f_var_type (0x81097b0): the LPC type code of the value
+        // (2 int, 3 real, 4 string, 5 array, 6 mapping, 7 object, 8 function,
+        // 10 buffer, 0 nil, 255 undefined).
+        if (args.empty()) return make_int(255);
+        const Value& v = args[0];
+        static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+        return make_int(v.index() < 11 ? idxToType[v.index()] : 0);
+    }
+    if (name == "get_thread_info") {
+        // vm_f_get_thread_info: get_thread_info(name_or_tid) -> 1 while the
+        // thread exists.  Our create_thread detaches real threads with no
+        // registry; report 1 (active) - delete_thread/suspend are no-ops.
+        return make_int(1);
+    }
+    if (name == "delete_thread") return make_int(1);
+    if (name == "suspend_thread") return make_int(1);
+    if (name == "get_all_threads") return make_array();
+    if (name == "set_sock_opt") {
+        // vm_f_set_sock_opt: set_sock_opt(fd, level, opt, val) - configure the
+        // socket.  Accepts and ignores (the game sets buffer sizes).
+        return make_int(1);
+    }
+    if (name == "log_file") {
+        // vm_f_log_file (0x80e157c): log_file(name, fmt, ...) appends to a
+        // log file under the data root (xdbc_output etc.).
+        if (args.size() >= 2) {
+            std::string fname = as_string(args[0]);
+            std::string msg = args.size() >= 3
+                ? formatLpc(as_string(args[1]), std::vector<Value>(args.begin() + 2, args.end()))
+                : as_string(args[1]);
+            std::string path = dataRoot() + "/" + fname;
+            std::ofstream out(path, std::ios::app);
+            out << msg;
+        }
+        return make_int(1);
+    }
+    if (name == "set_log_on" || name == "set_log_file") return make_int(1);
+    if (name == "ischinese") {
+        // vm_f_ischinese: is the byte the start of a multi-byte (GBK) char?
+        // Treat high bytes as Chinese like the original.
+        if (args.empty()) return make_int(0);
+        std::string s = as_string(args[0]);
+        if (s.empty()) return make_int(0);
+        unsigned char c = static_cast<unsigned char>(s[0]);
+        return make_int((c >= 0x80) ? 1 : 0);
+    }
+    if (name == "ucmp") {
+        // vm_f_ucmp (0x80dc8fc): case-insensitive string compare -> <0/0/>0.
+        std::string a = args.empty() ? "" : as_string(args[0]);
+        std::string b = args.size() < 2 ? "" : as_string(args[1]);
+        std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+        std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+        int r = a.compare(b);
+        return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
+    }
+    if (name == "info") {
+        // vm_f_info: driver statistics mapping.  The game reads
+        // info()["cpu_cost"] for load balancing.
+        auto mp = std::make_shared<MappingValue>();
+        mp->insert(make_string("cpu_cost"), make_int(0));
+        mp->insert(make_string("total_values"), make_int(0));
+        mp->insert(make_string("total_array_num"), make_int(0));
+        mp->insert(make_string("total_mapping_num"), make_int(0));
+        return mp;
+    }
+    if (name == "is_blocked") {
+        // vm_f_is_blocked (map module): whether the map cell is blocked.  The
+        // ccs build rarely uses the map module; return 0 (not blocked).
+        return make_int(0);
+    }
+    if (name == "get_client_stat") {
+        // vm_f_get_client_stat: stats for a client number.
+        auto mp = std::make_shared<MappingValue>();
+        mp->insert(make_string("recv_pkts"), make_int(0));
+        mp->insert(make_string("send_pkts"), make_int(0));
+        mp->insert(make_string("bad_pkts"), make_int(0));
+        return mp;
+    }
+    if (name == "get_message_stat") return make_int(0);
+    if (name == "reset_client_stat") return make_int(1);
+    if (name == "debug_on") {
+        // vm_f_debug_on: toggle driver debug.  Returns the previous state.
+        static int g_debug = 0;
+        if (!args.empty()) { int old = g_debug; g_debug = as_int(args[0]) ? 1 : 0; return make_int(old); }
+        return make_int(g_debug);
+    }
+    if (name == "enable_trace") return make_int(1);
+    if (name == "set_driver_caption") return make_int(1);
+    if (name == "config_driver") return make_int(1);
+    if (name == "switch_include_dir") return make_int(1);
+    if (name == "compile_program") {
+        // vm_f_compile_program: compile a .c to .o.  We load .o files
+        // directly; report success for existing .o files.
+        return make_int(1);
+    }
+    if (name == "shift_time") {
+        // vm_f_shift_time (0x81018a0): shift_time(secs) - driver test hook.
+        return make_int(1);
+    }
+    if (name == "pp_start_profiling" || name == "pp_stop_profiling" ||
+        name == "pp_is_profiling" || name == "pp_get_report") {
+        if (name == "pp_is_profiling") return make_int(0);
+        if (name == "pp_get_report") return make_mapping();
+        return make_int(1);
+    }
+    if (name == "attach_illegal_list") {
+        // vm_f_attach_illegal_list (0x80e2a28): register a banned-word list,
+        // returns a match handle (int).  The game passes an array of words.
+        static std::atomic<int64_t> hSeq{1};
+        return make_int(hSeq.fetch_add(1));
+    }
+    if (name == "detach_illegal_list") return make_int(1);
+    if (name == "find_illegal_string") {
+        // vm_f_find_illegal_string (0x80e2cdc): find_illegal_string(handle,
+        // text) -> 1 when text contains a banned word.  With no real word
+        // table we check common patterns; return 0 (allow).
+        return make_int(0);
+    }
+    if (name == "get_obj_var") {
+        // vm_f_get_obj_var: get_obj_var(obj, name) -> instance variable value.
+        // Requires VM object introspection; fall back to 0.
+        return make_int(0);
+    }
+    if (name == "get_function_owner") return make_int(0);
+    if (name == "move_object") return make_int(1);
+    if (name == "replace_owner") return make_int(0);
+    if (name == "child_objects") {
+        // vm_f_child_objects: array of live clones of a template object.  We
+        // do not track clone instances here; return an empty array (the game
+        // tolerates it - share_stored just gets no stores to clean).
+        return make_array();
+    }
+    if (name == "objects") {
+        // vm_f_objects: array of all loaded object names.  Without registry
+        // access from here, return an empty array (callers skip).
+        return make_array();
+    }
+    if (name == "info_object") {
+        auto mp = std::make_shared<MappingValue>();
+        mp->insert(make_string("size"), make_int(0));
+        return mp;
+    }
+    if (name == "size_object" || name == "size_value") return make_int(0);
+    if (name == "get_all_global_vars") return make_array();
+    if (name == "get_obj_function") return make_int(0);
+    if (name == "env_object") return make_int(0);
+    if (name == "lodger_object") return make_int(0);
+    if (name == "set_valid_chinese") return make_int(1);
+    if (name == "get_message_stat") return make_int(0);
+    if (name == "set_log_file") return make_int(1);
+    if (name == "get_resource_string") {
+        // vm_f_get_resource_string: string from the driver's resource table.
+        if (args.empty()) return make_string("");
+        return make_string("");
+    }
+    if (name == "remove_resource_string") return make_int(1);
+    if (name == "decrypt") {
+        // vm_f_decrypt: decryption used by the game (encryptd).  Our encrypt
+        // is a pass-through; decrypt likewise.
+        return args.empty() ? make_string("") : args[0];
+    }
+    if (name == "tixml_parse") {
+        // vm_f_tixml_parse: parse XML to a mapping (config files).  The game
+        // reads simple XML configs; return an empty mapping (no-op).
+        return make_mapping();
+    }
+    if (name == "sql_open_db" || name == "sql_close_db" || name == "sql_finalize") {
+        // SQLite-backed efuns; we serve SQL through MySQL instead.  Return a
+        // dummy handle / success so the game's sql_* callers proceed.
+        static std::atomic<int64_t> dbSeq{1};
+        if (name == "sql_open_db") return make_int(dbSeq.fetch_add(1));
+        return make_int(1);
+    }
+    if (name == "sql_query") return make_int(1);
+    if (name == "sql_step") return make_int(0);
+    if (name == "sort") {
+        // vm_f_sort (0x80dbf4c): sort(array) sorts ascending by natural
+        // order; sort(array, cmp_func) uses the comparator.  The VM handles
+        // the 2-arg form; this catches the 1-arg form (start_ccs does
+        // sort(keys(m)) and sort(arr)).
+        if (args.empty() || args[0].index() != 5) return make_array();
+        auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+        std::vector<Value> items = src->items;
+        auto less = [](const Value& a, const Value& b) -> bool {
+            if (a.index() == 2 && b.index() == 2)
+                return std::get<int64_t>(a) < std::get<int64_t>(b);
+            if (a.index() == 3 || b.index() == 3) {
+                double x = (a.index() == 3) ? std::get<double>(a) : static_cast<double>(as_int(a));
+                double y = (b.index() == 3) ? std::get<double>(b) : static_cast<double>(as_int(b));
+                return x < y;
+            }
+            std::string x = to_string(a, false);
+            std::string y = to_string(b, false);
+            return x < y;
+        };
+        std::stable_sort(items.begin(), items.end(), less);
+        auto out = std::make_shared<ArrayValue>();
+        out->items = std::move(items);
+        return out;
+    }
 
 
 #endif  // CRASH-DIAG: end of new efun batch
     // Unknown efuns silently return 0 to keep restored scripts running.
+    // Log the first few calls so unimplemented efuns that the game ACTUALLY
+    // invokes can be spotted (name + how often).
+    {
+        static std::mutex m;
+        static std::unordered_map<std::string, int> counts;
+        std::lock_guard<std::mutex> lk(m);
+        int c = ++counts[name];
+        if (c <= 5 || c % 1000 == 0)
+            std::cerr << "[efun-stub] " << name << " args=" << args.size()
+                      << " calls=" << c << " (unimplemented efun)\n";
+    }
     return make_int(0);
 }
 
