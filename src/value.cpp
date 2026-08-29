@@ -431,11 +431,17 @@ bool is_truthy(const Value& v) {
     case 2: return std::get<int64_t>(v) != 0;
     case 3: return std::get<double>(v) != 0.0;
     case 4: return !std::get<std::string>(v).empty();
-    case 5: return !std::get<std::shared_ptr<ArrayValue>>(v)->items.empty();
-    case 6: return !std::get<std::shared_ptr<MappingValue>>(v)->empty();
+    // Arrays, mappings and buffers are ALWAYS truthy in the original driver
+    // (vm_isZero 0x808cae6: only number-0 / real-0 / null-string / undefined
+    // are zero; everything else falls to the default -> not zero).  Treating
+    // an empty array as false broke dba's cmd_read_content ("if (!arr)" with
+    // a ({}) result silently skipped the 17409 reply, hanging gs's filed
+    // do_operate forever).
+    case 5: return true;
+    case 6: return true;
     case 7: return true;
     case 8: return true;
-    case 10: return !std::get<std::shared_ptr<BufferValue>>(v)->data.empty();
+    case 10: return true;
     default: return false;
     }
 }

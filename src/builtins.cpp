@@ -1,4 +1,4 @@
-#include "builtins.h"
+﻿#include "builtins.h"
 #include "efun_table.h"
 
 #include "d3des.h"
@@ -181,6 +181,21 @@ FileTable& fileTable() {
 
 namespace lpc {
 
+// Driver predefines injected at boot (/D CONFIG=...).  expand_macro() checks
+// this table before the .o define table so start_<prefix>.o can resolve
+// INI_FILE = expand_macro("CONFIG") to the real config file.
+std::map<std::string, std::string>& injectedDefines() {
+    static std::map<std::string, std::string> m;
+    return m;
+}
+std::mutex& injectedDefinesMutex() {
+    static std::mutex m;
+    return m;
+}
+void injectDefine(const std::string& name, const std::string& value) {
+    std::lock_guard<std::mutex> lk(injectedDefinesMutex());
+    injectedDefines()[name] = value;
+}
 // ---------------------------------------------------------------------------
 // Driver message queues (vm_f_create_queue / send_to_queue / receive_from_queue).
 // A real, cross-thread FIFO: send_to_queue from any OS thread enqueues and
@@ -306,6 +321,9 @@ void eventDelete(const std::string& name) {
 }
 
 int64_t eventRaise(const Value& ref, uint32_t mask) {
+    if (std::getenv("LPCVM_EVENT_TRACE"))
+        std::cerr << "[event-raise] ref=" << to_string(ref, false)
+                  << " mask=0x" << std::hex << mask << std::dec << "\n";
     auto& reg = eventRegistry();
     std::shared_ptr<DriverEvent> ev;
     std::string ename;
@@ -326,6 +344,10 @@ int64_t eventRaise(const Value& ref, uint32_t mask) {
 }
 
 int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs) {
+    if (std::getenv("LPCVM_EVENT_TRACE"))
+        std::cerr << "[event-wait] ref=" << to_string(ref, false)
+                  << " mask=0x" << std::hex << mask << std::dec
+                  << " timeout=" << timeoutSecs << "\n";
     auto& reg = eventRegistry();
     std::shared_ptr<DriverEvent> ev;
     std::string ename;
@@ -541,6 +563,22 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
         } else if (type == 'c') {
             snprintf(buf, sizeof(buf), spec.c_str(), static_cast<int>(as_int(v) & 0xFF));
             out += buf;
+        } else if (type == 'O') {
+            // %O = object/value readable form (gameshell vm_sprintf).  Strings
+            // print quoted so "Failed to expand macro: %O" shows the value.
+            if (v.index() == 4) {
+                out += "\"";
+                out += std::get<std::string>(v);
+                out += "\"";
+            } else if (v.index() == 3) {
+                snprintf(buf, sizeof(buf), "%g", std::get<double>(v));
+                out += buf;
+            } else if (v.index() == 6 || v.index() == 5) {
+                out += to_string(v, true);
+            } else {
+                snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(as_int(v)));
+                out += buf;
+            }
         } else {
             // integer types: d i u o x X
             snprintf(buf, sizeof(buf), spec.c_str(), as_int(v));
@@ -607,6 +645,7 @@ std::mutex& mysqlHandlesMutex() {
     static std::mutex m;
     return m;
 }
+
 int nextMysqlCno() {
     static std::atomic<int> n{1};
     return n++;
@@ -2265,6 +2304,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // DOUBLE QUOTES; the LPC startup strips them with [1..<2].
         if (!args.empty() && args[0].index() == 4) {
             const std::string& key = std::get<std::string>(args[0]);
+            {
+                // Boot-injected predefines (/D CONFIG=...) win over the .o
+                // define table, matching the original driver's runtime
+                // define merge (start_<prefix>.o resolves INI_FILE via
+                // expand_macro("CONFIG")).
+                std::lock_guard<std::mutex> lk(injectedDefinesMutex());
+                auto it = injectedDefines().find(key);
+                if (it != injectedDefines().end()) return make_string(it->second);
+            }
             if (key == "__BIN_DIR__") {
                 if (pakMounted())
                     return make_string("\"" + pakVirtualPrefix() + "\"");
@@ -2287,12 +2335,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t e0 = expansion.find_last_not_of(" \t\r\n");
                 std::string trimmed = (b0 == std::string::npos) ? "" :
                                       expansion.substr(b0, e0 - b0 + 1);
-                char* end = nullptr;
-                long long v = std::strtoll(trimmed.c_str(), &end, 0);
-                if (std::getenv("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
-                    std::cerr << "[expand_macro] " << key << " parsed=" << v
-                              << " end='" << (end ? *end : '?') << "'\n";
-                if (end && *end == '\0') return make_int(static_cast<int64_t>(v));
+                // The original vm_f_expand_macro (0x80d5598) ALWAYS pushes a
+                // STRING (vm_pushString of the define expansion), even for
+                // numeric macros - the game wraps the result with
+                // is_string()/atoi()/trim()/(int) (convert_to_value checks
+                // is_string, threadd checks MAX_SERVICE_THREAD_NUM, etc.).
+                // Returning an int here broke convert_to_value with
+                // "Failed to expand macro: %O, use raw data".
+                return make_string(trimmed);
             }
         }
         return make_int(0);
@@ -2500,7 +2550,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
                 int64_t cmdNo = 0;
                 Value mv = call_builtin(nullptr, "expand_macro", {make_string(macro)});
-                if (mv.index() == 2) cmdNo = std::get<int64_t>(mv);
+                if (mv.index() == 2) {
+                    cmdNo = std::get<int64_t>(mv);
+                } else if (mv.index() == 4) {
+                    // expand_macro returns a STRING (original vm_f_expand_macro
+                    // always pushes a string).  Parse the numeric define
+                    // (accepts "0x2478" / "9336" / "                  0x5351").
+                    const std::string& es = std::get<std::string>(mv);
+                    size_t b0 = es.find_first_not_of(" \t\r\n");
+                    size_t e0 = es.find_last_not_of(" \t\r\n");
+                    std::string trimS = (b0 == std::string::npos) ? "" : es.substr(b0, e0 - b0 + 1);
+                    cmdNo = std::strtoll(trimS.c_str(), nullptr, 0);
+                }
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[pkt] add_interface " << name << " macro=" << macro
                               << " cmdNo=" << cmdNo << " mvIndex=" << static_cast<int>(mv.index())
@@ -3566,19 +3627,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "make32" || name == "make32i") {
-        // make32(n) -> 4-byte big-endian BUFFER; make32i(str[,off]) -> int.
-        if (name == "make32") {
-            int64_t v = args.empty() ? 0 : as_int(args[0]);
-            std::string s(4, '\0');
-            for (int i = 0; i < 4; ++i) s[static_cast<size_t>(i)] = static_cast<char>((v >> (24 - 8 * i)) & 0xFF);
-            return make_buffer(s);
+        // vm_f_make32 (0x804dd70) AND vm_f_make32i (0x804defb) pack EVERY
+        // argument as a 4-byte big-endian value into one buffer, so
+        // make32(a, b) yields 8 bytes.  The game uses make32i(int) the same
+        // way (apexd's make32i(apex_id) is a pack, not a parse).
+        std::string out;
+        for (const auto& a : args) {
+            int64_t v = as_int(a);
+            out += static_cast<char>((v >> 24) & 0xFF);
+            out += static_cast<char>((v >> 16) & 0xFF);
+            out += static_cast<char>((v >> 8) & 0xFF);
+            out += static_cast<char>(v & 0xFF);
         }
-        std::string s = args.empty() ? "" : as_string(args[0]);
-        size_t off = args.size() >= 2 ? static_cast<size_t>(as_int(args[1])) : 0;
-        int64_t v = 0;
-        for (int i = 0; i < 4 && off + static_cast<size_t>(i) < s.size(); ++i)
-            v = (v << 8) | static_cast<unsigned char>(s[off + static_cast<size_t>(i)]);
-        return make_int(v);
+        return make_buffer(out);
     }
     if (name == "regexp") {
         // regexp(str, pattern[, max]) -> array of {start,end} per group.

@@ -342,6 +342,16 @@ int runPakOriginal(const std::string& path) {
     lpc::setVfsProfile(vfsRoot, dataRoot, etcDir, pakPrefix, objPrefix);
     lpc::setPakMount(absPak, prefix);
 
+    // The original boot scripts pass /D CONFIG=<prefix>/<prefix>.ini (rungs:
+    // /D CONFIG=gs/gs1.ini).  start_<prefix>.o resolves INI_FILE via
+    // expand_macro("CONFIG") with a "/<prefix>/game_server.ini" fallback that
+    // only aaa/dba/ccs happen to match; inject the real config file so gs
+    // reads gs1.ini (and the others read their own ini) instead of falling
+    // back to the missing game_server.ini.
+    std::string iniRel = objPrefix + "/" + objPrefix + ".ini";
+    if (objPrefix == "gs") iniRel = "gs/gs1.ini";  // rungs: /D CONFIG=gs/gs1.ini
+    lpc::injectDefine("CONFIG", iniRel);
+
     // Boot object: <pak>/<objPrefix>/start_<objPrefix>.o (runaaa/rundba -e).
     lpc::OriginalObject obj;
     std::vector<uint8_t> bootBytes;
