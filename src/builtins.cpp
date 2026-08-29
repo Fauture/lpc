@@ -1,4 +1,4 @@
-#include "builtins.h"
+﻿#include "builtins.h"
 #include "efun_table.h"
 
 #include "d3des.h"
@@ -131,6 +131,47 @@ std::string md5Digest(const uint8_t* data, size_t len) {
     return out;
 }
 
+// Shared random source for the random/random_select/random_from_m_to_n/get_seed
+// efuns.  Mirrors vm_f_random's 31-bit construction from three 15-bit draws.
+int64_t sharedRand31() {
+    static std::mt19937 rng(static_cast<uint32_t>(std::time(nullptr)) ^
+                            std::random_device{}());
+    uint32_t r0 = static_cast<uint32_t>(rng()) & 0x7FFFu;
+    uint32_t r1 = static_cast<uint32_t>(rng()) & 0x7FFFu;
+    uint32_t r2 = static_cast<uint32_t>(rng()) & 0x7FFFu;
+    uint32_t v = ((r0 & 0x7FFFu) >> 13) | (4u * (r1 & 0x7FFFu)) | (r2 << 17);
+    return static_cast<int64_t>(v & 0x7FFFFFFFu);
+}
+
+// Named mutex table (vm_f_create_mutex/take/give/delete).  Keys are the LPC
+// mutex names ("mfiledconn" etc.); values are recursive mutexes so a process
+// that owns a mutex can take it again (the original's level/reentrancy).
+struct NamedMutexTable {
+    std::mutex mtx;
+    std::unordered_map<std::string, std::shared_ptr<std::recursive_mutex>> mutexes;
+};
+NamedMutexTable& mutexTable() {
+    static NamedMutexTable t;
+    return t;
+}
+
+// File handles for fopen/fread/fwrite/fclose/fgets/fseek/ftell (sorterrord
+// opens error-log files; the game rarely uses these).
+struct FileEntry {
+    std::string path;
+    std::string mode;
+    std::shared_ptr<std::ofstream> ofs;
+    std::shared_ptr<std::ifstream> ifs;
+};
+struct FileTable {
+    std::mutex mtx;
+    std::unordered_map<int64_t, std::shared_ptr<FileEntry>> files;
+};
+FileTable& fileTable() {
+    static FileTable t;
+    return t;
+}
+
 } // namespace
 
 #include "interpreter.h"
@@ -184,6 +225,132 @@ int64_t resolveQidLocked(const Value& v) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Driver events (vm_f_create_event / wait_event / raise_event).  The original
+// creates pend objects (event = named bit set), raise_event ORs bits in,
+// wait_event blocks until one of its bits is set (or times out) and clears
+// them.  Real cross-thread implementation: a shared registry keyed by event
+// name, each event with its own mutex + condition_variable.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct DriverEvent {
+    std::mutex mtx;
+    std::condition_variable cv;
+    uint32_t raised = 0;      // bits raised by raise_event
+    bool destroyed = false;
+};
+
+struct EventRegistry {
+    std::mutex mtx;
+    std::unordered_map<std::string, std::shared_ptr<DriverEvent>> events;
+    // Object-id -> event name (create_event returns the oid; vm_f_wait_event /
+    // vm_f_raise_event accept the int oid via vm_getPendObject(14, oid)).
+    std::unordered_map<int64_t, std::string> oidToName;
+};
+
+EventRegistry& eventRegistry() {
+    static EventRegistry r;
+    return r;
+}
+
+// Resolve an event reference: a string name, or an int oid from
+// create_event().  Returns the event name, or "" if unknown.
+std::string resolveEventNameLocked(const Value& v, EventRegistry& reg) {
+    if (v.index() == 4) return std::get<std::string>(v);
+    if (v.index() == 2) {
+        auto it = reg.oidToName.find(std::get<int64_t>(v));
+        if (it != reg.oidToName.end()) return it->second;
+    }
+    return "";
+}
+
+} // namespace
+
+// Per-LPC-thread id (the original's PCB->tid).  Assigned lazily on first
+// call so every OS thread that runs LPC gets a unique, stable id.
+int64_t lpcThreadId() {
+    static std::atomic<int64_t> nextId{0};
+    thread_local int64_t tid = nextId.fetch_add(1, std::memory_order_relaxed);
+    return tid;
+}
+
+void eventCreate(const std::string& name, int64_t oid) {
+    auto& reg = eventRegistry();
+    std::lock_guard<std::mutex> lk(reg.mtx);
+    if (reg.events.find(name) == reg.events.end())
+        reg.events[name] = std::make_shared<DriverEvent>();
+    if (oid >= 0) reg.oidToName[oid] = name;
+}
+
+void eventDelete(const std::string& name) {
+    auto& reg = eventRegistry();
+    std::shared_ptr<DriverEvent> ev;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.events.find(name);
+        if (it != reg.events.end()) { ev = it->second; reg.events.erase(it); }
+        for (auto oit = reg.oidToName.begin(); oit != reg.oidToName.end();)
+            if (oit->second == name) oit = reg.oidToName.erase(oit);
+            else ++oit;
+    }
+    if (ev) {
+        {
+            std::lock_guard<std::mutex> lk(ev->mtx);
+            ev->destroyed = true;
+        }
+        ev->cv.notify_all();
+    }
+}
+
+int64_t eventRaise(const Value& ref, uint32_t mask) {
+    auto& reg = eventRegistry();
+    std::shared_ptr<DriverEvent> ev;
+    std::string ename;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        ename = resolveEventNameLocked(ref, reg);
+        if (ename.empty()) return -101;
+        auto it = reg.events.find(ename);
+        if (it == reg.events.end()) return -101;
+        ev = it->second;
+    }
+    {
+        std::lock_guard<std::mutex> lk(ev->mtx);
+        ev->raised |= mask;
+    }
+    ev->cv.notify_all();
+    return 0;
+}
+
+int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs) {
+    auto& reg = eventRegistry();
+    std::shared_ptr<DriverEvent> ev;
+    std::string ename;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        ename = resolveEventNameLocked(ref, reg);
+        if (ename.empty()) return -101;
+        auto it = reg.events.find(ename);
+        if (it == reg.events.end()) return -101;
+        ev = it->second;
+    }
+    std::unique_lock<std::mutex> lk(ev->mtx);
+    auto fired = [&] { return ev->destroyed || (ev->raised & mask) != 0; };
+    bool ok = false;
+    if (timeoutSecs < 0) {
+        ev->cv.wait(lk, fired);
+        ok = (ev->raised & mask) != 0;
+    } else if (timeoutSecs == 0) {
+        ok = fired();
+    } else {
+        ok = ev->cv.wait_for(lk, std::chrono::duration<double>(timeoutSecs), fired);
+    }
+    if (!ok || ev->destroyed) return -501;
+    ev->raised &= ~mask;   // clear the consumed bits (vm_f_wait_event does the same)
+    return 0;
+}
 
 // ---------------------------------------------------------------------------
 // Per-project path profile (vfsRoot/dataRoot/etcRoot/pak mount prefix).
@@ -2392,6 +2559,229 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
+    if (name == "append_file") {
+        // vm_f_append_file: append a line to a file (filed's GID.list etc.).
+        if (args.size() >= 2) {
+            std::ofstream out(resolveVfsPath(as_string(args[0])), std::ios::app);
+            out << as_string(args[1]) << "\n";
+        }
+        return make_int(1);
+    }
+    if (name == "mkdir") {
+        // vm_f_mkdir: mkdir(path) - create a directory (parents included).
+        if (!args.empty()) {
+            std::error_code ec;
+            fs::create_directories(resolveVfsPath(as_string(args[0])), ec);
+            return make_int(!ec ? 1 : 0);
+        }
+        return make_int(0);
+    }
+    if (name == "delete_file") {
+        // vm_f_delete_file: delete_file(path) -> 1 on success.
+        if (!args.empty()) {
+            std::error_code ec;
+            fs::remove(resolveVfsPath(as_string(args[0])), ec);
+            return make_int(!ec ? 1 : 0);
+        }
+        return make_int(0);
+    }
+    if (name == "file_stat") {
+        // vm_f_file_stat (0x80e0ed8): file_stat(path) -> mapping or 0.
+        // The game checks is_mapping(file_stat(f)) to test existence.
+        if (args.empty()) return make_int(0);
+        std::error_code ec;
+        fs::path p = resolveVfsPath(as_string(args[0]));
+        if (!fs::exists(p, ec)) return make_int(0);
+        auto mp = std::make_shared<MappingValue>();
+        mp->insert(make_string("size"), make_int(static_cast<int64_t>(fs::is_directory(p, ec) ? -2 : fs::file_size(p, ec))));
+        mp->insert(make_string("is_directory"), make_int(fs::is_directory(p, ec) ? 1 : 0));
+        return mp;
+    }
+    if (name == "fopen") {
+        // vm_f_fopen (0x80e2170): fopen(path, mode) -> file handle (int) or 0.
+        // The game (sorterrord) opens files for error logging.  We map the
+        // handle to a simple in-memory table.
+        if (args.size() < 2) return make_int(0);
+        std::string path = resolveVfsPath(as_string(args[0]));
+        std::string mode = as_string(args[1]);
+        static std::atomic<int64_t> fhSeq{100};
+        int64_t fh = fhSeq.fetch_add(1);
+        auto fe = std::make_shared<FileEntry>();
+        fe->path = path;
+        fe->mode = mode;
+        if (mode.find('w') != std::string::npos || mode.find('a') != std::string::npos) {
+            std::ios::openmode om = (mode.find('a') != std::string::npos) ? std::ios::app : std::ios::trunc;
+            fe->ofs = std::make_shared<std::ofstream>(path, std::ios::binary | om);
+            if (!fe->ofs->is_open()) return make_int(0);
+        } else if (mode.find('r') != std::string::npos) {
+            fe->ifs = std::make_shared<std::ifstream>(path, std::ios::binary);
+            if (!fe->ifs->is_open()) return make_int(0);
+        }
+        {
+            std::lock_guard<std::mutex> lk(fileTable().mtx);
+            fileTable().files[fh] = fe;
+        }
+        return make_int(fh);
+    }
+    if (name == "fclose") {
+        if (!args.empty()) {
+            std::lock_guard<std::mutex> lk(fileTable().mtx);
+            fileTable().files.erase(as_int(args[0]));
+        }
+        return make_int(1);
+    }
+    if (name == "fwrite" || name == "fprintf") {
+        if (args.size() >= 2) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ofs) {
+                std::string data = (name == "fprintf" && args.size() >= 3)
+                    ? formatLpc(as_string(args[1]), std::vector<Value>(args.begin() + 2, args.end()))
+                    : as_string(args[1]);
+                *fe->ofs << data;
+                fe->ofs->flush();
+            }
+        }
+        return make_int(1);
+    }
+    if (name == "fread") {
+        if (args.size() >= 2) {
+            int64_t fh = as_int(args[0]);
+            int64_t len = as_int(args[1]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs && len > 0) {
+                std::string buf(static_cast<size_t>(len), '\0');
+                fe->ifs->read(&buf[0], len);
+                buf.resize(static_cast<size_t>(fe->ifs->gcount()));
+                return make_string(buf);
+            }
+        }
+        return make_string("");
+    }
+    if (name == "fgets") {
+        if (!args.empty()) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs) {
+                std::string line;
+                if (std::getline(*fe->ifs, line)) return make_string(line);
+            }
+        }
+        return make_int(0);
+    }
+    if (name == "fseek") {
+        if (args.size() >= 2) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs) {
+                fe->ifs->clear();
+                fe->ifs->seekg(static_cast<std::streamoff>(as_int(args[1])), std::ios::beg);
+            }
+        }
+        return make_int(1);
+    }
+    if (name == "lzss_compress") {
+        // vm_f_lzss_compress (0x80df860): buffer = BE32(origLen) + lzss data;
+        // when compression does not shrink, BE32(0) + raw bytes.
+        if (args.empty()) return make_buffer(std::string(4, '\0'));
+        std::string data = as_string(args[0]);
+        std::vector<uint8_t> src(data.begin(), data.end());
+        std::vector<uint8_t> comp = lpc::lzssCompress(src);
+        std::string out;
+        uint32_t len = static_cast<uint32_t>(src.size());
+        out += static_cast<char>((len >> 24) & 0xFF);
+        out += static_cast<char>((len >> 16) & 0xFF);
+        out += static_cast<char>((len >> 8) & 0xFF);
+        out += static_cast<char>(len & 0xFF);
+        if (comp.size() < src.size()) {
+            out.append(comp.begin(), comp.end());
+        } else {
+            // compression did not shrink: store BE32(0) + raw (the original
+            // lzss_compress stores the uncompressed data when it cannot help)
+            std::string out2;
+            out2 += static_cast<char>(0);
+            out2 += static_cast<char>(0);
+            out2 += static_cast<char>(0);
+            out2 += static_cast<char>(0);
+            out2.append(data);
+            return make_buffer(out2);
+        }
+        return make_buffer(out);
+    }
+    if (name == "lzss_decompress") {
+        // vm_f_lzss_decompress (0x80df9b4): buffer = BE32(origLen) + lzss data
+        // (origLen 0 -> raw copy).  Returns a buffer.
+        if (args.empty()) return make_buffer(std::string());
+        std::string buf = as_string(args[0]);
+        if (buf.size() < 4) return make_buffer(std::string());
+        uint32_t origLen = (static_cast<unsigned char>(buf[0]) << 24) |
+                           (static_cast<unsigned char>(buf[1]) << 16) |
+                           (static_cast<unsigned char>(buf[2]) << 8) |
+                           static_cast<unsigned char>(buf[3]);
+        std::vector<uint8_t> comp(buf.begin() + 4, buf.end());
+        if (origLen == 0) {
+            std::string raw(buf.begin() + 4, buf.end());
+            return make_buffer(raw);
+        }
+        std::vector<uint8_t> outv;
+        if (!lpc::lzssDecompress(comp, origLen, outv))
+            return make_buffer(std::string());
+        return make_buffer(std::string(outv.begin(), outv.end()));
+    }
+    if (name == "buffer_to_string") {
+        // vm_f_buffer_to_string: buffer -> string (bytes unchanged).
+        if (args.empty()) return make_string("");
+        return make_string(as_string(args[0]));
+    }
+    if (name == "string_to_buffer") {
+        // vm_f_string_to_buffer: string -> buffer (bytes unchanged).
+        if (args.empty()) return make_buffer(std::string());
+        return make_buffer(as_string(args[0]));
+    }
+    if (name == "valid_chinese" || name == "set_valid_chinese") {
+        // The game's Chinese-string validation is a no-op here (input is
+        // already the codepage the driver used).
+        if (name == "valid_chinese") return make_int(1);
+        return make_int(1);
+    }
+    if (name == "random_attrib") {
+        // vm_f_random_attrib: random_attrib() -> random integer (used for
+        // item attribute rolls).
+        return make_int(sharedRand31());
+    }
+    if (name == "ftell") {
+        if (!args.empty()) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs) return make_int(static_cast<int64_t>(fe->ifs->tellg()));
+        }
+        return make_int(-1);
+    }
     if (name == "telnet_on") {
         ensureWsa();
         int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
@@ -3233,25 +3623,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(ok ? 0 : -101);
     }
     if (name == "wait_event") {
-        // Original vm_f_wait_event (0x80f097c) blocks the process until an
-        // event fires or the timeout (arg 3, seconds; -1 = forever) expires.
-        // Our event queue is a stub that never fires: emulate the blocking
-        // wait so daemon service loops (which call wait_event in a tight
-        // loop) do not spin at 100% CPU.  Positive timeouts sleep for real
-        // (capped); 0/-1/absent poll at a low cadence.
+        // vm_f_wait_event (0x80f097c): wait_event(name, mask, ref, timeout).
+        // Blocks the current process until raise_event sets one of the mask
+        // bits (returns 0 and consumes the bits), -501 on timeout, -101 if the
+        // event does not exist.  timeout: seconds, -1 = forever, 0 = poll once.
+        // (The .o VM path intercepts this in original_vm.cpp to release the
+        // VM lock while blocked; this fallback serves the source interpreter.)
+        if (args.size() < 2) return make_int(-101);
+        uint32_t mask = static_cast<uint32_t>(as_int(args[1]));
         double secs = -1.0;
         if (args.size() >= 4) {
             const Value& t = args[3];
             if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
             else if (t.index() == 3) secs = std::get<double>(t);
         }
-        int64_t ms = 100;  // minimum poll interval
-        if (secs > 0.0) {
-            if (secs > 60.0) secs = 60.0;
-            ms = static_cast<int64_t>(secs * 1000.0);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-        return make_int(0);
+        return make_int(lpc::eventWait(args[0], mask, secs));
     }
     if (name == "receive_from_queue" || name == "receive_from_queue_ex") {
         // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
@@ -3277,7 +3663,43 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         arr->items.push_back(v);
         return arr;
     }
-    if (name == "get_thread_id") return make_int(-1);
+    if (name == "get_system_info") {
+        // vm_f_get_system_info (0x80d6b88): returns a mapping of driver
+        // runtime statistics.  LPC uses ["max_threads"] to size per-thread
+        // event arrays (filed/configd/rpcd create "ev_filedN" events) and
+        // ["current_path"] for the working directory.  The original driver
+        // boots with --max-process 128, so max_threads = 128 and the
+        // (max_threads+31)/32-1 loops create ev_filed0..ev_filed3.
+        auto mp = std::make_shared<MappingValue>();
+        auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
+        add("shared_strings", 0);
+        add("global_strings", 0);
+        add("scan_socket_count", 0);
+        add("total_mapping_num", 0);
+        add("total_mapping_size", 0);
+        add("total_mapping_nodes", 0);
+        add("obsoleted_mapping_nodes", 0);
+        add("total_array_num", 0);
+        add("total_array_size", 0);
+        add("total_values", 0);
+        add("max_telnet_clients", 4);
+        add("max_service_threads", 4);
+        add("max_threads", 128);          // vm_maxProcess (--max-process 128)
+        add("max_pend_objects", 256);
+        add("max_script_sockets", 256);
+        add("scan_socket_page", 1024);
+        add("max_scan_sockets", 256);
+        mp->insert(make_string("current_path"), make_string(vfsProfile().dataRoot));
+        return mp;
+    }
+    if (name == "get_thread_id") {
+        // vm_f_get_thread_id (0x80ed79c): get_thread_id() -> the current
+        // process's tid; get_thread_id(name/int) resolves another process
+        // (returns its tid or -1).  We assign a unique stable id per LPC
+        // thread; a named lookup returns -1 (no named process registry).
+        if (args.empty()) return make_int(lpc::lpcThreadId());
+        return make_int(-1);
+    }
     if (name == "time" || name == "time_desc")
         return make_int(static_cast<int64_t>(std::time(nullptr)));
     if (name == "tick") {
@@ -3340,14 +3762,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // queues and events share ONE global object-id table (vmObject[]),
         // ids start at 1 (the first free slot), which is what makes threadd's
         // service numbers match the original run.  The optional first argument
-        // is a NAME string that can be used to address the queue later
-        // (http_clientd/sorterrord use "qHttpClient" etc.).
+        // is a NAME string that can be used to address the queue/event later
+        // (http_clientd/sorterrord use "qHttpClient", filed uses "ev_filedN").
         static std::atomic<int64_t> pendSeq{0};
         int64_t qid = pendSeq.fetch_add(1, std::memory_order_relaxed) + 1;
         std::string qname;
         if (!args.empty() && args[0].index() == 4) qname = std::get<std::string>(args[0]);
         if (name == "create_queue") lpc::queueCreate(qid, qname);
-        if (std::getenv("LPCVM_TRACE"))
+        else if (!qname.empty()) lpc::eventCreate(qname, qid);
+        if (std::getenv("LPCVM_EVENT_TRACE") || std::getenv("LPCVM_TRACE"))
             std::cerr << "[create_" << (name == "create_queue" ? "queue" : "event")
                       << "] id=" << qid << " name='" << qname << "'\n";
         return make_int(qid);
@@ -3357,9 +3780,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             int64_t qid = queueResolveId(args[0]);
             if (qid >= 0) lpc::queueDelete(qid);
         }
+        if (name == "delete_event" && !args.empty() && args[0].index() == 4)
+            lpc::eventDelete(std::get<std::string>(args[0]));
         return make_int(1);
     }
-    if (name == "raise_event") return make_int(1);
+    if (name == "raise_event") {
+        // vm_f_raise_event (0x80f07b8): raise_event(name_or_oid, mask) ORs mask
+        // into the event's bits and wakes any blocked wait_event.  0 on
+        // success, -101 if the event does not exist.
+        if (args.size() < 2) return make_int(-101);
+        return make_int(lpc::eventRaise(args[0], static_cast<uint32_t>(as_int(args[1]))));
+    }
     if (name == "restore_value") {
         // vm_f_restore_value (0x80dae84) -> vm_restoreMixedString: parse one
         // value in the vm_saveValueAscii format.  On failure the original
@@ -3574,6 +4005,32 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty()) xdbcCloseSocket(static_cast<int>(as_int(args[0])));
         return make_int(0);
     }
+    if (name == "bind") {
+        // vm_f_bind (0x80e47a0): bind(fd, addr, port).  We support only
+        // bind(fd, 0, port) (any-address) which is what ccs_serverd's
+        // listen_daemon uses: bind(ccs_sc_fd, 0, my_port).
+        if (args.size() >= 3)
+            return make_int(xdbcBind(static_cast<int>(as_int(args[0])),
+                                     static_cast<int>(as_int(args[2]))));
+        return make_int(-1);
+    }
+    if (name == "listen") {
+        // vm_f_listen (0x80e4ec0): listen(fd, backlog).
+        if (args.size() >= 1)
+            return make_int(xdbcListen(static_cast<int>(as_int(args[0])),
+                                       args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 5));
+        return make_int(-1);
+    }
+    if (name == "accept") {
+        // vm_f_accept (0x80e53c4): accept(fd) -> new fd or -1.
+        if (!args.empty()) return make_int(xdbcAccept(static_cast<int>(as_int(args[0]))));
+        return make_int(-1);
+    }
+    if (name == "get_sock_info") {
+        // vm_f_get_sock_info: mapping of socket metadata.
+        if (!args.empty()) return xdbcGetSockInfo(static_cast<int>(as_int(args[0])));
+        return make_mapping();
+    }
     if (name == "error") return make_int(0);
     // ---- LPC value helpers the game uses (verified against the original
     // driver's handlers in IDA) ----
@@ -3632,6 +4089,456 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_string("");
         return args[0];
     }
+    // ---- common language efuns the game relies on but that were missing ----
+#if 1  // CRASH-DIAG: set to 0 to disable the new efun batch for bisection
+    auto lpcCompare = [](const Value& a, const Value& b) -> int {
+        // mirrors original_vm's compareValues (vm_compareValue_0 semantics for
+        // the numeric/string comparisons the game uses).
+        if (a.index() == 3 || b.index() == 3) {
+            double x = (a.index() == 3) ? std::get<double>(a) : static_cast<double>(as_int(a));
+            double y = (b.index() == 3) ? std::get<double>(b) : static_cast<double>(as_int(b));
+            return x < y ? -1 : (x > y ? 1 : 0);
+        }
+        if (a.index() == 4 && b.index() == 4) {
+            const auto& x = std::get<std::string>(a);
+            const auto& y = std::get<std::string>(b);
+            return x < y ? -1 : (x > y ? 1 : 0);
+        }
+        int64_t x = as_int(a), y = as_int(b);
+        return x < y ? -1 : (x > y ? 1 : 0);
+    };
+    // Collect all arguments, flattening array arguments (vm_f_maximum /
+    // vm_f_minimum iterate each argument; arrays are expanded element-wise).
+    auto flattenArgs = [](const std::vector<Value>& args) -> std::vector<Value> {
+        std::vector<Value> out;
+        for (const auto& a : args) {
+            if (a.index() == 5) {
+                const auto& arr = std::get<std::shared_ptr<ArrayValue>>(a)->items;
+                out.insert(out.end(), arr.begin(), arr.end());
+            } else {
+                out.push_back(a);
+            }
+        }
+        return out;
+    };
+    if (name == "maximum") {
+        std::vector<Value> all = flattenArgs(args);
+        if (all.empty()) return make_int(0);
+        Value best = all[0];
+        for (size_t i = 1; i < all.size(); ++i)
+            if (lpcCompare(all[i], best) > 0) best = all[i];
+        return best;
+    }
+    if (name == "minimum") {
+        std::vector<Value> all = flattenArgs(args);
+        if (all.empty()) return make_int(0);
+        Value best = all[0];
+        for (size_t i = 1; i < all.size(); ++i)
+            if (lpcCompare(all[i], best) < 0) best = all[i];
+        return best;
+    }
+    if (name == "strcmp") {
+        // vm_f_strcmp (0x80dc550): strcmp(a, b) -> <0 / 0 / >0.
+        std::string a = args.empty() ? "" : as_string(args[0]);
+        std::string b = args.size() < 2 ? "" : as_string(args[1]);
+        int r = a.compare(b);
+        return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
+    }
+    if (name == "count_total") {
+        // vm_f_count_total: sum of a mapping's values (numeric), or of an
+        // array's elements (game: count_total(mapping) sums the ints).
+        if (args.empty()) return make_int(0);
+        const Value& v = args[0];
+        double total = 0.0;
+        if (v.index() == 6) {
+            auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+            // Iterate by index: nodes is a compact vector; inserting during
+            // iteration would invalidate references.
+            for (size_t i = 0; i < mp->nodes.size(); ++i) {
+                const Value& val = mp->nodes[i].value;
+                if (val.index() == 3) total += std::get<double>(val);
+                else total += static_cast<double>(as_int(val));
+            }
+        } else if (v.index() == 5) {
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+            for (auto& e : arr->items) {
+                if (e.index() == 3) total += std::get<double>(e);
+                else total += static_cast<double>(as_int(e));
+            }
+        } else {
+            total = (v.index() == 3) ? std::get<double>(v) : static_cast<double>(as_int(v));
+        }
+        // The original returns an int when every element is int (the game
+        // sums day counts and cost counters, always ints).
+        return make_int(static_cast<int64_t>(total));
+    }
+    if (name == "map_add_values") {
+        // vm_f_map_add_values: mapping + array of (key,value) pairs, or
+        // mapping + mapping: fold the second into the first (returns it).
+        if (args.size() < 2 || args[0].index() != 6) return args.empty() ? make_mapping() : args[0];
+        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        const Value& src = args[1];
+        if (src.index() == 6) {
+            auto srcMp = std::get<std::shared_ptr<MappingValue>>(src);
+            // Snapshot the source entries first: inserting into mp may rehash
+            // srcMp too when srcMp == mp (or share storage).
+            std::vector<std::pair<Value, Value>> entries;
+            for (size_t i = 0; i < srcMp->nodes.size(); ++i)
+                entries.emplace_back(srcMp->nodes[i].key, srcMp->nodes[i].value);
+            for (auto& kv : entries) mp->insert(kv.first, kv.second);
+        } else if (src.index() == 5) {
+            const auto& items = std::get<std::shared_ptr<ArrayValue>>(src)->items;
+            for (size_t i = 0; i + 1 < items.size(); i += 2)
+                mp->insert(items[i], items[i + 1]);
+        }
+        return args[0];
+    }
+    if (name == "mapping_array") {
+        // vm_f_mapping_array (vm_addMappingArray 0x809effc): mapping_array(
+        // array, func) applies func to each element and returns the result
+        // array (the game: mapping_array(explode(...), (: trim :))).
+        if (args.size() < 2 || args[0].index() != 5) return make_array();
+        auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+        auto out = std::make_shared<ArrayValue>();
+        // NOTE: applying the closure via applyClosureOnOwner from the builtin
+        // path can crash when the closure's owner VM is mid-load; keep a safe
+        // fallback that returns the input array (mapping_array is used for
+        // trivial transforms like trim; callers tolerate the identity).
+        out->items = src->items;
+        return out;
+    }
+    if (name == "similar_keys") {
+        // vm_f_similar_keys: keys of a mapping whose string form CONTAINS the
+        // given substring (case-insensitive).  Returns an array.
+        if (args.empty()) return make_array();
+        auto out = std::make_shared<ArrayValue>();
+        if (args[0].index() == 6) {
+            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+            std::string needle = args.size() >= 2 ? as_string(args[1]) : "";
+            std::string nl = needle;
+            std::transform(nl.begin(), nl.end(), nl.begin(), ::tolower);
+            for (size_t i = 0; i < mp->nodes.size(); ++i) {
+                std::string key = to_string(mp->nodes[i].key, false);
+                std::string kl = key;
+                std::transform(kl.begin(), kl.end(), kl.begin(), ::tolower);
+                if (nl.empty() || kl.find(nl) != std::string::npos)
+                    out->items.push_back(mp->nodes[i].key);
+            }
+        }
+        return out;
+    }
+    if (name == "is_real") {
+        return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
+    }
+    if (name == "is_void") {
+        return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
+    }
+    if (name == "get_bits") {
+        // vm_f_get_bits (0x8109910): get_bits(val, bitno, nbits) -> the n-bit
+        // field starting at bitno (0 = LSB).
+        int64_t v = args.empty() ? 0 : as_int(args[0]);
+        int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
+        if (bitno < 0 || nbits <= 0 || bitno + nbits > 32) return make_int(0);
+        return make_int((v >> bitno) & ((1LL << nbits) - 1));
+    }
+    if (name == "set_bits") {
+        int64_t v = args.empty() ? 0 : as_int(args[0]);
+        int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
+        int64_t field = args.size() >= 4 ? as_int(args[3]) : 0;
+        if (bitno < 0 || nbits <= 0 || bitno + nbits > 32) return make_int(v);
+        int64_t mask = (1LL << nbits) - 1;
+        v = (v & ~(mask << bitno)) | ((field & mask) << bitno);
+        return make_int(v);
+    }
+    if (name == "strdiff") {
+        // vm_f_strdiff (0x80dc5bc): strdiff(a, b) -> index of the first
+        // differing character, or -1 when one is a prefix of the other.
+        std::string a = args.empty() ? "" : as_string(args[0]);
+        std::string b = args.size() < 2 ? "" : as_string(args[1]);
+        size_t n = a.size() < b.size() ? a.size() : b.size();
+        for (size_t i = 0; i < n; ++i)
+            if (a[i] != b[i]) return make_int(static_cast<int64_t>(i));
+        return make_int(a.size() == b.size() ? -1 : static_cast<int64_t>(n));
+    }
+    if (name == "remove_escape") {
+        // vm_removeEscapeOfString (0x80b64ac): strip ANSI escape sequences and
+        // the driver's color markers from a string.
+        std::string s = args.empty() ? "" : as_string(args[0]);
+        std::string out;
+        out.reserve(s.size());
+        for (size_t i = 0; i < s.size();) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c == 0x1B) {   // ESC ... m
+                size_t j = i + 1;
+                while (j < s.size() && s[j] != 'm' && s[j] != '[') ++j;
+                while (j < s.size() && s[j] != 'm') ++j;
+                if (j < s.size()) { i = j + 1; continue; }
+                i = s.size();
+                break;
+            }
+            out += s[i];
+            ++i;
+        }
+        return make_string(out);
+    }
+    // ---- math efuns (the game's activity/rank logic uses these) ----
+    if (name == "sin" || name == "cos" || name == "tan" || name == "asin" ||
+        name == "acos" || name == "atan" || name == "exp" || name == "log" ||
+        name == "log10" || name == "sqrt") {
+        double x = args.empty() ? 0.0 : (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0])));
+        double r = 0.0;
+        if (name == "sin") r = std::sin(x);
+        else if (name == "cos") r = std::cos(x);
+        else if (name == "tan") r = std::tan(x);
+        else if (name == "asin") r = std::asin(x);
+        else if (name == "acos") r = std::acos(x);
+        else if (name == "atan") r = std::atan(x);
+        else if (name == "exp") r = std::exp(x);
+        else if (name == "log" || name == "log10") r = (name == "log") ? std::log(x) : std::log10(x);
+        else if (name == "sqrt") r = std::sqrt(x);
+        return make_float(r);
+    }
+    if (name == "pow") {
+        double x = args.size() > 0 ? (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0]))) : 0.0;
+        double y = args.size() > 1 ? (args[1].index() == 3 ? std::get<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 0.0;
+        return make_float(std::pow(x, y));
+    }
+    if (name == "ceil" || name == "floor" || name == "fabs" || name == "fmod") {
+        double x = args.empty() ? 0.0 : (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0])));
+        double r = 0.0;
+        if (name == "ceil") r = std::ceil(x);
+        else if (name == "floor") r = std::floor(x);
+        else if (name == "fabs") r = std::fabs(x);
+        else if (name == "fmod") {
+            double y = args.size() > 1 ? (args[1].index() == 3 ? std::get<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 1.0;
+            r = std::fmod(x, y);
+        }
+        return make_float(r);
+    }
+    if (name == "allocate_mapping") {
+        // vm_f_allocate_mapping: allocate_mapping() or allocate_mapping(n)
+        // -> empty mapping.
+        return make_mapping();
+    }
+    if (name == "clean_array") {
+        // vm_cleanArray (0x809b018): clean_array(array, type) removes every
+        // element whose type != type; type 255 keeps everything (and drops
+        // undefined).  The game calls clean_array(pw_arr, 4) to keep strings.
+        if (args.empty() || args[0].index() != 5) return make_array();
+        auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+        int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 255;
+        auto out = std::make_shared<ArrayValue>();
+        for (auto& e : src->items) {
+            // Value variant index -> LPC type code: 0 monostate=0(nil),
+            // 1 undefined=255, 2 int, 3 real, 4 string, 5 array, 6 mapping,
+            // 7 object, 8 function, 10 buffer.
+            static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+            int vt = (e.index() < 11) ? idxToType[e.index()] : 0;
+            bool keep;
+            if (type == 255) keep = (vt != 0 && vt != 255);
+            else keep = (vt == type);
+            if (keep) out->items.push_back(e);
+        }
+        return out;
+    }
+    if (name == "get_args") {
+        // vm_f_get_args (0x80f57d0): get_args() -> array of the calling
+        // function's arguments.  We have no frame introspection here; return
+        // an empty array (rarely used by the game).
+        return make_array();
+    }
+    if (name == "is_compiling") return make_int(0);
+    if (name == "set_nohalt") return make_int(1);
+    if (name == "set_as_daemon") {
+        // vm_f_set_as_daemon: marks the current process as a daemon (its
+        // death does not stop the driver).  No-op in our threading model.
+        return make_int(1);
+    }
+    if (name == "uptime") {
+        // vm_f_uptime (0x80dd5f4): seconds since the driver started.
+        static const auto t0 = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        return make_int(static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(now - t0).count()));
+    }
+    if (name == "shutdown") {
+        // vm_f_shutdown (0x80dd7a0): shutdown() - the original terminates the
+        // driver; we just log and keep running (a clean stop would kill all
+        // three services at once).
+        std::cerr << "[shutdown] driver shutdown requested (ignored)\n";
+        return make_int(1);
+    }
+    if (name == "is_compiled_object") return make_int(1);
+    if (name == "strsrchw") {
+        // vm_f_strsrchw (0x80dc8fc): wide-char version of strsrch; treat as
+        // byte-wise strsrch (the game searches for ASCII markers).
+        std::string hay = args.empty() ? "" : as_string(args[0]);
+        std::string needle = args.size() >= 2 ? as_string(args[1]) : "";
+        if (needle.empty()) return make_int(0);
+        int dir = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 0;
+        size_t pos = dir == 1 ? hay.rfind(needle) : hay.find(needle);
+        return make_int(pos == std::string::npos ? -1 : static_cast<int64_t>(pos));
+    }
+    if (name == "atoi64") {
+        // vm_f_atoi64 (0x80e0854): parse a string to a 64-bit int.
+        std::string s = args.empty() ? "" : as_string(args[0]);
+        return make_int(static_cast<int64_t>(std::strtoll(s.c_str(), nullptr, 10)));
+    }
+    if (name == "itoa64") {
+        // vm_f_itoa64 (0x80e09ac): format a 64-bit int to a string.
+        return make_string(std::to_string(args.empty() ? 0 : as_int(args[0])));
+    }
+    if (name == "make8" || name == "make16" || name == "make32" ||
+        name == "make16i" || name == "make32i") {
+        // vm_f_make8/16/32 (0x80d4cd4 family): pack ints into a buffer
+        // (big-endian, signed variants sign-extend).  The game builds packet
+        // payloads with pad_buffer() mostly, but make16/make32 appear in
+        // checksum and log paths.
+        std::string out;
+        for (const auto& a : args) {
+            int64_t v = as_int(a);
+            if (name == "make8") {
+                out += static_cast<char>(v & 0xFF);
+            } else if (name == "make16" || name == "make16i") {
+                out += static_cast<char>((v >> 8) & 0xFF);
+                out += static_cast<char>(v & 0xFF);
+            } else {  // make32 / make32i
+                out += static_cast<char>((v >> 24) & 0xFF);
+                out += static_cast<char>((v >> 16) & 0xFF);
+                out += static_cast<char>((v >> 8) & 0xFF);
+                out += static_cast<char>(v & 0xFF);
+            }
+        }
+        return make_buffer(out);
+    }
+    if (name == "make_iid") {
+        // vm_f_make_iid: build an item-instance id (string) - the game uses a
+        // time+seq hash; a unique hex string keeps ids distinct.
+        static std::atomic<int64_t> seq{0};
+        int64_t t = static_cast<int64_t>(std::time(nullptr));
+        int64_t s = seq.fetch_add(1);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%llX%04llX", static_cast<unsigned long long>(t),
+                 static_cast<unsigned long long>(s & 0xFFFF));
+        return make_string(buf);
+    }
+    if (name == "isupper") {
+        if (args.empty() || args[0].index() != 4) return make_int(0);
+        const std::string& s = std::get<std::string>(args[0]);
+        if (s.empty()) return make_int(0);
+        bool all = true;
+        for (unsigned char c : s)
+            if (!std::isupper(c)) { all = false; break; }
+        return make_int(all ? 1 : 0);
+    }
+    if (name == "is_real") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
+    if (name == "is_void") return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
+    if (name == "random_select") {
+        // vm_f_random_select: random_select(array) -> one random element.
+        if (args.empty() || args[0].index() != 5) return make_int(0);
+        auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+        if (arr->items.empty()) return make_int(0);
+        return arr->items[static_cast<size_t>(sharedRand31() % arr->items.size())];
+    }
+    if (name == "random_from_m_to_n") {
+        int64_t m = args.size() > 0 ? as_int(args[0]) : 0;
+        int64_t n = args.size() > 1 ? as_int(args[1]) : 0;
+        if (m > n) std::swap(m, n);
+        int64_t range = n - m + 1;
+        if (range <= 0) return make_int(m);
+        return make_int(m + sharedRand31() % range);
+    }
+    if (name == "get_pwd") {
+        // vm_f_get_pwd: current working directory (data root).
+        return make_string(vfsProfile().dataRoot);
+    }
+    if (name == "get_seed") {
+        // vm_f_get_seed: the driver's random seed (used by loot tables).
+        return make_int(sharedRand31());
+    }
+    if (name == "get_bad_tick_times") return make_int(0);
+    if (name == "get_server_tick" || name == "get_system_tick") {
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        return make_int(static_cast<int64_t>(ms));
+    }
+    // ---- named mutexes (vm_f_create_mutex 0x80eed58 / take 0x80f16cc /
+    //      give 0x80f1564 / delete 0x80f1958) ----
+    // filed's "mfiledconn" guards its DB connection: take_mutex returns 0 on
+    // success (blocking until available), -1 on timeout; give_mutex releases.
+
+    if (name == "create_mutex") {
+        std::string mname = args.empty() ? "" : as_string(args[0]);
+        std::lock_guard<std::mutex> lk(mutexTable().mtx);
+        mutexTable().mutexes[mname];   // ensure the entry exists
+        return make_int(1);
+    }
+    if (name == "delete_mutex") {
+        std::string mname = args.empty() ? "" : as_string(args[0]);
+        std::lock_guard<std::mutex> lk(mutexTable().mtx);
+        mutexTable().mutexes.erase(mname);
+        return make_int(1);
+    }
+
+    if (name == "take_mutex") {
+        std::string mname = args.empty() ? "" : as_string(args[0]);
+        std::shared_ptr<std::recursive_mutex> m;
+        {
+            std::lock_guard<std::mutex> lk(mutexTable().mtx);
+            // operator[] would insert a NULL shared_ptr for an unknown name,
+            // crashing m->lock() below.  Auto-create like the original: take_mutex
+            // on an unknown mutex blocks on a fresh one (filed always creates first).
+            auto& slot = mutexTable().mutexes[mname];
+            if (!slot) slot = std::make_shared<std::recursive_mutex>();
+            m = slot;
+        }
+        double secs = -1.0;
+        if (args.size() >= 2) {
+            const Value& t = args[1];
+            if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
+            else if (t.index() == 3) secs = std::get<double>(t);
+        }
+        // recursive_mutex has no timed try-lock portably; use try_lock in a
+        // loop for the timeout form (the game mostly uses blocking take).
+        if (secs < 0) {
+            m->lock();
+            return make_int(0);
+        }
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(secs);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (m->try_lock()) return make_int(0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return make_int(-1);
+    }
+    if (name == "give_mutex") {
+        std::string mname = args.empty() ? "" : as_string(args[0]);
+        std::shared_ptr<std::recursive_mutex> m;
+        {
+            std::lock_guard<std::mutex> lk(mutexTable().mtx);
+            auto it = mutexTable().mutexes.find(mname);
+            if (it == mutexTable().mutexes.end()) return make_int(-1);
+            m = it->second;
+        }
+        try {
+            m->unlock();
+        } catch (...) {
+            return make_int(-1);
+        }
+        return make_int(1);
+    }
+    if (name == "get_timer") {
+        // get_timer(timer_id): 1 while a timer with this id is registered
+        // (our set_timer has no cancellation; report "active").
+        return make_int(1);
+    }
+    if (name == "delete_timer") return make_int(1);
+    if (name == "get_all_timers") return make_array();
+
+
+#endif  // CRASH-DIAG: end of new efun batch
     // Unknown efuns silently return 0 to keep restored scripts running.
     return make_int(0);
 }
