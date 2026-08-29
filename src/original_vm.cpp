@@ -2959,7 +2959,8 @@ private:
                             if (!dbg.empty()) dbg += ", ";
                             dbg += to_string(a, false).substr(0, 30);
                         }
-                        std::cerr << dbg << "] vm=" << this << " obj=" << objName_ << "\n";
+                        std::cerr << dbg << "] argc=" << args.size() << " vm=" << this
+                                  << " obj=" << objName_ << "\n";
                     }
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
@@ -3013,6 +3014,15 @@ private:
                                 }
                             }).detach();
                         } else {
+                            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
+                                std::string adbg;
+                                for (auto& a : all) {
+                                    if (!adbg.empty()) adbg += ", ";
+                                    adbg += to_string(a, false).substr(0, 25);
+                                }
+                                std::cerr << "[cfptr-call] " << cl->functionName << " n=" << all.size()
+                                          << " all=[" << adbg << "]\n";
+                            }
                             result = executeFunctionFromOutside(*fn, all);
                         }
                         if ((std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) &&

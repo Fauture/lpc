@@ -221,7 +221,18 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
         // length-prefixed string/buffer (1/2/4 byte length)
         std::string s;
         if (val.index() == 4) s = std::get<std::string>(val);
-        else if (val.index() == 2) s = std::to_string(std::get<int64_t>(val));
+        else if (val.index() == 2) {
+            // int-valued string/buffer field: 0 means "no data" (empty
+            // payload), NOT the literal text "0".  dba's cmd_read_content
+            // sends send_message(17409, cookie, -1, 0) with an int 0 content
+            // when the record is missing; encoding it as "0" made ccs's
+            // filed operate_done receive got_result="0" (a string) instead of
+            // the empty payload, so read_content returned "0" and callers
+            // like shop_mgrd's load_ad_infos wrote save_string("")="\"\""
+            // into the DB.  Non-zero ints keep their decimal text.
+            int64_t n = std::get<int64_t>(val);
+            if (n != 0) s = std::to_string(n);
+        }
         else if (val.index() == 6) s = to_string(val, false);
         int llen = f.fixedLen ? f.fixedLen : 1;
         uint32_t slen = static_cast<uint32_t>(s.size());

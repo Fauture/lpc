@@ -890,24 +890,33 @@ int xdbcListen(int fd, int backlog) {
 
 int xdbcAccept(int fd) {
     ensureWsa();
-    std::lock_guard<std::mutex> lk(socketsMutex());
-    auto it = socketTable().find(fd);
-    if (it == socketTable().end() || !it->second.used || !it->second.isListener)
-        return -1;
-    SocketEntry& se = it->second;
-    u_long mode = 1;
-    ioctlsocket(static_cast<SOCKET>(se.realSock), FIONBIO, &mode);
+    SOCKET listener = INVALID_SOCKET;
+    {
+        std::lock_guard<std::mutex> lk(socketsMutex());
+        auto it = socketTable().find(fd);
+        if (it == socketTable().end() || !it->second.used || !it->second.isListener)
+            return -1;
+        listener = static_cast<SOCKET>(it->second.realSock);
+    }
+    // Blocking accept, mirroring the original driver's vm_f_accept: the
+    // listening thread (e.g. ccs_serverd's accept_daemon) runs
+    // `while(1) { if ((fd = accept(...)) < 0) continue; ... }` and relies on
+    // accept() PARKING until a connection arrives.  A non-blocking accept
+    // returned -1 instantly, turning that loop into a 100%-CPU busy spin
+    // (ccs_serverd.o accept_daemon burned ~54% of a core with zero
+    // connections).  Blocking accept keeps the LPC loop idle exactly like the
+    // original cooperative scheduler did.
     sockaddr_in cli{};
     int cliLen = sizeof(cli);
-    SOCKET c = accept(static_cast<SOCKET>(se.realSock),
-                      reinterpret_cast<sockaddr*>(&cli), &cliLen);
-    mode = 0;
-    ioctlsocket(static_cast<SOCKET>(se.realSock), FIONBIO, &mode);
+    SOCKET c = accept(listener, reinterpret_cast<sockaddr*>(&cli), &cliLen);
     if (c == INVALID_SOCKET) return -1;
     int newFd = nextSocketFd().fetch_add(1);
-    SocketEntry& ne = socketTable()[newFd];
-    ne.used = true;
-    ne.realSock = static_cast<uintptr_t>(c);
+    {
+        std::lock_guard<std::mutex> lk(socketsMutex());
+        SocketEntry& ne = socketTable()[newFd];
+        ne.used = true;
+        ne.realSock = static_cast<uintptr_t>(c);
+    }
     return newFd;
 }
 
