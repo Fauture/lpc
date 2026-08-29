@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -470,6 +471,9 @@ struct SocketEntry {
     std::string realHost;
     int realPort = 0;
     std::shared_ptr<XdbcConn> conn;
+    // Listening-socket fields (ccs_serverd's bind/listen/accept loop).
+    bool isListener = false;
+    int listenPort = 0;
 };
 
 std::mutex& socketsMutex() {
@@ -761,8 +765,22 @@ std::string xdbcRecv(int fd, int len) {
     return buf;
 }
 
-int xdbcSelect(std::vector<int>& fds, int timeoutMs) {
-    std::vector<int> ready;
+namespace {
+// Non-blocking probe: is a connection pending on this listening socket?
+// Uses select() (readable = pending accept) so the connection is NOT consumed.
+bool acceptReady(SOCKET s) {
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(s, &rfds);
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    int rc = ::select(static_cast<int>(s) + 1, &rfds, nullptr, nullptr, &tv);
+    return rc > 0 && FD_ISSET(s, &rfds);
+}
+} // namespace
+
+int xdbcSelect(std::vector<int>& fds, int timeoutMs) {    std::vector<int> ready;
     {
         std::lock_guard<std::mutex> lk(socketsMutex());
         for (int fd : fds) {
@@ -771,6 +789,11 @@ int xdbcSelect(std::vector<int>& fds, int timeoutMs) {
             SocketEntry& se = it->second;
             if (se.isVirtualXdbc) {
                 if (!se.conn->outQueue.empty()) ready.push_back(fd);
+            } else if (se.isListener) {
+                // A listening socket is "readable" when a connection is
+                // pending (accept_daemon polls this).
+                if (se.realSock && acceptReady(static_cast<SOCKET>(se.realSock)))
+                    ready.push_back(fd);
             }
         }
     }
@@ -830,6 +853,91 @@ uintptr_t xdbcDetachSocket(int fd) {
     uintptr_t s = it->second.realSock;
     socketTable().erase(it);
     return s;
+}
+
+int xdbcBind(int fd, int port) {
+    ensureWsa();
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used) return -1;
+    SocketEntry& se = it->second;
+    if (se.isVirtualXdbc || se.realSock) return -1;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return -1;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(static_cast<u_short>(port));
+    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(s);
+        return -1;
+    }
+    se.realSock = static_cast<uintptr_t>(s);
+    se.isListener = true;
+    se.listenPort = port;
+    return 0;
+}
+
+int xdbcListen(int fd, int backlog) {
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used || !it->second.realSock)
+        return -1;
+    if (listen(static_cast<SOCKET>(it->second.realSock), backlog) == SOCKET_ERROR)
+        return -1;
+    return 0;
+}
+
+int xdbcAccept(int fd) {
+    ensureWsa();
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used || !it->second.isListener)
+        return -1;
+    SocketEntry& se = it->second;
+    u_long mode = 1;
+    ioctlsocket(static_cast<SOCKET>(se.realSock), FIONBIO, &mode);
+    sockaddr_in cli{};
+    int cliLen = sizeof(cli);
+    SOCKET c = accept(static_cast<SOCKET>(se.realSock),
+                      reinterpret_cast<sockaddr*>(&cli), &cliLen);
+    mode = 0;
+    ioctlsocket(static_cast<SOCKET>(se.realSock), FIONBIO, &mode);
+    if (c == INVALID_SOCKET) return -1;
+    int newFd = nextSocketFd().fetch_add(1);
+    SocketEntry& ne = socketTable()[newFd];
+    ne.used = true;
+    ne.realSock = static_cast<uintptr_t>(c);
+    return newFd;
+}
+
+bool xdbcIsListener(int fd) {
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    return it != socketTable().end() && it->second.isListener;
+}
+
+Value xdbcGetSockInfo(int fd) {
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used) return make_mapping();
+    const SocketEntry& se = it->second;
+    auto mp = std::make_shared<MappingValue>();
+    auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
+    if (se.isListener) {
+        add("local_port", se.listenPort);
+    } else if (se.realSock) {
+        sockaddr_in local{};
+        int llen = sizeof(local);
+        getsockname(static_cast<SOCKET>(se.realSock), reinterpret_cast<sockaddr*>(&local), &llen);
+        add("local_port", ntohs(local.sin_port));
+        sockaddr_in rem{};
+        int rlen = sizeof(rem);
+        getpeername(static_cast<SOCKET>(se.realSock), reinterpret_cast<sockaddr*>(&rem), &rlen);
+        add("remote_port", ntohs(rem.sin_port));
+        add("remote_ip", static_cast<int64_t>(ntohl(rem.sin_addr.S_un.S_addr)));
+    }
+    return mp;
 }
 
 } // namespace lpc

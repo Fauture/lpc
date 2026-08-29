@@ -61,4 +61,19 @@ bool xdbcSocketExists(int fd);
 // bind_to_client to hand the socket over to the game client layer.
 uintptr_t xdbcDetachSocket(int fd);
 
+// ---- listening socket layer (vm_f_bind / vm_f_listen / vm_f_accept /
+//      vm_f_get_sock_info) ----
+// bind(fd, 0, port): make fd a listener on the given port.  0 = ok, -1 = fail.
+int xdbcBind(int fd, int port);
+// listen(fd, backlog): start listening.  0 = ok, -1 = fail.
+int xdbcListen(int fd, int backlog);
+// accept(fd, &addr): accept one pending connection, return the NEW fd
+// (registered in the socket table) or -1 when nothing is pending.
+int xdbcAccept(int fd);
+// get_sock_info(fd): mapping of socket metadata the driver exposes
+// (local_port, remote_port, ...).  Empty when the fd is unknown.
+Value xdbcGetSockInfo(int fd);
+// True when the fd is a listening socket (used by select to report readiness).
+bool xdbcIsListener(int fd);
+
 } // namespace lpc

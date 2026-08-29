@@ -10866,11 +10866,17 @@ void handle_vm_msgCfgMyDist(GameClient& cl, const uint8_t* body, size_t len)
 
 void handle_vm_msgCfgReadEtc(GameClient& cl, const uint8_t* body, size_t len)
 {
+    // Original vm_msgCfgReadEtc (0x8065dd0): parses two BE u32s from the
+    // body and applies msg_cfg_read_etc(clientNo, u32a, u32b) on the MASTER
+    // program.  start_ccs.o's msg_cfg_read_etc is declared with 3 args
+    // (client_no, cookie, result) and forwards (cookie, result) to
+    // /daemons/configd.c.  So the 3-arg form with clientNo FIRST is correct;
+    // aaa answers the 17520 read-etc request with 9331 (cookie, result).
     size_t off = 0;
     if (off + 8 > len) return;
-    uint32_t pageNo = rd32be(body, off); off += 4;
-    uint32_t dataLen = rd32be(body, off); off += 4;
-    applyLpc("msg_cfg_read_etc", {make_int(cl.clientNo), make_int(pageNo), make_int(dataLen)});
+    uint32_t cookie = rd32be(body, off); off += 4;
+    uint32_t result = rd32be(body, off); off += 4;
+    applyLpc("msg_cfg_read_etc", {make_int(cl.clientNo), make_int(cookie), make_int(result)});
 }
 
 void handle_vm_msgCfgWriteEtc(GameClient& cl, const uint8_t* body, size_t len)
@@ -11723,6 +11729,10 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
+    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+        std::cerr << "[dispatch] cmd=0x" << std::hex << cmdNo << std::dec
+                  << " client=" << cl.clientNo << " attrib=" << cl.attrib
+                  << " len=" << len << "\n";
     // Primary path: packet protocol analyser (comm_desc.txt interfaces).
     int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
     if (pa == 1) return;   // handled by the protocol interface
@@ -12878,8 +12888,10 @@ int startGameService(int port) {
                     // the client's NEXT packet is read.  Wait here until the
                     // threadd service queue drains so the account packet doesn't
                     // race that tail and see antibot_answer still unset.
-                    for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
-                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    if (cur->attrib & ATTRIB_CLIENT_USER) {
+                        for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
+                            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
                     feedClient(*cur, buf, static_cast<size_t>(n));
                 }
                 closesocket(c);
@@ -12977,9 +12989,17 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
                 cur = &it->second;
             }
             // Preserve the cooperative scheduler's reply-then-cleanup ordering
-            // (see the accept loop for details).
-            for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // (see the accept loop for details): only the CLIENT_USER path
+            // (account login) depends on the threadd service queue draining
+            // before the next packet is read.  Internal comm connections
+            // (aaa/dba/gs) dispatch replies synchronously into their target
+            // objects (wait_event/raise_event); blocking here on a leaked
+            // pending-service counter starved the socket - ccs's dba reply
+            // (0x4401) was never fed, so filed's do_operate waited forever.
+            if (cur->attrib & ATTRIB_CLIENT_USER) {
+                for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
             feedClient(*cur, buf, static_cast<size_t>(n));
         }
         closesocket(static_cast<SOCKET>(fd));

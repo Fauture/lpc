@@ -1,6 +1,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <windows.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -389,6 +391,35 @@ void usage() {
 } // namespace
 
 int main(int argc, char** argv) {
+    // SEH crash catcher: print a backtrace so a segfault inside the VM or a
+    // builtin (the current MSVCP140.dll 0xc0000005 crashes) can be located
+    // without a debugger attached.
+    SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* ep) -> LONG {
+        void* frames[32];
+        USHORT n = CaptureStackBackTrace(0, 32, frames, nullptr);
+        std::cerr << "[crash] code=0x" << std::hex
+                  << (ep ? ep->ExceptionRecord->ExceptionCode : 0)
+                  << " addr=0x" << (ep ? ep->ExceptionRecord->ExceptionAddress : 0)
+                  << std::dec << " frames=" << n << "\n";
+        for (USHORT i = 0; i < n; ++i) {
+            HMODULE mod = nullptr;
+            char modName[MAX_PATH] = "?";
+            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               static_cast<LPCSTR>(frames[i]), &mod);
+            if (mod) GetModuleFileNameA(mod, modName, MAX_PATH);
+            std::string mn = modName;
+            size_t bs = mn.find_last_of('\\');
+            if (bs != std::string::npos) mn = mn.substr(bs + 1);
+            uintptr_t base = mod ? reinterpret_cast<uintptr_t>(mod) : 0;
+            std::cerr << "  #" << i << " 0x" << std::hex << frames[i] << std::dec
+                      << " rva=0x" << std::hex
+                      << (base ? (reinterpret_cast<uintptr_t>(frames[i]) - base) : 0)
+                      << std::dec << " in " << mn << "\n";
+        }
+        std::cerr.flush();
+        return EXCEPTION_CONTINUE_SEARCH;   // let the OS generate the dump
+    });
     try {
         // Driver-level telnet options (mirroring the original driver's
         // -w <password> / -p <port>): telnet is only enabled when a port is
