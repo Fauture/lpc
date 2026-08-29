@@ -221,6 +221,8 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
         // length-prefixed string/buffer (1/2/4 byte length)
         std::string s;
         if (val.index() == 4) s = std::get<std::string>(val);
+        else if (val.index() == 10)
+            s = std::get<std::shared_ptr<BufferValue>>(val)->data;   // raw buffer bytes
         else if (val.index() == 2) {
             // int-valued string/buffer field: 0 means "no data" (empty
             // payload), NOT the literal text "0".  dba's cmd_read_content
