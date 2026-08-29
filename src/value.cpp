@@ -348,8 +348,12 @@ std::string value_type_name(const Value& v) {
 
 std::string to_string(const Value& v, bool quote_strings) {
     switch (v.index()) {
-    case 0: return "0";
-    case 1: return "undefined";
+    // Original type 0 = "undefined" (missing keys/uninit vars) renders as
+    // "(undefined)" (vm_typeValueAt); type 1 = "void" (void fn result)
+    // renders as "(void)".  Probed live: %O and (string) of a missing key
+    // both give "(undefined)".
+    case 0: return "(undefined)";
+    case 1: return "(void)";
     case 2: {
         std::ostringstream os;
         os << std::get<int64_t>(v);
@@ -430,7 +434,9 @@ bool is_truthy(const Value& v) {
     case 1: return false;
     case 2: return std::get<int64_t>(v) != 0;
     case 3: return std::get<double>(v) != 0.0;
-    case 4: return !std::get<std::string>(v).empty();
+    case 4: return true;  // strings are ALWAYS truthy in the original driver
+                          // (probed on the live original: if("") is truthy;
+                          // vm_isZero only zeroes number-0/real-0/undefined).
     // Arrays, mappings and buffers are ALWAYS truthy in the original driver
     // (vm_isZero 0x808cae6: only number-0 / real-0 / null-string / undefined
     // are zero; everything else falls to the default -> not zero).  Treating

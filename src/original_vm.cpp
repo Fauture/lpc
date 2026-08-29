@@ -1,4 +1,4 @@
-﻿#include "original_vm.h"
+#include "original_vm.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,30 +33,38 @@ namespace lpc {
 
 namespace {
 // ---------------------------------------------------------------------------
-// Timer registry backing set_timer / get_timer / delete_timer.
-// set_timer(timeout, name, fn) schedules a one-shot callback after timeout
-// seconds and returns a timer id; get_timer(name|id) returns the timer's info
-// mapping (or 0 when absent); delete_timer(name|id) cancels it and returns 0
-// on success, -601 when not found (vm_f_delete_timer 0x80ef404).  Re-using a
-// name cancels the previous entry (the game relies on "delete-then-set" and
-// "if (!get_timer()) set_timer()" idioms).
+// Timer registry backing set_timer / get_timer / delete_timer, faithfully
+// mirroring the original driver's scheduler (vm_scheduler.c):
+//   - vm_putTimerIntoTimerList (0x80aa12c) inserts each timer into an ordered
+//     list sorted by ABSOLUTE trigger time; each node's timeoutTicks holds the
+//     delta from the previous node (so a walk accumulating timeoutTicks yields
+//     the absolute trigger offset from the list head).
+//   - vm_f_get_timer (0x80ef470) returns timeout = accumulated ticks / 1000.
+//   - Same-name timers may COEXIST; get_timer/delete_timer act on the FIRST
+//     match in the list (vm_getTimerByName), they never replace.
+//   - delete_timer returns 0 on success, -601 when not found (0x80ef404).
 // ---------------------------------------------------------------------------
 struct TimerEntry {
     int64_t id = 0;
     std::string name;         // empty when registered with 0/ref as arg2
     std::string callback;     // function name, for the get_timer mapping
     int64_t timeoutSecs = 0;  // delay in seconds
+    int64_t triggerAt = 0;    // absolute trigger time (seconds since epoch)
     std::shared_ptr<std::atomic<bool>> cancelled;
 };
 std::mutex g_timerMtx;
-std::map<std::string, std::shared_ptr<TimerEntry>> g_timerByName;
+// Ordered by triggerAt (the original's sorted timer list); name lookups walk
+// this list for the first match (same-name timers coexist).
+std::vector<std::shared_ptr<TimerEntry>> g_timerList;
 std::map<int64_t, std::shared_ptr<TimerEntry>> g_timerById;
 std::atomic<int64_t> g_timerSeq{1};
 
+// First timer whose name matches (vm_getTimerByName semantics), or nullptr.
 std::shared_ptr<TimerEntry> timerFindByName(const std::string& name) {
     std::lock_guard<std::mutex> lk(g_timerMtx);
-    auto it = g_timerByName.find(name);
-    return it == g_timerByName.end() ? nullptr : it->second;
+    for (const auto& e : g_timerList)
+        if (e->name == name) return e;
+    return nullptr;
 }
 std::shared_ptr<TimerEntry> timerFindById(int64_t id) {
     std::lock_guard<std::mutex> lk(g_timerMtx);
@@ -67,10 +75,8 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e) {
     if (!e) return;
     std::lock_guard<std::mutex> lk(g_timerMtx);
     if (e->cancelled) *e->cancelled = true;
-    if (!e->name.empty()) {
-        auto it = g_timerByName.find(e->name);
-        if (it != g_timerByName.end() && it->second == e) g_timerByName.erase(it);
-    }
+    for (auto it = g_timerList.begin(); it != g_timerList.end(); ++it)
+        if (*it == e) { g_timerList.erase(it); break; }
     auto it = g_timerById.find(e->id);
     if (it != g_timerById.end() && it->second == e) g_timerById.erase(it);
 }
@@ -216,6 +222,7 @@ int vmTypeOf(const Value& v) {
     case 6: return 7;            // mapping
     case 7: return 10;           // object
     case 8: return 9;            // function value
+    case 10: return 5;           // buffer (vm_castType writes type 5)
     default: return 0;
     }
 }
@@ -399,6 +406,14 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
             }
             return make_int(0);
         }
+        if (v.index() == 10) {
+            // vm_castType case 2, type 5 (0x8090344): (int)buffer accumulates
+            // every byte big-endian (v22 = byte | (v22 << 8)).
+            const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+            uint64_t be = 0;
+            for (unsigned char c : s) be = (be << 8) | c;
+            return make_int(static_cast<int64_t>(be));
+        }
         if (v.index() == 1 || v.index() == 0) return make_int(0);
         return v;
     case 3:
@@ -408,14 +423,36 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
         return v;
     case 4:
         if (v.index() == 4) return v;
+        if (v.index() == 10) {
+            // (string)buffer cast (vm_castType 0x8090212): raw bytes as a
+            // string, stripping a leading UTF-8 BOM (EF BB BF) like the
+            // original (0x809021a / 0x80903b7).  Returning ":HEX:" here
+            // corrupted dba's `content_text = (string)content`.
+            std::string s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+            if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF &&
+                static_cast<unsigned char>(s[1]) == 0xBB &&
+                static_cast<unsigned char>(s[2]) == 0xBF)
+                s.erase(0, 3);
+            return make_string(s);
+        }
+        if (v.index() == 0) return make_string("(undefined)");
+        if (v.index() == 1) return make_string("(void)");
         if (v.index() == 5 || v.index() == 6 || v.index() == 7 || v.index() == 8) {
             // arrays/mappings/functions stringify
             return make_string(to_string(v, false));
         }
         return make_string(to_string(v, false));
     case 5:
-        // (buffer) casts (vm_castType case 5): int -> 4-byte big-endian,
-        // string -> same bytes, nil/undefined -> empty buffer.
+        // (buffer) casts (vm_castType case 5, 0x8090120): ALWAYS allocate a
+        // real Vm_Buffer_T (type 5):
+        //   int -> 4-byte big-endian buffer (0x80902d1)
+        //   string -> buffer with the same bytes (0x809029c)
+        //   nil/undefined -> empty buffer (0x8090278)
+        //   buffer -> itself
+        // Returning plain strings here made filed's `(buffer)save_string(...)`
+        // content serialize with a spurious u8 length prefix in pad_buffer,
+        // corrupting the write_content content field (3-byte garbage in
+        // dl_ddb_1.data instead of "({...})").
         if (v.index() == 2) {
             uint32_t n = static_cast<uint32_t>(static_cast<int32_t>(std::get<int64_t>(v)));
             std::string s;
@@ -423,11 +460,12 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
             s += static_cast<char>((n >> 16) & 0xFF);
             s += static_cast<char>((n >> 8) & 0xFF);
             s += static_cast<char>(n & 0xFF);
-            return make_string(s);
+            return make_buffer(s);
         }
-        if (v.index() == 4) return v;
-        if (v.index() == 1 || v.index() == 0) return make_string("");
-        return v;
+        if (v.index() == 4) return make_buffer(std::get<std::string>(v));
+        if (v.index() == 1 || v.index() == 0) return make_buffer("");
+        if (v.index() == 10) return v;
+        return make_buffer(to_string(v, false));
     case 6:
         if (v.index() == 1 || v.index() == 0) return make_array();
         return v;
@@ -785,7 +823,7 @@ public:
                 for (size_t i = 0; i < createArgs.size(); ++i) args.push_back(createArgs[i]);
             }
             for (int i = static_cast<int>(args.size()); i < it->second->argCount; ++i)
-                args.push_back(UndefinedTag{});
+                args.push_back(Value{});   // missing create arg -> undefined (type 0)
             executeFunctionFromOutside(*it->second, args);
         }
     }
@@ -989,12 +1027,12 @@ private:
             int64_t i = toInt(ref.key);
             const auto& items = ref.arr->items;
             if (i >= 0 && i < static_cast<int64_t>(items.size())) return items[static_cast<size_t>(i)];
-            return UndefinedTag{};
+            return Value{};   // OOB -> original type 0 "undefined"
         }
         if (ref.map) {
             const Value* hit = ref.map->find(ref.key);
             if (hit) return *hit;
-            return UndefinedTag{};
+            return Value{};   // miss -> original type 0 "undefined"
         }
         return make_int(0);
     }
@@ -1213,9 +1251,9 @@ private:
                         const auto& efn = efunNameTable();
                         for (size_t i = 0; i < efn.size(); ++i)
                             if (efn[i] == fname) return make_closure(fname, {});
-                        return UndefinedTag{};
+                        return Value{};   // function not found -> type 0 "undefined"
                     }
-                    return UndefinedTag{};
+                    return Value{};   // bad bind target -> type 0 "undefined"
                 }
                 auto bindClosure = [&](const std::shared_ptr<ClosureValue>& src) {
                     auto cl = std::make_shared<ClosureValue>();
@@ -1269,12 +1307,12 @@ private:
                         const auto& efn = efunNameTable();
                         for (size_t i = 0; i < efn.size(); ++i)
                             if (efn[i] == fname) return make_closure(fname, {});
-                        return UndefinedTag{};
+                        return Value{};   // function not found -> type 0 "undefined"
                     }
                     // bad type: option 0 -> undefined (no error)
-                    return UndefinedTag{};
+                    return Value{};
                 }
-                return UndefinedTag{};
+                return Value{};
             }
             if (nm == "broadcast") {
                 // Pure log message (vm_f_broadcast).  Object loading is driven
@@ -1469,18 +1507,20 @@ private:
                     entry->name = timerName;
                     entry->callback = fnName;
                     entry->timeoutSecs = timeout;
+                    entry->triggerAt = static_cast<int64_t>(std::time(nullptr)) + timeout;
                     entry->cancelled = std::make_shared<std::atomic<bool>>(false);
                     {
+                        // Insert into the trigger-time-ordered list (original
+                        // vm_putTimerIntoTimerList).  Same-name timers coexist;
+                        // the game's delete-then-set pattern is driven by LPC.
                         std::lock_guard<std::mutex> lk(g_timerMtx);
-                        if (!timerName.empty()) {
-                            auto old = g_timerByName.find(timerName);
-                            if (old != g_timerByName.end()) {
-                                if (old->second->cancelled) *old->second->cancelled = true;
-                                g_timerById.erase(old->second->id);
-                                g_timerByName.erase(old);
-                            }
-                            g_timerByName[timerName] = entry;
-                        }
+                        auto it = std::lower_bound(
+                            g_timerList.begin(), g_timerList.end(), entry,
+                            [](const std::shared_ptr<TimerEntry>& a,
+                               const std::shared_ptr<TimerEntry>& b) {
+                                return a->triggerAt < b->triggerAt;
+                            });
+                        g_timerList.insert(it, entry);
                         g_timerById[entry->id] = entry;
                     }
                     auto objPtr = std::make_shared<OriginalObject>(*owner);
@@ -1528,12 +1568,39 @@ private:
                         e = timerFindById(toInt(args[0]));
                 }
                 if (!e) return make_int(0);
+                // Original vm_f_get_timer walks the sorted list from the head,
+                // accumulating each node's timeoutTicks (relative delta); the
+                // matched timer's timeout = accumulated ticks / 1000.  Mirror
+                // that: head delta = first trigger - now, later deltas = the
+                // trigger-time gap, so timeout is the absolute trigger offset.
+                double acc = 0.0;
+                {
+                    // Accumulate every node's timeoutTicks up to the match
+                    // (v3 += FirstTimer->timeoutTicks), exactly like the
+                    // original: head delta = trigger - now, later deltas =
+                    // trigger-time gaps.
+                    std::lock_guard<std::mutex> lk(g_timerMtx);
+                    int64_t now = static_cast<int64_t>(std::time(nullptr));
+                    int64_t prev = 0;
+                    for (const auto& ent : g_timerList) {
+                        int64_t delta = (prev == 0) ? (ent->triggerAt - now)
+                                                     : (ent->triggerAt - prev);
+                        acc += static_cast<double>(delta);
+                        if (ent == e) break;
+                        prev = ent->triggerAt;
+                    }
+                }
                 auto tmap = std::make_shared<MappingValue>();
-                tmap->insert(make_string("callback"), make_string(e->callback));
-                tmap->insert(make_string("timeout"), make_float(static_cast<double>(e->timeoutSecs)));
+                // Original callback is "(: fn@/path/file.c :)"; we only keep
+                // the function name, render the closest form.
+                tmap->insert(make_string("callback"),
+                             make_string("(: " + e->callback + " :)"));
+                tmap->insert(make_string("timeout"), make_float(acc));
                 tmap->insert(make_string("id"), make_int(e->id));
                 tmap->insert(make_string("name"), make_string(e->name));
-                tmap->insert(make_string("output"), make_string("Enabled"));
+                // Timers created via set_timer have outFd = 0 -> "Disabled"
+                // (probed on the original: output is "Disabled").
+                tmap->insert(make_string("output"), make_string("Disabled"));
                 return tmap;
             }
             if (nm == "delete_timer") {
@@ -1816,12 +1883,12 @@ private:
         int passed = static_cast<int>(args.size());
         bool placeholder = false;
         if (n == 0 && passed == 0) {
-            pushValue(UndefinedTag{});   // frame slot for bp
+            pushValue(Value{});   // frame slot for bp (original type 0)
             placeholder = true;
         }
         int pushCount = (passed > n) ? passed : n;
         for (int i = pushCount - 1; i >= 0; --i) {
-            Value a = (i < static_cast<int>(args.size())) ? args[i] : Value(UndefinedTag{});
+            Value a = (i < static_cast<int>(args.size())) ? args[i] : Value{};
             pushValue(a);
         }
         // all declared arguments were pushed (missing ones as undefined)
@@ -1970,13 +2037,13 @@ private:
                 const Frame& f = frames_.back();
                 size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
                 if (stack_.size() == expectedVoid) {
-                    returnValue_ = make_int(0);   // void return value
+                    returnValue_ = UndefinedTag{};   // void return value (type 1)
                 } else if (stack_.size() == expectedVoid + 1 && !stack_.empty()) {
                     returnValue_ = pop().value;
                 } else {
                     // Stack not in canonical shape; take the top if any.
                     if (!stack_.empty()) returnValue_ = pop().value;
-                    else returnValue_ = make_int(0);
+                    else returnValue_ = UndefinedTag{};
                 }
                 returned_ = true;
                 return;
@@ -1998,8 +2065,8 @@ private:
                     else pushValue(make_int(0));
                 }
                 break;
-            case 66: // push_undefined
-                pushValue(UndefinedTag{});
+            case 66: // push_undefined (original type 0 "undefined")
+                pushValue(Value{});
                 break;
             case 65: // push_this_object
                 pushValue(make_object_owned(thisObjectName_, &obj_));
@@ -2957,7 +3024,7 @@ private:
                 if (std::getenv("LPCVM_TRACE") && (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc"))
                     std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
                               << " stackBefore=" << stack_.size() << "\n";
-                for (int i = 0; i < f.localCount; ++i) pushValue(UndefinedTag{});
+                for (int i = 0; i < f.localCount; ++i) pushValue(Value{});   // uninit locals = type 0 "undefined"
                 if (std::getenv("LPCVM_TRACE") && (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc"))
                     std::cerr << "[enter] " << f.fn->name << " stackAfter=" << stack_.size() << "\n";
                 break;
@@ -3059,8 +3126,8 @@ private:
                 loopStep(ip, slotOf(varNo), 0, continueOffset);
                 break;
             }
-            case 82: // to_reserve_stack_value
-                pushValue(UndefinedTag{});
+            case 82: // to_reserve_stack_value (placeholder slot; type irrelevant)
+                pushValue(Value{});
                 break;
             case 83: // to_unreserve_stack_value
                 if (!stack_.empty()) pop();
@@ -3224,13 +3291,13 @@ private:
             auto mp = std::get<std::shared_ptr<MappingValue>>(container);
             const Value* hit = mp->find(key);
             if (hit) return *hit;
-            return UndefinedTag{};
+            return Value{};   // miss -> original type 0 "undefined"
         }
         if (container.index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(container);
             int64_t i = toInt(key);
             if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) return arr->items[static_cast<size_t>(i)];
-            return UndefinedTag{};
+            return Value{};   // OOB -> original type 0 "undefined"
         }
         if (container.index() == 4) {
             // LPC string indexing returns the ASCII code (int), e.g.
@@ -3239,9 +3306,9 @@ private:
             int64_t i = toInt(key);
             if (i >= 0 && i < static_cast<int64_t>(s.size()))
                 return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
-            return UndefinedTag{};
+            return Value{};   // OOB -> original type 0 "undefined"
         }
-        return UndefinedTag{};
+        return Value{};
     }
 
     Value queryRangeValue(const Value& container, const Value& from, const Value& to,

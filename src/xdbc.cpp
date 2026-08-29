@@ -512,9 +512,9 @@ std::string cellToValue(const MysqlClient::Cell& c) {
 Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
     // para is a mapping; missing pieces degrade gracefully
     auto get = [&para](const char* k) -> Value {
-        if (para.index() != 6) return Value(UndefinedTag{});
+        if (para.index() != 6) return Value{};   // missing -> undefined (type 0)
         const Value* hit = std::get<std::shared_ptr<MappingValue>>(para)->find(make_string(k));
-        return hit ? *hit : Value(UndefinedTag{});
+        return hit ? *hit : Value{};             // missing -> undefined (type 0)
     };
     std::string cmd;
     {
@@ -613,7 +613,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
         auto it = globalViews().find(vno);
         if (it == globalViews().end() || it->second.cursor == 0 ||
             it->second.cursor > it->second.rows.size())
-            return Value(UndefinedTag{});
+            return Value{};   // missing -> undefined (type 0)
         const XdbcView& v = it->second;
         const auto& row = v.rows[v.cursor - 1];
         auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(v.cols.size()));
@@ -625,7 +625,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
         int vno = static_cast<int>(toInt64(get("vno")));
         std::lock_guard<std::mutex> lk(viewsMutex());
         auto it = globalViews().find(vno);
-        if (it == globalViews().end()) return Value(UndefinedTag{});
+        if (it == globalViews().end()) return Value{};   // missing -> undefined (type 0)
         auto arr = std::make_shared<ArrayValue>();
         for (const auto& c : it->second.cols) arr->items.push_back(make_string(c));
         return arr;
@@ -637,10 +637,10 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
         auto it = globalViews().find(vno);
         if (it == globalViews().end() || it->second.cursor == 0 ||
             it->second.cursor > it->second.rows.size())
-            return Value(UndefinedTag{});
+            return Value{};   // missing -> undefined (type 0)
         const XdbcView& v = it->second;
         const auto& row = v.rows[v.cursor - 1];
-        if (idx < 0 || static_cast<size_t>(idx) >= row.size()) return Value(UndefinedTag{});
+        if (idx < 0 || static_cast<size_t>(idx) >= row.size()) return Value{};   // missing -> undefined (type 0)
         return make_string(cellToValue(row[static_cast<size_t>(idx)]));
     }
     if (cmd == "finalize") {
@@ -649,7 +649,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
         globalViews().erase(vno);
         return make_int(0);
     }
-    return Value(UndefinedTag{});
+    return Value{};
 }
 
 void processXdbcFrames(SocketEntry& se) {

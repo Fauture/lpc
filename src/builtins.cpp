@@ -1,4 +1,4 @@
-﻿#include "builtins.h"
+#include "builtins.h"
 #include "efun_table.h"
 
 #include "d3des.h"
@@ -566,10 +566,26 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
         } else if (type == 'O') {
             // %O = object/value readable form (gameshell vm_sprintf).  Strings
             // print quoted so "Failed to expand macro: %O" shows the value.
+            // Buffers print as hex pairs + ASCII gutter (original vm_sprintf
+            // %O of Vm_Buffer_T, probed on the live original:
+            //   sprintf("%O", (buffer)"({[]})") -> "28 7B 5B 5D 7D 29 ...({[]})").
             if (v.index() == 4) {
                 out += "\"";
                 out += std::get<std::string>(v);
                 out += "\"";
+            } else if (v.index() == 0) {
+                out += "(undefined)";
+            } else if (v.index() == 1) {
+                out += "(void)";
+            } else if (v.index() == 10) {
+                const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+                for (unsigned char c : s) {
+                    char b[8];
+                    snprintf(b, sizeof(b), "%02X ", c);
+                    out += b;
+                }
+                out += " ";
+                for (unsigned char c : s) out += (c >= 32 && c < 127) ? static_cast<char>(c) : '.';
             } else if (v.index() == 3) {
                 snprintf(buf, sizeof(buf), "%g", std::get<double>(v));
                 out += buf;
@@ -1560,15 +1576,15 @@ Value get_index(const Value& c, const Value& idx) {
         int64_t i = as_int(idx);
         if (i < 0) i += static_cast<int64_t>(arr->items.size());
         if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) return arr->items[static_cast<size_t>(i)];
-        return UndefinedTag{};
+        return Value{};   // OOB -> original type 0 "undefined"
     }
     if (c.index() == 6) {
         auto mp = std::get<std::shared_ptr<MappingValue>>(c);
         const Value* hit = mp->find(idx);
         if (hit) return *hit;
-        return UndefinedTag{};
+        return Value{};   // miss -> original type 0 "undefined"
     }
-    return UndefinedTag{};
+    return Value{};
 }
 
 } // namespace
@@ -2048,10 +2064,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (v.index() == 5) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size()));
         if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size()));
         if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<std::string>(v).size()));
+        // vm_f_sizeof (0x80dbcec) case 5 (buffer): byte length
+        // (*(pValue+12) = Vm_Buffer_T length).
+        if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<BufferValue>>(v)->data.size()));
         return make_int(0);
     }
     if (name == "strlen") return args.empty() ? make_int(0) : make_int(static_cast<int64_t>(as_string(args[0]).size()));
-    if (name == "is_undefined") return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
+    // vm_f_is_undefined (0x80d80ec): returns (type == 0).  In the original the
+    // "undefined" value IS type 0 (missing keys, uninitialized vars); void
+    // function results are type 1 (is_void).  Probed live:
+    //   is_undefined(m["nope"])=1, is_undefined(uninit mixed)=1,
+    //   is_void(m["nope"])=0, is_void(void fn())=1.
+    if (name == "is_undefined") return make_int(!args.empty() && args[0].index() == 0 ? 1 : 0);
     if (name == "is_mapping") return make_int(!args.empty() && args[0].index() == 6 ? 1 : 0);
     if (name == "is_array") return make_int(!args.empty() && args[0].index() == 5 ? 1 : 0);
     if (name == "is_function") return make_int(!args.empty() && args[0].index() == 8 ? 1 : 0);
@@ -2247,7 +2271,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 if (hit) return *hit;
             }
         }
-        return UndefinedTag{};
+        return Value{};   // miss -> original type 0 "undefined"
     }
     if (name == "query_temp" || name == "query") return make_int(0);
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
@@ -2285,11 +2309,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "allocate_array") {
-        // allocate_array(n) -> an array with n undefined slots.
+        // allocate_array(n) -> an array with n undefined slots (original
+        // type 0 "undefined").
         auto arr = std::make_shared<ArrayValue>();
         int64_t n = args.empty() ? 0 : as_int(args[0]);
         if (n < 0) n = 0;
-        for (int64_t i = 0; i < n; ++i) arr->items.push_back(UndefinedTag{});
+        for (int64_t i = 0; i < n; ++i) arr->items.push_back(Value{});
         return arr;
     }
     if (name == "defined") {
@@ -2586,7 +2611,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // 1 = positional array).
         if (args.size() >= 1) {
             int64_t msgNo = as_int(args[0]);
-            Value values = (args.size() >= 2) ? args[1] : Value(UndefinedTag{});
+            Value values = (args.size() >= 2) ? args[1] : Value{};
             if (msgNo == 0x4401 || msgNo == 0x2403)
                 std::cerr << "[pad-efun] msgNo=0x" << std::hex << msgNo << std::dec
                           << " argc=" << args.size()
@@ -3449,7 +3474,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // side disconnects, the original driver kills the pended process;
         // we terminate the daemon thread the same way (TelnetClosedError).
         int cno = threadTelnetClient();
-        if (cno < 0 || !findTelnetClient(cno)) return Value(UndefinedTag{});
+        if (cno < 0 || !findTelnetClient(cno)) return Value{};
         std::string line = telnetReadLine(cno);
         TelnetClient* cl = findTelnetClient(cno);
         if (cl && cl->eof) {
@@ -3627,17 +3652,25 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "make32" || name == "make32i") {
-        // vm_f_make32 (0x804dd70) AND vm_f_make32i (0x804defb) pack EVERY
-        // argument as a 4-byte big-endian value into one buffer, so
-        // make32(a, b) yields 8 bytes.  The game uses make32i(int) the same
-        // way (apexd's make32i(apex_id) is a pack, not a parse).
+        // vm_f_make32 (0x804dd70) packs EVERY argument as 4 bytes BIG-endian
+        // (ROR byte swap, verified on the original: make32(0x11223344) ->
+        // "11 22 33 44").  vm_f_make32i (0x804defb) stores the raw DWORD
+        // (x86 little-endian, verified: make32i(0x11223344) -> "44 33 22 11").
         std::string out;
+        bool little = (name == "make32i");
         for (const auto& a : args) {
             int64_t v = as_int(a);
-            out += static_cast<char>((v >> 24) & 0xFF);
-            out += static_cast<char>((v >> 16) & 0xFF);
-            out += static_cast<char>((v >> 8) & 0xFF);
-            out += static_cast<char>(v & 0xFF);
+            if (little) {
+                out += static_cast<char>(v & 0xFF);
+                out += static_cast<char>((v >> 8) & 0xFF);
+                out += static_cast<char>((v >> 16) & 0xFF);
+                out += static_cast<char>((v >> 24) & 0xFF);
+            } else {
+                out += static_cast<char>((v >> 24) & 0xFF);
+                out += static_cast<char>((v >> 16) & 0xFF);
+                out += static_cast<char>((v >> 8) & 0xFF);
+                out += static_cast<char>(v & 0xFF);
+            }
         }
         return make_buffer(out);
     }
@@ -3664,12 +3697,22 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(-1);
     }
     if (name == "ctime") {
-        // ctime([t]) - "Www Mmm dd hh:mm:ss yyyy\n"
+        // vm_f_ctime (0x80d4f74): ctime([t[,style]])
+        //   style 0 (default) -> "Www Mmm dd hh:mm:ss yyyy\n"
+        //   style 1 -> %04d-%02d-%02d-%02d:%02d:%02d (YYYY-MM-DD-HH:MM:SS)
+        //   style 2 -> %04d-%02d-%02d (YYYY-MM-DD)
+        //   style 3 -> %04d%02d%02d%02d%02d%02d (YYYYMMDDHHMMSS)
         std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
+        int style = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
         std::tm tm{};
         localtime_s(&tm, &t);
         char buf[64];
-        strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", &tm);
+        switch (style) {
+            case 1: strftime(buf, sizeof(buf), "%Y-%m-%d-%H:%M:%S", &tm); break;
+            case 2: strftime(buf, sizeof(buf), "%Y-%m-%d", &tm); break;
+            case 3: strftime(buf, sizeof(buf), "%Y%m%d%H%M%S", &tm); break;
+            default: strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", &tm); break;
+        }
         return make_string(buf);
     }
     if (name == "execute_data") {
@@ -3788,7 +3831,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_int(-101);
         int64_t qid = queueResolveId(args[0]);
         if (qid < 0) return make_int(-101);
-        Value v = args.size() >= 2 ? args[1] : Value(UndefinedTag{});
+        Value v = args.size() >= 2 ? args[1] : Value{};
         bool ok = lpc::queueSend(qid, v);
         return make_int(ok ? 0 : -101);
     }
@@ -4571,9 +4614,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             int64_t v = as_int(a);
             if (name == "make8") {
                 out += static_cast<char>(v & 0xFF);
-            } else if (name == "make16" || name == "make16i") {
+            } else if (name == "make16") {
+                // vm_f_make16 (0x804dc37): big-endian (ROR word).
                 out += static_cast<char>((v >> 8) & 0xFF);
                 out += static_cast<char>(v & 0xFF);
+            } else if (name == "make16i") {
+                // vm_f_make16i (0x804dd23): raw WORD (little-endian).
+                out += static_cast<char>(v & 0xFF);
+                out += static_cast<char>((v >> 8) & 0xFF);
             } else {  // make32 / make32i
                 out += static_cast<char>((v >> 24) & 0xFF);
                 out += static_cast<char>((v >> 16) & 0xFF);
@@ -4772,13 +4820,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "var_type" || name == "var_raw_type") {
-        // vm_f_var_type (0x81097b0): the LPC type code of the value
-        // (2 int, 3 real, 4 string, 5 array, 6 mapping, 7 object, 8 function,
-        // 10 buffer, 0 nil, 255 undefined).
-        if (args.empty()) return make_int(255);
+        // vm_f_var_type (0x80dd70c): returns the STRING type name via
+        // vm_valueType ("undefined"/"void"/"integer"/"float"/"string"/
+        // "buffer"/"array"/"mapping"/"function"/"object").
+        // vm_f_var_raw_type (0x80dd6c4): returns the numeric type code
+        // (0 undefined, 1 void, 2 int, 3 real, 4 string, 5 buffer, 6 array,
+        // 7 mapping, 9 function, 10 object).  Probed on the live original:
+        //   var_type(({}))="array", var_type(([ ]))="mapping",
+        //   var_type(allocate_buffer(3))="buffer", var_type(missing)="undefined",
+        //   var_raw_type(uninit mixed)=0, var_type(1.5)="float".
+        if (args.empty()) return make_string("mixed");
         const Value& v = args[0];
-        static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
-        return make_int(v.index() < 11 ? idxToType[v.index()] : 0);
+        static const char* typeName[] = {
+            "undefined", "void", "integer", "float", "string", "buffer",
+            "array", "mapping", "object", "function", "buffer"};
+        static const int idxToRaw[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
+        if (name == "var_raw_type")
+            return make_int(v.index() < 11 ? idxToRaw[v.index()] : 255);
+        return make_string(v.index() < 11 ? typeName[v.index()] : "mixed");
     }
     if (name == "get_thread_info") {
         // vm_f_get_thread_info: get_thread_info(name_or_tid) -> 1 while the

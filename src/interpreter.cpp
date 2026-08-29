@@ -361,8 +361,12 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
 }
 
 Value Interpreter::evalIdent(const std::string& name, Environment& env) {
-    if (name == "undefined") return UndefinedTag{};
-    if (name == "nil") return std::monostate{};
+    // Original: "undefined"/"nil" are NOT keywords - an undeclared identifier
+    // is reported as "Undefined variable(x), treat as undefined value" which
+    // is type 0 "undefined" (save "U", is_undefined=1).  Probed live:
+    //   save_string(undefined) = "U", save_string(nil) = "U".
+    if (name == "undefined") return Value{};
+    if (name == "nil") return Value{};
     if (name == "true") return make_int(1);
     if (name == "false") return make_int(0);
     if (name == "this_object") {
@@ -473,14 +477,14 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
             if (start > end) return make_string("");
             return make_string(s.substr(static_cast<size_t>(start), static_cast<size_t>(end - start + 1)));
         }
-        return UndefinedTag{};
+        return Value{};   // bad range -> undefined (type 0)
     }
     if (c.index() == 5) {
         auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
         int64_t len = static_cast<int64_t>(arr->items.size());
         int64_t i = resolveIndex(rhs, len);
         if (i < 0) i += len;
-        if (i < 0 || i >= len) return UndefinedTag{};
+        if (i < 0 || i >= len) return Value{};   // OOB -> undefined (type 0)
         return arr->items[static_cast<size_t>(i)];
     }
     if (c.index() == 6) {
@@ -488,17 +492,17 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
         auto mp = std::get<std::shared_ptr<MappingValue>>(c);
         const Value* hit = mp->find(idx);
         if (hit) return *hit;
-        return UndefinedTag{};
+        return Value{};   // miss -> undefined (type 0)
     }
     if (c.index() == 4) {
         const std::string& s = std::get<std::string>(c);
         int64_t len = static_cast<int64_t>(s.size());
         int64_t i = resolveIndex(rhs, len);
         if (i < 0) i += len;
-        if (i < 0 || i >= len) return UndefinedTag{};
+        if (i < 0 || i >= len) return Value{};   // OOB -> undefined (type 0)
         return make_string(std::string(1, s[static_cast<size_t>(i)]));
     }
-    return UndefinedTag{};
+    return Value{};
 }
 
 void Interpreter::assignIndex(ExprPtr lhs, ExprPtr rhs, const Value& v, Environment& env) {
