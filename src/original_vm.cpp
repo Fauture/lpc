@@ -636,11 +636,15 @@ struct SuspendSignal {};
 // What a parked process waits for, and the value to push on resume.
 struct ResumeCond {
     // kind: 0 = not parked, 1 = timer (wakeAtMs), 2 = queue (qkey),
-    //       3 = event (ename), 4 = forever (only woken externally)
+    //       3 = event (ename), 4 = forever (only woken externally),
+    //       5 = socket readable/writable (fd; polled by the scheduler)
     int kind = 0;
     int64_t wakeAtMs = 0;       // kind 1
     std::string qkey;           // kind 2
     std::string ename;          // kind 3
+    int fd = -1;                // kind 5
+    bool wantRead = false;      // kind 5
+    bool wantWrite = false;     // kind 5
     Value resumeValue;          // pushed onto the stack when resumed
 };
 
@@ -727,6 +731,9 @@ public:
     // Wake every process waiting on event `ename` (raise_event side).
     void wakeEvent(const std::string& ename);
 
+    // Wake processes whose socket (kind-5 wait) became readable/writable.
+    void wakeSocket(int fd, bool readable, bool writable);
+
     // Main loop: run ready processes / fire due timers / wait for wakeups.
     void run();
 
@@ -746,6 +753,8 @@ private:
     std::multimap<int64_t, std::shared_ptr<Process>> timers_;       // wakeAtMs -> p
     std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> queueWaiters_;
     std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> eventWaiters_;
+    // fd -> processes parked in connect()/recv() (kind 5).  Polled by run().
+    std::unordered_map<int, std::deque<std::shared_ptr<Process>>> sockWaiters_;
     std::vector<std::shared_ptr<Process>> parked_;   // no automatic wakeup
     bool shutdown_ = false;
     uint64_t step_ = 0;
@@ -1878,6 +1887,39 @@ private:
                 out->items = std::move(items);
                 return out;
             }
+            if (nm == "connect") {
+                // vm_f_connect (0x80e83b4): connect(fd, host, port, timeout).
+                // The original performs a NON-BLOCKING connect: on EINPROGRESS
+                // the process parks on the socket and the cooperative scheduler
+                // wakes it when the socket becomes writable (or the timeout
+                // fires).  Returns 0 on success, -1 on failure.
+                if (args.size() >= 3) {
+                    int fd = static_cast<int>(toInt(args[0]));
+                    std::string host = to_string(args[1], false);
+                    int port = static_cast<int>(toInt(args[2]));
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[connect] fd=" << fd << " " << host << ":" << port << "\n";
+                    int rc = xdbcConnectAsync(fd, host, port);
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[connect] rc=" << rc << "\n";
+                    if (rc == 0) return make_int(0);          // connected immediately
+                    if (rc == -1) return make_int(-1);        // hard failure
+                    // EINPROGRESS: park until the socket is writable.
+                    ResumeCond cond;
+                    cond.kind = 5;
+                    cond.fd = fd;
+                    cond.wantWrite = true;
+                    auto hook = [this, fd]() {
+                        // Socket writable: check the connect result.
+                        resumeValue_ = make_int(xdbcConnectResult(fd));
+                    };
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[connect] parking fd=" << fd << " kind=" << cond.kind << "\n";
+                    parkAndSuspend(cond, std::move(hook), make_int(0));
+                    return make_int(0);   // unreachable (SuspendSignal thrown)
+                }
+                return make_int(-1);
+            }
             return call_builtin(nullptr, nm, args);
         }
         return make_int(0);
@@ -2330,7 +2372,7 @@ private:
     // loop from the saved ip_.  Returns when the whole call chain finishes,
     // or re-throws SuspendSignal if it parks again (the scheduler re-parks).
     // resumeValue must be a fresh value; the caller owns any stack effects.
-    void resumeProcess(Value resumeValue) {
+    void resumeProcess(Value /*resumeValue ignored*/) {
         ExecGuard lock(execMutex_, execDepth_, "resume " + objName_);
         parked_ = false;
         ResumeCond c = cond_;
@@ -2338,9 +2380,9 @@ private:
         if (onResume_) {
             auto hook = std::move(onResume_);
             onResume_ = nullptr;
-            hook();
+            hook();     // may update resumeValue_ (e.g. connect's result check)
         }
-        pushValue(std::move(resumeValue));
+        pushValue(std::move(resumeValue_));
         runLoop();
         // runLoop returned normally: the whole call chain finished and the
         // top-level frame was popped by case 72/73 (retCode == nullptr).
@@ -2896,7 +2938,10 @@ private:
                     if (names[efun] == "recv") {
                         // vm_f_recv (0x80e80c8): recv(fd, &buf, len) writes the
                         // received bytes back through the reference and returns
-                        // the byte count.
+                        // the byte count.  Cooperative: when no data is
+                        // available yet the process parks on the socket
+                        // (kind 5) and the scheduler resumes it once the fd
+                        // becomes readable.
                         std::vector<StackItem> items;
                         for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
                         std::reverse(items.begin(), items.end());
@@ -2905,12 +2950,31 @@ private:
                             Value lenv = items[2].isRef ? deref(items[2]) : items[2].value;
                             int fd = static_cast<int>(toInt(fdv));
                             int len = static_cast<int>(toInt(lenv));
-                            std::string data = xdbcRecv(fd, len);
-                            if (!data.empty()) writeThrough(items[1], make_string(data));
                             if (std::getenv("LPCVM_TRACE"))
-                                std::cerr << "[recv] fd=" << fd << " len=" << len
-                                          << " got=" << data.size() << "\n";
-                            pushValue(make_int(static_cast<int64_t>(data.size())));
+                                std::cerr << "[recv] fd=" << fd << " len=" << len << "\n";
+                            bool ok = false;
+                            std::string data = xdbcRecvAsync(fd, len, ok);
+                            if (ok || !xdbcSocketExists(fd)) {
+                                if (ok && !data.empty()) writeThrough(items[1], make_string(data));
+                                if (std::getenv("LPCVM_TRACE"))
+                                    std::cerr << "[recv] fd=" << fd << " got=" << data.size() << "\n";
+                                pushValue(make_int(static_cast<int64_t>(data.size())));
+                            } else {
+                                // No data yet: park until readable.
+                                ResumeCond cond;
+                                cond.kind = 5;
+                                cond.fd = fd;
+                                cond.wantRead = true;
+                                StackItem bufRef = items[1];
+                                auto hook = [this, fd, len, bufRef]() mutable {
+                                    bool rok = false;
+                                    std::string d = xdbcRecvAsync(fd, len, rok);
+                                    if (rok && !d.empty()) writeThrough(bufRef, make_string(d));
+                                    resumeValue_ = make_int(static_cast<int64_t>(d.size()));
+                                };
+                                parkAndSuspend(cond, std::move(hook), make_int(0));
+                                break;   // unreachable (SuspendSignal thrown)
+                            }
                         } else {
                             pushValue(make_int(-1));
                         }
@@ -3987,7 +4051,9 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
 void Scheduler::wake(std::shared_ptr<Process> p) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        p->resumeValue = p->vm->parkedResumeValue();
+        // The resume hook (run inside resumeProcess BEFORE the value is
+        // pushed) may update parkedResumeValue (e.g. connect's result check);
+        // re-read it there rather than snapshotting here.
         ready_.push_back(std::move(p));
     }
     cv_.notify_one();
@@ -4006,6 +4072,9 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     case 3:   // event
         eventWaiters_[c.ename].push_back(p);
         break;
+    case 5:   // socket (connect/recv)
+        sockWaiters_[c.fd].push_back(p);
+        break;
     default:  // kind 0/4: no wakeup registered; park forever (external
               // explicit wake via wake() or process list)
         parked_.push_back(p);
@@ -4023,6 +4092,9 @@ void Scheduler::wakeQueue(const std::string& qkey) {
             queueWaiters_.erase(it);
         }
     }
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[wq] " << qkey << " hits=" << hits.size()
+                  << " t=" << std::this_thread::get_id() << "\n";
     for (auto& p : hits) wake(std::move(p));
 }
 
@@ -4034,6 +4106,28 @@ void Scheduler::wakeEvent(const std::string& ename) {
         if (it != eventWaiters_.end()) {
             hits = std::move(it->second);
             eventWaiters_.erase(it);
+        }
+    }
+    for (auto& p : hits) wake(std::move(p));
+}
+
+void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
+    std::deque<std::shared_ptr<Process>> hits;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = sockWaiters_.find(fd);
+        if (it != sockWaiters_.end()) {
+            // Only wake waiters whose condition is satisfied; keep the rest.
+            std::deque<std::shared_ptr<Process>> keep;
+            for (auto& p : it->second) {
+                const ResumeCond& c = p->vm->resumeCond();
+                if ((c.wantRead && readable) || (c.wantWrite && writable))
+                    hits.push_back(std::move(p));
+                else
+                    keep.push_back(std::move(p));
+            }
+            if (keep.empty()) sockWaiters_.erase(it);
+            else it->second = std::move(keep);
         }
     }
     for (auto& p : hits) wake(std::move(p));
@@ -4072,8 +4166,29 @@ void Scheduler::run() {
                 std::cerr << "[sched-idle] ready=" << ready_.size()
                           << " timers=" << timers_.size()
                           << " qwait=" << queueWaiters_.size()
-                          << " evwait=" << eventWaiters_.size() << "\n";
+                          << " evwait=" << eventWaiters_.size()
+                          << " sockwait=" << sockWaiters_.size() << "\n";
             ++step_;
+            // Poll parked sockets (kind-5 waits: connect/recv) when nothing
+            // else can wake the loop.  select() with a short timeout lets the
+            // scheduler notice connect completion / incoming data without a
+            // blocking network call.
+            if (!sockWaiters_.empty() && ready_.empty() && timers_.empty()) {
+                std::vector<int> fds;
+                for (auto& kv : sockWaiters_) fds.push_back(kv.first);
+                lk.unlock();
+                std::vector<int> rd = fds, wr = fds;
+                int nrd = lpc::xdbcPoll(fds, rd, wr, 100);
+                if (std::getenv("LPCVM_TRACE") && nrd != 0)
+                    std::cerr << "[sock-poll] n=" << nrd << "\n";
+                for (int fd : fds) {
+                    bool r = std::find(rd.begin(), rd.end(), fd) != rd.end();
+                    bool w = std::find(wr.begin(), wr.end(), fd) != wr.end();
+                    if (r || w) wakeSocket(fd, r, w);
+                }
+                lk.lock();
+                continue;   // re-check ready_ with the lock held
+            }
             if (!timers_.empty()) {
                 int64_t w = timers_.begin()->first - nowMs();
                 if (w < 0) w = 0;

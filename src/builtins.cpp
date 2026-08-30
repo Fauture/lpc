@@ -4202,7 +4202,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return arr;
     }
     if (name == "connect") {
-        // vm_f_connect (0x80e83b4): connect(fd, host, port) -> 0 / -1.
+        // vm_f_connect (0x80e83b4): connect(fd, host, port, timeout).
+        // The original performs a NON-BLOCKING connect: when it would block
+        // (EINPROGRESS) the process parks on the socket and the cooperative
+        // scheduler resumes it when the socket becomes writable (or the
+        // timeout fires).  Returns 0 = ok, -1 = failure.
         if (args.size() >= 3) {
             int fd = static_cast<int>(as_int(args[0]));
             std::string host = as_string(args[1]);

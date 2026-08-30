@@ -42,14 +42,33 @@ int xdbcSocket();
 // anything else performs a real blocking TCP connect.  0 = ok, -1 = failure.
 int xdbcConnect(int fd, const std::string& host, int port);
 
+// Non-blocking connect for the cooperative scheduler (vm_f_connect semantics):
+// returns 0 = connected, -1 = immediate failure, 1 = in progress (EINPROGRESS;
+// the process parks until the socket becomes writable).  xdbcConnectResult
+// then reports the final outcome (0 / -1) once the socket is writable.
+int xdbcConnectAsync(int fd, const std::string& host, int port);
+int xdbcConnectResult(int fd);
+
 // send(fd, data): bytes accepted (emulator processes frames synchronously).
 int xdbcSend(int fd, const std::string& data);
 
 // recv(fd, len): up to len bytes (empty string when nothing is buffered).
 std::string xdbcRecv(int fd, int len);
 
+// Non-blocking recv: ok=false means no data available yet (the caller parks
+// the process and retries when the fd becomes readable).  Returns the bytes
+// actually read.
+std::string xdbcRecvAsync(int fd, int len, bool& ok);
+
 // select(fds): drops non-ready fds from the vector, returns the ready count.
 int xdbcSelect(std::vector<int>& fds, int timeoutMs);
+
+// Poll sockets for readability/writability.  `fds` is the set of interest;
+// readable/writable receive the subsets that are ready (both start as copies
+// of fds).  Returns the total number of ready fds.  Used by the cooperative
+// scheduler to wake connect()/recv() parked processes.
+int xdbcPoll(const std::vector<int>& fds, std::vector<int>& readable,
+             std::vector<int>& writable, int timeoutMs);
 
 void xdbcCloseSocket(int fd);
 

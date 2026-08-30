@@ -467,6 +467,7 @@ struct XdbcConn {
 struct SocketEntry {
     bool used = false;
     bool isVirtualXdbc = false;
+    bool connecting = false;   // non-blocking connect in progress
     uintptr_t realSock = 0;      // real TCP socket (non-xdbc)
     std::string realHost;
     int realPort = 0;
@@ -729,6 +730,86 @@ int xdbcConnect(int fd, const std::string& host, int port) {
     return 0;
 }
 
+namespace {
+// Fill a sockaddr_in for host:port (IPv4 literal or name).  Returns false on
+// resolution failure.
+bool fillSockAddr(const std::string& host, int port, sockaddr_in& addr) {
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<u_short>(port));
+    std::string h = host;
+    size_t sp = h.find(' ');
+    if (sp != std::string::npos) h = h.substr(0, sp);
+    if (inet_pton(AF_INET, h.c_str(), &addr.sin_addr) == 1) return true;
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(h.c_str(), nullptr, &hints, &res) != 0 || !res) return false;
+    addr.sin_addr = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr;
+    freeaddrinfo(res);
+    return true;
+}
+} // namespace
+
+int xdbcConnectAsync(int fd, const std::string& host, int port) {
+    ensureWsa();
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used) return -1;
+    SocketEntry& se = it->second;
+    if (se.isVirtualXdbc || se.realSock) return -1;
+    if (port == 9527) {
+        // XDBC emulator connects "instantly" (in-process MySQL).
+        se.isVirtualXdbc = true;
+        se.conn = std::make_shared<XdbcConn>();
+        std::string mysqlHost = host;
+        int mysqlPort = 3306;
+        parseMysqlHost(host, mysqlHost, mysqlPort);
+        se.conn->mysqlHost = mysqlHost;
+        se.conn->mysqlPort = mysqlPort;
+        return 0;
+    }
+    sockaddr_in addr{};
+    if (!fillSockAddr(host, port, addr)) return -1;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return -1;
+    // Non-blocking connect: EINPROGRESS means the caller parks the process
+    // until the socket becomes writable (vm_f_connect semantics).
+    u_long mode = 1;
+    ioctlsocket(s, FIONBIO, &mode);
+    int rc = connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    if (rc == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSAEWOULDBLOCK || err == WSAEINPROGRESS) {
+            se.realSock = static_cast<uintptr_t>(s);
+            se.realHost = host;
+            se.realPort = port;
+            se.connecting = true;
+            return 1;   // in progress
+        }
+        closesocket(s);
+        return -1;
+    }
+    se.realSock = static_cast<uintptr_t>(s);
+    se.realHost = host;
+    se.realPort = port;
+    return 0;
+}
+
+int xdbcConnectResult(int fd) {
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used) return -1;
+    SocketEntry& se = it->second;
+    if (se.isVirtualXdbc) return 0;
+    if (!se.realSock) return -1;
+    int err = 0;
+    int len = sizeof(err);
+    getsockopt(static_cast<SOCKET>(se.realSock), SOL_SOCKET, SO_ERROR,
+               reinterpret_cast<char*>(&err), &len);
+    se.connecting = false;
+    return err == 0 ? 0 : -1;
+}
+
 int xdbcSend(int fd, const std::string& data) {
     std::lock_guard<std::mutex> lk(socketsMutex());
     auto it = socketTable().find(fd);
@@ -761,6 +842,48 @@ std::string xdbcRecv(int fd, int len) {
     std::string buf(static_cast<size_t>(len), '\0');
     int n = recv(static_cast<SOCKET>(se.realSock), &buf[0], len, 0);
     if (n <= 0) return "";
+    buf.resize(static_cast<size_t>(n));
+    return buf;
+}
+
+std::string xdbcRecvAsync(int fd, int len, bool& ok) {
+    ok = false;
+    std::lock_guard<std::mutex> lk(socketsMutex());
+    auto it = socketTable().find(fd);
+    if (it == socketTable().end() || !it->second.used) { ok = true; return ""; }
+    SocketEntry& se = it->second;
+    if (se.isVirtualXdbc) {
+        ok = true;   // virtual XDBC: whatever is queued is what we get
+        std::string& q = se.conn->outQueue;
+        size_t n = static_cast<size_t>(len) < q.size() ? static_cast<size_t>(len) : q.size();
+        std::string out = q.substr(0, n);
+        q.erase(0, n);
+        return out;
+    }
+    if (!se.realSock || len <= 0) { ok = true; return ""; }
+    if (se.connecting) {
+        // Connect not finished yet: treat as "no data" (parked until the
+        // socket becomes writable, then connect result is checked).
+        return "";
+    }
+    // Non-blocking probe: readable sockets return data immediately; an
+    // empty result with ok=false means "no data available - park".
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(static_cast<SOCKET>(se.realSock), &rfds);
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    int rc = ::select(static_cast<int>(se.realSock) + 1, &rfds, nullptr, nullptr, &tv);
+    if (rc <= 0) return "";   // not readable yet -> park
+    std::string buf(static_cast<size_t>(len), '\0');
+    int n = recv(static_cast<SOCKET>(se.realSock), &buf[0], len, 0);
+    if (n <= 0) {
+        // Peer closed / error: report 0 bytes as a terminal state.
+        ok = true;
+        return "";
+    }
+    ok = true;
     buf.resize(static_cast<size_t>(n));
     return buf;
 }
@@ -830,6 +953,49 @@ int xdbcSelect(std::vector<int>& fds, int timeoutMs) {    std::vector<int> ready
     }
     fds = ready;
     return static_cast<int>(ready.size());
+}
+
+int xdbcPoll(const std::vector<int>& fds, std::vector<int>& readable,
+             std::vector<int>& writable, int timeoutMs) {
+    readable.clear();
+    writable.clear();
+    if (fds.empty()) return 0;
+    fd_set rfds, wfds;
+    FD_ZERO(&rfds);
+    FD_ZERO(&wfds);
+    SOCKET maxS = 0;
+    std::map<SOCKET, int> bySock;
+    for (int fd : fds) {
+        std::lock_guard<std::mutex> lk(socketsMutex());
+        auto it = socketTable().find(fd);
+        if (it == socketTable().end() || !it->second.used) continue;
+        if (it->second.isVirtualXdbc) {
+            // Virtual XDBC socket: readable when a reply is queued.
+            if (it->second.conn && !it->second.conn->outQueue.empty()) {
+                readable.push_back(fd);
+                writable.push_back(fd);
+            }
+            continue;
+        }
+        if (!it->second.realSock) continue;
+        SOCKET s = static_cast<SOCKET>(it->second.realSock);
+        FD_SET(s, &rfds);
+        FD_SET(s, &wfds);
+        bySock[s] = fd;
+        if (s > maxS) maxS = s;
+    }
+    if (bySock.empty()) return static_cast<int>(readable.size());
+    timeval tv{};
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    int rc = ::select(static_cast<int>(maxS) + 1, &rfds, &wfds, nullptr, &tv);
+    if (rc > 0) {
+        for (auto& kv : bySock) {
+            if (FD_ISSET(kv.first, &rfds)) readable.push_back(kv.second);
+            if (FD_ISSET(kv.first, &wfds)) writable.push_back(kv.second);
+        }
+    }
+    return static_cast<int>(readable.size() + writable.size());
 }
 
 void xdbcCloseSocket(int fd) {
