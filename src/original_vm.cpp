@@ -3285,10 +3285,14 @@ private:
                             ResumeCond cond;
                             cond.kind = 2;
                             cond.qkey = "q:" + std::to_string(qid);
-                            auto hook = [this, item = items[1]]() mutable {
+                            auto hook = [this, item = items[1], qid]() mutable {
                                 bool rok = false;
-                                Value m = queueReceive(queueResolveId(
-                                    item.isRef ? deref(item) : item.value), 0, rok);
+                                Value m = queueReceive(qid, 0, rok);
+                                if (std::getenv("LPCVM_BM"))
+                                    std::cerr << "[rq-resume] qid=" << qid
+                                              << " ok=" << rok
+                                              << " m.type=" << m.index()
+                                              << " m=" << to_string(m, false).substr(0, 40) << "\n";
                                 if (rok) writeThrough(item, m);
                             };
                             parkAndSuspend(cond, std::move(hook), make_int(0));
@@ -4434,7 +4438,12 @@ void Scheduler::wakeQueue(const std::string& qkey) {
     if (hit) {
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[wq] " << qkey << " wake1\n";
+        if (std::getenv("LPCVM_BM"))
+            std::cerr << "[bm-wq] " << qkey << " wake entry=" << hit->entry
+                      << " vm=" << hit->vm.get() << "\n";
         wake(std::move(hit));
+    } else if (std::getenv("LPCVM_BM")) {
+        std::cerr << "[bm-wq] " << qkey << " no waiter\n";
     }
 }
 
