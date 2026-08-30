@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "builtins.h"
@@ -592,6 +593,11 @@ struct ObjectRegistry {
     // The same, keyed by object pointer (the master's local VM uses the
     // original object, not the registry copy).
     std::unordered_map<const OriginalObject*, bool> initializedObj;
+    // Registry keys whose object-construction process (__init__) is in flight
+    // (load_object spawned it; runConstruction raises the done event when it
+    // finishes).  A second load_object for the same key must join that wait,
+    // not spawn a second construction.
+    std::unordered_set<std::string> constructing;
     // The driver's global program object (start_aaa), as used by the running
     // master VM.  Threads/timers on it must not re-run the full startup.
     const OriginalObject* masterObj = nullptr;
@@ -606,6 +612,10 @@ void runPendingOriginalThreads(const std::string& searchRoot);
 void runPostInitFunctions(const std::string& searchRoot);
 bool isObjectInitialized(const OriginalObject* obj);
 bool isMasterObject(const OriginalObject* obj);
+// Register the object's VM in the registry WITHOUT running its initializer
+// (used by load_object's cooperative construction).  Returns the key ("" on
+// failure); defined below the class alongside loadObjectIntoRegistry.
+std::string registerObjectVM(const std::string& virtualPath, const std::string& searchRoot);
 
 int32_t readI32(const std::vector<uint8_t>& meta, uint32_t off) {
     if (off + 4 > meta.size()) throw std::runtime_error("original_vm: bad metadata reference");
@@ -737,6 +747,9 @@ public:
         // True after a TimeSliceSignal requeue: resume the master via
         // runAsMaster() (phase continuation), not resumeProcess().
         bool sliceResume = false;
+        // Object-construction process (entry "__init__"): the event raised
+        // when the object's init/create finished, waking the parked caller.
+        std::string doneEvent;
     };
 
     // Spawn a new process (create_thread / set_timer / post_init / network
@@ -744,6 +757,13 @@ public:
     // scheduler thread via run().
     void spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
                std::vector<Value> args);
+
+    // Spawn an object-construction process (entry "__init__"): runs the
+    // object's global init code + create() cooperatively (yields/park resume
+    // through the scheduler), then raises `doneEvent` to wake the caller that
+    // parked inside load_object.
+    void spawnConstruction(std::shared_ptr<OriginalVm> vm, std::vector<Value> args,
+                           std::string doneEvent);
 
     // Schedule a process to run once at absolute time atMs (set_timer).  The
     // optional TimerEntry allows delete_timer to cancel it before it fires.
@@ -753,6 +773,12 @@ public:
 
     // Re-queue a process whose wake condition fired.
     void wake(std::shared_ptr<Process> p);
+
+    // Wake a process to the FRONT of the ready queue (load_object's parked
+    // caller resumes before processes spawned during construction - the
+    // original continues the loading process inline, so "Load: ... OK" prints
+    // before the freshly created daemons get their turn).
+    void wakeFront(std::shared_ptr<Process> p);
 
     // Time-slice yield: put the process back at the TAIL of the ready queue
     // (master process after a TimeSliceSignal; its VM state is preserved so
@@ -768,6 +794,9 @@ public:
 
     // Wake every process waiting on event `ename` (raise_event side).
     void wakeEvent(const std::string& ename);
+
+    // Wake the event's waiters to the FRONT of ready_ (construction done).
+    void wakeEventFront(const std::string& ename);
 
     // Wake processes whose socket (kind-5 wait) became readable/writable.
     void wakeSocket(int fd, bool readable, bool writable);
@@ -908,6 +937,91 @@ public:
         return make_int(0);
     }
 
+    // vm_f_load_object cooperative path (stage B): register the object's VM
+    // in the registry, spawn an "__init__" construction scheduler process that
+    // runs the object's global init code + create() with full cooperative
+    // yields, and PARK this VM on "obj-init:<key>" until construction done.
+    // The original runs the construction inline on the loading process (so
+    // create()'s blocking/yielding efuns park the whole process and it resumes
+    // inside create later); a scheduler process + park reproduces that with
+    // the single cooperative scheduler.
+    Value loadObjectCooperative(const std::string& vpath, const std::vector<Value>& createArgs) {
+        if (searchRoot_.empty() || vpath.empty()) return make_int(0);
+        std::string rel = vpath;
+        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+        if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+        auto& reg = objectRegistry();
+        std::string key;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms) {
+                if (hasSuffix(kv.first, rel)) { key = kv.first; break; }
+            }
+        }
+        if (!key.empty()) {
+            // Already registered: if initialized, return the object now; if a
+            // construction is in flight, join its wait (do not double-spawn).
+            bool initd = false;
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                auto it = reg.initialized.find(key);
+                initd = (it != reg.initialized.end() && it->second);
+            }
+            if (initd) return make_object(vpath);
+            // Construction in flight (or failed): park on the same event.  The
+            // resume hook re-checks the registry so a failed construction
+            // resumes with 0 instead of a phantom object.
+            ResumeCond cond;
+            cond.kind = 3;
+            cond.ename = "obj-init:" + key;
+            auto hook = [this, vpath, key]() {
+                bool ok = false;
+                {
+                    auto& reg2 = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl2(registryMutex());
+                    auto it2 = reg2.initialized.find(key);
+                    ok = (it2 != reg2.initialized.end() && it2->second);
+                }
+                resumeValue_ = ok ? make_object(vpath) : make_int(0);
+            };
+            parkAndSuspend(cond, std::move(hook), make_int(0));
+            return make_int(0);   // unreachable (SuspendSignal thrown)
+        }
+        key = registerObjectVM(vpath, searchRoot_);
+        if (key.empty()) return make_int(0);
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            reg.constructing.insert(key);
+        }
+        std::shared_ptr<OriginalVm> vm;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            auto it = reg.vms.find(key);
+            if (it != reg.vms.end()) vm = it->second;
+        }
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[loadobj-cop] " << vpath << " key=" << key
+                      << " spawn __init__ createArgs=" << createArgs.size() << "\n";
+        scheduler().spawnConstruction(vm, createArgs, "obj-init:" + key);
+        // Park the caller; runConstruction raises the event when done.  The
+        // resume hook re-checks the registry: a failed create() yields 0.
+        ResumeCond cond;
+        cond.kind = 3;
+        cond.ename = "obj-init:" + key;
+        auto hook = [this, vpath, key]() {
+            bool ok = false;
+            {
+                auto& reg2 = objectRegistry();
+                std::lock_guard<std::recursive_mutex> rl2(registryMutex());
+                auto it2 = reg2.initialized.find(key);
+                ok = (it2 != reg2.initialized.end() && it2->second);
+            }
+            resumeValue_ = ok ? make_object(vpath) : make_int(0);
+        };
+        parkAndSuspend(cond, std::move(hook), make_int(0));
+        return make_int(0);   // unreachable (SuspendSignal thrown)
+    }
+
     // Run a specific function pointer on THIS VM (with this VM's object vars).
     // Used by call_fun_ptr to run a closure's captured function on its owner VM.
     Value callFunctionPointer(const OriginalFunction* fn, const std::vector<Value>& args) {
@@ -1008,7 +1122,10 @@ public:
         }
         if (masterPhase_ == 2) {
             masterNoYield_ = true;
-            callCreate();
+            if (!masterCreateStarted_) {
+                masterCreateStarted_ = true;
+                callCreate();
+            }
             masterNoYield_ = false;
             code_ = nullptr;
             masterPhase_ = 3;
@@ -1016,6 +1133,75 @@ public:
                 std::cerr << "[master-phase] 2->3 post_init\n";
             runPostInitFunctions(searchRoot_);
             masterInitDone_ = true;
+        }
+    }
+
+    // Object construction as a SCHEDULER process (entry "__init__"), spawned
+    // by load_object: run the object's global init code + create() exactly
+    // like the original driver's vm_f_construct_object2 chain (inline on the
+    // loading process, so create() can yield/park and resume through the
+    // scheduler).  The phase machine mirrors runAsMaster: phase 0 (global
+    // code) may yield and resumes via runLoop; phases 1/2 (inherited inits /
+    // create) are C++ calls that cannot resume mid-way, so masterNoYield_
+    // keeps relinquish from yielding inside them (create() that must yield
+    // uses the SuspendSignal parking of its own blocking efuns instead).
+    // When all phases finish, raise initDoneEvent_ so the parked load_object
+    // caller resumes.
+    void runConstruction(const std::vector<Value>& createArgs, const std::string& doneEvent) {
+        initCreateArgs_ = createArgs;
+        initDoneEvent_ = doneEvent;
+        if (initPhase_ <= 0) {
+            if (!code_) {
+                execute(obj_.globalCode, obj_.globalMeta);
+            } else {
+                runLoop();   // resumed after a yield in the global code
+            }
+            code_ = nullptr;
+            initPhase_ = 1;
+        }
+        if (initPhase_ == 1) {
+            masterNoYield_ = true;
+            runInheritedInits(0, 0);
+            masterNoYield_ = false;
+            code_ = nullptr;
+            initPhase_ = 2;
+        }
+        if (initPhase_ == 2) {
+            if (!initCreateStarted_) {
+                initCreateStarted_ = true;
+                masterNoYield_ = true;
+                callCreate(initCreateArgs_);
+                masterNoYield_ = false;
+            }
+            // create() finished (synchronously, or after a park-resume which
+            // ran the rest of the create via resumeProcess).
+            code_ = nullptr;
+            initPhase_ = 3;
+        }
+        if (initPhase_ == 3) {
+            // Construction finished: mark the object initialized in the
+            // registry and wake the load_object caller parked on this event.
+            markObjectInitialized();
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[construct-done] " << objName_ << " event=" << initDoneEvent_ << "\n";
+            scheduler().wakeEventFront(initDoneEvent_);
+            initPhase_ = 4;
+        }
+    }
+
+    // Mark this VM's object as initialized in the registry (construction
+    // process completion).  The registry keys for this VM's object get
+    // initialized[key] = true so isObjectInitialized() / later load_object
+    // calls short-circuit.
+    void markObjectInitialized() {
+        auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms) {
+            if (kv.second.get() == this || &kv.second->object() == &obj_) {
+                reg.initialized[kv.first] = true;
+                reg.initializedObj[&obj_] = true;
+                reg.constructing.erase(kv.first);
+            }
         }
     }
 
@@ -1174,6 +1360,17 @@ private:
     // returns immediately instead of throwing TimeSliceSignal, so those
     // phases run to completion synchronously.
     bool masterNoYield_ = false;
+    // The master's own create() already started (park-resume must not re-run
+    // it; callCreate can park on load_object now that loading is cooperative).
+    bool masterCreateStarted_ = false;
+    // Object-construction state (entry "__init__" scheduler process, spawned
+    // by load_object): runs the object's global init code + create() with the
+    // same phase machine as the master, then raises initDoneEvent_ to wake the
+    // parked load_object caller.
+    int initPhase_ = 0;             // 0=globalCode,1=inherited,2=create,3=done
+    bool initCreateStarted_ = false;   // create() began (park-resume must not re-run it)
+    std::string initDoneEvent_;     // "obj-init:<key>" raised when construction finished
+    std::vector<Value> initCreateArgs_;
     Value returnValue_ = make_int(0);
     bool returned_ = false;
     int catchDepth_ = 0;
@@ -2099,6 +2296,28 @@ private:
                 }
                 return make_int(-1);
             }
+            if (nm == "load_object") {
+                // vm_f_load_object (0x80f8cbc): load + construct the object.
+                // The original runs the construction (global init code +
+                // create()) INLINE on the current process, so a create() that
+                // blocks (queue/event/socket) parks the WHOLE process and the
+                // scheduler resumes it inside create() later - the "Load: ...
+                // OK" line prints only AFTER create() finished (reference
+                // dba.log: 143-161 configd create + handlers, then 162 "Load:
+                // /daemons/configd.c... OK").  Mirror that with a construction
+                // SCHEDULER process (entry "__init__"): register the object's
+                // VM, spawn the construction, and PARK this VM on the
+                // "obj-init:<key>" event until construction finished, then
+                // resume with the object value.
+                if (args.empty()) return make_int(0);
+                std::string vpath;
+                if (args[0].index() == 4) vpath = std::get<std::string>(args[0]);
+                else if (args[0].index() == 2) vpath = std::to_string(std::get<int64_t>(args[0]));
+                else vpath = to_string(args[0], false);
+                std::vector<Value> createArgs;
+                if (args.size() >= 2) createArgs.push_back(args[1]);
+                return loadObjectCooperative(vpath, createArgs);
+            }
             return call_builtin(nullptr, nm, args);
         }
         return make_int(0);
@@ -2164,7 +2383,8 @@ private:
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
             const OriginalFunction& fn = *it->second;
-            if ((index >= 50 && index <= 60) || (objName_.find("connectiond") != std::string::npos && index <= 15))
+            if ((index >= 50 && index <= 60) || (objName_.find("connectiond") != std::string::npos && index <= 15) ||
+                objName_.find("config") != std::string::npos)
                 std::cerr << "[cfu] local fn=" << fn.name << " idx=" << index
                           << " obj=" << objName_ << " code=" << fn.code.size() << "\n";
             // A nodes==0 entry is a forward declaration (dlt reference) whose
@@ -4365,6 +4585,25 @@ void Scheduler::spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
     cv_.notify_one();
 }
 
+void Scheduler::spawnConstruction(std::shared_ptr<OriginalVm> vm, std::vector<Value> args,
+                                  std::string doneEvent) {
+    auto p = std::make_shared<Process>();
+    p->vm = std::move(vm);
+    p->entry = "__init__";
+    p->args = std::move(args);
+    p->doneEvent = std::move(doneEvent);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        // FRONT of the queue: the original driver runs the construction
+        // INLINE on the loading process (create() is part of load_object's own
+        // execution), so processes spawned by EARLIER creates (e.g. mmd's
+        // MMD.service daemon) must not run between this load_object and its
+        // create().  A tail insert would let them preempt the constructor.
+        ready_.push_front(p);
+    }
+    cv_.notify_one();
+}
+
 void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& entry,
                              std::vector<Value> args, int64_t atMs,
                              std::shared_ptr<TimerEntry> timerEntry) {
@@ -4387,6 +4626,14 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
         // pushed) may update parkedResumeValue (e.g. connect's result check);
         // re-read it there rather than snapshotting here.
         ready_.push_back(std::move(p));
+    }
+    cv_.notify_one();
+}
+
+void Scheduler::wakeFront(std::shared_ptr<Process> p) {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        ready_.push_front(std::move(p));
     }
     cv_.notify_one();
 }
@@ -4457,6 +4704,23 @@ void Scheduler::wakeEvent(const std::string& ename) {
         }
     }
     for (auto& p : hits) wake(std::move(p));
+}
+
+// Construction-completion wake: the object's load_object caller resumes at the
+// FRONT of the ready queue (the original driver continues the loading process
+// inline, so its "Load: ... OK" print comes before any processes spawned
+// during create() get to run).
+void Scheduler::wakeEventFront(const std::string& ename) {
+    std::deque<std::shared_ptr<Process>> hits;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = eventWaiters_.find(ename);
+        if (it != eventWaiters_.end()) {
+            hits = std::move(it->second);
+            eventWaiters_.erase(it);
+        }
+    }
+    for (auto& p : hits) wakeFront(std::move(p));
 }
 
 void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
@@ -4591,6 +4855,10 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 // The driver's master process: run the global init code and
                 // create() with time slices (see runAsMaster).
                 p->vm->runAsMaster();
+            } else if (p->entry == "__init__") {
+                // Object-construction process spawned by load_object: run the
+                // object's global init code + create() (see runConstruction).
+                p->vm->runConstruction(p->args, p->doneEvent);
             } else {
                 p->vm->callFunctionByName(p->entry, p->args);
             }
@@ -4598,15 +4866,28 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 std::cerr << "[sched-call-done] " << p->entry << "\n";
             p->done = true;
         } else if (p->sliceResume) {
-            // Time-slice yield resume: continue the master's startup phases.
+            // Time-slice yield resume: continue the master's startup phases
+            // (or the construction's phases for "__init__" processes).
             p->sliceResume = false;
-            p->vm->runAsMaster();
+            if (p->entry == "__master__")
+                p->vm->runAsMaster();
+            else if (p->entry == "__init__")
+                p->vm->runConstruction(p->args, p->doneEvent);
+            else
+                p->vm->runLoop();   // daemon yielded (rare): continue its stream
             p->done = true;
         } else {
             // Resume the VM whose execution state was parked (usually p->vm,
             // but cross-object blocking runs on the target's registry VM).
             auto rvm = p->parkedVm ? p->parkedVm : p->vm;
             rvm->resumeProcess(std::move(p->resumeValue));
+            // The parked call finished; a construction process must advance
+            // its phase machine (raise the done event), and the master must
+            // continue its startup phases after load_all finished.
+            if (p->entry == "__init__")
+                p->vm->runConstruction(p->args, p->doneEvent);
+            else if (p->entry == "__master__" && !p->vm->masterInitDone_)
+                p->vm->runAsMaster();
             p->done = true;
         }
         // A set_timer callback finished (or was cancelled): remove its entry
@@ -4653,10 +4934,23 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
     } catch (const std::exception& e) {
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[sched] process " << p->entry << " error: " << e.what() << "\n";
+        // A construction process that failed must still wake its parked
+        // load_object caller (its resume hook reads the registry and yields
+        // make_int(0) when the object never got initialized).
+        if (p->entry == "__init__" && !p->doneEvent.empty()) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
+            scheduler().wakeEventFront(p->doneEvent);
+        }
         p->done = true;
     } catch (...) {
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[sched] process " << p->entry << " error: unknown\n";
+        if (p->entry == "__init__" && !p->doneEvent.empty()) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
+            scheduler().wakeEventFront(p->doneEvent);
+        }
         p->done = true;
     }
 }
@@ -5009,6 +5303,59 @@ void runPostInitFunctions(const std::string& searchRoot) {
     funcs.clear();
 }
 
+// Register the object's VM in the registry (load the .o, create the VM,
+// insert into objects/vms) WITHOUT running its initializer.  load_object's
+// cooperative path uses this + a construction scheduler process; the
+// synchronous loadObjectIntoRegistry uses it + runInit.  Returns the registry
+// key ("" on failure).
+std::string registerObjectVM(const std::string& virtualPath, const std::string& searchRoot) {
+    if (searchRoot.empty() || virtualPath.empty()) return "";
+    std::string rel = virtualPath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    std::vector<std::string> relCandidates;
+    relCandidates.push_back(rel);
+    std::string opPrefix = vfsObjPrefix() + "/";
+    if (rel.compare(0, opPrefix.size(), opPrefix) == 0)
+        relCandidates.push_back(rel.substr(opPrefix.size()));
+    for (const auto& rc : relCandidates) {
+        auto pakObj = loadOriginalObjectByRelPath(rc);
+        if (!pakObj) continue;
+        std::string key = "pak:" + rc;
+        auto& reg = objectRegistry();
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            if (reg.vms.find(key) != reg.vms.end()) return key;
+        }
+        auto vmPtr = std::make_shared<OriginalVm>(*pakObj, searchRoot);
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            reg.objects[key] = pakObj;
+            reg.vms[key] = vmPtr;
+        }
+        return key;
+    }
+    for (const auto& rc : relCandidates) {
+        std::string c = searchRoot + "/" + rc;
+        std::error_code ec;
+        if (!std::filesystem::exists(c, ec)) continue;
+        auto& reg = objectRegistry();
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            if (reg.vms.find(c) != reg.vms.end()) return c;
+        }
+        auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
+        auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            reg.objects[c] = objPtr;
+            reg.vms[c] = vmPtr;
+        }
+        return c;
+    }
+    return "";
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -5102,28 +5449,32 @@ int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRo
 int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot,
                            const std::vector<Value>& createArgs) {
     if (searchRoot.empty() || virtualPath.empty()) return 0;
-    std::string rel = virtualPath;
-    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
-    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-    // The original driver resolves compiled objects through the binary
-    // directory (the mounted pak) first, then the real filesystem.
-    std::vector<std::string> relCandidates;
-    relCandidates.push_back(rel);
-    std::string opPrefix = vfsObjPrefix() + "/";
-    if (rel.compare(0, opPrefix.size(), opPrefix) == 0)
-        relCandidates.push_back(rel.substr(opPrefix.size()));
-    for (const auto& rc : relCandidates) {
-        if (std::getenv("LPCVM_LOCK_TRACE"))
-            std::cerr << "[loadobj] stage1 rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
-        auto pakObj = loadOriginalObjectByRelPath(rc);
-        if (!pakObj) continue;
-        std::string key = "pak:" + rc;
-        auto& reg = objectRegistry();
-        {
-            std::lock_guard<std::recursive_mutex> rl(registryMutex());
-            if (reg.vms.find(key) != reg.vms.end()) return 1;
-        }
-        try {
+    // Register the object's VM (load the .o, create the VM, insert into the
+    // registry) WITHOUT running its initializer; the caller then runs
+    // runInit/runConstruction.  Mirrors the original vm_f_load_object ->
+    // vm_loadObject split: loading and constructing are separate steps.
+    auto regKey = [&]() -> std::string {
+        std::string rel = virtualPath;
+        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+        if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+        // The original driver resolves compiled objects through the binary
+        // directory (the mounted pak) first, then the real filesystem.
+        std::vector<std::string> relCandidates;
+        relCandidates.push_back(rel);
+        std::string opPrefix = vfsObjPrefix() + "/";
+        if (rel.compare(0, opPrefix.size(), opPrefix) == 0)
+            relCandidates.push_back(rel.substr(opPrefix.size()));
+        for (const auto& rc : relCandidates) {
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[loadobj] stage1 rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
+            auto pakObj = loadOriginalObjectByRelPath(rc);
+            if (!pakObj) continue;
+            std::string key = "pak:" + rc;
+            auto& reg = objectRegistry();
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                if (reg.vms.find(key) != reg.vms.end()) return key;
+            }
             if (std::getenv("LPCVM_LOCK_TRACE"))
                 std::cerr << "[loadobj] constructing VM key=" << key << " t=" << std::this_thread::get_id() << "\n";
             auto vmPtr = std::make_shared<OriginalVm>(*pakObj, searchRoot);
@@ -5132,30 +5483,17 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
                 reg.objects[key] = pakObj;
                 reg.vms[key] = vmPtr;
             }
-            if (std::getenv("LPCVM_LOCK_TRACE"))
-                std::cerr << "[loadobj] runInit key=" << key << " t=" << std::this_thread::get_id() << "\n";
-            vmPtr->runInit(createArgs);
+            return key;
+        }
+        for (const auto& rc : relCandidates) {
+            std::string c = searchRoot + "/" + rc;
+            std::error_code ec;
+            if (!std::filesystem::exists(c, ec)) continue;
+            auto& reg = objectRegistry();
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                reg.initialized[key] = true;
+                if (reg.vms.find(c) != reg.vms.end()) return c;
             }
-            if (std::getenv("LPCVM_LOCK_TRACE"))
-                std::cerr << "[loadobj] done key=" << key << " t=" << std::this_thread::get_id() << "\n";
-            return 1;
-        } catch (...) {
-            return 0;
-        }
-    }
-    for (const auto& rc : relCandidates) {
-        std::string c = searchRoot + "/" + rc;
-        std::error_code ec;
-        if (!std::filesystem::exists(c, ec)) continue;
-        auto& reg = objectRegistry();
-        {
-            std::lock_guard<std::recursive_mutex> rl(registryMutex());
-            if (reg.vms.find(c) != reg.vms.end()) return 1;
-        }
-        try {
             auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
             auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
             {
@@ -5163,17 +5501,36 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
                 reg.objects[c] = objPtr;
                 reg.vms[c] = vmPtr;
             }
-            vmPtr->runInit(createArgs);
-            {
-                std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                reg.initialized[c] = true;
-            }
-            return 1;
-        } catch (...) {
-            return 0;
+            return c;
         }
+        return "";
+    }();
+    if (regKey.empty()) return 0;
+    {
+        auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        if (reg.initialized.count(regKey) && reg.initialized[regKey]) return 1;
     }
-    return 0;
+    try {
+        auto& reg = objectRegistry();
+        std::shared_ptr<OriginalVm> vm;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            vm = reg.vms[regKey];
+        }
+        if (std::getenv("LPCVM_LOCK_TRACE"))
+            std::cerr << "[loadobj] runInit key=" << regKey << " t=" << std::this_thread::get_id() << "\n";
+        vm->runInit(createArgs);
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            reg.initialized[regKey] = true;
+        }
+        if (std::getenv("LPCVM_LOCK_TRACE"))
+            std::cerr << "[loadobj] done key=" << regKey << " t=" << std::this_thread::get_id() << "\n";
+        return 1;
+    } catch (...) {
+        return 0;
+    }
 }
 
 Value findObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot) {
