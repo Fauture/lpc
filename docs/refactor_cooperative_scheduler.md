@@ -1,4 +1,4 @@
-﻿# lpcvm 单线程协作式调度重构设计
+# lpcvm 单线程协作式调度重构设计
 
 ## 目标
 
@@ -130,6 +130,40 @@ SwitchToFiber 挂起),结论:
 - TRACE 路径多处 frames_.back().fn 可能为 nullptr(上下文帧),需判空
 
 **下一步(阶段 B/C)**:调度器核心 + 阻塞 efun 挂起化
+
+## 阶段 B 完成情况(2026-08-30,5 个提交)
+
+**单线程协作式调度器已实现并验证**,aaa 完整运行:
+- 8001 游戏服务 + 8101 telnet 监听,daemon 进程挂起/恢复正常
+- sleep(timer)/receive_from_queue(queue)/wait_event(event)挂起化
+- send_to_queue/raise_event 唤醒挂起进程,从保存的 ip_ 恢复执行
+- 无崩溃、无 OS 线程竞争(execMutex_ 仅剩路径未清,阶段 E)
+
+关键实现:
+1. **Scheduler 类**(original_vm.cpp 匿名 namespace):ready 队列、
+   timers_(wakeAtMs 排序)、queueWaiters_/eventWaiters_(按 key)、
+   sockWaiters_(kind-5 fd 等待,idle 时 select 轮询)、parked_ 表
+2. **SuspendSignal 机制**:阻塞 efun 抛 SuspendSignal(非 std::exception,
+   避开 catch(VmError)/catch(std::exception)),携带 parkedVm+ResumeCond;
+   runProcess 捕获后注册唤醒条件,park 进程;唤醒后 resumeProcess 从
+   保存的 ip_ 继续同一 runLoop(显式栈机状态全在 VM 成员)
+3. **objKeepAlive**:spawn 进程 VM 持有 shared_ptr<const OriginalObject>,
+   修复 obj_ 引用悬垂(create_thread 局部 objPtr 析构后调度器访问崩溃)
+4. **set_timer 迁移**:detach OS 线程 → scheduler().spawnDelayed(timerEntry
+   取消由 delete_timer 经 cancelled 标志处理)
+5. **post_init 进程化**:do_init 闭包 spawn 为调度器进程(顺序语义,
+   阻塞挂起恢复),替代同步 for 循环(SuspendSignal 逃逸 0xe06d7363)
+6. **connect/recv 挂起化**:xdbcConnectAsync(非阻塞,EINPROGRESS→park)、
+   xdbcRecvAsync(select 探测,无数据→park)、xdbcPoll(调度器 socket 轮询)
+7. **parkedVm**:跨对象 call_other 在目标 registry VM 上阻塞时,进程挂到
+   cond 所属 VM 并 resume 该 VM(修复跨 VM 挂起条件丢失)
+
+已知问题(待阶段 C 后处理):
+- case 8 跨对象内联禁用:启用后 aaa express_recharged time_desc 递归
+  (全局函数 return 后 ip 回 0,快路径),call_other_arg 内联安全可用
+- dba:logd init → sql_get_table → sql stub(sql_query/sql_step 占位返回
+  假值)→ time_desc 后 0xe06d7363(仅快路径;TRACE 慢执行时不崩)
+
 ## 迁移阶段
 
 - 阶段 A:execute 显式栈机(非递归化,call/return 用显式 frame 栈)
