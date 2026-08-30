@@ -1404,7 +1404,7 @@ private:
                 if (path.empty() || path == "<this>" || path == ".") {
                     return callFunctionByName(funName, callArgs);
                 }
-                if (false) {   // DISABLED: call_other_arg inline regressed aaa; keep the registry-VM path
+                if (true) {   // A/B: call_other_arg inline ON
                     if (!targetVm) {
                         {
                             std::string rel = path;
@@ -3505,7 +3505,7 @@ private:
                             std::cerr << "[case8-wc2] targetVm=" << (targetVm ? targetVm->objName() : "NULL")
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " fns=" << (targetVm ? targetVm->object().functions.size() : -1) << "\n";
-                        if (targetFn && targetFn->index >= 0 && false) {   // DISABLED: case-8 inline regressed aaa/dba; runDetached path below is the committed behavior
+                        if (targetFn && targetFn->index >= 0 && false) {   // A/B: case-8 inline OFF
                             if (std::getenv("LPCVM_TRACE"))
                                 std::cerr << "[case8-inline] " << objName_ << " -> "
                                           << (targetVm ? targetVm->objName() : "?") << "::" << funName
