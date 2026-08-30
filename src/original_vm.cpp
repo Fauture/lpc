@@ -2014,10 +2014,14 @@ private:
         if (flags & 0x80) {
             if (const OriginalFunction* gfn = findMasterFunction(index)) {
                 if (std::getenv("LPCVM_TRACE") || index >= 600 || gfn->name == "mysql_select" ||
-                    gfn->name == "mixed_mysql_select")
+                    gfn->name == "mixed_mysql_select") {
+                    std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
                     std::cerr << "[gfn] inline global fn=" << gfn->name << " idx=" << index
                               << " argc=" << (flags & 0x3F) << " vm=" << this
-                              << " obj=" << objName_ << "\n";
+                              << " obj=" << objName_ << " cur=" << cur
+                              << " frames=" << frames_.size() << " stack=" << stack_.size() << "\n";
+                    std::cerr.flush();
+                }
                 if (startInlineFunction(*gfn, false, flags & 0x3F)) return true;
                 if (gfn->name == "mysql_select" || gfn->name == "mixed_mysql_select")
                     std::cerr << "[gfn] " << gfn->name << " START FAILED (stack too shallow)\n";
@@ -2553,6 +2557,11 @@ private:
                 // resume a caller stream - it just ends the init segment.
                 if (frames_.empty()) { returned_ = true; return; }
                 const Frame& f = frames_.back();
+                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN") &&
+                    f.fn && f.fn->name == std::getenv("LPCVM_TRACE_FN"))
+                    std::cerr << "[ret-enter] " << f.fn->name << " bp=" << f.bp
+                              << " argNum=" << f.argNum << " stack=" << stack_.size()
+                              << " frames=" << frames_.size() << " op=" << in.op << "\n";
                 if (in.op == 72) {
                     if (!stack_.empty()) returnValue_ = pop().value;
                     else returnValue_ = make_int(0);
@@ -2609,6 +2618,8 @@ private:
                     f.fn && f.fn->name == std::getenv("LPCVM_TRACE_FN"))
                     std::cerr << "[ret-t] " << f.fn->name << " bp=" << f.bp << " argNum=" << f.argNum
                               << " retCode=" << (retCode ? "set" : "null")
+                              << " retCodePtr=" << (retCode ? std::to_string(reinterpret_cast<uintptr_t>(retCode)) : "-")
+                              << " curCodePtr=" << (code_ ? std::to_string(reinterpret_cast<uintptr_t>(code_)) : "-")
                               << " retIp=" << retIp << " newStack=" << newSize
                               << " framesAfter=" << frames_.size() << "\n";
                 pushValue(returnValue_);   // caller sees the return value on top
@@ -3505,7 +3516,7 @@ private:
                             std::cerr << "[case8-wc2] targetVm=" << (targetVm ? targetVm->objName() : "NULL")
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " fns=" << (targetVm ? targetVm->object().functions.size() : -1) << "\n";
-                        if (targetFn && targetFn->index >= 0 && false) {   // A/B: case-8 inline OFF
+                        if (targetFn && targetFn->index >= 0 && false) {   // case-8 inline OFF (regresses aaa)
                             if (std::getenv("LPCVM_TRACE"))
                                 std::cerr << "[case8-inline] " << objName_ << " -> "
                                           << (targetVm ? targetVm->objName() : "?") << "::" << funName
@@ -3517,10 +3528,10 @@ private:
                             for (int i = static_cast<int>(args.size()) - 1; i >= 0; --i) pushValue(args[static_cast<size_t>(i)]);
                             if (declared == 0 && args.empty()) {
                                 pushValue(Value{});
-                                inlineStarted = startInlineFunction(fn, true, 0, targetVm->objVarsShared());
+                                inlineStarted = startInlineFunction(fn, true, 0, nullptr);   // TEST: no objVars switch
                             } else {
                                 inlineStarted = startInlineFunction(fn, false, static_cast<int>(args.size()),
-                                                                    targetVm->objVarsShared());
+                                                                    nullptr);   // TEST: no objVars switch
                             }
                             if (!inlineStarted) {
                                 // Stack too shallow: pop the pushed args back and
@@ -4430,13 +4441,29 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             p->timerEntry.reset();
         }
     } catch (const SuspendSignal& sig) {
-        // A blocking efun parked THIS VM (cross-object calls are inlined
-        // on the process VM, so cond_ belongs to p->vm).  Register the
-        // wakeup.
+        // A blocking efun parked a VM.  Cross-object call_other runs blocking
+        // efuns on the TARGET's registry VM (sig.vm), so cond_ lives there;
+        // the process waits on that cond and resumes THAT VM (its stack holds
+        // the parked call).  p->parkedVm records it for resume.
+        if (sig.vm && sig.vm != p->vm.get()) {
+            std::shared_ptr<OriginalVm> holder;
+            {
+                auto& reg = objectRegistry();
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                for (auto& kv : reg.vms)
+                    if (kv.second.get() == sig.vm) { holder = kv.second; break; }
+            }
+            if (holder) p->parkedVm = std::move(holder);
+            else p->parkedVm = p->vm;
+        } else {
+            p->parkedVm = p->vm;
+        }
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[sched-park] " << p->entry << " kind=" << sig.cond.kind
                       << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
-                      << " vm=" << p->vm.get() << "\n";
+                      << " vm=" << p->vm.get() << " parkedVm=" << p->parkedVm.get() << "\n";
+        // Register the wakeup under the PARKED VM's cond (it owns cond_).
+        p->vm = p->parkedVm;
         parkCurrent(p);
     } catch (const std::exception& e) {
         if (std::getenv("LPCVM_TRACE"))
