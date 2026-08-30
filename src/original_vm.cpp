@@ -1523,19 +1523,24 @@ private:
                         g_timerById[entry->id] = entry;
                     }
                     auto objPtr = std::make_shared<OriginalObject>(*owner);
-                    std::vector<Value> objVarsSnapshot;
+                    // The timer callback runs in the object's OWN context like
+                    // the original driver's cooperative timer fire: the SAME
+                    // process/Vm that owns the object (searchRoot for
+                    // call_other resolution, shared instance vars, and closure
+                    // owners pointing at the registry object so a queued
+                    // closure (save_info -> threadd dispatch_service ->
+                    // save_info_to_db) resolves back to this VM).  Mirror the
+                    // postinit-detach path: capture the registry VM for the
+                    // owner and run the callback there.
+                    std::shared_ptr<OriginalVm> ownerVm;
                     {
                         auto& reg = objectRegistry();
                         std::lock_guard<std::recursive_mutex> rl(registryMutex());
                         for (auto& kv : reg.vms) {
-                            if (&kv.second->object() == owner) {
-                                objVarsSnapshot = kv.second->objVars();
-                                break;
-                            }
+                            if (&kv.second->object() == owner) { ownerVm = kv.second; break; }
                         }
                     }
-                    std::thread([objPtr, fnName, bound, timeout, entry,
-                                 objVarsSnapshot = std::move(objVarsSnapshot)]() {
+                    std::thread([ownerVm, objPtr, fnName, bound, timeout, entry]() {
                         if (timeout > 0)
                             std::this_thread::sleep_for(std::chrono::seconds(timeout));
                         if (entry->cancelled && *entry->cancelled) {
@@ -1543,11 +1548,14 @@ private:
                             return;
                         }
                         try {
-                            OriginalVm vm(*objPtr);
-                            auto& dst = vm.objVars();
-                            if (dst.size() < objVarsSnapshot.size()) dst.resize(objVarsSnapshot.size());
-                            for (size_t i = 0; i < objVarsSnapshot.size(); ++i) dst[i] = objVarsSnapshot[i];
-                            vm.callFunctionByName(fnName, bound);
+                            if (ownerVm) {
+                                ownerVm->callFunctionByName(fnName, bound);
+                            } else {
+                                // Object not registered (rare): fall back to a
+                                // fresh VM whose obj vars mirror the snapshot.
+                                OriginalVm vm(*objPtr);
+                                vm.callFunctionByName(fnName, bound);
+                            }
                         } catch (...) {
                         }
                         timerUnregister(entry);

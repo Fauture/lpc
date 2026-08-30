@@ -137,10 +137,13 @@ bool decodeField(const PktField& f, const uint8_t* body, size_t len, size_t& off
         out = arr;
         return true;
     }
-    if (f.type == "int8" || f.type == "int16" || f.type == "int32" || f.type == "int64") {
-        if (f.type == "int8") { if (!need(1)) return false; out = make_int(static_cast<int8_t>(body[off])); off += 1; }
-        else if (f.type == "int16") { if (!need(2)) return false; out = make_int(static_cast<int16_t>(rd16be(body + off))); off += 2; }
-        else if (f.type == "int32") { if (!need(4)) return false; out = make_int(static_cast<int32_t>(rd32be(body + off))); off += 4; }
+    if (f.type == "int8" || f.type == "uint8" || f.type == "int16" || f.type == "uint16" ||
+        f.type == "int32" || f.type == "uint32" || f.type == "int64") {
+        // Original vm_pktInitAnalyser: int8/uint8=1B, int16/uint16=2B,
+        // int32/uint32=4B (matchType 1/4, 2/5, 3/6 encode identically).
+        if (f.type == "int8" || f.type == "uint8") { if (!need(1)) return false; out = make_int(static_cast<int8_t>(body[off])); off += 1; }
+        else if (f.type == "int16" || f.type == "uint16") { if (!need(2)) return false; out = make_int(static_cast<int16_t>(rd16be(body + off))); off += 2; }
+        else if (f.type == "int32" || f.type == "uint32") { if (!need(4)) return false; out = make_int(static_cast<int32_t>(rd32be(body + off))); off += 4; }
         else { if (!need(8)) return false; out = make_int(static_cast<int64_t>(rd64be(body + off))); off += 8; }
         return true;
     }
@@ -209,32 +212,31 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
         for (size_t k = 0; k < cnt; ++k) encodeField(elem, items[k], out);
         return;
     }
-    if (f.type == "int8") {
-        out.push_back(static_cast<char>(valInt(val) & 0xFF));
-    } else if (f.type == "int16") {
-        wr16be(out, static_cast<uint16_t>(valInt(val) & 0xFFFF));
-    } else if (f.type == "int32") {
-        wr32be(out, static_cast<uint32_t>(valInt(val)));
+    if (f.type == "int8" || f.type == "uint8") {
+        // Original vm_pktPadDefValue matchType 1/4: only an int value is
+        // encoded; any other type writes 0.
+        out.push_back(static_cast<char>((val.index() == 2 ? valInt(val) : 0) & 0xFF));
+    } else if (f.type == "int16" || f.type == "uint16") {
+        wr16be(out, static_cast<uint16_t>((val.index() == 2 ? valInt(val) : 0) & 0xFFFF));
+    } else if (f.type == "int32" || f.type == "uint32") {
+        wr32be(out, static_cast<uint32_t>(val.index() == 2 ? valInt(val) : 0));
     } else if (f.type == "int64") {
-        wr64be(out, static_cast<uint64_t>(valInt(val)));
+        wr64be(out, static_cast<uint64_t>(val.index() == 2 ? valInt(val) : 0));
     } else if (f.type.rfind("string", 0) == 0 || f.type.rfind("buffer", 0) == 0) {
         // length-prefixed string/buffer (1/2/4 byte length)
         std::string s;
         if (val.index() == 4) s = std::get<std::string>(val);
         else if (val.index() == 10)
             s = std::get<std::shared_ptr<BufferValue>>(val)->data;   // raw buffer bytes
-        else if (val.index() == 2) {
-            // int-valued string/buffer field: 0 means "no data" (empty
-            // payload), NOT the literal text "0".  dba's cmd_read_content
-            // sends send_message(17409, cookie, -1, 0) with an int 0 content
-            // when the record is missing; encoding it as "0" made ccs's
-            // filed operate_done receive got_result="0" (a string) instead of
-            // the empty payload, so read_content returned "0" and callers
-            // like shop_mgrd's load_ad_infos wrote save_string("")="\"\""
-            // into the DB.  Non-zero ints keep their decimal text.
-            int64_t n = std::get<int64_t>(val);
-            if (n != 0) s = std::to_string(n);
-        }
+        // Original vm_pktPadDefValue: for string/buffer fields a NON-string/
+        // non-buffer value (e.g. int) is treated as EMPTY - it writes a
+        // zero-length prefix and no payload (LABEL_21/LABEL_67 paths).  dba's
+        // cmd_read_content sends send_message(17409, cookie, -1, 0) with an
+        // int 0 content for a missing record; encoding it as anything but an
+        // empty payload made ccs's filed operate_done see got_result="0" and
+        // read_content returned "0" instead of -1, so callers like shop_mgrd's
+        // load_ad_infos wrote save_string("")="\"\"" into the DB.
+        // else if (val.index() == 2) ... -> intentionally NOT encoded
         else if (val.index() == 6) s = to_string(val, false);
         int llen = f.fixedLen ? f.fixedLen : 1;
         uint32_t slen = static_cast<uint32_t>(s.size());
