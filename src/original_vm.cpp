@@ -644,6 +644,7 @@ struct ResumeCond {
     int fd = -1;                // kind 5
     bool wantRead = false;      // kind 5
     bool wantWrite = false;     // kind 5
+    int64_t timeoutAtMs = 0;    // kind 5: wake anyway at this time (connect timeout)
     Value resumeValue;          // pushed onto the stack when resumed
 };
 
@@ -662,6 +663,16 @@ struct SuspendSignal {
     OriginalVm* vm = nullptr;
     ResumeCond cond;
 };
+
+// Time-slice yield for the MASTER process (the original driver's runTicks:
+// the master's startup code - load_all, post_init - shares the CPU with the
+// daemon processes it creates, so "THREAD_D.service daemon start..." appears
+// interleaved with object loading, exactly like the reference log).  When the
+// master has run a slice of instructions it yields (throws TimeSliceSignal);
+// the scheduler requeues it at the tail of ready_ and runs the next process.
+// Execution state stays in the VM members (like SuspendSignal), so resume
+// continues from the saved ip_.
+struct TimeSliceSignal {};
 
 // The "global variable" space is shared across all objects (it belongs to the
 // driver's global program). push_global_var/vptr access this space; object
@@ -723,6 +734,9 @@ public:
         // == vm, but a cross-object call_other executes on the TARGET's
         // registry VM, so the parked state (stack_/frames_/cond_) lives there.
         std::shared_ptr<OriginalVm> parkedVm;
+        // True after a TimeSliceSignal requeue: resume the master via
+        // runAsMaster() (phase continuation), not resumeProcess().
+        bool sliceResume = false;
     };
 
     // Spawn a new process (create_thread / set_timer / post_init / network
@@ -739,6 +753,11 @@ public:
 
     // Re-queue a process whose wake condition fired.
     void wake(std::shared_ptr<Process> p);
+
+    // Time-slice yield: put the process back at the TAIL of the ready queue
+    // (master process after a TimeSliceSignal; its VM state is preserved so
+    // the next run continues from the saved ip_).
+    void requeue(std::shared_ptr<Process> p);
 
     // Park the CURRENTLY RUNNING process (called from run() while executing a
     // process whose VM threw SuspendSignal).  Registers the wake condition.
@@ -828,6 +847,8 @@ public:
     // The shared object-variable table (cross-object inline calls switch to
     // the target object's table for the duration of the call).
     std::shared_ptr<std::vector<Value>> objVarsShared() { return objVars_; }
+    // Mark this VM as the driver's master process (time-sliced startup).
+    void setMasterProcess(bool v) { isMasterProcess_ = v; }
     // baseVarOffset of the currently executing function's constitution.
     // Global init code runs with no frame -> offset 0 (its own program).
     int currentVarOffset() const {
@@ -942,6 +963,61 @@ public:
                                      " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
         }
         return 0;
+    }
+
+    // Master startup run as a SCHEDULER process (stage B): executes the global
+    // code (load_all), inherited inits and create() with a time slice so the
+    // daemon processes created during load get to run interleaved (the
+    // original driver's runTicks).  TimeSliceSignal propagates up to the
+    // scheduler which requeues this VM at the tail of ready_; the VM's
+    // execution state (stack_/frames_/ip_) is preserved, so the next
+    // runAsMaster() call continues from the saved ip_ instead of restarting.
+    // Returns normally only when the whole startup finished.
+    void runAsMaster() {
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[master-enter] phase=" << masterPhase_
+                      << " code=" << (code_ ? code_->size() : -1)
+                      << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+        // The master runs as a scheduler process.  Its startup LPC code
+        // (global init + inherited inits + create) may call relinquish(),
+        // which throws TimeSliceSignal; the scheduler requeues this VM and
+        // runAsMaster() is called again.  Execution state (code_/meta_/ip_/
+        // stack_/frames_) is preserved across the yield, so each entry simply
+        // continues runLoop(); when the current stream ends we advance to the
+        // next phase.  No phase is re-run from scratch after a yield.
+        if (masterPhase_ == 0 && !code_) {
+            // First entry: start the global init code (load_all etc.).
+            execute(obj_.globalCode, obj_.globalMeta);
+        } else {
+            // Resumed after a yield, or a later phase: continue the current
+            // stream (code_/ip_ were left by the interrupt).
+            runLoop();
+        }
+        if (!code_ || ip_ >= code_->size()) {
+            // The stream we were on finished.  Advance to the next phase.
+            code_ = nullptr;
+            if (masterPhase_ == 0) {
+                masterPhase_ = 1;
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[master-phase] 0->1 inherited\n";
+                runInheritedInits(0, 0);
+                code_ = nullptr;
+            }
+            if (masterPhase_ == 1) {
+                masterPhase_ = 2;
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[master-phase] 1->2 create\n";
+                callCreate();
+                code_ = nullptr;
+            }
+            if (masterPhase_ == 2) {
+                masterPhase_ = 3;
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[master-phase] 2->3 post_init\n";
+                runPostInitFunctions(searchRoot_);
+                masterInitDone_ = true;
+            }
+        }
     }
 
     // Execute the global initializer of every inherited program, each under
@@ -1086,6 +1162,14 @@ private:
     int lastOp_ = -1;
     size_t lastIp_ = 0;
     int stepCounter_ = 0;
+    // Time-slice state (master process): after this many instructions the
+    // runLoop yields (TimeSliceSignal) so daemon processes created during
+    // load_all/post_init get scheduled interleaved (original runTicks).
+    int yieldEvery_ = 0;
+    int yieldCountdown_ = 0;
+    bool isMasterProcess_ = false;
+    bool masterInitDone_ = false;   // master startup (globalCode+create) finished
+    int masterPhase_ = 0;           // 0=globalCode,1=inherited,2=create,3=done
     Value returnValue_ = make_int(0);
     bool returned_ = false;
     int catchDepth_ = 0;
@@ -1957,6 +2041,22 @@ private:
                 out->items = std::move(items);
                 return out;
             }
+            if (nm == "relinquish") {
+                // vm_f_relinquish: the LPC startup code (load_all etc.) calls
+                // relinquish() to yield the CPU to other processes (daemon
+                // processes created so far) - the original cooperative
+                // scheduler's voluntary yield.  We throw TimeSliceSignal; the
+                // scheduler requeues this process at the tail of ready_ and
+                // its VM state (stack_/frames_/ip_) is preserved, so it
+                // resumes here (returning 1) after the other processes ran.
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[relinquish] vm=" << this << " obj=" << objName_
+                              << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                // The caller expects relinquish() to return; push 1 now, then
+                // yield AFTER the push so the resumed process sees the value.
+                pushValue(make_int(1));
+                throw TimeSliceSignal{};
+            }
             if (nm == "connect") {
                 // vm_f_connect (0x80e83b4): connect(fd, host, port, timeout).
                 // The original performs a NON-BLOCKING connect: on EINPROGRESS
@@ -2412,6 +2512,10 @@ private:
             // resumeProcess().  Do NOT restore savedCode/savedMeta/savedIp and
             // do NOT pop the frame - that would destroy the parked state.
             parked_ = true;
+            throw;
+        } catch (const TimeSliceSignal&) {
+            // Master time-slice yield: keep ALL state (stack_/frames_/
+            // code_/meta_/ip_) so the scheduler can resume from ip_ later.
             throw;
         } catch (...) {
             code_ = savedCode;
@@ -4065,6 +4169,14 @@ private:
                               << " at ip=" << (ip_ - 1) << "\n";
                 break;
             }
+            } catch (const TimeSliceSignal&) {
+                // Master time-slice yield: execution state stays in the
+                // members; unwind runLoop untouched (the scheduler requeues
+                // the master at the tail of ready_ and resumes it later).
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[slice-yield] vm=" << this << " obj=" << objName_
+                              << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                throw;
             } catch (const SuspendSignal& sig) {
                 // A blocking efun parked this process.  Execution state stays
                 // in the members; unwind runLoop untouched (the scheduler
@@ -4271,6 +4383,14 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
     cv_.notify_one();
 }
 
+void Scheduler::requeue(std::shared_ptr<Process> p) {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        ready_.push_back(std::move(p));
+    }
+    cv_.notify_one();
+}
+
 void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     std::lock_guard<std::mutex> lk(mtx_);
     const ResumeCond& c = p->vm->resumeCond();
@@ -4459,9 +4579,20 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             p->firstRun = false;
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[sched-call] " << p->entry << " args=" << p->args.size() << "\n";
-            p->vm->callFunctionByName(p->entry, p->args);
+            if (p->entry == "__master__") {
+                // The driver's master process: run the global init code and
+                // create() with time slices (see runAsMaster).
+                p->vm->runAsMaster();
+            } else {
+                p->vm->callFunctionByName(p->entry, p->args);
+            }
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[sched-call-done] " << p->entry << "\n";
+            p->done = true;
+        } else if (p->sliceResume) {
+            // Time-slice yield resume: continue the master's startup phases.
+            p->sliceResume = false;
+            p->vm->runAsMaster();
             p->done = true;
         } else {
             // Resume the VM whose execution state was parked (usually p->vm,
@@ -4477,6 +4608,15 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             timerUnregister(p->timerEntry);
             p->timerEntry.reset();
         }
+    } catch (const TimeSliceSignal&) {
+        // Master process yielded its time slice (relinquish): VM execution
+        // state stays in the members; requeue at the tail of ready_ so other
+        // processes (daemons created during load_all) get a turn, then the
+        // master resumes via runAsMaster() (phase continuation).
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[sched-slice] " << p->entry << " requeue\n";
+        p->sliceResume = true;
+        requeue(p);
     } catch (const SuspendSignal& sig) {
         // A blocking efun parked a VM.  Cross-object call_other runs blocking
         // efuns on the TARGET's registry VM (sig.vm), so cond_ lives there;
@@ -4886,22 +5026,24 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
     // Register the main object (the driver's "global program") so cross-object
     // function lookups can resolve its functions.  The same OriginalObject is
     // used by the running VM, so thread closures created from it share state.
+    std::shared_ptr<OriginalVm> mainVm;
     {
         auto& reg = objectRegistry();
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
         if (reg.vms.find(mainKey) == reg.vms.end()) {
             auto objPtr = std::make_shared<OriginalObject>(obj);
             reg.objects[mainKey] = objPtr;
-            auto mainVm = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            mainVm = std::make_shared<OriginalVm>(*objPtr, searchRoot);
             mainVm->setThisObjectName(mainKey);
             reg.vms[mainKey] = mainVm;
-            // mark the registered copy initialized after vm.run() below
+        } else {
+            mainVm = reg.vms[mainKey];
         }
     }
     {
         auto& reg = objectRegistry();
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        // Set BEFORE vm.run(): the master's own init code calls global
+        // Set BEFORE the master runs: the master's own init code calls global
         // functions (call_in_user_fun bit7), which resolve against this object.
         reg.masterObj = &obj;
     }
@@ -4918,27 +5060,27 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
             }
         }
     }
-    vm.run();
-    // The LPC startup code in start_<prefix>.o ends with post_init(), but
-    // register_post_init is intercepted in the VM (call_in_efun) so the LPC
-    // _post_init_funcs array stays empty and the LPC post_init() is a no-op.
-    // Run the collected C++-side post-init closures here instead - after the
-    // master's global code finished (all daemons loaded + registered) but
-    // before the master's runMainLoop window closes.  Each closure runs on a
-    // fresh VM over the SAME registered object (state shared through the
-    // registry), matching the original's post_init semantics (the daemon's
-    // init() registers threads/timers that start its service loop).
-    runPostInitFunctions(searchRoot);
+    // STAGE B: the master is a SCHEDULER process, exactly like the original
+    // driver (vm_mainLoop runs from the very start; the master's startup code
+    // - load_all, post_init - shares the CPU with the daemon processes it
+    // creates via runTicks time slices).  runAsMaster() runs the global init
+    // code and create(), yielding (TimeSliceSignal) every slice so daemon
+    // processes spawned during load run interleaved - their
+    // "THREAD_D.service(...) daemon start..." prints appear while objects are
+    // still loading, matching the reference aaa.log.  post_init closures are
+    // queued behind the master.
+    mainVm->setMasterProcess(true);
+    scheduler().spawn(mainVm, "__master__", {});
+    // post_init closures are queued by runAsMaster() AFTER the master's
+    // startup finished (register_post_init is intercepted so the LPC
+    // _post_init_funcs array stays empty; the closures collected during
+    // load_all/daemon-create are spawned as scheduler processes then).
     {
         auto& reg = objectRegistry();
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
         reg.initialized[mainKey] = true;
-        // The local vm ran the init on the caller's obj (not the registry
-        // copy); mark that instance too so master-object thread closures
-        // (daemon/echo_daemon) don't re-run the whole driver startup.
         reg.initializedObj[&obj] = true;
     }
-    runPendingOriginalThreads(searchRoot);
     out << "Original .o VM finished.\n";
     return 0;
 }
