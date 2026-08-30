@@ -1,4 +1,4 @@
-# lpcvm 单线程协作式调度重构设计
+﻿# lpcvm 单线程协作式调度重构设计
 
 ## 目标
 
@@ -109,6 +109,27 @@ SwitchToFiber 挂起),结论:
 - 不依赖 Fiber,不依赖 C++ 异常跨栈(VM 的 catch 用显式 catches_ 数组)。
 - 每个调度器进程持有独立的执行状态;对象(objVars)共享。
 
+
+## 阶段 A 完成情况(2026-08-30)
+
+**execute 显式栈机已完成并提交**(1308646),全部服务验证通过:
+- aaa 8001(游戏服务)+8101(telnet)、dba 8120+9120、ccs 8110+9110 完整启动
+- 跨服务器连接正常:ccs/dba 通过 aaa 获取配置,server.o clone 处理远程消息
+- LPC 表达式求值正确,MySQL 查询正常
+
+关键实现:
+1. ip/code/meta 提升为 VM 成员,execute() 非递归化(runLoop 单循环)
+2. startInlineFunction:函数调用压 Frame(存 retCode/retMeta/retIp)切换流
+3. case 72/73 返回三分支:上下文帧(fn==nullptr)不弹直接结束 init 段;
+   顶层帧(retCode==nullptr)退出 runLoop;普通帧恢复调用者继续
+4. executeFunctionOnStack 保存/恢复外层 code/meta/ip(efun 内嵌调用安全)
+
+踩坑:
+- Fiber+C++ EH 不兼容已确认,显式栈机是唯一正确路径
+- register.o 的 global init 以 return_from_fake_fun 结束,上下文帧必须特殊处理
+- TRACE 路径多处 frames_.back().fn 可能为 nullptr(上下文帧),需判空
+
+**下一步(阶段 B/C)**:调度器核心 + 阻塞 efun 挂起化
 ## 迁移阶段
 
 - 阶段 A:execute 显式栈机(非递归化,call/return 用显式 frame 栈)
@@ -124,3 +145,4 @@ SwitchToFiber 挂起),结论:
 - 重构后 aaa/dba/ccs(+gs) 跨服务器链路行为与修复后的多线程版一致
 - lottery_info 5 分钟保存、share_data、ad_shop、读/写 DB 正常
 - 保留原版 wire 协议、pkt_protocol、xdbc 语义
+
