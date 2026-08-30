@@ -57,4 +57,8 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
 Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot,
                             const std::vector<Value>& createArgs = {});
 
+// Cooperative scheduler main loop (stage B): drives daemon processes, wake
+// timers and queue/event wakeups.  Replaces main()'s idle sleep loop.
+void schedulerRun();
+
 } // namespace lpc

@@ -379,8 +379,10 @@ int runPakOriginal(const std::string& path) {
     std::cout.flush();
 
     if (rc != 0) return rc;
-    // Keep the driver alive so LPC-started services (telnet_on) keep running.
-    for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
+    // Keep the driver alive: the cooperative scheduler drives daemon
+    // processes, timers and queue/event wakeups (stage B).  It returns only
+    // when no work remains (all processes finished / parked forever).
+    lpc::schedulerRun();
     return 0;
 }
 

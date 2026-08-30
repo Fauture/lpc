@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -614,6 +615,35 @@ struct VmError : std::runtime_error {
     explicit VmError(const std::string& m) : std::runtime_error(m) {}
 };
 
+// ---------------------------------------------------------------------------
+// Cooperative-scheduler suspend signal (stage B/C).
+//
+// A blocking efun (sleep / wait_event / receive_from_queue / ...) consumes its
+// arguments, registers the wake-up condition with the scheduler, and throws
+// SuspendSignal.  All execution state (stack_/frames_/code_/meta_/ip_/
+// returnValue_/returned_) lives in VM members, so runLoop simply unwinds and
+// the scheduler parks the VM; when the condition fires the scheduler re-enters
+// the VM via resumeProcess(), which pushes the efun's result and continues the
+// SAME loop from the saved ip_.  This is the original driver's
+// vm_pendCurrentProcess model - no OS threads, no Fiber, no C++ recursion.
+//
+// SuspendSignal intentionally does NOT derive from std::exception, so the
+// runLoop catch(VmError)/catch(std::exception) handlers never see it.  Every
+// C++ boundary that uses catch(...) must re-throw it unchanged (and must NOT
+// destroy the parked execution state).
+struct SuspendSignal {};
+
+// What a parked process waits for, and the value to push on resume.
+struct ResumeCond {
+    // kind: 0 = not parked, 1 = timer (wakeAtMs), 2 = queue (qkey),
+    //       3 = event (ename), 4 = forever (only woken externally)
+    int kind = 0;
+    int64_t wakeAtMs = 0;       // kind 1
+    std::string qkey;           // kind 2
+    std::string ename;          // kind 3
+    Value resumeValue;          // pushed onto the stack when resumed
+};
+
 // The "global variable" space is shared across all objects (it belongs to the
 // driver's global program). push_global_var/vptr access this space; object
 // instance variables (push_obj_var/vptr) stay per-object.
@@ -645,6 +675,86 @@ Value& sharedGlobal(int index) {
     return g[static_cast<size_t>(index)];
 }
 
+// ---------------------------------------------------------------------------
+// Cooperative scheduler (stage B).  A single driver-level event loop that
+// drives LPC processes: ready queue, wake timers, queue/event wakeups.
+//
+// A "process" here is a shared OriginalVm plus the entry it should run.  The
+// VM's execution state (stack_/frames_/code_/meta_/ip_) lives in the VM; a
+// blocking efun parks the VM (SuspendSignal), the scheduler registers the
+// wake condition (ResumeCond) and parks the process; when the condition fires
+// the scheduler resumes the VM via resumeProcess() and keeps driving it until
+// it finishes or parks again.
+//
+// The scheduler's run() loop is the replacement for main()'s idle sleep: it
+// runs ready processes, fires due timers, and waits for external wakeups
+// (queue push / event raise / network data / timer expiry).
+// ---------------------------------------------------------------------------
+class Scheduler {
+public:
+    struct Process {
+        std::shared_ptr<OriginalVm> vm;
+        std::string entry;              // function to call on first run
+        std::vector<Value> args;
+        Value resumeValue;              // pushed by resumeProcess on wake
+        bool firstRun = true;           // false => resume an existing call
+        bool done = false;
+        std::shared_ptr<TimerEntry> timerEntry;   // set_timer callback (cancellation)
+    };
+
+    // Spawn a new process (create_thread / set_timer / post_init / network
+    // callback).  Called from any OS thread; the process runs on the
+    // scheduler thread via run().
+    void spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
+               std::vector<Value> args);
+
+    // Schedule a process to run once at absolute time atMs (set_timer).  The
+    // optional TimerEntry allows delete_timer to cancel it before it fires.
+    void spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& entry,
+                      std::vector<Value> args, int64_t atMs,
+                      std::shared_ptr<TimerEntry> timerEntry = nullptr);
+
+    // Re-queue a process whose wake condition fired.
+    void wake(std::shared_ptr<Process> p);
+
+    // Park the CURRENTLY RUNNING process (called from run() while executing a
+    // process whose VM threw SuspendSignal).  Registers the wake condition.
+    void parkCurrent(std::shared_ptr<Process> p);
+
+    // Wake every process waiting on queue `qkey` (send_to_queue side).
+    void wakeQueue(const std::string& qkey);
+
+    // Wake every process waiting on event `ename` (raise_event side).
+    void wakeEvent(const std::string& ename);
+
+    // Main loop: run ready processes / fire due timers / wait for wakeups.
+    void run();
+
+    void requestShutdown();
+
+    // If the CURRENTLY RUNNING process should stop the whole driver, park it
+    // forever so run() returns when no other work exists.
+    void parkForever(std::shared_ptr<Process> p);
+
+private:
+    static int64_t nowMs();
+    void runProcess(std::shared_ptr<Process> p);
+
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::deque<std::shared_ptr<Process>> ready_;
+    std::multimap<int64_t, std::shared_ptr<Process>> timers_;       // wakeAtMs -> p
+    std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> queueWaiters_;
+    std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> eventWaiters_;
+    std::vector<std::shared_ptr<Process>> parked_;   // no automatic wakeup
+    bool shutdown_ = false;
+    uint64_t step_ = 0;
+};
+
+// The driver-level scheduler instance (defined below; declared here so VM
+// blocking efuns can wake parked processes).
+Scheduler& scheduler();
+
 class OriginalVm {
 public:
     explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
@@ -657,8 +767,24 @@ public:
         mergeInheritedFunctions();
         objName_ = obj.sourceName.empty() ? "<obj>" : obj.sourceName;
     }
+    // Scheduler-process constructor: keeps the source object alive so the VM
+    // (whose obj_ is a reference) never dangles after the caller's temporary
+    // shared_ptr goes out of scope.
+    explicit OriginalVm(std::shared_ptr<const OriginalObject> obj, std::string searchRoot = "")
+        : obj_(*obj), objKeepAlive_(std::move(obj)), searchRoot_(std::move(searchRoot)) {
+        objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj_.globalVarCount));
+        for (auto& g : *objVars_) g = make_int(0);
+        for (const auto& fn : obj_.functions) {
+            if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
+        }
+        mergeInheritedFunctions();
+        objName_ = obj_.sourceName.empty() ? "<obj>" : obj_.sourceName;
+    }
 
     const OriginalObject& object() const { return obj_; }
+    const std::string& objName() const { return objName_; }
+    const std::vector<OriginalInsn>* code() const { return code_; }
+    size_t ip() const { return ip_; }
     // baseVarOffset of the currently executing function's constitution.
     // Global init code runs with no frame -> offset 0 (its own program).
     int currentVarOffset() const {
@@ -883,6 +1009,10 @@ public:
     }
 
 private:
+    // The cooperative scheduler resumes parked VMs (stage B); it must reach
+    // resumeProcess/resumeCond/parkedResumeValue/parkAndSuspend.
+    friend class Scheduler;
+
     // The original driver is a single-threaded program: one global program and
     // cooperatively scheduled lightweight threads.  We model threads with real
     // OS threads, so a shared VM (the registry copies used for cross-object
@@ -897,6 +1027,11 @@ private:
     int execDepth_ = 0;
 
     const OriginalObject& obj_;
+    // Keeps the referenced object alive when this VM was built from a
+    // temporary copy (create_thread/set_timer scheduler processes): obj_ is a
+    // reference member, so the shared_ptr here must outlive the VM.  Registry
+    // VMs leave this null (the registry owns the object).
+    std::shared_ptr<const OriginalObject> objKeepAlive_;
     std::string objName_;
     std::string searchRoot_;
     std::string thisObjectName_ = "<this>";   // object identity for this_object()
@@ -928,6 +1063,18 @@ private:
     const std::vector<OriginalInsn>* code_ = nullptr;
     const std::vector<uint8_t>* meta_ = nullptr;
     size_t ip_ = 0;
+    // Cooperative-scheduler park state (stage B).  When a blocking efun throws
+    // SuspendSignal, cond_.kind != 0 records what to wait for and the VM is
+    // parked; resumeProcess(v) pushes v and re-enters runLoop at ip_.  All
+    // execution state stays in the members above - nothing is moved or copied.
+    ResumeCond cond_;
+    // While parked, the top-level entry that owns this VM (callFunctionByName
+    // from a create_thread/network thread) must NOT run cleanup; it re-throws
+    // SuspendSignal and the thread exits, leaving the VM object owned by the
+    // scheduler.  This flag is cleared by resumeProcess.
+    bool parked_ = false;
+    // Value pushed when this parked VM resumes (parkAndSuspend stores it).
+    Value resumeValue_ = make_int(0);
 
     const OriginalFunction* findFunction(const std::string& name) {
         for (const auto& fn : obj_.functions)
@@ -1434,12 +1581,12 @@ private:
                 // cooperative scheduler ran it before the master's post_init(),
                 // so do_init callbacks always saw populated config.  Our real
                 // threads can finish update_config AFTER post_init starts,
-                // making do_init's "等待取回数据" retry loop print (it only
-                // prints while MySQL data is not yet fetched).  Synchronously
-                // run the FIRST update_config() on the owner's shared VM here
-                // so the data is fetched before post_init - the daemon thread
-                // still re-runs update_config() every 180s as usual, so this
-                // does not change the loop semantics, only the ordering.
+                // making do_init's retry loop print (it only prints while the
+                // MySQL data is not yet fetched).  Synchronously run the FIRST
+                // update_config() on the owner's shared VM here so the data is
+                // fetched before post_init - the daemon process still re-runs
+                // update_config() every 180s as usual, so this does not change
+                // the loop semantics, only the ordering.
                 if (funName == "update_config_daemon") {
                     std::shared_ptr<OriginalVm> ownerVm;
                     {
@@ -1459,6 +1606,31 @@ private:
                         } catch (...) {
                         }
                     }
+                }
+                // Cooperative scheduler (stage B): ordinary daemon threads are
+                // scheduler PROCESSES now - no OS thread.  The VM runs on the
+                // scheduler thread; blocking efuns park it (SuspendSignal) and
+                // the scheduler resumes it.  Telnet daemons stay OS threads for
+                // now (they block on socket recv; stage F makes that event
+                // driven too).
+                if (!isTelnetThread) {
+                    auto vm = std::make_shared<OriginalVm>(objPtr, root);
+                    {
+                        auto& reg = objectRegistry();
+                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                        for (auto& kv : reg.vms) {
+                            if (&kv.second->object() == owner) {
+                                vm->shareObjVars(kv.second.get());
+                                break;
+                            }
+                        }
+                    }
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[sched] spawn " << funName << " args=" << threadArgs.size()
+                                  << " owner=[" << (owner ? owner->sourceName : "NULL")
+                                  << "] copyObj=[" << objPtr->sourceName << "]\n";
+                    scheduler().spawn(vm, funName, threadArgs);
+                    return make_int(1);
                 }
                 std::thread([objPtr, owner, funName, threadArgs, root, isTelnetThread, telnetCno,
                              objVarsSnapshot = std::move(objVarsSnapshot)]() {
@@ -1545,8 +1717,6 @@ private:
                     if (!owner) owner = &obj_;
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[timer] schedule " << fnName << " in " << timeout << "s\n";
-                    if (std::getenv("LPCVM_LOCK_TRACE"))
-                        std::cerr << "[timer] creating thread... t=" << std::this_thread::get_id() << "\n";
                     // arg2 is the timer name (string) or 0/&ref (anonymous).
                     std::string timerName;
                     if (args.size() >= 2 && args[1].index() == 4)
@@ -1579,9 +1749,11 @@ private:
                     // call_other resolution, shared instance vars, and closure
                     // owners pointing at the registry object so a queued
                     // closure (save_info -> threadd dispatch_service ->
-                    // save_info_to_db) resolves back to this VM).  Mirror the
-                    // postinit-detach path: capture the registry VM for the
-                    // owner and run the callback there.
+                    // save_info_to_db) resolves back to this VM).  Stage B:
+                    // the callback is a SCHEDULER process fired at triggerAt
+                    // (the original driver's event loop runs timer callbacks
+                    // on the single thread); delete_timer cancels it via the
+                    // entry's cancelled flag.
                     std::shared_ptr<OriginalVm> ownerVm;
                     {
                         auto& reg = objectRegistry();
@@ -1590,29 +1762,19 @@ private:
                             if (&kv.second->object() == owner) { ownerVm = kv.second; break; }
                         }
                     }
-                    std::thread([ownerVm, objPtr, fnName, bound, timeout, entry]() {
-                        if (std::getenv("LPCVM_LOCK_TRACE"))
-                            std::cerr << "[timer] thread started, sleeping " << timeout
-                                      << "s t=" << std::this_thread::get_id() << "\n";
-                        if (timeout > 0)
-                            std::this_thread::sleep_for(std::chrono::seconds(timeout));
-                        if (entry->cancelled && *entry->cancelled) {
-                            timerUnregister(entry);
-                            return;
-                        }
-                        try {
-                            if (ownerVm) {
-                                ownerVm->callFunctionByName(fnName, bound);
-                            } else {
-                                // Object not registered (rare): fall back to a
-                                // fresh VM whose obj vars mirror the snapshot.
-                                OriginalVm vm(*objPtr);
-                                vm.callFunctionByName(fnName, bound);
-                            }
-                        } catch (...) {
-                        }
-                        timerUnregister(entry);
-                    }).detach();
+                    std::shared_ptr<OriginalVm> timerVm = ownerVm;
+                    if (!timerVm) {
+                        // Object not registered (rare): fall back to a fresh
+                        // VM whose obj vars mirror the snapshot.
+                        timerVm = std::make_shared<OriginalVm>(objPtr);
+                    }
+                    if (std::getenv("LPCVM_LOCK_TRACE"))
+                        std::cerr << "[timer] scheduling " << fnName
+                                  << " on scheduler t=" << std::this_thread::get_id() << "\n";
+                    using namespace std::chrono;
+                    int64_t atMs = duration_cast<milliseconds>(
+                        steady_clock::now().time_since_epoch()).count() + timeout * 1000;
+                    scheduler().spawnDelayed(timerVm, fnName, bound, atMs, entry);
                     return make_int(entry->id);
                 }
             }
@@ -2099,6 +2261,14 @@ private:
             meta_ = &fn.metaData;
             ip_ = 0;
             runLoop();
+        } catch (const SuspendSignal&) {
+            // Parked by a blocking efun.  ALL execution state (stack_/frames_/
+            // code_/meta_/ip_/returnValue_/returned_) stays in the members as
+            // the parked process image; the scheduler resumes it via
+            // resumeProcess().  Do NOT restore savedCode/savedMeta/savedIp and
+            // do NOT pop the frame - that would destroy the parked state.
+            parked_ = true;
+            throw;
         } catch (...) {
             code_ = savedCode;
             meta_ = savedMeta;
@@ -2151,6 +2321,52 @@ private:
         runLoop();
     }
 
+    // ------------------------------------------------------------------
+    // Cooperative-scheduler resume entry (stage B).  A parked VM (a blocking
+    // efun threw SuspendSignal; all execution state stayed in the members)
+    // is resumed here by the scheduler: run the efun's resume hook (writes
+    // back through references etc.), push the efun's result (the parked
+    // call site consumed its args but never pushed), then continue the SAME
+    // loop from the saved ip_.  Returns when the whole call chain finishes,
+    // or re-throws SuspendSignal if it parks again (the scheduler re-parks).
+    // resumeValue must be a fresh value; the caller owns any stack effects.
+    void resumeProcess(Value resumeValue) {
+        ExecGuard lock(execMutex_, execDepth_, "resume " + objName_);
+        parked_ = false;
+        ResumeCond c = cond_;
+        cond_ = ResumeCond{};
+        if (onResume_) {
+            auto hook = std::move(onResume_);
+            onResume_ = nullptr;
+            hook();
+        }
+        pushValue(std::move(resumeValue));
+        runLoop();
+        // runLoop returned normally: the whole call chain finished and the
+        // top-level frame was popped by case 72/73 (retCode == nullptr).
+        // All state is already clean; nothing to restore.
+    }
+
+    // True while this VM is parked (a blocking efun suspended it).
+    bool isParked() const { return parked_; }
+    // The condition the parked VM is waiting for (owned by the scheduler).
+    ResumeCond& resumeCond() { return cond_; }
+    // Resume hook run just before resumeValue is pushed (write-backs etc.).
+    std::function<void()> onResume_;
+
+    // Park this VM on a wake condition and unwind to the scheduler.  cond
+    // records what to wait for; hook runs on resume before the efun result
+    // is pushed; resumeValue is pushed on resume.
+    void parkAndSuspend(const ResumeCond& cond, std::function<void()> hook, Value resumeValue) {
+        cond_ = cond;
+        onResume_ = std::move(hook);
+        parked_ = true;
+        resumeValue_ = std::move(resumeValue);
+        throw SuspendSignal{};
+    }
+    // The value to push when this parked VM resumes.
+    Value& parkedResumeValue() { return resumeValue_; }
+
     // The single cooperative instruction loop.  Executes code_/meta_/ip_
     // until finish_action, a top-level return (frame with no caller), or the
     // end of the stream.  All execution state (stack_/frames_/code_/meta_/ip_)
@@ -2170,6 +2386,14 @@ private:
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
             if (++stepCounter_ > 20000000) return;
+            if (std::getenv("LPCVM_LOCK_TRACE") && (stepCounter_ % 500000) == 0) {
+                std::string cur = "<global>";
+                if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
+                std::cerr << "[vm-stuck] obj=" << objName_ << " fn=" << cur
+                          << " ip=" << ip_ << "/" << (code_ ? code_->size() : 0)
+                          << " op=" << in.op << " frames=" << frames_.size()
+                          << " stack=" << stack_.size() << "\n";
+            }
             const ActionInfo& ai = actionInfo(in.op);
             int32_t m0 = 0, m1 = 0;
             bool fromMeta = (ai.attrib & 0x80000000u) != 0;
@@ -2754,13 +2978,29 @@ private:
                         if (std::getenv("LPCVM_TRACE"))
                             std::cerr << "[queue] receive qid=" << qid
                                       << " timeoutMs=" << timeoutMs << "\n";
+                        // Cooperative scheduling: try a non-blocking receive
+                        // first; if the queue is empty, PARK this VM on the
+                        // queue (send_to_queue wakes it) instead of blocking
+                        // the OS thread.
                         bool ok = false;
-                        Value msg = queueReceive(qid, timeoutMs, ok);
+                        Value msg = queueReceive(qid, 0, ok);
                         if (ok) {
                             writeThrough(items[1], msg);
                             pushValue(make_int(0));
                         } else {
-                            pushValue(make_int(-402));
+                            // Park: wake up when send_to_queue pushes to this
+                            // queue.  The resume hook writes the message back
+                            // through the reference; resume value is 0.
+                            ResumeCond cond;
+                            cond.kind = 2;
+                            cond.qkey = "q:" + std::to_string(qid);
+                            auto hook = [this, item = items[1]]() mutable {
+                                bool rok = false;
+                                Value m = queueReceive(queueResolveId(
+                                    item.isRef ? deref(item) : item.value), 0, rok);
+                                if (rok) writeThrough(item, m);
+                            };
+                            parkAndSuspend(cond, std::move(hook), make_int(0));
                         }
                     } else {
                         pushValue(make_int(-101));
@@ -2782,9 +3022,40 @@ private:
                         if (std::getenv("LPCVM_TRACE"))
                             std::cerr << "[queue] send qid=" << qid << " ok=" << ok
                                       << " val=" << to_string(v, false) << "\n";
+                        // Wake any process parked on this queue (cooperative
+                        // scheduler): the message was already enqueued, the
+                        // resumed receiver's hook dequeues it.
+                        scheduler().wakeQueue("q:" + std::to_string(qid));
                         pushValue(make_int(ok ? 0 : -101));
                     } else {
                         pushValue(make_int(-101));
+                    }
+                    break;
+                }
+                else if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                         names[efun] == "sleep") {
+                    // vm_f_sleep (0x80ec9e4): sleep(secs) parks the process
+                    // on a timer; the scheduler resumes it when the timer
+                    // fires.  Cooperative: never blocks the OS thread.
+                    std::vector<StackItem> items;
+                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    double secs = 0;
+                    if (!items.empty()) {
+                        Value tv = items[0].isRef ? deref(items[0]) : items[0].value;
+                        secs = tv.index() == 3 ? std::get<double>(tv)
+                                               : static_cast<double>(toInt(tv));
+                    }
+                    if (secs <= 0.0) {
+                        pushValue(make_int(1));
+                    } else {
+                        // Park on a timer for `secs` seconds.
+                        ResumeCond cond;
+                        cond.kind = 1;
+                        using namespace std::chrono;
+                        int64_t nowMs = duration_cast<milliseconds>(
+                            steady_clock::now().time_since_epoch()).count();
+                        cond.wakeAtMs = nowMs + static_cast<int64_t>(secs * 1000.0);
+                        parkAndSuspend(cond, nullptr, make_int(1));
                     }
                     break;
                 }
@@ -2825,13 +3096,31 @@ private:
                         std::cerr << "[wait_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " secs=" << secs
                                   << " vm=" << this << " obj=" << objName_ << "\n";
-                    Value r = runDetached([&] {
-                        return make_int(lpc::eventWait(eref, mask, secs));
-                    });
-                    if (std::getenv("LPCVM_EVENT_TRACE"))
-                        std::cerr << "[wait_event] done " << ename << " -> " << to_string(r, false)
-                                  << " vm=" << this << "\n";
-                    pushValue(r);
+                    // Cooperative scheduling: probe with timeout 0 first.  If
+                    // the event is already raised, return immediately; else
+                    // PARK this VM on the event (raise_event wakes it).  A
+                    // finite timeout also parks with a wake timer (stage C).
+                    int64_t probe = lpc::eventWait(eref, mask, 0.0);
+                    if (probe == 0) {
+                        if (std::getenv("LPCVM_EVENT_TRACE"))
+                            std::cerr << "[wait_event] immediate " << ename << "\n";
+                        pushValue(make_int(0));
+                    } else if (secs < 0 || secs > 0.0001) {
+                        ResumeCond cond;
+                        cond.kind = 3;
+                        cond.ename = ename;
+                        // The resume hook consumes the raised bits via a
+                        // blocking-free wait on the already-raised event.
+                        auto hook = [this, eref, mask]() {
+                            bool rok = false;
+                            int64_t rc = lpc::eventWait(eref, mask, 0.0);
+                            (void)rc;
+                        };
+                        parkAndSuspend(cond, std::move(hook), make_int(0));
+                    } else {
+                        // zero timeout, not raised -> timeout
+                        pushValue(make_int(-501));
+                    }
                     break;
                 }
                 else if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
@@ -2858,6 +3147,10 @@ private:
                         std::cerr << "[raise_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " -> " << rc
                                   << " vm=" << this << " obj=" << objName_ << "\n";
+                    // Wake any process parked on this event (cooperative
+                    // scheduler).  The resumed waiter's hook consumes the
+                    // raised bits.
+                    if (rc == 0) scheduler().wakeEvent(ename);
                     pushValue(make_int(rc));
                     break;
                 }
@@ -3212,26 +3505,17 @@ private:
                                   << " -> " << (fn ? fn->name : "?") << "\n";
                     if (fn) {
                         if (inPostInit) {
-                            // post_init detach: run the init on its own thread
-                            // so a blocking round-trip cannot stall the master's
-                            // post_init loop (see the case-5 comment).
-                            const OriginalFunction* fnp = fn;
-                            std::vector<Value> allc = all;
-                            std::string fnn = cl->functionName;
-                            std::string oname = objName_;
-                            std::string src = obj_.sourceName;
-                            OriginalVm* self = this;
-                            std::thread([fnp, allc, fnn, oname, src, self]() {
-                                if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
-                                    std::cerr << "[postinit-detach] " << fnn << " on " << src << "\n";
-                                try {
-                                    self->callFunctionPointer(fnp, allc);
-                                } catch (const std::exception& e) {
-                                    std::cerr << "[postinit-detach] " << fnn << " error: " << e.what() << "\n";
-                                } catch (...) {
-                                    std::cerr << "[postinit-detach] " << fnn << " unknown error\n";
-                                }
-                            }).detach();
+                            // post_init: run the init INLINE (synchronously) in
+                            // the original driver's post_init loop order - the
+                            // master's post_init() calls each do_init closure
+                            // one after another on the single thread.  A
+                            // blocking efun inside the init parks the VM
+                            // (SuspendSignal) and the scheduler resumes it; it
+                            // never spawns a second OS thread.
+                            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                                std::cerr << "[postinit-sync] " << cl->functionName << " on " << obj_.sourceName << "\n";
+                            bool ph = pushArgsForFunction(*fn, all);
+                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()));
                         } else {
                             if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
                                 std::string adbg;
@@ -3284,27 +3568,15 @@ private:
                             // an overloaded name (process_command) resolves to the
                             // exact function the closure was bound to.
                             if (inPostInit) {
-                                // Detach like the same-owner path: a daemon
-                                // init may block on a dba round-trip; it must
-                                // not stall the master's post_init loop.
-                                std::shared_ptr<OriginalVm> ovm = ownerVm;
-                                const OriginalFunction* fnp = cl->func;
-                                std::string fnn = cl->functionName;
-                                std::string fns = cl->functionName;
-                                std::vector<Value> allc = all;
-                                std::string oname = ovm->object().sourceName;
-                                std::thread([ovm, fnp, fnn, fns, allc, oname]() {
-                                    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
-                                        std::cerr << "[postinit-detach] " << fns << " on " << oname << "\n";
-                                    try {
-                                        if (fnp) ovm->callFunctionPointer(fnp, allc);
-                                        else ovm->callFunctionByName(fnn, allc);
-                                    } catch (const std::exception& e) {
-                                        std::cerr << "[postinit-detach] " << fns << " error: " << e.what() << "\n";
-                                    } catch (...) {
-                                        std::cerr << "[postinit-detach] " << fns << " unknown error\n";
-                                    }
-                                }).detach();
+                                // post_init: run the init INLINE (synchronously)
+                                // on the owner's VM, matching the original
+                                // driver's sequential post_init loop.  No second
+                                // OS thread - blocking efuns park the process.
+                                if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                                    std::cerr << "[postinit-sync] " << cl->functionName
+                                              << " on " << ownerVm->object().sourceName << "\n";
+                                if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
+                                else result = ownerVm->callFunctionByName(cl->functionName, all);
                             } else if (cl->func)
                                 result = runDetached([&] { return ownerVm->callFunctionPointer(cl->func, all); });
                             else
@@ -3521,6 +3793,11 @@ private:
                               << " at ip=" << (ip_ - 1) << "\n";
                 break;
             }
+            } catch (const SuspendSignal&) {
+                // A blocking efun parked this process.  Execution state stays
+                // in the members; unwind runLoop untouched (the scheduler
+                // re-enters via resumeProcess).
+                throw;
             } catch (const VmError& e) {
                 // Unwind to the innermost new_thread_catch, if any.
                 if (catches_.empty()) throw;
@@ -3676,6 +3953,215 @@ private:
         return make_array();
     }
 };
+
+
+// Scheduler member definitions (OriginalVm is complete here).
+void Scheduler::spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
+                      std::vector<Value> args) {
+    auto p = std::make_shared<Process>();
+    p->vm = std::move(vm);
+    p->entry = entry;
+    p->args = std::move(args);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        ready_.push_back(p);
+    }
+    cv_.notify_one();
+}
+
+void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& entry,
+                             std::vector<Value> args, int64_t atMs,
+                             std::shared_ptr<TimerEntry> timerEntry) {
+    auto p = std::make_shared<Process>();
+    p->vm = std::move(vm);
+    p->entry = entry;
+    p->args = std::move(args);
+    p->timerEntry = std::move(timerEntry);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        timers_.emplace(atMs, p);
+    }
+    cv_.notify_one();
+}
+
+void Scheduler::wake(std::shared_ptr<Process> p) {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        p->resumeValue = p->vm->parkedResumeValue();
+        ready_.push_back(std::move(p));
+    }
+    cv_.notify_one();
+}
+
+void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    const ResumeCond& c = p->vm->resumeCond();
+    switch (c.kind) {
+    case 1:   // timer
+        timers_.emplace(c.wakeAtMs, p);
+        break;
+    case 2:   // queue
+        queueWaiters_[c.qkey].push_back(p);
+        break;
+    case 3:   // event
+        eventWaiters_[c.ename].push_back(p);
+        break;
+    default:  // kind 0/4: no wakeup registered; park forever (external
+              // explicit wake via wake() or process list)
+        parked_.push_back(p);
+        break;
+    }
+}
+
+void Scheduler::wakeQueue(const std::string& qkey) {
+    std::deque<std::shared_ptr<Process>> hits;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = queueWaiters_.find(qkey);
+        if (it != queueWaiters_.end()) {
+            hits = std::move(it->second);
+            queueWaiters_.erase(it);
+        }
+    }
+    for (auto& p : hits) wake(std::move(p));
+}
+
+void Scheduler::wakeEvent(const std::string& ename) {
+    std::deque<std::shared_ptr<Process>> hits;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = eventWaiters_.find(ename);
+        if (it != eventWaiters_.end()) {
+            hits = std::move(it->second);
+            eventWaiters_.erase(it);
+        }
+    }
+    for (auto& p : hits) wake(std::move(p));
+}
+
+void Scheduler::run() {
+    while (true) {
+        std::shared_ptr<Process> p;
+        int64_t now = nowMs();
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            // Move due timers to ready.
+            while (!timers_.empty() && timers_.begin()->first <= now) {
+                auto it = timers_.begin();
+                ready_.push_back(it->second);
+                timers_.erase(it);
+            }
+            if (!ready_.empty()) {
+                p = std::move(ready_.front());
+                ready_.pop_front();
+            }
+        }
+        if (p) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sched-pop] " << p->entry << " first=" << (p->firstRun ? 1 : 0)
+                          << " vm=" << p->vm.get() << "\n";
+            runProcess(p);
+            if (std::getenv("LPCVM_TRACE") && !p->done)
+                std::cerr << "[sched-pop] " << p->entry << " NOT DONE after runProcess\n";
+            continue;
+        }
+        {
+            std::unique_lock<std::mutex> lk(mtx_);
+            if (shutdown_ && ready_.empty() && timers_.empty()) return;
+            if (std::getenv("LPCVM_TRACE") && (step_ % 10000) == 0)
+                std::cerr << "[sched-idle] ready=" << ready_.size()
+                          << " timers=" << timers_.size()
+                          << " qwait=" << queueWaiters_.size()
+                          << " evwait=" << eventWaiters_.size() << "\n";
+            ++step_;
+            if (!timers_.empty()) {
+                int64_t w = timers_.begin()->first - nowMs();
+                if (w < 0) w = 0;
+                cv_.wait_for(lk, std::chrono::milliseconds(w));
+            } else {
+                cv_.wait(lk);
+            }
+        }
+    }
+}
+
+void Scheduler::requestShutdown() {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        shutdown_ = true;
+    }
+    cv_.notify_all();
+}
+
+void Scheduler::parkForever(std::shared_ptr<Process> p) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    parked_.push_back(std::move(p));
+}
+
+int64_t Scheduler::nowMs() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+void Scheduler::runProcess(std::shared_ptr<Process> p) {
+    try {
+        if (p->timerEntry && p->timerEntry->cancelled && *p->timerEntry->cancelled) {
+            // delete_timer() cancelled this callback before it fired.
+            p->done = true;
+            return;
+        }
+        if (std::getenv("LPCVM_TRACE")) {
+            std::cerr << "[sched-run] entry=" << p->entry << " first=" << (p->firstRun ? 1 : 0) << "\n";
+            std::cerr << "  obj=[" << p->vm->object().sourceName << "]" << "\n";
+            std::cerr << "  objName=[" << p->vm->objName() << "]" << "\n";
+            std::cerr << "  fns=" << std::to_string(p->vm->object().functions.size()) << "\n";
+            std::cerr << "  code=" << (p->vm->code() ? std::to_string(p->vm->code()->size()) : "-1")
+                      << " ip=" << std::to_string(p->vm->ip()) << "\n";
+            std::cerr.flush();
+        }
+        if (p->firstRun) {
+            p->firstRun = false;
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sched-call] " << p->entry << " args=" << p->args.size() << "\n";
+            p->vm->callFunctionByName(p->entry, p->args);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sched-call-done] " << p->entry << "\n";
+            p->done = true;
+        } else {
+            p->vm->resumeProcess(std::move(p->resumeValue));
+            p->done = true;
+        }
+        // A set_timer callback finished (or was cancelled): remove its entry
+        // from the timer list (the original driver unregisters the timer when
+        // its callback fires).
+        if (p->timerEntry) {
+            timerUnregister(p->timerEntry);
+            p->timerEntry.reset();
+        }
+    } catch (const SuspendSignal&) {
+        // The VM parked itself; cond_ is set.  Register the wakeup.
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[sched-park] " << p->entry << " kind=" << p->vm->resumeCond().kind
+                      << " key=" << (p->vm->resumeCond().qkey.empty() ? p->vm->resumeCond().ename
+                                                                       : p->vm->resumeCond().qkey) << "\n";
+        parkCurrent(p);
+    } catch (const std::exception& e) {
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[sched] process " << p->entry << " error: " << e.what() << "\n";
+        p->done = true;
+    } catch (...) {
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[sched] process " << p->entry << " error: unknown\n";
+        p->done = true;
+    }
+}
+
+// The single driver-level scheduler instance (anonymous-namespace type; the
+// lpc::schedulerRun() entry below calls this).
+Scheduler& scheduler() {
+    static Scheduler s;
+    return s;
+}
 
 ObjectRegistry& objectRegistry() {
     static ObjectRegistry reg;
@@ -4018,6 +4504,16 @@ void runPostInitFunctions(const std::string& searchRoot) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Driver-level cooperative scheduler entry (stage B).  Runs the single-thread
+// event loop that drives daemon processes, wake timers and queue/event
+// wakeups.  Replaces main()'s idle sleep loop; returns only when no work
+// remains (all processes finished / parked forever).
+// ---------------------------------------------------------------------------
+void schedulerRun() {
+    scheduler().run();
+}
 
 int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
     OriginalVm vm(obj, searchRoot);
