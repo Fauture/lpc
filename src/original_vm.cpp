@@ -978,45 +978,44 @@ public:
             std::cerr << "[master-enter] phase=" << masterPhase_
                       << " code=" << (code_ ? code_->size() : -1)
                       << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
-        // The master runs as a scheduler process.  Its startup LPC code
-        // (global init + inherited inits + create) may call relinquish(),
-        // which throws TimeSliceSignal; the scheduler requeues this VM and
-        // runAsMaster() is called again.  Execution state (code_/meta_/ip_/
-        // stack_/frames_) is preserved across the yield, so each entry simply
-        // continues runLoop(); when the current stream ends we advance to the
-        // next phase.  No phase is re-run from scratch after a yield.
-        if (masterPhase_ == 0 && !code_) {
-            // First entry: start the global init code (load_all etc.).
-            execute(obj_.globalCode, obj_.globalMeta);
-        } else {
-            // Resumed after a yield, or a later phase: continue the current
-            // stream (code_/ip_ were left by the interrupt).
-            runLoop();
-        }
-        if (!code_ || ip_ >= code_->size()) {
-            // The stream we were on finished.  Advance to the next phase.
+        // Phase 0 (globalCode / load_all) may yield via relinquish; the
+        // scheduler requeues this VM and runAsMaster() is called again with
+        // code_/ip_ preserved - runLoop() continues where it left off.
+        // Phases 1/2 (runInheritedInits / callCreate) are C++ loops that
+        // cannot resume mid-way, so masterNoYield_ makes relinquish return
+        // immediately and they run to completion synchronously.
+        if (masterPhase_ <= 0) {
+            if (!code_) {
+                execute(obj_.globalCode, obj_.globalMeta);
+            } else {
+                runLoop();   // resumed after a yield
+            }
             code_ = nullptr;
             if (masterPhase_ == 0) {
                 masterPhase_ = 1;
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[master-phase] 0->1 inherited\n";
-                runInheritedInits(0, 0);
-                code_ = nullptr;
             }
-            if (masterPhase_ == 1) {
-                masterPhase_ = 2;
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[master-phase] 1->2 create\n";
-                callCreate();
-                code_ = nullptr;
-            }
-            if (masterPhase_ == 2) {
-                masterPhase_ = 3;
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[master-phase] 2->3 post_init\n";
-                runPostInitFunctions(searchRoot_);
-                masterInitDone_ = true;
-            }
+        }
+        if (masterPhase_ == 1) {
+            masterNoYield_ = true;
+            runInheritedInits(0, 0);
+            masterNoYield_ = false;
+            code_ = nullptr;
+            masterPhase_ = 2;
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[master-phase] 1->2 create\n";
+        }
+        if (masterPhase_ == 2) {
+            masterNoYield_ = true;
+            callCreate();
+            masterNoYield_ = false;
+            code_ = nullptr;
+            masterPhase_ = 3;
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[master-phase] 2->3 post_init\n";
+            runPostInitFunctions(searchRoot_);
+            masterInitDone_ = true;
         }
     }
 
@@ -1170,6 +1169,11 @@ private:
     bool isMasterProcess_ = false;
     bool masterInitDone_ = false;   // master startup (globalCode+create) finished
     int masterPhase_ = 0;           // 0=globalCode,1=inherited,2=create,3=done
+    // While TRUE the master is inside runInheritedInits/callCreate (C++
+    // functions that cannot be resumed mid-way after a yield); relinquish()
+    // returns immediately instead of throwing TimeSliceSignal, so those
+    // phases run to completion synchronously.
+    bool masterNoYield_ = false;
     Value returnValue_ = make_int(0);
     bool returned_ = false;
     int catchDepth_ = 0;
@@ -2052,6 +2056,11 @@ private:
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[relinquish] vm=" << this << " obj=" << objName_
                               << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                if (masterNoYield_) {
+                    // Inside runInheritedInits/callCreate (C++ loops that
+                    // cannot resume mid-way): run synchronously, no yield.
+                    return make_int(1);
+                }
                 // The caller expects relinquish() to return; push 1 now, then
                 // yield AFTER the push so the resumed process sees the value.
                 pushValue(make_int(1));
@@ -3288,11 +3297,6 @@ private:
                             auto hook = [this, item = items[1], qid]() mutable {
                                 bool rok = false;
                                 Value m = queueReceive(qid, 0, rok);
-                                if (std::getenv("LPCVM_BM"))
-                                    std::cerr << "[rq-resume] qid=" << qid
-                                              << " ok=" << rok
-                                              << " m.type=" << m.index()
-                                              << " m=" << to_string(m, false).substr(0, 40) << "\n";
                                 if (rok) writeThrough(item, m);
                             };
                             parkAndSuspend(cond, std::move(hook), make_int(0));
@@ -4438,12 +4442,7 @@ void Scheduler::wakeQueue(const std::string& qkey) {
     if (hit) {
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[wq] " << qkey << " wake1\n";
-        if (std::getenv("LPCVM_BM"))
-            std::cerr << "[bm-wq] " << qkey << " wake entry=" << hit->entry
-                      << " vm=" << hit->vm.get() << "\n";
         wake(std::move(hit));
-    } else if (std::getenv("LPCVM_BM")) {
-        std::cerr << "[bm-wq] " << qkey << " no waiter\n";
     }
 }
 
