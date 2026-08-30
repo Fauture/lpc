@@ -4295,19 +4295,27 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
 }
 
 void Scheduler::wakeQueue(const std::string& qkey) {
-    std::deque<std::shared_ptr<Process>> hits;
+    // The original driver's queue pend list wakes ONE waiter per push
+    // (vm_f_send_to_queue -> vm_resumeFromObject on the pend head); that
+    // waiter's resume hook (vm_acquiredValueFromQueue) dequeues the value.
+    // Waking ALL waiters made every daemon poll the same queue: one got the
+    // message, the other 19 dequeued empty -> "Bad message" spam.  Wake the
+    // head waiter only; the rest stay parked for the next push.
+    std::shared_ptr<Process> hit;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = queueWaiters_.find(qkey);
-        if (it != queueWaiters_.end()) {
-            hits = std::move(it->second);
-            queueWaiters_.erase(it);
+        if (it != queueWaiters_.end() && !it->second.empty()) {
+            hit = std::move(it->second.front());
+            it->second.pop_front();
+            if (it->second.empty()) queueWaiters_.erase(it);
         }
     }
-    if (std::getenv("LPCVM_TRACE"))
-        std::cerr << "[wq] " << qkey << " hits=" << hits.size()
-                  << " t=" << std::this_thread::get_id() << "\n";
-    for (auto& p : hits) wake(std::move(p));
+    if (hit) {
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[wq] " << qkey << " wake1\n";
+        wake(std::move(hit));
+    }
 }
 
 void Scheduler::wakeEvent(const std::string& ename) {
@@ -4381,11 +4389,12 @@ void Scheduler::run() {
                           << " evwait=" << eventWaiters_.size()
                           << " sockwait=" << sockWaiters_.size() << "\n";
             ++step_;
-            // Poll parked sockets (kind-5 waits: connect/recv) when nothing
-            // else can wake the loop.  select() with a short timeout lets the
-            // scheduler notice connect completion / incoming data without a
-            // blocking network call.
-            if (!sockWaiters_.empty() && ready_.empty() && timers_.empty()) {
+            // Poll parked sockets (kind-5 waits: connect/recv) whenever the
+            // ready queue is empty (timers may still be pending - e.g. echo
+            // daemon's periodic sleep - but a socket event must still wake the
+            // loop).  select() with a short timeout notices connect completion
+            // / incoming data without blocking the scheduler.
+            if (!sockWaiters_.empty() && ready_.empty()) {
                 std::vector<int> fds;
                 for (auto& kv : sockWaiters_) fds.push_back(kv.first);
                 lk.unlock();
