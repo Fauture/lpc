@@ -2013,6 +2013,27 @@ private:
         result = make_int(0);
         if (flags & 0x80) {
             if (const OriginalFunction* gfn = findMasterFunction(index)) {
+                if (gfn->name == "register_post_init" && (flags & 0x3F) >= 1) {
+                    // register_post_init is a LPC GLOBAL function (not an efun):
+                    // it appends the closure to the master's _post_init_funcs
+                    // array, and the LPC post_init() then calls each closure
+                    // SYNCHRONOUSLY inside the master's run().  That lets a
+                    // blocking closure (wait_config -> wait_event) throw
+                    // SuspendSignal out of the master run() (no scheduler
+                    // process to park it) - 0xe06d7363.  Collect the closure in
+                    // the C++ postInitFuncs() instead and run each as a
+                    // SCHEDULER process where blocking efuns park/resume.
+                    Value cl = pop().value;   // the function argument
+                    if (cl.index() == 8) {
+                        auto closure = std::get<std::shared_ptr<ClosureValue>>(cl);
+                        postInitFuncs().push_back({&obj_, closure->functionName, closure->boundArgs});
+                        if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                            std::cerr << "[rpi-gfn] " << closure->functionName
+                                      << " obj=" << objName_ << " vm=" << this << "\n";
+                    }
+                    result = make_int(1);
+                    return false;
+                }
                 if (std::getenv("LPCVM_TRACE") || index >= 600 || gfn->name == "mysql_select" ||
                     gfn->name == "mixed_mysql_select") {
                     std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
@@ -2488,6 +2509,9 @@ private:
         SuspendSignal sig;
         sig.vm = this;
         sig.cond = cond_;
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[suspend] vm=" << this << " obj=" << objName_
+                      << " kind=" << cond.kind << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
         throw sig;
     }
     // The value to push when this parked VM resumes.
@@ -4041,10 +4065,14 @@ private:
                               << " at ip=" << (ip_ - 1) << "\n";
                 break;
             }
-            } catch (const SuspendSignal&) {
+            } catch (const SuspendSignal& sig) {
                 // A blocking efun parked this process.  Execution state stays
                 // in the members; unwind runLoop untouched (the scheduler
                 // re-enters via resumeProcess).
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[loop-suspend] vm=" << this << " obj=" << objName_
+                              << " sigVm=" << (sig.vm ? reinterpret_cast<void*>(sig.vm) : nullptr)
+                              << " frames=" << frames_.size() << "\n";
                 throw;
             } catch (const VmError& e) {
                 // Unwind to the innermost new_thread_catch, if any.
