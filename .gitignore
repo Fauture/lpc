@@ -364,3 +364,12 @@ FodyWeavers.xsd
 
 linux/
 *.err
+build/*.out
+build/*.err
+build/*.dmp
+build/*.py
+build/*.txt
+*.out
+crashdumps/
+build/*.exe
+*.ini.bak

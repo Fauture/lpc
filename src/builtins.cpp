@@ -2965,7 +2965,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // packet protocol, cmdList dispatch).  This is NOT the telnet service;
         // telnet_on() handles the telnet port separately.
         int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
-        return make_int(lpc::startGameService(port));
+        int rc = lpc::startGameService(port);
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[start_service_on] port=" << port << " args=" << args.size()
+                      << " rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
+        return make_int(rc);
     }
     if (name == "mysql_connect") {
         // mysql_connect(host, user, password, database) -> cno (>=1) or -1.

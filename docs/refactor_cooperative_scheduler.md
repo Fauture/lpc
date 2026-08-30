@@ -82,14 +82,42 @@
 
 8. **MySQL**:保持阻塞但独立连接池线程,查询完成回调恢复进程
 
-### 迁移阶段
+### 关键实验结论(2026-08-30)
 
-- 阶段 A:调度器核心(就绪队列/timer/invoke/挂起表)+ execute 挂起原语
-- 阶段 B:create_thread/set_timer/closure 调用改为协作式进程
-- 阶段 C:queue/event/sleep/wait 挂起化
-- 阶段 D:网络 accept/recv/send 事件驱动
-- 阶段 E:MySQL/xdbc 回调恢复
-- 阶段 F:移除所有 mutex/atomic,验证 aaa/dba/ccs/gs
+### Windows Fiber 方案不可行
+实现并验证了 Fiber 方案(每个进程一个 Fiber,阻塞 efun 内
+SwitchToFiber 挂起),结论:
+
+1. **调度器核心可行**:单线程事件循环 + Fiber 进程池 + timer/挂起表
+   (sched_test 验证:两个进程协作切换 + 定时器恢复正常)。
+2. **Fiber + C++ 异常不兼容**:execute() 的主循环用 try/catch 包裹整个
+   switch(VM 的 VmError/catch 语义),而阻塞 efun(sleep/wait/queue)在
+   try 块内触发 SwitchToFiber。Fiber 切换破坏 SEH(结构化异常处理)链,
+   深递归 execute 场景(daemon 加载 → logd sql_select)下确定性崩溃
+   (access violation,回溯帧指向 vcruntime 的 __CxxFrameHandler)。
+3. 简单 fiber_test(try 内 yield + 后续 throw/catch)通过,但真实
+   execute 的深层 try/catch + 跨 VM 调用触发已知的 Fiber+EH 兼容问题。
+4. 共享 VM 执行状态(stack_/frames_)在多进程下会被交错破坏:
+   execMutex_ 是线程级锁,在单线程 Fiber 协作式下失效(同一线程的
+   不同 Fiber 都能"拿到"锁)。
+
+### 正确路径:显式栈机(原版 vm_doActions 的确切模型)
+- execute() 改为**非递归**:函数调用 = push Frame(保存返回 ip/code/meta),
+  切换 code/meta/ip,继续同一循环;函数返回 = pop Frame 恢复。
+- ip/code/meta 提升为 VM 成员(可保存/恢复)。
+- 阻塞 efun:保存执行状态到进程,返回调度器;恢复时从保存的 ip 继续。
+- 不依赖 Fiber,不依赖 C++ 异常跨栈(VM 的 catch 用显式 catches_ 数组)。
+- 每个调度器进程持有独立的执行状态;对象(objVars)共享。
+
+## 迁移阶段
+
+- 阶段 A:execute 显式栈机(非递归化,call/return 用显式 frame 栈)
+- 阶段 B:调度器核心(就绪队列/timer/invoke/挂起表,不依赖 Fiber)
+- 阶段 C:阻塞 efun(sleep/wait/queue/recv/mysql)挂起化
+- 阶段 D:create_thread/set_timer/closure 改为调度器进程
+- 阶段 E:移除 execMutex_/runDetached/objVarsSnapshot 等全部多线程机制
+- 阶段 F:网络层事件驱动化
+- 阶段 G:验证 aaa/dba/ccs(+gs) 跨服务器链路与 lottery 保存一致
 
 ### 兼容性要求
 

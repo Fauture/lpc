@@ -541,6 +541,19 @@ struct Frame {
     // resolves local function indexes as baseFunOffset + index
     // (vm_callInUserFun 0x8094080).  0 for the object's own functions.
     int funOffset = 0;
+    // Explicit-stack-machine return context: the caller's code/meta/ip that
+    // execution resumes at when this function returns (vm_returnFromFun pops
+    // the caller's funContext and jumps back).  For the top-level frame pushed
+    // by executeFunctionOnStack these hold the OUTER context that must be
+    // restored when that external call completes; ip_ points at the
+    // instruction AFTER the calling opcode (ip was pre-incremented).
+    const std::vector<OriginalInsn>* retCode = nullptr;
+    const std::vector<uint8_t>* retMeta = nullptr;
+    size_t retIp = 0;
+    // True when this frame was entered with executeFunctionOnStack's
+    // zero-arg placeholder slot (one extra slot pushed so bp >= 0); the
+    // return cleanup must drop that slot with the frame.
+    bool zeroArgPlaceholder = false;
     // Loop control blocks.  The original VM keeps a loop's control value in a
     // local slot, but expression-stack pops can descend into the local region
     // in this interpreter (the prologue of load_comm_desc does); storing the
@@ -720,6 +733,9 @@ public:
 
     int runInit(const std::vector<Value>& createArgs = {}) {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
+        if (std::getenv("LPCVM_LOCK_TRACE"))
+            std::cerr << "[runinit] enter obj=" << obj_.sourceName
+                      << " t=" << std::this_thread::get_id() << "\n";
         try {
             // The original runs EVERY constitution's initCodeSegment in
             // initOrderList order (vm_callInInitFun 0x8094258 sets
@@ -727,8 +743,17 @@ public:
             // use that program's baseVarOffset).  The child's own global code
             // first (its constitution, offset 0), then each inherited
             // program's global code under its own accumulated offset.
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[runinit] global code obj=" << obj_.sourceName
+                          << " t=" << std::this_thread::get_id() << "\n";
             execute(obj_.globalCode, obj_.globalMeta);
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[runinit] inherited inits obj=" << obj_.sourceName
+                          << " t=" << std::this_thread::get_id() << "\n";
             runInheritedInits(0, 0);
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[runinit] create obj=" << obj_.sourceName
+                          << " t=" << std::this_thread::get_id() << "\n";
             callCreate(createArgs);
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
@@ -779,8 +804,19 @@ public:
             Frame frame{nullptr, 0, 0, 0, &parentObj->strings};
             frame.varOffset = varOff;
             frames_.push_back(frame);
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[inhinit] executing " << parentObj->sourceName
+                          << " varOff=" << varOff << " globalCode=" << parentObj->globalCode.size()
+                          << " t=" << std::this_thread::get_id() << "\n";
             try {
+                if (std::getenv("LPCVM_LOCK_TRACE"))
+                    std::cerr << "[inhinit] BEFORE exec " << parentObj->sourceName
+                              << " frames=" << frames_.size() << " t=" << std::this_thread::get_id() << "\n";
                 execute(parentObj->globalCode, parentObj->globalMeta);
+                if (std::getenv("LPCVM_LOCK_TRACE"))
+                    std::cerr << "[inhinit] AFTER exec " << parentObj->sourceName
+                              << " frames=" << frames_.size() << " ip=" << ip_
+                              << " t=" << std::this_thread::get_id() << "\n";
             } catch (...) {
                 frames_.pop_back();
                 throw;
@@ -881,6 +917,17 @@ private:
         size_t frameCount = 0;   // frames to keep
     };
     std::vector<CatchRecord> catches_;
+    // Explicit-stack-machine execution context.  These are the current
+    // instruction stream (code), its metadata and the next instruction index.
+    // They live as members so a blocking efun can SAVE the whole execution
+    // state (stack_/frames_/code_/meta_/ip_ are all members) and the
+    // scheduler can resume by re-entering execute() from the saved point -
+    // exactly like the original PCB's sp/funCp/ip restore.  Function calls
+    // no longer recurse into a second execute(): they push a Frame carrying
+    // the caller's (retCode/retMeta/retIp) and switch these members.
+    const std::vector<OriginalInsn>* code_ = nullptr;
+    const std::vector<uint8_t>* meta_ = nullptr;
+    size_t ip_ = 0;
 
     const OriginalFunction* findFunction(const std::string& name) {
         for (const auto& fn : obj_.functions)
@@ -1109,7 +1156,8 @@ private:
         if (std::getenv("LPCVM_TRACE")) {
             std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                  ? names[efunIndex] : "?";
-            std::string fn = frames_.empty() ? "<global>" : frames_.back().fn->name;
+            std::string fn = "<global>";
+            if (!frames_.empty() && frames_.back().fn) fn = frames_.back().fn->name;
             std::cerr << "[vm] efun idx=" << efunIndex << " name=" << nm << " argc=" << args.size()
                       << " in=" << fn << " obj=" << objName_ << "\n";
         }
@@ -1497,6 +1545,8 @@ private:
                     if (!owner) owner = &obj_;
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[timer] schedule " << fnName << " in " << timeout << "s\n";
+                    if (std::getenv("LPCVM_LOCK_TRACE"))
+                        std::cerr << "[timer] creating thread... t=" << std::this_thread::get_id() << "\n";
                     // arg2 is the timer name (string) or 0/&ref (anonymous).
                     std::string timerName;
                     if (args.size() >= 2 && args[1].index() == 4)
@@ -1541,6 +1591,9 @@ private:
                         }
                     }
                     std::thread([ownerVm, objPtr, fnName, bound, timeout, entry]() {
+                        if (std::getenv("LPCVM_LOCK_TRACE"))
+                            std::cerr << "[timer] thread started, sleeping " << timeout
+                                      << "s t=" << std::this_thread::get_id() << "\n";
                         if (timeout > 0)
                             std::this_thread::sleep_for(std::chrono::seconds(timeout));
                         if (entry->cancelled && *entry->cancelled) {
@@ -1668,16 +1721,22 @@ private:
         return make_int(0);
     }
 
-    Value callUserFunction(int index, int flags) {
-        // vm_callInUserFun (0x8094080): bit 7 of the flags selects the driver's
-        // GLOBAL program (start_aaa) function table, NOT this object's table.
-        // vm_callInUserFunBody then runs that function INLINE on the current
-        // stack/process (thisObject=NULL, consititution = the global program's),
-        // so it never switches object and never takes another VM's execution
-        // lock.  The old path forwarded it to the master VM as a cross-object
-        // call, which deadlocked account_login (game thread -> accountd
-        // execMutex_) against _check_client_data (threadd thread -> accountd
-        // execMutex_ -> master execMutex_ for set_dynamic_key).
+    // vm_callInUserFun (0x8094080): bit 7 of the flags selects the driver's
+    // GLOBAL program (start_aaa) function table, NOT this object's table.
+    // vm_callInUserFunBody then runs that function INLINE on the current
+    // stack/process (thisObject=NULL, consititution = the global program's),
+    // so it never switches object and never takes another VM's execution
+    // lock.  The old path forwarded it to the master VM as a cross-object
+    // call, which deadlocked account_login (game thread -> accountd
+    // execMutex_) against _check_client_data (threadd thread -> accountd
+    // execMutex_ -> master execMutex_ for set_dynamic_key).
+    // Returns true when the callee was started INLINE on the current stack
+    // (a frame was pushed and code_/meta_/ip_ switched; the callee's
+    // return_from_fun will push its own result, so the caller must NOT push
+    // one).  Returns false when the call COMPLETED synchronously and result
+    // holds the return value.
+    bool callUserFunction(int index, int flags, Value& result) {
+        result = make_int(0);
         if (flags & 0x80) {
             if (const OriginalFunction* gfn = findMasterFunction(index)) {
                 if (std::getenv("LPCVM_TRACE") || index >= 600 || gfn->name == "mysql_select" ||
@@ -1685,14 +1744,14 @@ private:
                     std::cerr << "[gfn] inline global fn=" << gfn->name << " idx=" << index
                               << " argc=" << (flags & 0x3F) << " vm=" << this
                               << " obj=" << objName_ << "\n";
-                Value gr = executeFunctionOnStack(*gfn, false, flags & 0x3F);
+                if (startInlineFunction(*gfn, false, flags & 0x3F)) return true;
                 if (gfn->name == "mysql_select" || gfn->name == "mixed_mysql_select")
-                    std::cerr << "[gfn] " << gfn->name << " -> " << to_string(gr, false).substr(0, 80) << "\n";
-                return gr;
+                    std::cerr << "[gfn] " << gfn->name << " START FAILED (stack too shallow)\n";
+                return false;
             }
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[gfn] global fn idx=" << index << " NOT FOUND in master\n";
-            return make_int(0);
+            return false;
         }
         auto it = funcsByIndex_.find(index);
         if (it != funcsByIndex_.end()) {
@@ -1724,7 +1783,7 @@ private:
                     // No implementation anywhere: keep a zero result but still
                     // consume the declared arguments.
                     for (int i = 0; i < fn.argCount && !stack_.empty(); ++i) pop();
-                    return make_int(0);
+                    return false;
                 }
             }
             bool traceMe = impl->name == "mixed_mysql_select" || impl->name == "get_info_by_type" ||
@@ -1748,10 +1807,10 @@ private:
                 std::cerr << "[auth] " << impl->name << " obj=" << objName_
                           << " argc=" << ac << " args=[" << adbg << "]\n";
             }
-            Value r = executeFunctionOnStack(*impl, false, flags & 0x3F);
+            if (startInlineFunction(*impl, false, flags & 0x3F)) return true;
             if (authTrace)
-                std::cerr << "[auth] " << impl->name << " -> " << to_string(r, false).substr(0, 60) << "\n";
-            return r;
+                std::cerr << "[auth] " << impl->name << " START FAILED (stack too shallow)\n";
+            return false;
         }
         // Cross-object function table fallback (inherited/global functions).
         // The arguments are still on this stack: transfer them to the callee.
@@ -1794,7 +1853,8 @@ private:
                 std::cerr << "[fallback] vm=" << this << " index=" << index << " name=" << name
                           << " argc=" << argCount << " args=[" << dbg << "] stackLeft=" << stack_.size() << "\n";
             }
-            return runDetached([&] { return target->callFunctionByName(name, args); });
+            result = runDetached([&] { return target->callFunctionByName(name, args); });
+            return false;
         }
         // Some global function indices refer to builtin efuns (e.g. the telnet
         // helpers). The low 6 bits of the flags carry the argument count.
@@ -1803,9 +1863,10 @@ private:
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[vm] global efun fallback index=" << index << " name=" << names[index]
                           << " argc=" << argCount << "\n";
-            return callEfun(index, argCount);
+            result = callEfun(index, argCount);
+            return false;
         }
-        return make_int(0);
+        return false;
     }
 
     // RAII reentrant execution lock that also tracks the recursion depth so
@@ -1813,8 +1874,24 @@ private:
     struct ExecGuard {
         std::recursive_mutex& m;
         int& depth;
-        ExecGuard(std::recursive_mutex& m_, int& d_) : m(m_), depth(d_) { m.lock(); ++depth; }
-        ~ExecGuard() { --depth; m.unlock(); }
+        std::string tag;
+        ExecGuard(std::recursive_mutex& m_, int& d_, std::string tag_ = "")
+            : m(m_), depth(d_), tag(std::move(tag_)) {
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[lock+] try " << tag << " t=" << std::this_thread::get_id() << "\n";
+            m.lock();
+            ++depth;
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[lock+] got " << tag << " depth=" << depth
+                          << " t=" << std::this_thread::get_id() << "\n";
+        }
+        ~ExecGuard() {
+            --depth;
+            m.unlock();
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[lock-] rel " << tag << " depth=" << depth
+                          << " t=" << std::this_thread::get_id() << "\n";
+        }
         ExecGuard(const ExecGuard&) = delete;
         ExecGuard& operator=(const ExecGuard&) = delete;
     };
@@ -1871,26 +1948,19 @@ private:
         if (diagMe)
             std::cerr << "[lock] TRY obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
-        ExecGuard lock(execMutex_, execDepth_);
+        ExecGuard lock(execMutex_, execDepth_, ("fromOutside " + objName_ + "/" + fn.name).c_str());
         if (diagMe)
             std::cerr << "[lock] GOT obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
         return executeFunctionFromOutsideLocked(fn, args);
     }
 
-    Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
-        // The original VM pushes args in reverse (param0 last, on top).
-        // For a zero-arg function the stack top would be -1; reserve one slot
-        // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
-        if (std::getenv("LPCVM_TRACE") && fn.name == "save_to_text")
-            std::cerr << "[efo-dbg] save_to_text args=" << args.size()
-                      << " stackBefore=" << stack_.size()
-                      << " caller=" << (frames_.empty() ? "<top>" : frames_.back().fn->name) << "\n";
+    // Push the arguments for fn onto the stack the way the original VM does
+    // (param0 on top; missing declared args padded with undefined type 0).
+    // Returns true when a zero-arg call pushed one placeholder slot (so
+    // bp >= 0).  Mirrors executeFunctionFromOutsideLocked's inline layout.
+    bool pushArgsForFunction(const OriginalFunction& fn, const std::vector<Value>& args) {
         int n = fn.argCount;
-        // varargs functions (attrib "varargs"): the caller may pass MORE args
-        // than declared; ALL of them stay on the stack so ($<) /
-        // create_argument_array sees them and the frame records the real
-        // passed count (vm_padStackVariables in send_to_client relies on it).
         int passed = static_cast<int>(args.size());
         bool placeholder = false;
         if (n == 0 && passed == 0) {
@@ -1902,13 +1972,63 @@ private:
             Value a = (i < static_cast<int>(args.size())) ? args[i] : Value{};
             pushValue(a);
         }
-        // all declared arguments were pushed (missing ones as undefined)
-        return executeFunctionOnStack(fn, placeholder, passed);
+        return placeholder;
     }
 
+    Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
+        // The original VM pushes args in reverse (param0 last, on top).
+        // For a zero-arg function the stack top would be -1; reserve one slot
+        // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
+        if (std::getenv("LPCVM_TRACE") && fn.name == "save_to_text")
+            std::cerr << "[efo-dbg] save_to_text args=" << args.size()
+                      << " stackBefore=" << stack_.size()
+                      << " caller=" << (frames_.empty() || !frames_.back().fn
+                                            ? "<top>" : frames_.back().fn->name) << "\n";
+        // all declared arguments were pushed (missing ones as undefined)
+        bool placeholder = pushArgsForFunction(fn, args);
+        return executeFunctionOnStack(fn, placeholder, static_cast<int>(args.size()));
+    }
+
+    // Push a Frame for fn and switch the instruction stream to it, WITHOUT
+    // recursing into a new execute()/runLoop.  The caller (a case 7/8/5
+    // handler inside runLoop) continues the SAME loop; when the callee hits
+    // return_from_fun (case 72/73) it pops this frame and restores
+    // code_/meta_/ip_ from the frame's ret* fields, then pushes the return
+    // value.  This is the explicit-stack-machine equivalent of the
+    // original's vm_callInUserFunBody running the callee INLINE.
+    // The arguments must already be on the stack (param0 on top), exactly as
+    // executeFunctionFromOutsideLocked leaves them.  Returns false (and
+    // leaves the stack untouched) when the stack is too shallow.
+    bool startInlineFunction(const OriginalFunction& fn, bool zeroArgPlaceholder, int passedArgs) {
+        if (static_cast<int>(stack_.size()) < fn.argCount) return false;
+        int bp = static_cast<int>(stack_.size()) - 1;
+        Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
+                    fn.strings.empty() ? &obj_.strings : &fn.strings};
+        frame.varOffset = fn.varOffset;
+        frame.funOffset = fn.funOffset;
+        frame.zeroArgPlaceholder = zeroArgPlaceholder;
+        // Save the caller's stream so return_from_fun can resume it.
+        frame.retCode = code_;
+        frame.retMeta = meta_;
+        frame.retIp = ip_;   // ip_ already points at the instruction AFTER the call
+        frames_.push_back(frame);
+        code_ = &fn.code;
+        meta_ = &fn.metaData;
+        ip_ = 0;
+        returnValue_ = make_int(0);
+        returned_ = false;
+        return true;
+    }
+
+    // Start a function call from OUTSIDE the bytecode loop (external entry:
+    // callFunctionByName / callFunctionPointer / callFunctionByIndex / efun
+    // embedded calls).  Pushes a TOP-LEVEL frame (retCode == nullptr) and
+    // runs the loop until that frame returns.  Nested uses (an efun that
+    // calls a function on the same VM) recurse one level per efun, exactly
+    // like the original's vm_apply from inside an efun.
     Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
                                  int passedArgs = -1) {
-        ExecGuard lock(execMutex_, execDepth_);
+        ExecGuard lock(execMutex_, execDepth_, "onStack " + objName_ + "/" + fn.name);
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
@@ -1959,44 +2079,53 @@ private:
                     fn.strings.empty() ? &obj_.strings : &fn.strings};
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
+        frame.zeroArgPlaceholder = zeroArgPlaceholder;
+        // Top-level frame: retCode stays nullptr.  When case 72/73 pops this
+        // frame it sees retCode == nullptr and exits runLoop with the result
+        // in returnValue_ (no caller to resume).
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
         bool savedReturned = returned_;
         returnValue_ = make_int(0);
         returned_ = false;
+        // The calling context (may be an outer runLoop on this VM, e.g. an
+        // efun embedded call, or an idle VM when entered externally).  Save
+        // and restore it so the explicit stack machine never loses it.
+        const std::vector<OriginalInsn>* savedCode = code_;
+        const std::vector<uint8_t>* savedMeta = meta_;
+        size_t savedIp = ip_;
         try {
-            execute(fn.code, fn.metaData);
+            code_ = &fn.code;
+            meta_ = &fn.metaData;
+            ip_ = 0;
+            runLoop();
         } catch (...) {
-            frames_.pop_back();
+            code_ = savedCode;
+            meta_ = savedMeta;
+            ip_ = savedIp;
+            if (!frames_.empty() && frames_.back().fn == &fn) frames_.pop_back();
             returnValue_ = savedReturn;
             returned_ = savedReturned;
             throw;
         }
         Value result = returnValue_;
-        // The cleanup must be based on the LIVE frame: resort_stack moves the
-        // frame base (inline default arguments become trailing parameters)
-        // and updates argNum to passed + defaults.  Using the DECLARED
-        // argCount instead eats the caller's stack slots whenever a function
-        // with default arguments is called with fewer arguments (e.g.
-        // read_etc_file("file") -> 3 declared, 1 passed, 2 caller slots lost
-        // per call - seen as load_file_dependence's locals vanishing).
-        int liveBp = bp;
-        int usedArgs = fn.argCount;
+        // Normal path: case 72/73 already popped our frame and cleaned the
+        // stack.  Defensive: if runLoop exited abnormally (finish_action,
+        // step limit, code exhaustion) the frame may still be on the stack.
         if (!frames_.empty() && frames_.back().fn == &fn) {
-            liveBp = frames_.back().bp;
-            usedArgs = frames_.back().argNum;
+            // The cleanup must be based on the LIVE frame: resort_stack moves
+            // the frame base (inline default arguments become trailing
+            // parameters) and updates argNum to passed + defaults.
+            int liveBp = frames_.back().bp;
+            int usedArgs = frames_.back().argNum;
+            int newSize = liveBp - usedArgs + 1 - (frames_.back().zeroArgPlaceholder ? 1 : 0);
+            if (newSize < 0) newSize = 0;
+            stack_.resize(static_cast<size_t>(newSize));
+            frames_.pop_back();
         }
-        if (std::getenv("LPCVM_TRACE") && fn.name == "save_to_text")
-            std::cerr << "[xfn-ret] " << fn.name << " bp=" << bp << " liveBp=" << liveBp
-                      << " usedArgs=" << usedArgs << " zeroArg=" << zeroArgPlaceholder
-                      << " newSize=" << (liveBp - usedArgs + 1 - (zeroArgPlaceholder ? 1 : 0))
-                      << " result=" << to_string(result, false) << "\n";
-        // For zero-arg calls one placeholder frame slot was pushed; remove it
-        // with the frame (otherwise it leaks on every external 0-arg call).
-        int newSize = liveBp - usedArgs + 1 - (zeroArgPlaceholder ? 1 : 0);
-        if (newSize < 0) newSize = 0;
-        stack_.resize(static_cast<size_t>(newSize));
-        frames_.pop_back();
+        code_ = savedCode;
+        meta_ = savedMeta;
+        ip_ = savedIp;
         returnValue_ = savedReturn;
         returned_ = savedReturned;
         return result;
@@ -2005,17 +2134,39 @@ private:
     // ------------------------------------------------------------------
     // The main bytecode executor (mirrors vm_regularProcessor)
     // ------------------------------------------------------------------
+    // Top-level entry: adopt the instruction stream and run it to completion
+    // (global init code, or an externally-started function body).  In the
+    // original driver this is vm_doActions on the process's current
+    // constitution; function calls inside switch to a new stream via
+    // startInlineFunction and RETURN by restoring (code_/meta_/ip_) from the
+    // Frame, so this loop never recurses.
     void execute(const std::vector<OriginalInsn>& code, const std::vector<uint8_t>& meta) {
-        size_t ip = 0;
-        while (ip < code.size()) {
-            const OriginalInsn& in = code[ip++];
+        if (std::getenv("LPCVM_LOCK_TRACE"))
+            std::cerr << "[exec] obj=" << objName_ << " codeSize=" << code.size()
+                      << " metaSize=" << meta.size() << " ip0=" << (code.empty() ? -1 : code[0].op)
+                      << " t=" << std::this_thread::get_id() << "\n";
+        code_ = &code;
+        meta_ = &meta;
+        ip_ = 0;
+        runLoop();
+    }
+
+    // The single cooperative instruction loop.  Executes code_/meta_/ip_
+    // until finish_action, a top-level return (frame with no caller), or the
+    // end of the stream.  All execution state (stack_/frames_/code_/meta_/ip_)
+    // lives in members, so a blocking efun can later park the process by
+    // returning from here and resume by re-entering with the saved ip_ -
+    // exactly like the original scheduler restoring a PCB.
+    void runLoop() {
+        while (code_ && ip_ < code_->size()) {
+            const OriginalInsn& in = (*code_)[ip_++];
             lastOp_ = in.op;
-            lastIp_ = ip - 1;
+            lastIp_ = ip_ - 1;
             if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
                 std::string cur = "<global>";
                 if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
                 if (cur == std::getenv("LPCVM_TRACE_FN"))
-                    std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (ip - 1) << " op=" << in.op
+                    std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (ip_ - 1) << " op=" << in.op
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
             if (++stepCounter_ > 20000000) return;
@@ -2024,8 +2175,8 @@ private:
             bool fromMeta = (ai.attrib & 0x80000000u) != 0;
             if (fromMeta) {
                 uint32_t off = static_cast<uint32_t>(in.a) | (static_cast<uint32_t>(in.b) << 16);
-                m0 = readI32(meta, off);
-                if (ai.parameters == 2) m1 = readI32(meta, off + 4);
+                m0 = readI32(*meta_, off);
+                if (ai.parameters == 2) m1 = readI32(*meta_, off + 4);
             }
             try {
                 switch (in.op) {
@@ -2036,10 +2187,6 @@ private:
                 returnValue_ = make_int(0);
                 return;
             case 72: // return_from_fake_fun (lambda/closure return: value always popped)
-                if (!stack_.empty()) returnValue_ = pop().value;
-                else returnValue_ = make_int(0);
-                returned_ = true;
-                return;
             case 73: { // return_from_fun
                 // Original vm_returnFromFun (0x8094978): a value-returning
                 // function leaves exactly one value on the stack (sp ==
@@ -2050,31 +2197,74 @@ private:
                 // the top slot at entry, so:
                 //   void:   size == bp + 1            -> push void
                 //   valued: size == bp + 2            -> pop the return value
+                // A global init code segment ends with return_from_fake_fun
+                // (register.o's `all_entries = ([ ])` compiles to create_mapping
+                // / push_obj_vptr / assign_value / pop_stack / null_action /
+                // return_from_fake_fun / finish_action).  Such code runs under
+                // a CONTEXT frame (fn == nullptr) pushed by runInheritedInits,
+                // not a real call frame: the return op must NOT pop that
+                // context frame (runInheritedInits pops it itself) and must not
+                // resume a caller stream - it just ends the init segment.
+                if (frames_.empty()) { returned_ = true; return; }
                 const Frame& f = frames_.back();
-                size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
-                if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
-                    std::cerr << "[ret] " << f.fn->name << " bp=" << f.bp << " stack=" << stack_.size()
-                              << " expVoid=" << expectedVoid << " top="
-                              << (stack_.empty() ? "empty" : to_string(stack_.back().value, false)) << "\n";
-                if (stack_.size() == expectedVoid) {
-                    returnValue_ = UndefinedTag{};   // void return value (type 1)
-                } else if (stack_.size() == expectedVoid + 1 && !stack_.empty()) {
-                    returnValue_ = pop().value;
-                } else {
-                    // Stack not in canonical shape; take the top if any.
+                if (in.op == 72) {
                     if (!stack_.empty()) returnValue_ = pop().value;
-                    else returnValue_ = UndefinedTag{};
+                    else returnValue_ = make_int(0);
+                } else {
+                    size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
+                    if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
+                        std::cerr << "[ret] " << f.fn->name << " bp=" << f.bp << " stack=" << stack_.size()
+                                  << " expVoid=" << expectedVoid << " top="
+                                  << (stack_.empty() ? "empty" : to_string(stack_.back().value, false)) << "\n";
+                    if (stack_.size() == expectedVoid) {
+                        returnValue_ = UndefinedTag{};   // void return value (type 1)
+                    } else if (stack_.size() == expectedVoid + 1 && !stack_.empty()) {
+                        returnValue_ = pop().value;
+                    } else {
+                        // Stack not in canonical shape; take the top if any.
+                        if (!stack_.empty()) returnValue_ = pop().value;
+                        else returnValue_ = UndefinedTag{};
+                    }
                 }
                 if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
                     std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 returned_ = true;
-                return;
+                // Context frame (fn == nullptr): this is a global init code
+                // segment run by runInheritedInits.  Do NOT pop it (the caller
+                // pops it) and do NOT resume a caller stream - end the loop.
+                if (f.fn == nullptr) return;
+                // ---- explicit stack machine: return to the caller ----
+                // Clean the callee's argument/local slots off the stack
+                // (mirrors the cleanup executeFunctionOnStack used to do
+                // after execute() returned; vm_returnFromFun restores sp to
+                // bp - argNum + 1).  Use the LIVE frame values: resort_stack
+                // moves the frame base and updates argNum.
+                int liveBp = f.bp;
+                int usedArgs = f.argNum;
+                int newSize = liveBp - usedArgs + 1 - (f.zeroArgPlaceholder ? 1 : 0);
+                if (newSize < 0) newSize = 0;
+                // Grab the caller context before popping the frame.
+                const std::vector<OriginalInsn>* retCode = f.retCode;
+                const std::vector<uint8_t>* retMeta = f.retMeta;
+                size_t retIp = f.retIp;
+                frames_.pop_back();
+                stack_.resize(static_cast<size_t>(newSize));
+                if (retCode == nullptr) {
+                    // Top-level frame (pushed by executeFunctionOnStack): the
+                    // whole call is done; the result stays in returnValue_.
+                    return;
+                }
+                code_ = retCode;
+                meta_ = retMeta;
+                ip_ = retIp;
+                pushValue(returnValue_);   // caller sees the return value on top
+                break;
             }
             case 59: // push_number(S)
                 pushValue(make_int(static_cast<int16_t>(in.a)));
                 break;
             case 60: // push_number(L)
-                pushValue(make_int(fromMeta ? m0 : metaOperand(meta, in.a, in.b)));
+                pushValue(make_int(fromMeta ? m0 : metaOperand(*meta_, in.a, in.b)));
                 break;
             case 63: // push_real_from_word (float bits in the first metadata word)
                 pushValue(make_float(*reinterpret_cast<const float*>(&m0)));
@@ -2206,7 +2396,8 @@ private:
                             dbg += (k ? " | " : "") + to_string(bound[k], false).substr(0, 40);
                         std::cerr << "[cfv-create] " << fn->name << " idx=" << in.a
                                   << " bind=" << boundCount << " cur="
-                                  << (frames_.empty() ? "<global>" : frames_.back().fn->name)
+                                  << (frames_.empty() || !frames_.back().fn
+                                          ? "<global>" : frames_.back().fn->name)
                                   << " vals=[" << dbg << "]\n";
                     }
                     auto cl = std::make_shared<ClosureValue>();
@@ -2442,6 +2633,11 @@ private:
             case 6: { // call_in_efun
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
+                if (std::getenv("LPCVM_TRACE") && objName_.find("cmd_log_important") != std::string::npos)
+                    std::cerr << "[efun-pre] efun=" << efun << " argc=" << argc
+                              << " stack=" << stack_.size() << " frames=" << frames_.size()
+                              << " meta=" << (meta_ ? meta_->size() : 0)
+                              << " t=" << std::this_thread::get_id() << "\n";
                 const auto& names = efunNameTable();
                 if (efun >= 0 && static_cast<size_t>(efun) < names.size() && names[efun] == "sscanf") {
                     // sscanf(input, fmt, &a, &b, ...): the output arguments are
@@ -2705,7 +2901,11 @@ private:
                               << " flags=0x" << std::hex << flags << std::dec
                               << " obj=" << objName_ << " vm=" << this << "\n";
                 }
-                pushValue(callUserFunction(funIndex, flags));
+                Value r7 = make_int(0);
+                bool started = callUserFunction(funIndex, flags, r7);
+                // Inline start: the callee's return op will push its own
+                // result; do NOT push anything here.
+                if (!started) pushValue(r7);
                 break;
             }
             case 8: { // call_in_other_fun_ex
@@ -2718,7 +2918,7 @@ private:
                               << " stack=" << stack_.size() << " argn=" << argn
                               << " frames=" << frames_.size() << "\n";
                 if (std::getenv("LPCVM_TRACE")) {
-                    std::string cur = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                    std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
                     std::string fv = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
                     if (fv == "lite_query_temp")
                         std::cerr << "[case8-lqt] pathIdx=" << static_cast<int>(pathVal.index())
@@ -2744,6 +2944,11 @@ private:
                 bool argsConsumed = false;   // true once popArgs() or the inline
                                              // executeFunctionOnStack has taken
                                              // the argument slots off the stack
+                // True when resolveSelf() started the callee INLINE (frame
+                // pushed, code_/meta_/ip_ switched).  The callee's return op
+                // will then push its own result, so the case-8 epilogue must
+                // NOT pushValue(result) - that would double the value.
+                bool inlineStarted = false;
                 // The target object path, if the call names one.  The original
                 // driver resolves the function in that object; only when the
                 // path is absent/self do we fall back to the current object
@@ -2769,7 +2974,7 @@ private:
                             // Pull the passed args off the stack (StackItems, so
                             // reference parameters keep their slot pointers),
                             // pad missing declared defaults BELOW them, then push
-                            // back so param0 ends on top - executeFunctionOnStack
+                            // back so param0 ends on top - startInlineFunction
                             // expects [paramN-1 ... param0(top)] exactly like
                             // executeFunctionFromOutsideLocked builds it.
                             std::vector<StackItem> real;
@@ -2785,9 +2990,9 @@ private:
                                 // placeholder slot for 0-arg calls so bp >= 0;
                                 // mirror that here.
                                 pushValue(Value{});
-                                result = executeFunctionOnStack(fn, true, 0);
+                                inlineStarted = startInlineFunction(fn, true, 0);
                             } else {
-                                result = executeFunctionOnStack(fn, false, argn);
+                                inlineStarted = startInlineFunction(fn, false, argn);
                             }
                             found = true;
                             argsConsumed = true;   // frame args popped with the frame
@@ -2904,12 +3109,15 @@ private:
                 if (!argsConsumed) {
                     for (int i = 0; i < argn && !stack_.empty(); ++i) pop();
                 }
-                pushValue(result);
+                // An inline start means the callee's return_from_fun will push
+                // its own result; do NOT pushValue(result) in that case.
+                if (!inlineStarted) pushValue(result);
                 if (std::getenv("LPCVM_TRACE") && funVal.index() == 4 &&
                     std::get<std::string>(funVal) == "save_to_text")
                     std::cerr << "[case8-ret] save_to_text result=" << to_string(result, false)
                               << " idx=" << result.index() << " stack=" << stack_.size()
-                              << " cur=" << (frames_.empty() ? "<top>" : frames_.back().fn->name) << "\n";
+                              << " cur=" << (frames_.empty() || !frames_.back().fn
+                                                 ? "<top>" : frames_.back().fn->name) << "\n";
                 break;
             }
             case 5: { // call_fun_ptr
@@ -2919,6 +3127,9 @@ private:
                 std::vector<Value> args;
                 for (int i = 1; i < total && !stack_.empty(); ++i) args.push_back(pop().value);
                 Value result = make_int(0);
+                // True when a same-owner/global closure was started INLINE
+                // (its return op will push the result; we must not).
+                bool inlineStarted = false;
                 // The master's post_init() loops `_post_init_funcs` and calls
                 // each (*f)() closure SYNCHRONOUSLY.  In the original driver a
                 // daemon init's blocking wait (read_etc/do_operate -> dba
@@ -3031,7 +3242,12 @@ private:
                                 std::cerr << "[cfptr-call] " << cl->functionName << " n=" << all.size()
                                           << " all=[" << adbg << "]\n";
                             }
-                            result = executeFunctionFromOutside(*fn, all);
+                            // Same-owner / global closure: run INLINE on this
+                            // VM's stack via the explicit stack machine (frame
+                            // push + stream switch); the callee's return op
+                            // pushes the result itself.
+                            bool ph = pushArgsForFunction(*fn, all);
+                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()));
                         }
                         if ((std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) &&
                             (cl->functionName == "init" || cl->functionName == "do_init"))
@@ -3112,32 +3328,37 @@ private:
                 } else if (funItem.value.index() == 4) {
                     const std::string& fnName = std::get<std::string>(funItem.value);
                     const OriginalFunction* fn = findFunctionAny(fnName);
-                    if (fn) result = executeFunctionFromOutside(*fn, args);
+                    if (fn) {
+                        bool ph = pushArgsForFunction(*fn, args);
+                        inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(args.size()));
+                    }
                 }
                 if (funItem.value.index() == 0 || funItem.value.index() == 1) {
                     // null function value
                 }
-                pushValue(result);
+                if (!inlineStarted) pushValue(result);
                 break;
             }
             case 33: { // if: jump when isZero != bit0; pop when bit1 set
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int flags = fromMeta ? m1 : in.b;
                 bool zero = isZero(top().value);
-                if (zero != ((flags & 1) != 0)) ip += offset;
+                if (zero != ((flags & 1) != 0)) ip_ += offset;
                 if (flags & 2) pop();
                 break;
             }
             case 31: // goto
-                ip += static_cast<int16_t>(in.a);
+                ip_ += static_cast<int16_t>(in.a);
                 break;
             case 27: { // enter_function
                 const Frame& f = frames_.back();
-                if (std::getenv("LPCVM_TRACE") && (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc"))
+                bool traceEnter = std::getenv("LPCVM_TRACE") && f.fn &&
+                    (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc");
+                if (traceEnter)
                     std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
                               << " stackBefore=" << stack_.size() << "\n";
                 for (int i = 0; i < f.localCount; ++i) pushValue(Value{});   // uninit locals = type 0 "undefined"
-                if (std::getenv("LPCVM_TRACE") && (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc"))
+                if (traceEnter)
                     std::cerr << "[enter] " << f.fn->name << " stackAfter=" << stack_.size() << "\n";
                 break;
             }
@@ -3158,7 +3379,7 @@ private:
                 int maxArgNo = skipAll;
                 if (maxArgNo < declared) maxArgNo = declared;
                 // If every declared argument was passed, skip the default-code block.
-                if (passed >= maxArgNo) ip += skipAll;
+                if (passed >= maxArgNo) ip_ += skipAll;
                 // otherwise fall through and let the inline defaults + resort_stack run
                 break;
             }
@@ -3195,7 +3416,8 @@ private:
                 StackItem varRef = pop();
                 int number = static_cast<int>(toInt(typeV));
                 if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[loop] init fn=" << (frames_.empty() ? "<global>" : frames_.back().fn->name)
+                    std::cerr << "[loop] init fn=" << (frames_.empty() || !frames_.back().fn
+                                                           ? "<global>" : frames_.back().fn->name)
                               << " varNo=" << varNo << " slot=" << slot
                               << " typeV=" << number << " second.type=" << second.index()
                               << " second=" << to_string(second, false)
@@ -3222,20 +3444,21 @@ private:
                     stack_[static_cast<size_t>(slot)].value = ctrl;
                 else if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size()
-                              << " fn=" << (frames_.empty() ? "<global>" : frames_.back().fn->name)
+                              << " fn=" << (frames_.empty() || !frames_.back().fn
+                                                ? "<global>" : frames_.back().fn->name)
                               << " bp=" << (frames_.empty() ? -999 : frames_.back().bp) << "\n";
                 break;
             }
             case 18: { // cond_jmp_for_loop
                 int breakOffset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int varNo = fromMeta ? m1 : static_cast<int8_t>(in.b);
-                loopStep(ip, slotOf(varNo), breakOffset, 0);
+                loopStep(ip_, slotOf(varNo), breakOffset, 0);
                 break;
             }
             case 80: { // step_jmp_for_loop
                 int continueOffset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int varNo = fromMeta ? m1 : static_cast<int8_t>(in.b);
-                loopStep(ip, slotOf(varNo), 0, continueOffset);
+                loopStep(ip_, slotOf(varNo), 0, continueOffset);
                 break;
             }
             case 82: // to_reserve_stack_value (placeholder slot; type irrelevant)
@@ -3260,7 +3483,7 @@ private:
             case 12: { // case_default
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 if (!stack_.empty()) pop();
-                ip += offset;
+                ip_ += offset;
                 break;
             }
             case 10: { // case_check_number
@@ -3271,10 +3494,10 @@ private:
                 if (std::getenv("LPCVM_TRACE_CASE"))
                     std::cerr << "[case] num offset=" << offset << " value=" << number
                               << " top=" << to_string(v, false) << " idx=" << v.index()
-                              << " hit=" << hit << " ip=" << ip << "\n";
+                              << " hit=" << hit << " ip=" << ip_ << "\n";
                 if (hit) {
                     pop();
-                    ip += offset;
+                    ip_ += offset;
                 }
                 break;
             }
@@ -3288,14 +3511,14 @@ private:
                     static_cast<size_t>(strIndex) < tbl->size() &&
                     std::get<std::string>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
                     pop();
-                    ip += offset;
+                    ip_ += offset;
                 }
                 break;
             }
             default:
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[vm] unhandled op " << in.op << " " << ai.name
-                              << " at ip=" << (ip - 1) << "\n";
+                              << " at ip=" << (ip_ - 1) << "\n";
                 break;
             }
             } catch (const VmError& e) {
@@ -3308,7 +3531,7 @@ private:
                 catches_.pop_back();
                 stack_.resize(rec.stackSize);
                 pushValue(make_string(std::string(e.what())));
-                ip = rec.ipTarget;
+                ip_ = rec.ipTarget;
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[catch] error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
             } catch (const std::exception& e) {
@@ -3318,7 +3541,7 @@ private:
                     catches_.pop_back();
                     stack_.resize(rec.stackSize);
                     pushValue(make_string(std::string(e.what())));
-                    ip = rec.ipTarget;
+                    ip_ = rec.ipTarget;
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[catch] std error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
                 } else {
@@ -3334,7 +3557,7 @@ private:
     void loopStep(size_t& ip, int ctrlSlot, int breakOffset, int continueOffset) {
         if (ctrlSlot < 0 || static_cast<size_t>(ctrlSlot) >= stack_.size()) {
             if (std::getenv("LPCVM_TRACE")) {
-                std::string fn = frames_.empty() ? "<global>" : frames_.back().fn->name;
+                std::string fn = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
                 std::cerr << "[loop] ctrl slot out of range: " << ctrlSlot << " size=" << stack_.size()
                           << " fn=" << fn << " bp=" << (frames_.empty() ? -1 : frames_.back().bp)
                           << " localCount=" << (frames_.empty() ? -1 : frames_.back().localCount) << "\n";
@@ -3886,6 +4109,8 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
     if (rel.compare(0, opPrefix.size(), opPrefix) == 0)
         relCandidates.push_back(rel.substr(opPrefix.size()));
     for (const auto& rc : relCandidates) {
+        if (std::getenv("LPCVM_LOCK_TRACE"))
+            std::cerr << "[loadobj] stage1 rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
         auto pakObj = loadOriginalObjectByRelPath(rc);
         if (!pakObj) continue;
         std::string key = "pak:" + rc;
@@ -3895,17 +4120,23 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
             if (reg.vms.find(key) != reg.vms.end()) return 1;
         }
         try {
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[loadobj] constructing VM key=" << key << " t=" << std::this_thread::get_id() << "\n";
             auto vmPtr = std::make_shared<OriginalVm>(*pakObj, searchRoot);
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.objects[key] = pakObj;
                 reg.vms[key] = vmPtr;
             }
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[loadobj] runInit key=" << key << " t=" << std::this_thread::get_id() << "\n";
             vmPtr->runInit(createArgs);
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.initialized[key] = true;
             }
+            if (std::getenv("LPCVM_LOCK_TRACE"))
+                std::cerr << "[loadobj] done key=" << key << " t=" << std::this_thread::get_id() << "\n";
             return 1;
         } catch (...) {
             return 0;
