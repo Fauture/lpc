@@ -2413,13 +2413,23 @@ private:
                 Value key = pop().value;
                 StackItem c = pop();
                 Value container = c.isRef ? deref(c) : c.value;
-                pushValue(queryMemberValue(container, key));
+                pushValue(queryMemberValue(container, key, fromMeta ? m0 : static_cast<int16_t>(in.a)));
                 break;
             }
             case 68: { // query_member_ptr
                 Value key = pop().value;
                 StackItem c = pop();
                 Value container = c.isRef ? deref(c) : c.value;
+                int flag = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                // Original vm_queryMemberPtr (0x808f8e4): flag bit0 = index from
+                // the END (offset = size - index) for arrays.  Resolve the final
+                // index here so the member ref reads/writes the right element.
+                if ((flag & 1) && container.index() == 5) {
+                    const auto& items = std::get<std::shared_ptr<ArrayValue>>(container)->items;
+                    int64_t i = toInt(key);
+                    i = static_cast<int64_t>(items.size()) - i;
+                    key = make_int(i);
+                }
                 push(makeMemberRef(container, key));
                 break;
             }
@@ -3396,7 +3406,7 @@ private:
         }
     }
 
-    Value queryMemberValue(const Value& container, const Value& key) {
+    Value queryMemberValue(const Value& container, const Value& key, int flag = 0) {
         if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_MEMBER")) {
             std::string msg = "[member] key=" + to_string(key, false) + " cont=" + to_string(container, false) + "\n";
             std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
@@ -3410,6 +3420,9 @@ private:
         if (container.index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(container);
             int64_t i = toInt(key);
+            // Original vm_queryMember (0x808fa60): flag bit0 = index from the
+            // END (v7 = size - index) for arrays and strings alike.
+            if (flag & 1) i = static_cast<int64_t>(arr->items.size()) - i;
             if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) return arr->items[static_cast<size_t>(i)];
             return Value{};   // OOB -> original type 0 "undefined"
         }
@@ -3418,8 +3431,18 @@ private:
             // path[strlen-1] != 47 in load_all_path/load_all.
             const std::string& s = std::get<std::string>(container);
             int64_t i = toInt(key);
+            if (flag & 1) i = static_cast<int64_t>(s.size()) - i;
             if (i >= 0 && i < static_cast<int64_t>(s.size()))
                 return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
+            return Value{};   // OOB -> original type 0 "undefined"
+        }
+        if (container.index() == 10) {
+            // (buffer)[i] -> byte value (original vm_queryMember type 5 case).
+            const auto& data = std::get<std::shared_ptr<BufferValue>>(container)->data;
+            int64_t i = toInt(key);
+            if (flag & 1) i = static_cast<int64_t>(data.size()) - i;
+            if (i >= 0 && i < static_cast<int64_t>(data.size()))
+                return make_int(static_cast<int64_t>(static_cast<unsigned char>(data[static_cast<size_t>(i)])));
             return Value{};   // OOB -> original type 0 "undefined"
         }
         return Value{};
