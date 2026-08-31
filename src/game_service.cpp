@@ -12953,6 +12953,10 @@ bool gameServiceSend(int clientNo, const std::string& data) {
                      static_cast<int>(data.size()) - sent, 0);
         if (n <= 0) {
             int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK || err == WSAEINTR) {   // non-blocking socket
+                Sleep(1);
+                continue;
+            }
             if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " fail n=" << n << " err=" << err << "\n";
             return false;
         }
@@ -12980,6 +12984,18 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
         char buf[4096];
         for (;;) {
             int n = recv(static_cast<SOCKET>(fd), buf, sizeof(buf), 0);
+            if (n == SOCKET_ERROR) {
+                int err = WSAGetLastError();
+                // Non-blocking socket (created by xdbcConnectAsync / FIONBIO
+                // in the virtual socket layer): no data yet is NOT an error -
+                // retry after a short sleep instead of killing the connection.
+                if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+                    Sleep(1);
+                    continue;
+                }
+                std::cerr << "[recv] fd=" << fd << " cno=" << clientNo << " err=" << err << "\n";
+                break;
+            }
             {
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";

@@ -369,6 +369,9 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     }
     auto it = pktState().interfaces.find(cmdNo);
     if (it == pktState().interfaces.end()) {
+        if ((cmdNo & 0xFF00) == 0x2300 || (cmdNo & 0xFF00) == 0x2400 || cmdNo == 0x3A01 || cmdNo == 0x3A02)
+            std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
+                      << " NO INTERFACE\n";
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                       << " no interface\n";

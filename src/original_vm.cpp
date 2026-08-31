@@ -825,6 +825,7 @@ private:
     std::vector<std::shared_ptr<Process>> parked_;   // no automatic wakeup
     bool shutdown_ = false;
     uint64_t step_ = 0;
+    int64_t lastPollMs_ = 0;      // last socket poll tick (20ms throttle)
 };
 
 // The driver-level scheduler instance (defined below; declared here so VM
@@ -4781,17 +4782,20 @@ void Scheduler::run() {
                           << " evwait=" << eventWaiters_.size()
                           << " sockwait=" << sockWaiters_.size() << "\n";
             ++step_;
-            // Poll parked sockets (kind-5 waits: connect/recv) whenever the
-            // ready queue is empty (timers may still be pending - e.g. echo
-            // daemon's periodic sleep - but a socket event must still wake the
-            // loop).  select() with a short timeout notices connect completion
-            // / incoming data without blocking the scheduler.
-            if (!sockWaiters_.empty() && ready_.empty()) {
+            // Poll parked sockets (kind-5 waits: connect/recv) REGARDLESS of
+            // whether the ready queue is busy: the original vm_mainLoop scans
+            // sockets every iteration, and if some daemon keeps the ready
+            // queue fed (e.g. ccs's CONFIG_D retry loop), a connect/recv
+            // completion would NEVER be noticed - the connecting process stays
+            // parked forever and the service never starts.  Throttle to at
+            // most one select() per 20ms.
+            if (!sockWaiters_.empty() && (nowMs() - lastPollMs_) >= 20) {
+                lastPollMs_ = nowMs();
                 std::vector<int> fds;
                 for (auto& kv : sockWaiters_) fds.push_back(kv.first);
                 lk.unlock();
                 std::vector<int> rd = fds, wr = fds;
-                int nrd = lpc::xdbcPoll(fds, rd, wr, 100);
+                int nrd = lpc::xdbcPoll(fds, rd, wr, 20);
                 if (std::getenv("LPCVM_TRACE") && nrd != 0)
                     std::cerr << "[sock-poll] n=" << nrd << "\n";
                 for (int fd : fds) {

@@ -3604,6 +3604,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[send_to_client] cno=" << cno << " body=" << data.size()
                           << " total=" << pkt.size() << "\n";
+            if (std::getenv("LPCVM_SQL_TRACE")) {
+                std::string hex;
+                static const char* hx = "0123456789ABCDEF";
+                for (size_t i = 0; i < data.size() && i < 40; ++i) { hex += hx[(unsigned char)data[i] >> 4]; hex += hx[(unsigned char)data[i] & 15]; }
+                std::cerr << "[send-pkt] cno=" << cno << " msgNo=0x" << std::hex << msgNo << std::dec
+                          << " data(" << data.size() << ")=" << hex << "\n";
+            }
             return make_int(lpc::gameServiceSend(cno, pkt) ? 1 : 0);
         }
         return make_int(0);
