@@ -106,6 +106,19 @@ int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs);
 // Current LPC thread's unique, stable id (the original's PCB->tid).  Used to
 // build per-thread event names ("ev_filed" + tid/32) and bits (1 << tid%32).
 int64_t lpcThreadId();
+// Reserve an unused tid in the caller thread (create_thread needs the child's
+// tid synchronously to return it); the spawned thread then calls lpcThreadBind.
+int64_t lpcAllocTid();
+// Force the current thread's tid to `tid` and register it in the process
+// table under `name` (empty = unnamed).  Mirrors vm_spawnProcess registering
+// the PCB with a name.
+void lpcThreadBind(int64_t tid, const std::string& name);
+// Mark the process as terminated (PCB freed); get_thread_id queries go -1.
+void lpcThreadMarkDead(int64_t tid);
+// vm_lookupProcess(name): tid of a live process with that name, else -1.
+int64_t lpcThreadIdByName(const std::string& name);
+// vm_getPCB(tid): tid if a live process has it, else -1.
+int64_t lpcThreadIdByTid(int64_t tid);
 // True when no function closure is currently in flight on a driver queue (all
 // dispatched services have been received AND invoked to completion).  The game
 // accept thread polls this before feeding a packet so a dispatched

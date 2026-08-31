@@ -1356,8 +1356,26 @@ private:
                     owner = cl->owner ? cl->owner : &obj_;
                 }
                 if (funName.empty()) return make_int(0);
+                // Thread name (original vm_f_create_thread 0x80ecbc0): arg0 is
+                // a string name or a mapping with "name".  create_thread must
+                // RETURN the new process's tid (threadd stores it in tids[]
+                // and later polls get_thread_id(tid)); the original also
+                // errors on duplicate names, which never fires in the game.
+                std::string threadName;
+                if (!args.empty()) {
+                    if (args[0].index() == 4) {
+                        threadName = std::get<std::string>(args[0]);
+                    } else if (args[0].index() == 6) {
+                        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+                        const Value* hit = mp->find(make_string("name"));
+                        if (hit && hit->index() == 4) threadName = std::get<std::string>(*hit);
+                    }
+                }
+                int64_t newTid = lpc::lpcAllocTid();
                 if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[cthread] fun=" << funName << " args=" << threadArgs.size() << "\n";
+                    std::cerr << "[cthread] fun=" << funName << " args=" << threadArgs.size()
+                              << " name=" << (threadName.empty() ? "<none>" : threadName)
+                              << " tid=" << newTid << "\n";
                 // The original driver spawns the process immediately; the new
                 // process shares the creator object's context (globals are
                 // process-wide, instance vars are copied from the initialized
@@ -1413,7 +1431,12 @@ private:
                     }
                 }
                 std::thread([objPtr, owner, funName, threadArgs, root, isTelnetThread, telnetCno,
+                             threadName, newTid,
                              objVarsSnapshot = std::move(objVarsSnapshot)]() {
+                    // Register the process under its name BEFORE running LPC so
+                    // get_thread_id(name) / get_thread_id(tid) see it live, and
+                    // the thread-local tid is the parent-returned one.
+                    lpc::lpcThreadBind(newTid, threadName);
                     if (isTelnetThread && telnetCno >= 0)
                         setThreadTelnetClient(telnetCno);
                     if (std::getenv("LPCVM_TRACE"))
@@ -1460,8 +1483,12 @@ private:
                         std::cerr << "[thread] " << funName << " error: unknown\n";
                     }
                     setThreadTelnetClient(-1);
+                    lpc::lpcThreadMarkDead(newTid);
                 }).detach();
-                return make_int(1);
+                // Original pushes the new process's tid (vm_f_create_thread
+                // ends with vm_pushNumber(PCB->tid)); threadd stores it in
+                // tids[] for its shutdown wait.
+                return make_int(newTid);
             }  // nm == "create_thread"
             if (nm == "register_post_init" && args.size() >= 1 && args[0].index() == 8) {
                 auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);

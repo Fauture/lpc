@@ -293,6 +293,12 @@ std::string resolveEventNameLocked(const Value& v, EventRegistry& reg) {
 // Our threads are std::threads with no fixed table, so we reuse ids from a
 // free pool once a thread ends (PCB-slot semantics): ids never grow past the
 // live-thread count, which the game keeps well under max_threads.
+//
+// create_thread must return the new process's tid synchronously (threadd
+// stores it in tids[] and later polls get_thread_id(tid) for liveness), so
+// the parent allocates the id (lpcAllocTid) and the spawned thread binds it
+// (lpcThreadBind) before running LPC.  A process registry mirrors the
+// original's vm_lookupProcess(name)/vm_getPCB(tid) for get_thread_id(name|int).
 namespace {
 std::mutex& tidMutex() {
     static std::mutex m;
@@ -315,20 +321,91 @@ struct TidSlot {
     }
 };
 thread_local TidSlot g_tidSlot;
+thread_local int64_t g_presetTid = -1;
+
+// --- process registry (vm_lookupProcess / vm_getPCB) ---
+struct LpcProc {
+    std::string name;
+    std::atomic<bool> alive{true};
+};
+std::mutex& procMutex() {
+    static std::mutex m;
+    return m;
+}
+std::map<int64_t, std::shared_ptr<LpcProc>>& procByTid() {
+    static std::map<int64_t, std::shared_ptr<LpcProc>> m;
+    return m;
+}
+std::map<std::string, std::set<int64_t>>& procByName() {
+    static std::map<std::string, std::set<int64_t>> m;
+    return m;
+}
 } // namespace
+
+int64_t lpcAllocTid() {
+    std::lock_guard<std::mutex> lk(tidMutex());
+    auto& pool = tidFreePool();
+    if (!pool.empty()) {
+        int64_t t = *pool.begin();
+        pool.erase(pool.begin());
+        return t;
+    }
+    return tidNext().fetch_add(1, std::memory_order_relaxed);
+}
 
 int64_t lpcThreadId() {
     if (g_tidSlot.tid < 0) {
-        std::lock_guard<std::mutex> lk(tidMutex());
-        auto& pool = tidFreePool();
-        if (!pool.empty()) {
-            g_tidSlot.tid = *pool.begin();
-            pool.erase(pool.begin());
+        if (g_presetTid >= 0) {
+            g_tidSlot.tid = g_presetTid;
+            g_presetTid = -1;
         } else {
-            g_tidSlot.tid = tidNext().fetch_add(1, std::memory_order_relaxed);
+            g_tidSlot.tid = lpcAllocTid();
         }
     }
     return g_tidSlot.tid;
+}
+
+// Called by a spawned thread before it runs LPC: force the thread-local tid
+// to the parent-allocated id and register the process (name may be empty).
+void lpcThreadBind(int64_t tid, const std::string& name) {
+    g_presetTid = tid;
+    auto proc = std::make_shared<LpcProc>();
+    proc->name = name;
+    std::lock_guard<std::mutex> lk(procMutex());
+    procByTid()[tid] = proc;
+    if (!name.empty()) procByName()[name].insert(tid);
+}
+
+// Called when the spawned thread finishes (PCB termination).
+void lpcThreadMarkDead(int64_t tid) {
+    std::lock_guard<std::mutex> lk(procMutex());
+    auto it = procByTid().find(tid);
+    if (it == procByTid().end()) return;
+    it->second->alive = false;
+    const std::string& nm = it->second->name;
+    if (!nm.empty()) {
+        auto nit = procByName().find(nm);
+        if (nit != procByName().end()) {
+            nit->second.erase(tid);
+            if (nit->second.empty()) procByName().erase(nit);
+        }
+    }
+}
+
+// vm_lookupProcess(name): the tid of a LIVE process with that name, else -1.
+int64_t lpcThreadIdByName(const std::string& name) {
+    std::lock_guard<std::mutex> lk(procMutex());
+    auto it = procByName().find(name);
+    if (it == procByName().end() || it->second.empty()) return -1;
+    return *it->second.begin();
+}
+
+// vm_getPCB(tid): tid if a LIVE process has it, else -1.
+int64_t lpcThreadIdByTid(int64_t tid) {
+    std::lock_guard<std::mutex> lk(procMutex());
+    auto it = procByTid().find(tid);
+    if (it != procByTid().end() && it->second->alive) return tid;
+    return -1;
 }
 
 void eventCreate(const std::string& name, int64_t oid) {
@@ -3942,10 +4019,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "get_thread_id") {
         // vm_f_get_thread_id (0x80ed79c): get_thread_id() -> the current
-        // process's tid; get_thread_id(name/int) resolves another process
-        // (returns its tid or -1).  We assign a unique stable id per LPC
-        // thread; a named lookup returns -1 (no named process registry).
+        // process's tid; get_thread_id(name) -> tid of the live process with
+        // that name (vm_lookupProcess) or -1; get_thread_id(tid) -> tid if
+        // that process is still alive (vm_getPCB) or -1.
         if (args.empty()) return make_int(lpc::lpcThreadId());
+        if (args[0].index() == 4)
+            return make_int(lpc::lpcThreadIdByName(std::get<std::string>(args[0])));
+        if (args[0].index() == 2)
+            return make_int(lpc::lpcThreadIdByTid(as_int(args[0])));
         return make_int(-1);
     }
     if (name == "time" || name == "time_desc")
