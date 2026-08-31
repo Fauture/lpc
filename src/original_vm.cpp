@@ -82,11 +82,19 @@ DWORD WINAPI lpcThreadProc(LPVOID p) {
 
 void spawnLpcThread(std::function<void()> fn, const std::string& what) {
     auto pfn = new std::function<void()>(std::move(fn));
-    HANDLE h = CreateThread(nullptr, 32 * 1024 * 1024, lpcThreadProc, pfn,
+    // 16MB reserved stack: deep LPC chains (a few hundred Debug frames at
+    // ~5-10KB each) fit comfortably, and reserving less lets the 32-bit
+    // process spawn the many short-lived daemon/init threads the boot
+    // creates without exhausting the address space (32MB x hundreds of
+    // concurrent threads failed with CreateThread EAGAIN / out of memory,
+    // silently dropping post-init daemon inits -> permanent stalls).
+    HANDLE h = CreateThread(nullptr, 16 * 1024 * 1024, lpcThreadProc, pfn,
                             STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
     if (h) CloseHandle(h);
     else {
-        std::cerr << "[spawn] CreateThread failed for " << what << "\n";
+        DWORD e = GetLastError();
+        fprintf(stderr, "[spawn] CreateThread failed for %s (err=%lu) threads=%lu\n", what.c_str(),
+                (unsigned long)e, (unsigned long)GetCurrentThreadId());
         delete pfn;
     }
 }
@@ -787,6 +795,10 @@ public:
     }
 
     int runInit(const std::vector<Value>& createArgs = {}) {
+        struct InitDoneGuard {
+            OriginalVm* self;
+            ~InitDoneGuard() { if (self) self->markInitDone(); }
+        } idg{this};
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
         try {
             // The original runs EVERY constitution's initCodeSegment in
@@ -946,6 +958,45 @@ private:
     int lastOp_ = -1;
     size_t lastIp_ = 0;
     int stepCounter_ = 0;
+public:
+    // Stall watchdog state: the executing thread stamps the last opcode /
+    // function every 64 instructions; a watchdog thread scans the registry
+    // and reports any VM whose stamp is stale (its thread is stuck in C++:
+    // mutex, socket, eventWait - NOT executing bytecode).
+    std::atomic<uint64_t> stallStamp_{0};
+    std::atomic<uint32_t> stallOp_{0};
+    std::atomic<uint32_t> stallIp_{0};
+    std::atomic<const char*> stallFn_{nullptr};
+    std::atomic<const char*> stallObj_{nullptr};
+    std::atomic<DWORD> stallTid_{0};      // thread id of the last stamper
+    std::atomic<uint64_t> stallDumpedStamp_{0};   // stamp generation already deep-dumped
+    std::atomic<uint64_t> stallSince_{0};  // original stamp when the stall was first seen
+    unsigned stallCount_ = 0;
+    // Deeper stall context (written by the VM thread, read by the watchdog -
+    // benign race): last efun name entered, last cross-object call target, and
+    // whether the thread is currently blocked acquiring this VM's execMutex_.
+    char stallEfun_[64] = {0};
+    char stallTarget_[160] = {0};
+    std::atomic<uint64_t> stallLockWaitStart_{0};   // tick when execMutex lock() began
+    // Init gate: loadObjectIntoRegistry runs the loaded object's initializer on
+    // the CALLER's thread (which still holds the caller VM's execMutex).  A
+    // post-init thread that enters the SAME object concurrently while holding
+    // its own object's lock creates an AB-BA deadlock (loader: datasaved->
+    // achieve, post-init: achieve->datasaved).  The post-init waits for the
+    // object's init to complete before entering it.
+    std::mutex initCvMtx_;
+    std::condition_variable initCv_;
+    std::atomic<bool> initDone_{false};
+    void markInitDone() {
+        { std::lock_guard<std::mutex> lk(initCvMtx_); initDone_ = true; }
+        initCv_.notify_all();
+    }
+    bool waitInitDone(long long timeoutMs) {
+        std::unique_lock<std::mutex> lk(initCvMtx_);
+        return initCv_.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                                [this] { return initDone_.load(std::memory_order_relaxed); });
+    }
+private:
     Value returnValue_ = make_int(0);
     bool returned_ = false;
     int catchDepth_ = 0;
@@ -1183,6 +1234,8 @@ private:
     // Call an efun by index with already-collected arguments.
     Value callEfunWithArgs(int efunIndex, const std::vector<Value>& args) {
         const auto& names = efunNameTable();
+        if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty())
+            strncpy(stallEfun_, names[efunIndex].c_str(), sizeof(stallEfun_) - 1);
         if (std::getenv("LPCVM_TRACE")) {
             std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                  ? names[efunIndex] : "?";
@@ -1481,7 +1534,7 @@ private:
                 // cooperative scheduler ran it before the master's post_init(),
                 // so do_init callbacks always saw populated config.  Our real
                 // threads can finish update_config AFTER post_init starts,
-                // making do_init's "缂佹稑顦欢鐔煎矗閺嵮勭闁轰胶澧楀畵? retry loop print (it only
+                // making do_init's "缂備焦绋戦ˇ顖滄閻旂厧鐭楅柡宓嫮顦ラ梺杞拌兌婢ф鐣? retry loop print (it only
                 // prints while MySQL data is not yet fetched).  Synchronously
                 // run the FIRST update_config() on the owner's shared VM here
                 // so the data is fetched before post_init - the daemon thread
@@ -1933,7 +1986,14 @@ private:
     struct ExecGuard {
         std::recursive_mutex& m;
         int& depth;
-        ExecGuard(std::recursive_mutex& m_, int& d_) : m(m_), depth(d_) { m.lock(); ++depth; }
+        std::atomic<uint64_t>& waitStart;
+        ExecGuard(std::recursive_mutex& m_, int& d_, std::atomic<uint64_t>& ws)
+            : m(m_), depth(d_), waitStart(ws) {
+            waitStart = GetTickCount64();
+            m.lock();
+            waitStart = 0;
+            ++depth;
+        }
         ~ExecGuard() { --depth; m.unlock(); }
         ExecGuard(const ExecGuard&) = delete;
         ExecGuard& operator=(const ExecGuard&) = delete;
@@ -1960,7 +2020,11 @@ private:
         try {
             r = fn();
         } catch (...) {
-            for (int i = 0; i < d; ++i) execMutex_.lock();
+            for (int i = 0; i < d; ++i) {
+                stallLockWaitStart_ = GetTickCount64();
+                execMutex_.lock();
+            }
+            stallLockWaitStart_ = 0;
             execDepth_ = d;
             stack_ = std::move(s);
             frames_ = std::move(f);
@@ -1968,7 +2032,11 @@ private:
             returned_ = rd;
             throw;
         }
-        for (int i = 0; i < d; ++i) execMutex_.lock();
+        for (int i = 0; i < d; ++i) {
+            stallLockWaitStart_ = GetTickCount64();
+            execMutex_.lock();
+        }
+        stallLockWaitStart_ = 0;
         execDepth_ = d;
         stack_ = std::move(s);
         frames_ = std::move(f);
@@ -1991,7 +2059,7 @@ private:
         if (diagMe)
             std::cerr << "[lock] TRY obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
-        ExecGuard lock(execMutex_, execDepth_);
+        ExecGuard lock(execMutex_, execDepth_, stallLockWaitStart_);
         if (diagMe)
             std::cerr << "[lock] GOT obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
@@ -2028,7 +2096,7 @@ private:
 
     Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
                                  int passedArgs = -1) {
-        ExecGuard lock(execMutex_, execDepth_);
+        ExecGuard lock(execMutex_, execDepth_, stallLockWaitStart_);
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
         // Mirror the original driver's per-process call-depth guard
         // (vm_callInUserFunBody: "Too depth function call").  Our nested LPC
@@ -2183,6 +2251,15 @@ private:
             const OriginalInsn& in = code[ip++];
             lastOp_ = in.op;
             lastIp_ = ip - 1;
+            if ((++stallCount_ & 63) == 0) {
+                stallOp_ = static_cast<uint32_t>(in.op);
+                stallIp_ = static_cast<uint32_t>(ip - 1);
+                stallFn_ = frames_.empty() || !frames_.back().fn ? "<global>"
+                                                                 : frames_.back().fn->name.c_str();
+                stallObj_ = objName_.c_str();
+                stallTid_ = GetCurrentThreadId();
+                stallStamp_ = GetTickCount64();
+            }
             if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
                 std::string cur = "<global>";
                 if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
@@ -2811,6 +2888,7 @@ private:
                         std::cerr << "[wait_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " secs=" << secs
                                   << " vm=" << this << " obj=" << objName_ << "\n";
+                    snprintf(stallEfun_, sizeof(stallEfun_), "wait_event:%s", ename.c_str());
                     Value r = runDetached([&] {
                         return make_int(lpc::eventWait(eref, mask, secs));
                     });
@@ -2839,6 +2917,7 @@ private:
                         Value mv = items[1].isRef ? deref(items[1]) : items[1].value;
                         mask = static_cast<uint32_t>(toInt(mv));
                     }
+                    snprintf(stallEfun_, sizeof(stallEfun_), "raise_event:%s", ename.c_str());
                     int64_t rc = lpc::eventRaise(eref, mask);
                     if (std::getenv("LPCVM_EVENT_TRACE"))
                         std::cerr << "[raise_event] " << ename << " mask=0x" << std::hex
@@ -2992,11 +3071,13 @@ private:
                         if (funName.empty()) {
                             // function index on an explicit object: resolve
                             // via the object's own function table
+                            snprintf(stallTarget_, sizeof(stallTarget_), "%s::idx%d", path.c_str(), funIndex);
                             result = runDetached([&] {
                                 return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
                             });
                             found = true;
                         } else {
+                            snprintf(stallTarget_, sizeof(stallTarget_), "%s::%s", path.c_str(), funName.c_str());
                             result = runDetached([&] {
                                 return tryCallOtherObject(searchRoot_, path, funName, args);
                             });
@@ -3253,6 +3334,8 @@ private:
                                 std::cerr << "[cfptr] owner-init " << cl->functionName
                                           << " on " << ownerVm->object().sourceName
                                           << " vm=" << this << "\n";
+                            snprintf(stallTarget_, sizeof(stallTarget_), "closure:%s@%s",
+                                     cl->functionName.c_str(), ownerVm->object().sourceName.c_str());
                             if (std::getenv("LPCVM_TRACE"))
                                 std::cerr << "[cfv] calling " << cl->functionName << " on " << ownerVm->object().sourceName
                                           << " args=" << all.size() << "\n";
@@ -3273,6 +3356,16 @@ private:
                                     [ovm, fnp, fnn, fns, allc, oname]() {
                                     if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
                                         std::cerr << "[postinit-detach] " << fns << " on " << oname << "\n";
+                                    // The object may still be mid-initialization on
+                                    // the loading thread (its loader's safe_load_
+                                    // object runs the init inline while holding the
+                                    // loader's execMutex).  Entering it now would
+                                    // deadlock AB-BA style (we hold our own object's
+                                    // lock and want theirs; they hold theirs and want
+                                    // ours).  Wait for the init to finish first.
+                                    if (!ovm->waitInitDone(120000))
+                                        std::cerr << "[postinit-detach] WARN " << fns << " on "
+                                                  << oname << " init not done after 120s, proceeding\n";
                                     try {
                                         if (fnp) ovm->callFunctionPointer(fnp, allc);
                                         else ovm->callFunctionByName(fnn, allc);
@@ -4034,7 +4127,142 @@ void runPostInitFunctions(const std::string& searchRoot) {
 
 } // namespace
 
+// Stall watchdog: every 5s scan the object registry and report any VM whose
+// instruction stamp is older than 15s - its thread is stuck in C++ (mutex,
+// socket recv, eventWait) rather than executing bytecode.  Re-stamps the VM
+// so a still-stuck VM is re-reported every 15s.  Uses try_lock so a deadlock
+// ON registryMutex itself still surfaces.
+
+namespace {
+// lpcvm.exe module range (ASLR moves the base every run).
+uintptr_t moduleBase() {
+    static uintptr_t b = 0;
+    static bool done = false;
+    if (!done) {
+        done = true;
+        HMODULE h = GetModuleHandleA(nullptr);
+        if (h) {
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(h);
+            if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+                const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+                    reinterpret_cast<const uint8_t*>(h) + dos->e_lfanew);
+                if (nt->Signature == IMAGE_NT_SIGNATURE) b = reinterpret_cast<uintptr_t>(h);
+            }
+        }
+    }
+    return b;
+}
+size_t moduleSize() {
+    static size_t sz = 0;
+    static bool done = false;
+    if (!done) {
+        done = true;
+        HMODULE h = GetModuleHandleA(nullptr);
+        if (h) {
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(h);
+            if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+                const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+                    reinterpret_cast<const uint8_t*>(h) + dos->e_lfanew);
+                if (nt->Signature == IMAGE_NT_SIGNATURE) sz = nt->OptionalHeader.SizeOfImage;
+            }
+        }
+    }
+    return sz;
+}
+// Read one dword of OUR OWN memory (safe even if the pointer is bad).
+uintptr_t peekDword(uintptr_t addr) {
+    __try {
+        return *reinterpret_cast<const uintptr_t*>(addr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+// Suspend the stuck thread and dump its native stack as module-relative
+// addresses (resolve against build/Debug/lpcvm.map).
+void dumpStuckThread(DWORD tid) {
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                           FALSE, tid);
+    if (!th) return;
+    DWORD susp = SuspendThread(th);
+    if (susp == static_cast<DWORD>(-1)) { CloseHandle(th); return; }
+    CONTEXT ctx;
+    ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+    if (GetThreadContext(th, &ctx)) {
+        uintptr_t base = moduleBase();
+        size_t size = moduleSize();
+        fprintf(stderr, "[stk] tid=%lu esp=0x%lx base=0x%llx size=0x%zx\n",
+                (unsigned long)tid, (unsigned long)ctx.Esp,
+                (unsigned long long)base, size);
+        uintptr_t p = ctx.Esp;
+        uintptr_t end = ctx.Esp + 512 * 1024;
+        int printed = 0;
+        for (; p < end && printed < 60; p += 4) {
+            uintptr_t v = peekDword(p);
+            if (v >= base && v < base + size) {
+                fprintf(stderr, "[stk] +0x%06llx\n", (unsigned long long)(v - base));
+                ++printed;
+            }
+        }
+    }
+    ResumeThread(th);
+    CloseHandle(th);
+}
+} // namespace
+
+void stallWatchdogLoop() {
+    for (;;) {
+        Sleep(5000);
+        uint64_t now = GetTickCount64();
+        auto& reg = objectRegistry();
+        if (!registryMutex().try_lock()) {
+            fprintf(stderr, "[stall] registryMutex busy - possible deadlock on registry lock\n");
+            continue;
+        }
+        std::lock_guard<std::recursive_mutex> rl(registryMutex(), std::adopt_lock);
+        for (auto& kv : reg.vms) {
+            OriginalVm& vm = *kv.second;
+            uint64_t st = vm.stallStamp_.load(std::memory_order_relaxed);
+            if (st && now > st + 15000) {
+                if (vm.stallSince_.load() == 0) vm.stallSince_ = st;
+                uint64_t since = vm.stallSince_.load();
+                const char* fn = vm.stallFn_.load(std::memory_order_relaxed);
+                const char* ob = vm.stallObj_.load(std::memory_order_relaxed);
+                uint64_t lw = vm.stallLockWaitStart_.load(std::memory_order_relaxed);
+                fprintf(stderr,
+                        "[stall] obj=%s fn=%s op=%s ip=%u efun=%s target=%s%s vm=%p stuck=%llus\n",
+                        ob ? ob : "?", fn ? fn : "?", actionInfo(static_cast<int>(vm.stallOp_.load())).name,
+                        static_cast<unsigned>(vm.stallIp_.load()), vm.stallEfun_, vm.stallTarget_,
+                        (lw && now > lw + 15000) ? " [WAITING-EXEC-LOCK]" : "", (void*)&vm,
+                        (unsigned long long)((now - since) / 1000));
+                // Deep dump once per stuck episode (>90s since the ORIGINAL
+                // onset): the stuck thread's native stack as RVAs (see
+                // build/Debug/lpcvm.map).
+                if (now > since + 90000 && vm.stallDumpedStamp_.load() != since) {
+                    vm.stallDumpedStamp_ = since;
+                    DWORD tid = vm.stallTid_.load();
+                    fprintf(stderr, "[stall] deep-dump vm=%p tid=%lu\n", (void*)&vm, (unsigned long)tid);
+                    dumpStuckThread(tid);
+                }
+                // NOTE: deliberately NO re-stamp here - the stamp stays stale
+                // for a stuck VM so the onset (stallSince_) keeps accumulating.
+            } else {
+                vm.stallSince_ = 0;              // resumed
+                vm.stallDumpedStamp_ = 0;
+            }
+        }
+    }
+}
+
+void startStallWatchdog() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::thread(stallWatchdogLoop).detach();
+        std::cerr << "[stall-watchdog] armed\n";
+    });
+}
+
 int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
+    startStallWatchdog();
     dbgBootMem("runOriginalObject enter");
     OriginalVm vm(obj, searchRoot);
     dbgBootMem("boot VM constructed");
