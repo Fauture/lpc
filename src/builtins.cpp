@@ -10,6 +10,7 @@
 #include "lzss.h"
 #include "pkt_protocol.h"
 #include "xdbc.h"
+#include "sqlite3.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -1893,6 +1894,83 @@ static Value dupValue(const Value& v) {
         return v;   // int/float/string/object/closure/nil/undefined
     }
 }
+
+// ---------------------------------------------------------------------------
+// SQLite-backed efuns (sql_open_db / sql_query / sql_step / ...).
+//
+// The original driver runs the FILE database and the in-memory import DB on
+// SQLite; gs/dba/ccs autorecoverd uses sql_* to restore share_data and other
+// tables.  This is the sqlite3 C API surface the driver wraps (open/exec/
+// prepare/step/finalize/close/last_insert_rowid/errmsg), so real SQLite gives
+// exact semantics (single-quoted identifiers, "vacuum", "limit %d,%d", ...).
+// ---------------------------------------------------------------------------
+namespace {
+struct SqliteConn {
+    std::string uri;                        // real open path (shared-cache URI for memory)
+    std::map<DWORD, sqlite3*> conns;        // per-thread connections: sqlite's
+                                            // serialized mode serializes ALL
+                                            // ops on one connection, so a
+                                            // thread stuck inside sqlite3_exec
+                                            // (or a long import insert) blocks
+                                            // every OTHER thread using the same
+                                            // handle.  A shared-cache memory db
+                                            // gives each thread its OWN
+                                            // connection (independent mutexes)
+                                            // while all still see the same
+                                            // data - the import cannot starve
+                                            // the configd/daemon readers.
+};
+struct SqliteQuery {
+    sqlite3* db = nullptr;
+    sqlite3_stmt* stmt = nullptr;
+};
+std::mutex& sqliteMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<int64_t, std::shared_ptr<SqliteConn>>& sqliteConns() {
+    static auto* m = new std::unordered_map<int64_t, std::shared_ptr<SqliteConn>>();
+    return *m;
+}
+std::atomic<int64_t>& sqliteNextConn() {
+    static std::atomic<int64_t> n{1};
+    return n;
+}
+std::unordered_map<int64_t, std::shared_ptr<SqliteQuery>>& sqliteQueries() {
+    static auto* m = new std::unordered_map<int64_t, std::shared_ptr<SqliteQuery>>();
+    return *m;
+}
+std::atomic<int64_t>& sqliteNextQuery() {
+    static std::atomic<int64_t> n{1};
+    return n;
+}
+// Get (or lazily create) THIS thread's connection for the logical db handle.
+// Caller must NOT hold sqliteMutex (we take it for the lookup + open only).
+sqlite3* sqliteConnFor(const std::shared_ptr<SqliteConn>& c, DWORD tid) {
+    std::lock_guard<std::mutex> lk(sqliteMutex());
+    auto it = c->conns.find(tid);
+    if (it != c->conns.end()) return it->second;
+    sqlite3* db = nullptr;
+    if (sqlite3_open_v2(c->uri.c_str(), &db,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI,
+                        nullptr) != SQLITE_OK) {
+        if (db) sqlite3_close(db);
+        return nullptr;
+    }
+    c->conns[tid] = db;
+    return db;
+}
+// Map a virtual path ("/gs/log/filed_backup.sql") to a real file under the
+// run/data directory (linux/gs/log/filed_backup.sql), creating parents.
+std::string sqliteRealPath(const std::string& vpath) {
+    std::string rel = vpath;
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    std::string d = dataRoot() + "/" + rel;
+    std::error_code ec;
+    fs::create_directories(fs::path(d).parent_path(), ec);
+    return d;
+}
+} // namespace
 
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
@@ -5013,15 +5091,187 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // reads simple XML configs; return an empty mapping (no-op).
         return make_mapping();
     }
-    if (name == "sql_open_db" || name == "sql_close_db" || name == "sql_finalize") {
-        // SQLite-backed efuns; we serve SQL through MySQL instead.  Return a
-        // dummy handle / success so the game's sql_* callers proceed.
-        static std::atomic<int64_t> dbSeq{1};
-        if (name == "sql_open_db") return make_int(dbSeq.fetch_add(1));
-        return make_int(1);
+    if (name == "sql_open_db") {
+        // sql_open_db(path) -> db handle (>=1) or -1 on failure.  The game
+        // opens ":memory:" (init_sql_module) and the FILE database
+        // "/gs/log/filed_backup.sql" (autorecoverd packs to it).  The memory
+        // db is a NAMED shared-cache db so every thread's own connection sees
+        // the same data without contending on one connection mutex.
+        std::string path = args.empty() ? ":memory:" : as_string(args[0]);
+        std::string real = (path == ":memory:") ? "file:lpcvm_shared_mem?mode=memory&cache=shared"
+                                                : sqliteRealPath(path);
+        auto c = std::make_shared<SqliteConn>();
+        c->uri = real;
+        if (!sqliteConnFor(c, GetCurrentThreadId())) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sql_open_db] failed for " << real << "\n";
+            return make_int(-1);
+        }
+        int64_t id;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            id = sqliteNextConn().fetch_add(1);
+            sqliteConns()[id] = c;
+        }
+        if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+            std::cerr << "[sql_open_db] '" << path << "' -> " << id << " real=" << real << "\n";
+        return make_int(id);
     }
-    if (name == "sql_query") return make_int(1);
-    if (name == "sql_step") return make_int(0);
+    if (name == "sql_close_db") {
+        int64_t id = args.empty() ? -1 : as_int(args[0]);
+        std::lock_guard<std::mutex> lk(sqliteMutex());
+        auto it = sqliteConns().find(id);
+        if (it != sqliteConns().end()) {
+            for (auto& kv : it->second->conns)
+                if (kv.second) sqlite3_close(kv.second);
+            sqliteConns().erase(it);
+        }
+        return make_int(0);
+    }
+    if (name == "sql_execute") {
+        // sql_execute(db, sql) - run DDL/DML on the sqlite DB.  The game's
+        // sql_insert builds "insert into %s (%s) values (%s)" and calls this.
+        // Returns 0 on success, non-zero sqlite error code on failure.
+        if (args.size() < 2) return make_int(-1);
+        int64_t id = as_int(args[0]);
+        std::string sql = as_string(args[1]);
+        std::shared_ptr<SqliteConn> c;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            auto it = sqliteConns().find(id);
+            if (it == sqliteConns().end()) return make_int(-1);
+            c = it->second;
+        }
+        sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
+        if (!db) return make_int(-1);
+        char* err = nullptr;
+        uint64_t st0 = GetTickCount64();
+        int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err);
+        uint64_t stDt = GetTickCount64() - st0;
+        if (stDt > 2000)
+            fprintf(stderr, "[sql-slow] %llums db=%d sql=%s\n", (unsigned long long)stDt,
+                    (int)id, sql.substr(0, 90).c_str());
+        if (rc != SQLITE_OK) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sql_execute] err " << rc << ": " << (err ? err : "?")
+                          << " sql=" << sql << "\n";
+            if (err) sqlite3_free(err);
+        } else if (std::getenv("LPCVM_SQL_TRACE")) {
+            static std::atomic<int64_t> sqlCnt{0};
+            int64_t n = ++sqlCnt;
+            if (n <= 40 || (n % 500) == 0)
+                std::cerr << "[sql-exec] #" << n << " db=" << id << " " << sql.substr(0, 100) << "\n";
+        }
+        return make_int(rc);
+    }
+    if (name == "sql_query") {
+        // sql_query(db, sql) -> query handle (>=1) or -1 on error.  The game
+        // (master sql_select) treats -1 as "no rows".
+        if (args.size() < 2) return make_int(-1);
+        int64_t id = as_int(args[0]);
+        std::string sql = as_string(args[1]);
+        std::shared_ptr<SqliteConn> c;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            auto it = sqliteConns().find(id);
+            if (it == sqliteConns().end()) return make_int(-1);
+            c = it->second;
+        }
+        sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
+        if (!db) return make_int(-1);
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[sql_query] err: " << sqlite3_errmsg(db) << " sql=" << sql << "\n";
+            return make_int(-1);
+        }
+        auto q = std::make_shared<SqliteQuery>();
+        q->db = db;
+        q->stmt = stmt;
+        int64_t qid;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            qid = sqliteNextQuery().fetch_add(1);
+            sqliteQueries()[qid] = q;
+        }
+        return make_int(qid);
+    }
+    if (name == "sql_step") {
+        // sql_step(qh) -> the next row as a mapping (column name -> value),
+        // or 0 when the result set is exhausted.  The game's sql_select loops
+        // while the result is a mapping (type 7).
+        int64_t qid = args.empty() ? -1 : as_int(args[0]);
+        std::shared_ptr<SqliteQuery> q;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            auto it = sqliteQueries().find(qid);
+            if (it == sqliteQueries().end()) return make_int(0);
+            q = it->second;
+        }
+        int rc = sqlite3_step(q->stmt);
+        if (rc != SQLITE_ROW) return make_int(0);
+        int n = sqlite3_column_count(q->stmt);
+        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(n));
+        for (int i = 0; i < n; ++i) {
+            const char* cn = sqlite3_column_name(q->stmt, i);
+            std::string col = cn ? cn : "";
+            switch (sqlite3_column_type(q->stmt, i)) {
+            case SQLITE_INTEGER:
+                mp->insert(make_string(col), make_int(sqlite3_column_int64(q->stmt, i)));
+                break;
+            case SQLITE_FLOAT:
+                mp->insert(make_string(col), make_float(sqlite3_column_double(q->stmt, i)));
+                break;
+            case SQLITE_NULL:
+                mp->insert(make_string(col), make_string(""));
+                break;
+            default: {
+                const unsigned char* t = sqlite3_column_text(q->stmt, i);
+                mp->insert(make_string(col), make_string(t ? reinterpret_cast<const char*>(t) : ""));
+                break;
+            }
+            }
+        }
+        return mp;
+    }
+    if (name == "sql_finalize") {
+        int64_t qid = args.empty() ? -1 : as_int(args[0]);
+        std::lock_guard<std::mutex> lk(sqliteMutex());
+        auto it = sqliteQueries().find(qid);
+        if (it != sqliteQueries().end()) {
+            if (it->second->stmt) sqlite3_finalize(it->second->stmt);
+            sqliteQueries().erase(it);
+        }
+        return make_int(0);
+    }
+    if (name == "sql_get_insert_id") {
+        int64_t id = args.empty() ? -1 : as_int(args[0]);
+        std::shared_ptr<SqliteConn> c;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            auto it = sqliteConns().find(id);
+            if (it == sqliteConns().end()) return make_int(0);
+            c = it->second;
+        }
+        sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
+        return make_int(db ? static_cast<int64_t>(sqlite3_last_insert_rowid(db)) : 0);
+    }
+    if (name == "sql_get_error") {
+        int64_t id = args.empty() ? -1 : as_int(args[0]);
+        std::shared_ptr<SqliteConn> c;
+        {
+            std::lock_guard<std::mutex> lk(sqliteMutex());
+            auto it = sqliteConns().find(id);
+            if (it == sqliteConns().end()) return make_string("");
+            c = it->second;
+        }
+        sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
+        const char* m = db ? sqlite3_errmsg(db) : nullptr;
+        return make_string(m ? m : "");
+    }
+    if (name == "sql_get_db_info" || name == "sql_get_state_info" || name == "sql_mem_stat") {
+        return make_mapping();
+    }
     if (name == "sort") {
         // vm_f_sort (0x80dbf4c): sort(array) sorts ascending by natural
         // order; sort(array, cmp_func) uses the comparator.  The VM handles

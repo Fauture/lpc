@@ -960,11 +960,10 @@ int xdbcPoll(const std::vector<int>& fds, std::vector<int>& readable,
     readable.clear();
     writable.clear();
     if (fds.empty()) return 0;
-    fd_set rfds, wfds;
-    FD_ZERO(&rfds);
-    FD_ZERO(&wfds);
-    SOCKET maxS = 0;
-    std::map<SOCKET, int> bySock;
+    // WSAPoll has no FD_SETSIZE limit (select() with FD_SET overflows for
+    // socket handles >= 64, silently missing connect/recv completion).
+    std::vector<WSAPOLLFD> pfd;
+    pfd.reserve(fds.size());
     for (int fd : fds) {
         std::lock_guard<std::mutex> lk(socketsMutex());
         auto it = socketTable().find(fd);
@@ -978,21 +977,31 @@ int xdbcPoll(const std::vector<int>& fds, std::vector<int>& readable,
             continue;
         }
         if (!it->second.realSock) continue;
-        SOCKET s = static_cast<SOCKET>(it->second.realSock);
-        FD_SET(s, &rfds);
-        FD_SET(s, &wfds);
-        bySock[s] = fd;
-        if (s > maxS) maxS = s;
+        WSAPOLLFD pf{};
+        pf.fd = static_cast<SOCKET>(it->second.realSock);
+        pf.events = POLLRDNORM | POLLWRNORM;
+        pfd.push_back(pf);
     }
-    if (bySock.empty()) return static_cast<int>(readable.size());
-    timeval tv{};
-    tv.tv_sec = timeoutMs / 1000;
-    tv.tv_usec = (timeoutMs % 1000) * 1000;
-    int rc = ::select(static_cast<int>(maxS) + 1, &rfds, &wfds, nullptr, &tv);
+    if (pfd.empty()) return static_cast<int>(readable.size());
+    int rc = WSAPoll(pfd.data(), static_cast<ULONG>(pfd.size()), timeoutMs);
     if (rc > 0) {
-        for (auto& kv : bySock) {
-            if (FD_ISSET(kv.first, &rfds)) readable.push_back(kv.second);
-            if (FD_ISSET(kv.first, &wfds)) writable.push_back(kv.second);
+        for (const auto& pf : pfd) {
+            // Map the SOCKET back to the virtual fd.
+            int vfd = -1;
+            {
+                std::lock_guard<std::mutex> lk(socketsMutex());
+                for (auto& kv : socketTable()) {
+                    if (kv.second.used && kv.second.realSock == static_cast<uintptr_t>(pf.fd)) {
+                        vfd = kv.first;
+                        break;
+                    }
+                }
+            }
+            if (vfd < 0) continue;
+            if (pf.revents & (POLLRDNORM | POLLIN | POLLHUP | POLLERR))
+                readable.push_back(vfd);
+            if (pf.revents & (POLLWRNORM | POLLOUT | POLLHUP | POLLERR))
+                writable.push_back(vfd);
         }
     }
     return static_cast<int>(readable.size() + writable.size());

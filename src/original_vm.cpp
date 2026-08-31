@@ -1717,14 +1717,17 @@ private:
                             pushValue(callArgs[static_cast<size_t>(i)]);
                         if (declared == 0 && callArgs.empty()) {
                             pushValue(Value{});
-                            if (startInlineFunction(fn, true, 0, targetVm->objVarsShared())) {
+                            if (startInlineFunction(fn, true, 0, targetVm->objVarsShared(),
+                                                    &targetVm->object().strings)) {
                                 efunInlineStarted_ = true;
                                 return make_int(0);   // callee's return op pushes the result
                             }
                             return executeFunctionOnStack(fn, true, 0);
                         }
-                        if (startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
-                                                targetVm->objVarsShared())) {
+                        bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
+                                                         targetVm->objVarsShared(),
+                                                         &targetVm->object().strings);
+                        if (inlOk) {
                             efunInlineStarted_ = true;
                             return make_int(0);
                         }
@@ -2629,11 +2632,20 @@ private:
     // executeFunctionFromOutsideLocked leaves them.  Returns false (and
     // leaves the stack untouched) when the stack is too shallow.
     bool startInlineFunction(const OriginalFunction& fn, bool zeroArgPlaceholder, int passedArgs,
-                             std::shared_ptr<std::vector<Value>> switchObjVars = nullptr) {
+                             std::shared_ptr<std::vector<Value>> switchObjVars = nullptr,
+                             const std::vector<std::string>* targetStrings = nullptr) {
         if (static_cast<int>(stack_.size()) < fn.argCount) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
-        Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
-                    fn.strings.empty() ? &obj_.strings : &fn.strings};
+        // Cross-object inline call: the callee's push_shared_string indexes its
+        // OWN program's string table, not the caller's.  fn.strings carries the
+        // per-function override when the .o has one; otherwise fall back to the
+        // CALLEE object's table (targetStrings), never to this VM's object.
+        const std::vector<std::string>* tbl = &fn.strings;
+        if (tbl->empty()) {
+            tbl = targetStrings ? targetStrings : &obj_.strings;
+            if (tbl->empty()) tbl = &fn.strings;
+        }
+        Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount, tbl};
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
         frame.zeroArgPlaceholder = zeroArgPlaceholder;
@@ -3874,10 +3886,6 @@ private:
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " fns=" << (targetVm ? targetVm->object().functions.size() : -1) << "\n";
                         if (targetFn && targetFn->index >= 0 && false) {   // case-8 inline OFF (regresses aaa)
-                            if (std::getenv("LPCVM_TRACE"))
-                                std::cerr << "[case8-inline] " << objName_ << " -> "
-                                          << (targetVm ? targetVm->objName() : "?") << "::" << funName
-                                          << " argc=" << argn << "\n";
                             const OriginalFunction& fn = *targetFn;
                             int declared = fn.argCount;
                             int pad = (declared > static_cast<int>(args.size())) ? declared - static_cast<int>(args.size()) : 0;
@@ -4748,6 +4756,32 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
 
 void Scheduler::run() {
     while (true) {
+        // Poll parked sockets (kind-5 waits: connect/recv) REGARDLESS of
+        // whether the ready queue is busy.  The original vm_mainLoop scans
+        // sockets every iteration; if some daemon keeps the ready queue fed
+        // (e.g. ccs's CONFIG_D retry loop), a connect/recv completion would
+        // NEVER be noticed - the connecting process stays parked forever and
+        // the service never starts.  Throttle to at most one select() per
+        // 20ms, and use a zero timeout so a busy ready queue is not slowed
+        // down by a blocking select (the idle wait below sleeps between
+        // polls).
+        if (!sockWaiters_.empty() && (nowMs() - lastPollMs_) >= 20) {
+            lastPollMs_ = nowMs();
+            std::vector<int> fds;
+            {
+                std::lock_guard<std::mutex> lk(mtx_);
+                for (auto& kv : sockWaiters_) fds.push_back(kv.first);
+            }
+            std::vector<int> rd = fds, wr = fds;
+            int nrd = lpc::xdbcPoll(fds, rd, wr, 0);
+            if (std::getenv("LPCVM_TRACE") && nrd != 0)
+                std::cerr << "[sock-poll] n=" << nrd << "\n";
+            for (int fd : fds) {
+                bool r = std::find(rd.begin(), rd.end(), fd) != rd.end();
+                bool w = std::find(wr.begin(), wr.end(), fd) != wr.end();
+                if (r || w) wakeSocket(fd, r, w);
+            }
+        }
         std::shared_ptr<Process> p;
         int64_t now = nowMs();
         {
@@ -4782,34 +4816,16 @@ void Scheduler::run() {
                           << " evwait=" << eventWaiters_.size()
                           << " sockwait=" << sockWaiters_.size() << "\n";
             ++step_;
-            // Poll parked sockets (kind-5 waits: connect/recv) REGARDLESS of
-            // whether the ready queue is busy: the original vm_mainLoop scans
-            // sockets every iteration, and if some daemon keeps the ready
-            // queue fed (e.g. ccs's CONFIG_D retry loop), a connect/recv
-            // completion would NEVER be noticed - the connecting process stays
-            // parked forever and the service never starts.  Throttle to at
-            // most one select() per 20ms.
-            if (!sockWaiters_.empty() && (nowMs() - lastPollMs_) >= 20) {
-                lastPollMs_ = nowMs();
-                std::vector<int> fds;
-                for (auto& kv : sockWaiters_) fds.push_back(kv.first);
-                lk.unlock();
-                std::vector<int> rd = fds, wr = fds;
-                int nrd = lpc::xdbcPoll(fds, rd, wr, 20);
-                if (std::getenv("LPCVM_TRACE") && nrd != 0)
-                    std::cerr << "[sock-poll] n=" << nrd << "\n";
-                for (int fd : fds) {
-                    bool r = std::find(rd.begin(), rd.end(), fd) != rd.end();
-                    bool w = std::find(wr.begin(), wr.end(), fd) != wr.end();
-                    if (r || w) wakeSocket(fd, r, w);
-                }
-                lk.lock();
-                continue;   // re-check ready_ with the lock held
-            }
+            // Idle wait: sleep until the next timer, but never longer than the
+            // socket-poll interval when sockets are parked (the poll at the top
+            // of this loop notices connect/recv completion).
             if (!timers_.empty()) {
                 int64_t w = timers_.begin()->first - nowMs();
                 if (w < 0) w = 0;
+                if (!sockWaiters_.empty() && w > 20) w = 20;
                 cv_.wait_for(lk, std::chrono::milliseconds(w));
+            } else if (!sockWaiters_.empty()) {
+                cv_.wait_for(lk, std::chrono::milliseconds(20));
             } else {
                 cv_.wait(lk);
             }
