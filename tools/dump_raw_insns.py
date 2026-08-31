@@ -41,9 +41,17 @@ def main():
 
     target = None
     for s in segs:
-        if s.get('func_name') == fname or (s.get('func_name') and fname in s['func_name']):
+        nm = s.get('func_name') or ''
+        if nm == fname:
             target = s
             break
+    if not target:
+        # fall back to substring match
+        for s in segs:
+            nm = s.get('func_name') or ''
+            if fname in nm:
+                target = s
+                break
     if not target:
         print("function %r not found; segments:" % fname)
         for s in sorted(segs, key=lambda x: x['ns']):

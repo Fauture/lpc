@@ -272,7 +272,7 @@ int sqlDebug(const std::string& sql, const std::string& which) {
     std::string host = "192.168.200.128";
     std::string user = "root";
     std::string pass = "123456";
-    std::string db = (which == "mdb") ? "dl_mdb_all" : "dl_adb_all";
+    std::string db = (which == "mdb") ? "dl_mdb_all" : (which == "ddb") ? "dl_ddb_1_test" : "dl_adb_all";
     int port = 3306;
     lpc::MysqlClient::Result res;
     if (!cl.connect(host, port, user, pass, db, err)) {

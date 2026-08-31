@@ -33,7 +33,9 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <mutex>
 #include <unordered_set>
+#include <set>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -284,12 +286,49 @@ std::string resolveEventNameLocked(const Value& v, EventRegistry& reg) {
 
 } // namespace
 
-// Per-LPC-thread id (the original's PCB->tid).  Assigned lazily on first
-// call so every OS thread that runs LPC gets a unique, stable id.
+// Per-LPC-thread id (the original's PCB->tid).  The original driver sizes its
+// process table to vm_maxProcess (128): get_thread_id() returns the PCB slot,
+// so tids stay in 0..127 and the game's per-thread event naming ("ev_filed" +
+// tid/32, created only for i in 0..(max_threads+31)/32-1) always matches.
+// Our threads are std::threads with no fixed table, so we reuse ids from a
+// free pool once a thread ends (PCB-slot semantics): ids never grow past the
+// live-thread count, which the game keeps well under max_threads.
+namespace {
+std::mutex& tidMutex() {
+    static std::mutex m;
+    return m;
+}
+std::set<int64_t>& tidFreePool() {
+    static std::set<int64_t> s;
+    return s;
+}
+std::atomic<int64_t>& tidNext() {
+    static std::atomic<int64_t> n{0};
+    return n;
+}
+struct TidSlot {
+    int64_t tid = -1;
+    ~TidSlot() {
+        if (tid < 0) return;
+        std::lock_guard<std::mutex> lk(tidMutex());
+        tidFreePool().insert(tid);
+    }
+};
+thread_local TidSlot g_tidSlot;
+} // namespace
+
 int64_t lpcThreadId() {
-    static std::atomic<int64_t> nextId{0};
-    thread_local int64_t tid = nextId.fetch_add(1, std::memory_order_relaxed);
-    return tid;
+    if (g_tidSlot.tid < 0) {
+        std::lock_guard<std::mutex> lk(tidMutex());
+        auto& pool = tidFreePool();
+        if (!pool.empty()) {
+            g_tidSlot.tid = *pool.begin();
+            pool.erase(pool.begin());
+        } else {
+            g_tidSlot.tid = tidNext().fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return g_tidSlot.tid;
 }
 
 void eventCreate(const std::string& name, int64_t oid) {
@@ -2697,12 +2736,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "read_file") {
         if (args.empty()) return make_string("");
         std::string vpath = as_string(args[0]);
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
-            std::cerr << "[read_file] path=" << vpath << "\n";
         std::string content = readVfsFile(vpath);
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
-            std::cerr << "[read_file] -> " << content.size() << " bytes, head=["
-                      << content.substr(0, 20) << "]\n";
         // mode "b" (buffer): the original returns a buffer; we represent
         // buffers as byte strings so is_string() sees a string and slicing
         // works.  Content is already raw bytes.

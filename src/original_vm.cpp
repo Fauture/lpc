@@ -1495,8 +1495,10 @@ private:
                     // callback VM gets the initialized instance variables.
                     const OriginalObject* owner = cl ? cl->owner : nullptr;
                     if (!owner) owner = &obj_;
-                    if (std::getenv("LPCVM_TRACE"))
-                        std::cerr << "[timer] schedule " << fnName << " in " << timeout << "s\n";
+                    // Detailed log: which timer is scheduled when (the haoyun
+                    // auto-save path relies on the 3600s sync_data timer firing).
+                    std::cerr << "[timer] schedule fn=" << fnName << " in " << timeout << "s"
+                              << " obj=" << objName_ << " vm=" << this << "\n";
                     // arg2 is the timer name (string) or 0/&ref (anonymous).
                     std::string timerName;
                     if (args.size() >= 2 && args[1].index() == 4)
@@ -1548,6 +1550,9 @@ private:
                             return;
                         }
                         try {
+                            std::cerr << "[timer-fire] fn=" << fnName << " obj="
+                                      << (ownerVm ? ownerVm->objName_ : std::string("<fresh>"))
+                                      << " at " << std::time(nullptr) << "\n";
                             if (ownerVm) {
                                 ownerVm->callFunctionByName(fnName, bound);
                             } else {
@@ -1700,6 +1705,15 @@ private:
             if ((index >= 50 && index <= 60) || (objName_.find("connectiond") != std::string::npos && index <= 15))
                 std::cerr << "[cfu] local fn=" << fn.name << " idx=" << index
                           << " obj=" << objName_ << " code=" << fn.code.size() << "\n";
+            // Detailed log for haoyun's DB-write chain: sync_data -> save ->
+            // write_content.  These run on the 3600s timer (or threadd), so
+            // seeing them fire proves the auto-save path executed.
+            if (objName_.find("haoyun") != std::string::npos &&
+                (fn.name == "save" || fn.name == "sync_data" || fn.name == "do_stat_credit_info" ||
+                 fn.name == "_do_stat_credit_info" || fn.name == "prepare_stat_credit_info" ||
+                 fn.name == "init_all_credit_info"))
+                std::cerr << "[hy-flow] " << fn.name << " idx=" << index
+                          << " frames=" << frames_.size() << " stack=" << stack_.size() << "\n";
             // A nodes==0 entry is a forward declaration (dlt reference) whose
             // bytecode lives in the program that actually implements it (e.g.
             // feature/common/agent.o declares get_client_no/set_client_no/
@@ -1966,7 +1980,17 @@ private:
         returned_ = false;
         try {
             execute(fn.code, fn.metaData);
+        } catch (const std::exception& e) {
+            if (objName_.find("haoyun") != std::string::npos || std::getenv("LPCVM_TRACE"))
+                std::cerr << "[vm-exc] " << fn.name << " threw: " << e.what()
+                          << " obj=" << objName_ << "\n";
+            frames_.pop_back();
+            returnValue_ = savedReturn;
+            returned_ = savedReturned;
+            throw;
         } catch (...) {
+            if (objName_.find("haoyun") != std::string::npos || std::getenv("LPCVM_TRACE"))
+                std::cerr << "[vm-exc] " << fn.name << " threw (non-std) obj=" << objName_ << "\n";
             frames_.pop_back();
             returnValue_ = savedReturn;
             returned_ = savedReturned;
@@ -2830,6 +2854,15 @@ private:
                             });
                             found = true;
                         }
+                        // Detailed log: haoyun's DB-write calls into filed.
+                        if (objName_.find("haoyun") != std::string::npos &&
+                            (funName == "write_content" || funName == "create_content")) {
+                            std::string dbg;
+                            for (size_t i = 0; i < args.size() && i < 3; ++i)
+                                dbg += (i ? " | " : "") + to_string(args[i], false).substr(0, 30);
+                            std::cerr << "[hy-write] " << funName << "(" << dbg << ") -> "
+                                      << to_string(result, false).substr(0, 40) << " obj=" << objName_ << "\n";
+                        }
                     }
                 } else if (pathVal.index() == 7) {
                     // Object value: resolve through the clone/registry key.
@@ -3185,12 +3218,21 @@ private:
                     for (int i = f.argNum - 1; i >= 0; --i)
                         args.push_back(stack_[static_cast<size_t>(f.bp - i)]);
                     stack_.resize(static_cast<size_t>(f.bp - f.argNum + 1));
-                    // Parameter layout is [paramN ... param1, param0(top)]: the
-                    // compiler pushes the default-value block in REVERSE param
-                    // order (paramN's default first, param1's default last),
-                    // so they land in order param1..paramN when copied down
-                    // as-is below the caller's real arguments.
-                    for (auto& d : defaults) stack_.push_back(d);
+                    // The inline default block pushes the defaults in ASCENDING
+                    // param order (param1's default first, then paramN's), so
+                    // the collected `defaults` vector is already
+                    // [param_argNum .. param_newArgNum-1].  The final layout
+                    // must read the same way the caller's args do (param0 on
+                    // top, descending below it), so the LAST default (paramN)
+                    // has to be pushed FIRST: push the defaults in REVERSE
+                    // collected order, then the real args on top.
+                    // (Original vm_resortStack 0x80954a8 copies the args from
+                    // [bp..bp+argNum) to temp[sp..] and the defaults from
+                    // [bp-1..] to temp[sp+argNum..], i.e. defaults follow the
+                    // args in ascending param order; its stack grows downward,
+                    // so our upward mirror needs the reverse push.)
+                    for (int i = static_cast<int>(defaults.size()) - 1; i >= 0; --i)
+                        stack_.push_back(defaults[static_cast<size_t>(i)]);
                     for (auto& a : args) stack_.push_back(a);
                     f.argNum += defaultPushed;
                     f.bp = static_cast<int>(stack_.size()) - 1;
