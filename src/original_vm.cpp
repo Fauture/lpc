@@ -3200,8 +3200,28 @@ private:
                 int declared = frames_.empty() || !frames_.back().fn ? 0 : frames_.back().fn->argCount;
                 int maxArgNo = skipAll;
                 if (maxArgNo < declared) maxArgNo = declared;
-                // If every declared argument was passed, skip the default-code block.
-                if (passed >= maxArgNo) ip += skipAll;
+                if (passed >= maxArgNo) {
+                    // All arguments (declared + defaults) were passed: skip the
+                    // whole default-value block.
+                    ip += skipAll;
+                } else if (passed > 0) {
+                    // Original vm_checkArgNum (0x809521c): when fewer than the
+                    // maximum were passed, skip only the default-push
+                    // instructions of ALREADY-PASSED arguments (accumulate
+                    // defaultActionNum for no < passed); the remaining
+                    // defaults are still pushed by the inline block and
+                    // resort_stack.  Without this, a partial call (e.g.
+                    // time_length_to_ch(t, accuracy)) would push the passed
+                    // argument's default again and shift every later default
+                    // into the wrong parameter slot.
+                    const OriginalFunction* fn = frames_.empty() ? nullptr : frames_.back().fn;
+                    int skip = 0;
+                    if (fn && static_cast<size_t>(passed) <= fn->argDefaultActionNum.size()) {
+                        for (int i = 0; i < passed; ++i)
+                            skip += fn->argDefaultActionNum[static_cast<size_t>(i)];
+                    }
+                    if (skip > 0) ip += skip;
+                }
                 // otherwise fall through and let the inline defaults + resort_stack run
                 break;
             }

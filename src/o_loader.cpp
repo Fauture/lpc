@@ -91,7 +91,13 @@ struct Reader {
         uint16_t argCount = u16();
         fn.argCount = argCount;
         for (uint16_t i = 0; i < argCount; ++i) {
-            bytes(20);
+            std::vector<uint8_t> desc = bytes(20);
+            // Vm_Fun_Arg_T: name(4) flag(1) type(1) varAttrib(1) no(2)
+            //               defaultActionNum(2) pDefaultValue(4) pNext(4).
+            // defaultActionNum = instructions the default block needs to push
+            // this argument's default (0 when the argument has no default).
+            fn.argDefaultActionNum.push_back(
+                static_cast<uint16_t>(desc[10] | (desc[11] << 8)));
             tempString();
         }
         uint16_t localCount = u16();

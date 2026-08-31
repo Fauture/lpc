@@ -16,6 +16,11 @@ struct OriginalFunction {
     int index = -1;
     int argCount = 0;
     int localCount = 0;
+    // Per-argument defaultActionNum from the Vm_Fun_Arg_T descriptors (0 for
+    // arguments without a default).  vm_checkArgNum (0x809521c) uses these to
+    // skip the inline default-push instructions of ALREADY-PASSED default
+    // arguments when a function is called with a partial argument set.
+    std::vector<uint16_t> argDefaultActionNum;
     std::vector<OriginalInsn> code;
     std::vector<uint8_t> metaData;
     // String table of the program this function belongs to.  Shared-string
