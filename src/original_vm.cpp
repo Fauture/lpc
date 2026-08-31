@@ -971,6 +971,7 @@ public:
     std::atomic<DWORD> stallTid_{0};      // thread id of the last stamper
     std::atomic<uint64_t> stallDumpedStamp_{0};   // stamp generation already deep-dumped
     std::atomic<uint64_t> stallSince_{0};  // original stamp when the stall was first seen
+    std::atomic<uint64_t> stallLastReport_{0};    // last stall-report tick (throttle)
     unsigned stallCount_ = 0;
     // Deeper stall context (written by the VM thread, read by the watchdog -
     // benign race): last efun name entered, last cross-object call target, and
@@ -4228,16 +4229,26 @@ void stallWatchdogLoop() {
                 const char* fn = vm.stallFn_.load(std::memory_order_relaxed);
                 const char* ob = vm.stallObj_.load(std::memory_order_relaxed);
                 uint64_t lw = vm.stallLockWaitStart_.load(std::memory_order_relaxed);
-                fprintf(stderr,
-                        "[stall] obj=%s fn=%s op=%s ip=%u efun=%s target=%s%s vm=%p stuck=%llus\n",
-                        ob ? ob : "?", fn ? fn : "?", actionInfo(static_cast<int>(vm.stallOp_.load())).name,
-                        static_cast<unsigned>(vm.stallIp_.load()), vm.stallEfun_, vm.stallTarget_,
-                        (lw && now > lw + 15000) ? " [WAITING-EXEC-LOCK]" : "", (void*)&vm,
-                        (unsigned long long)((now - since) / 1000));
+                // Throttle: one report per VM per 60s (thousands of stalled
+                // daemon VMs would otherwise flood the log and skew timing).
+                uint64_t lr = vm.stallLastReport_.load();
+                if (now > lr + 60000) {
+                    vm.stallLastReport_ = now;
+                    fprintf(stderr,
+                            "[stall] obj=%s fn=%s op=%s ip=%u efun=%s target=%s%s vm=%p stuck=%llus\n",
+                            ob ? ob : "?", fn ? fn : "?", actionInfo(static_cast<int>(vm.stallOp_.load())).name,
+                            static_cast<unsigned>(vm.stallIp_.load()), vm.stallEfun_, vm.stallTarget_,
+                            (lw && now > lw + 15000) ? " [WAITING-EXEC-LOCK]" : "", (void*)&vm,
+                            (unsigned long long)((now - since) / 1000));
+                }
                 // Deep dump once per stuck episode (>90s since the ORIGINAL
                 // onset): the stuck thread's native stack as RVAs (see
-                // build/Debug/lpcvm.map).
-                if (now > since + 90000 && vm.stallDumpedStamp_.load() != since) {
+                // lpcvm.map).  OPT-IN (LPCVM_DEEP_DUMP=1): SuspendThread of a
+                // mid-sqlite thread holding sqlite's connection mutex froze the
+                // whole process when the dump stalled, so it is disabled by
+                // default.
+                if (std::getenv("LPCVM_DEEP_DUMP") && now > since + 90000 &&
+                    vm.stallDumpedStamp_.load() != since) {
                     vm.stallDumpedStamp_ = since;
                     DWORD tid = vm.stallTid_.load();
                     fprintf(stderr, "[stall] deep-dump vm=%p tid=%lu\n", (void*)&vm, (unsigned long)tid);
