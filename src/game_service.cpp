@@ -12814,7 +12814,7 @@ int startGameService(int port) {
         closesocket(s);
         return 0;
     }
-    std::thread([s, port]() {
+    lpc::spawnLpcThread([s, port]() {
         std::cout << "Service started on port " << port << "\n";
         while (true) {
             SOCKET c = accept(s, nullptr, nullptr);
@@ -12822,7 +12822,7 @@ int startGameService(int port) {
                 if (WSAGetLastError() == WSAEINTR) continue;
                 break;
             }
-            std::thread([c]() {
+            lpc::spawnLpcThread([c]() {
                 int clientNo = nextGameClientNo().fetch_add(1);
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[game] accepted client no=" << clientNo << "\n";
@@ -12905,10 +12905,10 @@ int startGameService(int port) {
                     std::lock_guard<std::mutex> lk(gameMutex());
                     gameClients().erase(clientNo);
                 }
-            }).detach();
+            }, "game-client");
         }
         closesocket(s);
-    }).detach();
+    }, "game-service-accept");
     return 1;
 }
 
@@ -12976,7 +12976,7 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
         std::lock_guard<std::mutex> lk(gameMutex());
         gameClients()[clientNo] = std::move(cl);
     }
-    std::thread([fd, clientNo]() {
+    lpc::spawnLpcThread([fd, clientNo]() {
         char buf[4096];
         for (;;) {
             int n = recv(static_cast<SOCKET>(fd), buf, sizeof(buf), 0);
@@ -13013,7 +13013,7 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
             std::lock_guard<std::mutex> lk(gameMutex());
             gameClients().erase(clientNo);
         }
-    }).detach();
+    }, "game-recv-client");
     return clientNo;
 }
 

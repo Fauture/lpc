@@ -1722,7 +1722,7 @@ void driverTelnetShellLoop(SOCKET listener) {
             if (WSAGetLastError() == WSAEINTR) continue;
             break;
         }
-        std::thread([c]() {
+        lpc::spawnLpcThread([c]() {
             int cno = nextTelnetClientNo().fetch_add(1);
             {
                 std::lock_guard<std::mutex> lk(telnetMutex());
@@ -1755,7 +1755,7 @@ void driverTelnetShellLoop(SOCKET listener) {
             }
             closeTelnetClient(cno);
             setThreadTelnetClient(-1);
-        }).detach();
+        }, "telnet-shell-client");
     }
 }
 
@@ -1775,7 +1775,7 @@ int startDriverTelnet(int port) {
         closesocket(s);
         return 0;
     }
-    std::thread(driverTelnetShellLoop, s).detach();
+    lpc::spawnLpcThread([s]() { driverTelnetShellLoop(s); }, "telnet-shell-accept");
     std::cout << "Driver telnet shell started on port " << port << "\n";
     return 1;
 }
@@ -2101,6 +2101,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty()) {
             std::vector<Value> rest(args.begin() + 1, args.end());
             std::string out = formatLpc(as_string(args[0]), rest);
+            if (out.find("Done of init_") != std::string::npos || out.find("Load all global feature") != std::string::npos ||
+                out.find("Create ID pool") != std::string::npos) {
+                struct PMC { DWORD cb, pf; SIZE_T a, b, c, d, e, f, pagefile, peakPagefile; };
+                typedef BOOL(WINAPI* Fn)(HANDLE, PMC*, DWORD);
+                static Fn fn = [] { HMODULE m = LoadLibraryA("psapi.dll");
+                                    return m ? reinterpret_cast<Fn>(GetProcAddress(m, "GetProcessMemoryInfo")) : nullptr; }();
+                PMC pmc{}; pmc.cb = sizeof(pmc);
+                if (fn && fn(GetCurrentProcess(), &pmc, sizeof(pmc)))
+                    std::cerr << "[mem-init] '" << out.substr(0, 40)
+                              << "' priv=" << (pmc.pagefile >> 20) << "MB\n";
+            }
             if (std::getenv("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
                 std::cerr << "[printf-badline] out=[" << out.substr(0, 80) << "]\n";
             // The original driver writes the formatted string exactly as-is
@@ -3066,7 +3077,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             closesocket(s);
             return make_int(0);
         }
-        std::thread(telnetServerLoop, s).detach();
+        lpc::spawnLpcThread([s]() { telnetServerLoop(s); }, "telnet-server");
         std::cout << "Telnet service started on port " << port << "\n";
         return make_int(1);
     }

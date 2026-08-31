@@ -1,4 +1,6 @@
 #include "original_vm.h"
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -11,6 +13,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <malloc.h>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -20,6 +23,33 @@
 #include <unordered_map>
 #include <vector>
 
+// Temporary diagnostic: process private/working-set bytes at boot milestones
+// (GS boots to ~900MB in the first seconds - pinning down where).
+void dbgBootMem(const char* tag) {
+    struct PMC { DWORD cb, pf; SIZE_T a, b, c, d, e, f, pagefile, peakPagefile; };
+    typedef BOOL(WINAPI* Fn)(HANDLE, PMC*, DWORD);
+    static Fn fn = [] {
+        HMODULE m = LoadLibraryA("psapi.dll");
+        return m ? reinterpret_cast<Fn>(GetProcAddress(m, "GetProcessMemoryInfo")) : nullptr;
+    }();
+    PMC pmc{};
+    pmc.cb = sizeof(pmc);
+    if (fn && fn(GetCurrentProcess(), &pmc, sizeof(pmc)))
+        std::cerr << "[mem] " << tag << " priv=" << (pmc.pagefile >> 20)
+                  << "MB ws=" << (pmc.b >> 20) << "MB\n";
+}
+
+// Spawn a thread that runs LPC code.  LPC call chains recurse on the C++
+// stack (Debug frames are several KB per level), and a cyclic / over-deep
+// chain would smash a default 1MB stack (0xc00000fd) and kill the whole
+// driver.  Use a large stack AND catch the overflow: on
+// EXCEPTION_STACK_OVERFLOW, reset the guard page and abort just this thread's
+// LPC process (the original driver aborts the faulting process; the rest of
+// the driver keeps running).
+
+// Project headers MUST be at global scope: each opens its own
+// `namespace lpc { ... }`, so including them inside an open namespace lpc
+// would nest them into lpc::lpc and hide every declaration.
 #include "builtins.h"
 #include "efun_table.h"
 #include "o_loader.h"
@@ -30,6 +60,36 @@
 namespace fs = std::filesystem;
 
 namespace lpc {
+namespace {
+// Runs the std::function payload.  C++ objects with destructors live HERE, not
+// in the __try frame below - MSVC forbids __try in a function whose locals
+// require unwinding (C2712).
+void runLpcThreadFn(std::function<void()>* pfn) {
+    std::unique_ptr<std::function<void()>> f(pfn);
+    (*f)();
+}
+DWORD WINAPI lpcThreadProc(LPVOID p) {
+    __try {
+        runLpcThreadFn(static_cast<std::function<void()>*>(p));
+    } __except (EXCEPTION_STACK_OVERFLOW == GetExceptionCode()) {
+        fprintf(stderr, "[stack-overflow] LPC thread aborted\n");
+        _resetstkoflw();
+        return 1;
+    }
+    return 0;
+}
+} // namespace
+
+void spawnLpcThread(std::function<void()> fn, const std::string& what) {
+    auto pfn = new std::function<void()>(std::move(fn));
+    HANDLE h = CreateThread(nullptr, 32 * 1024 * 1024, lpcThreadProc, pfn,
+                            STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (h) CloseHandle(h);
+    else {
+        std::cerr << "[spawn] CreateThread failed for " << what << "\n";
+        delete pfn;
+    }
+}
 
 namespace {
 // ---------------------------------------------------------------------------
@@ -634,18 +694,26 @@ Value& sharedGlobal(int index) {
 
 class OriginalVm {
 public:
-    explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
-        : obj_(obj), searchRoot_(std::move(searchRoot)) {
-        objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj.globalVarCount));
+    explicit OriginalVm(std::shared_ptr<const OriginalObject> obj, std::string searchRoot = "")
+        : objPtr_(std::move(obj)), obj_(*objPtr_), searchRoot_(std::move(searchRoot)) {
+        objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj_.globalVarCount));
         for (auto& g : *objVars_) g = make_int(0);
-        for (const auto& fn : obj.functions) {
+        for (const auto& fn : obj_.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
         }
         mergeInheritedFunctions();
-        objName_ = obj.sourceName.empty() ? "<obj>" : obj.sourceName;
+        objName_ = obj_.sourceName.empty() ? "<obj>" : obj_.sourceName;
     }
+    // Transient one-off VMs (clone snapshots etc.) may still construct from a
+    // plain object reference; the object is copied into a fresh shared holder.
+    explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
+        : OriginalVm(std::make_shared<OriginalObject>(obj), std::move(searchRoot)) {}
 
     const OriginalObject& object() const { return obj_; }
+    // temporary diagnostics for the GS boot memory audit
+    size_t stackCapacity() const { return stack_.capacity(); }
+    size_t functionCount() const { return funcsByIndex_.size(); }
+    size_t objVarCount() const { return objVars_ ? objVars_->size() : 0; }
     // baseVarOffset of the currently executing function's constitution.
     // Global init code runs with no frame -> offset 0 (its own program).
     int currentVarOffset() const {
@@ -739,9 +807,14 @@ public:
 
     int run() {
         try {
+            std::cout << "[mem-out] boot run enter\n"; std::cout.flush();
+            dbgBootMem("boot run enter");
             execute(obj_.globalCode, obj_.globalMeta);
+            dbgBootMem("boot globalCode done");
             runInheritedInits(0, 0);
+            dbgBootMem("boot inheritedInits done");
             callCreate();
+            dbgBootMem("boot create done");
             runMainLoop(10, std::chrono::milliseconds(50));
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
@@ -860,6 +933,7 @@ private:
     // deadlock between two threads calling into each other's objects.
     int execDepth_ = 0;
 
+    std::shared_ptr<const OriginalObject> objPtr_;   // owned (or shared with the registry)
     const OriginalObject& obj_;
     std::string objName_;
     std::string searchRoot_;
@@ -961,6 +1035,9 @@ private:
                 // Parent's own inheritance comes first (its function indexes
                 // already include them), then the parent's functions.
                 walk(*parentObj, funOff, varOff);
+                // One shared copy of the parent's string table for ALL of its
+                // inherited functions (copying per function was wasteful).
+                auto parentTable = std::make_shared<const std::vector<std::string>>(parentObj->strings);
                 for (const auto& fn : parentObj->functions) {
                     if (fn.index < 0) continue;
                     int childIndex = funOff + fn.index;
@@ -971,7 +1048,7 @@ private:
                         // against the accumulated baseVarOffset, and local
                         // function-index calls against the accumulated
                         // baseFunOffset
-                        inhFn->strings = parentObj->strings;
+                        inhFn->strings = parentTable;
                         inhFn->varOffset = varOff;
                         inhFn->funOffset = funOff;
                         inheritedFuncs_.push_back(inhFn);
@@ -1404,7 +1481,7 @@ private:
                 // cooperative scheduler ran it before the master's post_init(),
                 // so do_init callbacks always saw populated config.  Our real
                 // threads can finish update_config AFTER post_init starts,
-                // making do_init's "等待取回数据" retry loop print (it only
+                // making do_init's "缂佹稑顦欢鐔煎矗閺嵮勭闁轰胶澧楀畵? retry loop print (it only
                 // prints while MySQL data is not yet fetched).  Synchronously
                 // run the FIRST update_config() on the owner's shared VM here
                 // so the data is fetched before post_init - the daemon thread
@@ -1430,9 +1507,10 @@ private:
                         }
                     }
                 }
-                std::thread([objPtr, owner, funName, threadArgs, root, isTelnetThread, telnetCno,
-                             threadName, newTid,
-                             objVarsSnapshot = std::move(objVarsSnapshot)]() {
+                spawnLpcThread(
+                    [objPtr, owner, funName, threadArgs, root, isTelnetThread, telnetCno,
+                     threadName, newTid,
+                     objVarsSnapshot = std::move(objVarsSnapshot)]() {
                     // Register the process under its name BEFORE running LPC so
                     // get_thread_id(name) / get_thread_id(tid) see it live, and
                     // the thread-local tid is the parent-returned one.
@@ -1449,7 +1527,7 @@ private:
                     // frame context, so we run on a fresh VM whose objVars
                     // SHARE the owner's objVars storage instead of copying.
                     try {
-                        OriginalVm vm(*objPtr, root);
+                        OriginalVm vm(objPtr, root);
                         // Share the owner's instance-variable storage: point
                         // this VM's objVars at the registry owner's vector so
                         // update_config() writes are visible to get_my_info()
@@ -1484,7 +1562,7 @@ private:
                     }
                     setThreadTelnetClient(-1);
                     lpc::lpcThreadMarkDead(newTid);
-                }).detach();
+                }, "create_thread");
                 // Original pushes the new process's tid (vm_f_create_thread
                 // ends with vm_pushNumber(PCB->tid)); threadd stores it in
                 // tids[] for its shutdown wait.
@@ -1569,7 +1647,8 @@ private:
                             if (&kv.second->object() == owner) { ownerVm = kv.second; break; }
                         }
                     }
-                    std::thread([ownerVm, objPtr, fnName, bound, timeout, entry]() {
+                    spawnLpcThread(
+                        [ownerVm, objPtr, fnName, bound, timeout, entry]() {
                         if (timeout > 0)
                             std::this_thread::sleep_for(std::chrono::seconds(timeout));
                         if (entry->cancelled && *entry->cancelled) {
@@ -1585,13 +1664,13 @@ private:
                             } else {
                                 // Object not registered (rare): fall back to a
                                 // fresh VM whose obj vars mirror the snapshot.
-                                OriginalVm vm(*objPtr);
+                                OriginalVm vm(objPtr);
                                 vm.callFunctionByName(fnName, bound);
                             }
                         } catch (...) {
                         }
                         timerUnregister(entry);
-                    }).detach();
+                    }, "timer");
                     return make_int(entry->id);
                 }
             }
@@ -1951,6 +2030,48 @@ private:
                                  int passedArgs = -1) {
         ExecGuard lock(execMutex_, execDepth_);
         if (static_cast<int>(stack_.size()) < fn.argCount) return make_int(0);
+        // Mirror the original driver's per-process call-depth guard
+        // (vm_callInUserFunBody: "Too depth function call").  Our nested LPC
+        // calls recurse on the C++ stack ACROSS VMs (cross-object call_other
+        // returns to the same registry VM), so a single VM's frames_ stays
+        // small while the thread stack grows unboundedly on an over-deep /
+        // cyclic call chain - smash the stack (0xc00000fd) unless guarded.
+        thread_local int g_vmDepth = 0;
+        struct DepthGuard {
+            int& d;
+            ~DepthGuard() { --d; }
+        } dg{g_vmDepth};
+        if (++g_vmDepth > 300) {
+            if (g_vmDepth == 301)
+                std::cerr << "[vm-depth] global LPC call depth exceeded 300, aborting process: fn="
+                          << fn.name << " obj=" << objName_ << "\n";
+            throw VmError("too deep LPC function call");
+        }
+        if (g_vmDepth >= 20 && (g_vmDepth % 20) == 0) {
+            uintptr_t stackMark = reinterpret_cast<uintptr_t>(_AddressOfReturnAddress());
+            std::cerr << "[vm-depth] gDepth=" << g_vmDepth << " fn=" << fn.name
+                      << " obj=" << objName_ << " cppStack=0x" << std::hex << stackMark << std::dec << "\n";
+        }
+        // Mirror the original driver's call-depth guard (vm_callInUserFunBody:
+        // "Too depth function call" when the heap funContext table is full).
+        // Our nested calls recurse on the C++ stack, so an over-deep LPC call
+        // chain (e.g. an infinite recursion while loading zones) would smash
+        // the thread stack (0xc00000fd) and kill the whole driver.  Abort the
+        // LPC process instead, like the original.
+        if (frames_.size() >= 8000) {
+            if (frames_.size() == 8000)
+                std::cerr << "[vm-depth] LPC call depth exceeded 8000, aborting process: fn="
+                          << fn.name << " obj=" << objName_ << " frames=" << frames_.size() << "\n";
+            throw VmError("too deep LPC function call");
+        }
+        if (frames_.size() >= 2000 && (frames_.size() % 1000) == 0)
+            std::cerr << "[vm-depth] depth=" << frames_.size() << " fn=" << fn.name
+                      << " obj=" << objName_ << "\n";
+        if (frames_.size() >= 400 && (frames_.size() % 200) == 0) {
+            uintptr_t stackMark = reinterpret_cast<uintptr_t>(_AddressOfReturnAddress());
+            std::cerr << "[vm-depth] depth=" << frames_.size() << " fn=" << fn.name
+                      << " cppStack=0x" << std::hex << stackMark << std::dec << "\n";
+        }
 
         int bp = static_cast<int>(stack_.size()) - 1;
         if (std::getenv("LPCVM_TRACE") && (fn.name == "register_entry" || fn.name == "query_entry")) {
@@ -1997,7 +2118,7 @@ private:
         // with default arguments compare it against the declared count in
         // check_args_num and push the missing defaults inline.
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
-                    fn.strings.empty() ? &obj_.strings : &fn.strings};
+                    fn.strings ? fn.strings.get() : &obj_.strings};
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
         frames_.push_back(frame);
@@ -3080,7 +3201,8 @@ private:
                             std::string oname = objName_;
                             std::string src = obj_.sourceName;
                             OriginalVm* self = this;
-                            std::thread([fnp, allc, fnn, oname, src, self]() {
+                            spawnLpcThread(
+                                [fnp, allc, fnn, oname, src, self]() {
                                 if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
                                     std::cerr << "[postinit-detach] " << fnn << " on " << src << "\n";
                                 try {
@@ -3090,7 +3212,7 @@ private:
                                 } catch (...) {
                                     std::cerr << "[postinit-detach] " << fnn << " unknown error\n";
                                 }
-                            }).detach();
+                            }, "postinit");
                         } else {
                             if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
                                 std::string adbg;
@@ -3147,7 +3269,8 @@ private:
                                 std::string fns = cl->functionName;
                                 std::vector<Value> allc = all;
                                 std::string oname = ovm->object().sourceName;
-                                std::thread([ovm, fnp, fnn, fns, allc, oname]() {
+                                spawnLpcThread(
+                                    [ovm, fnp, fnn, fns, allc, oname]() {
                                     if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
                                         std::cerr << "[postinit-detach] " << fns << " on " << oname << "\n";
                                     try {
@@ -3158,7 +3281,7 @@ private:
                                     } catch (...) {
                                         std::cerr << "[postinit-detach] " << fns << " unknown error\n";
                                     }
-                                }).detach();
+                                }, "postinit");
                             } else if (cl->func)
                                 result = runDetached([&] { return ownerVm->callFunctionPointer(cl->func, all); });
                             else
@@ -3645,6 +3768,7 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
         {"", cmdsDir},
     };
     auto& reg = objectRegistry();
+    dbgBootMem("load-all enter");
     for (auto& sec : sections) {
         std::string title = sec.title;
         if (!title.empty()) std::cout << title << "\n";
@@ -3660,10 +3784,14 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
             files.push_back(rel.generic_string());
         }
         std::sort(files.begin(), files.end());
+        dbgBootMem(("load section " + sec.dir).c_str());
+        size_t cnt = 0;
         for (auto& rel : files) {
             std::string virt = "/" + rel;
             if (hasSuffix(virt, ".o")) virt = virt.substr(0, virt.size() - 2) + ".c";
             std::cout << "Load: " << virt << "... OK\n";
+            if ((++cnt % 200) == 0)
+                dbgBootMem(("load " + virt).c_str());
             std::string full = searchRoot + "/" + rel;
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
@@ -3673,7 +3801,7 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
                 std::cerr << "[load] " << full << "\n";
             try {
                 auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(full));
-                auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+                auto vmPtr = std::make_shared<OriginalVm>(objPtr, searchRoot);
                 {
                     std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     reg.objects[full] = objPtr;
@@ -3827,10 +3955,9 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
     if (std::getenv("LPCVM_TRACE")) std::cerr << "[orig] pending threads=" << snapshot.size() << "\n";
     // Run each thread concurrently so a long-running loop (e.g. a service loop)
     // does not block the other threads.
-    std::vector<std::thread> workers;
     for (auto& th : snapshot) {
         PendingThread copy = th;   // capture by value; the vector is cleared below
-        workers.emplace_back([copy, searchRoot]() {
+        spawnLpcThread([copy, searchRoot]() {
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
             // A telnet daemon thread serves one client; tell the builtins layer
@@ -3865,9 +3992,8 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
                 std::cerr << "[thread] " << copy.fun << " error: unknown\n";
             }
             setThreadTelnetClient(-1);
-        });
+        }, "orig-thread:" + copy.fun);
     }
-    for (auto& w : workers) w.detach();
 }
 
 void runPostInitFunctions(const std::string& searchRoot) {
@@ -3909,7 +4035,9 @@ void runPostInitFunctions(const std::string& searchRoot) {
 } // namespace
 
 int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::string& searchRoot) {
+    dbgBootMem("runOriginalObject enter");
     OriginalVm vm(obj, searchRoot);
+    dbgBootMem("boot VM constructed");
     // The master's this_object() must resolve to a REAL registry key so
     // object(<this>) values created by the master (e.g. load_object's
     // (["module": object(<this>)]) context) can be called back later - the
@@ -3927,7 +4055,7 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
         if (reg.vms.find(mainKey) == reg.vms.end()) {
             auto objPtr = std::make_shared<OriginalObject>(obj);
             reg.objects[mainKey] = objPtr;
-            auto mainVm = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            auto mainVm = std::make_shared<OriginalVm>(objPtr, searchRoot);
             mainVm->setThisObjectName(mainKey);
             reg.vms[mainKey] = mainVm;
             // mark the registered copy initialized after vm.run() below
@@ -3943,10 +4071,14 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
     {
         auto& m = sharedMasterFunctions();
         if (m.empty()) {
+            // One shared copy of the master's string table for ALL its
+            // function copies (per-function copies of start_gs.o's 2978
+            // strings x 1308 functions burned ~500MB at boot).
+            auto table = std::make_shared<const std::vector<std::string>>(obj.strings);
             for (const auto& fn : obj.functions) {
                 if (fn.index < 0 || fn.code.empty()) continue;
                 auto cp = std::make_shared<OriginalFunction>(fn);
-                cp->strings = obj.strings;
+                cp->strings = table;
                 cp->varOffset = 0;
                 cp->funOffset = 0;
                 m[fn.index] = cp;
@@ -3954,6 +4086,7 @@ int runOriginalObject(const OriginalObject& obj, std::ostream& out, const std::s
         }
     }
     vm.run();
+    dbgBootMem("boot run() done");
     // The LPC startup code in start_<prefix>.o ends with post_init(), but
     // register_post_init is intercepted in the VM (call_in_efun) so the LPC
     // _post_init_funcs array stays empty and the LPC post_init() is a no-op.
@@ -3987,6 +4120,10 @@ int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRo
 int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot,
                            const std::vector<Value>& createArgs) {
     if (searchRoot.empty() || virtualPath.empty()) return 0;
+    static std::atomic<int> g_loadCnt{0};
+    int n = ++g_loadCnt;
+    if ((n % 100) == 1 || n < 5)
+        dbgBootMem(("loadObject " + virtualPath).c_str());
     std::string rel = virtualPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
@@ -4007,13 +4144,25 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
             if (reg.vms.find(key) != reg.vms.end()) return 1;
         }
         try {
-            auto vmPtr = std::make_shared<OriginalVm>(*pakObj, searchRoot);
+            auto vmPtr = std::make_shared<OriginalVm>(pakObj, searchRoot);
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.objects[key] = pakObj;
                 reg.vms[key] = vmPtr;
             }
+            if ((n % 25) == 1 || n < 5) {
+                dbgBootMem(("VM built: " + rel).c_str());
+                std::cerr << "[mem2] " << rel << " stackCap=" << vmPtr->stackCapacity()
+                          << " funcs=" << vmPtr->functionCount()
+                          << " objVars=" << vmPtr->objVarCount() << "\n";
+            }
             vmPtr->runInit(createArgs);
+            if ((n % 25) == 1 || n < 5) {
+                dbgBootMem(("init done: " + rel).c_str());
+                std::cerr << "[mem2] " << rel << " stackCap=" << vmPtr->stackCapacity()
+                          << " funcs=" << vmPtr->functionCount()
+                          << " objVars=" << vmPtr->objVarCount() << "\n";
+            }
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.initialized[key] = true;
@@ -4034,7 +4183,7 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
         }
         try {
             auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
-            auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+            auto vmPtr = std::make_shared<OriginalVm>(objPtr, searchRoot);
             {
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 reg.objects[c] = objPtr;
@@ -4128,7 +4277,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         } else {
             objPtr = std::make_shared<OriginalObject>(*tmplObj);
         }
-        vmPtr = std::make_shared<OriginalVm>(*objPtr, tmplVm->searchRoot());
+        vmPtr = std::make_shared<OriginalVm>(objPtr, tmplVm->searchRoot());
         vmPtr->setThisObjectName(cloneKey);
         reg.objects[cloneKey] = objPtr;
         reg.vms[cloneKey] = vmPtr;
@@ -4260,10 +4409,9 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
     if (snapshot.empty()) return;
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[orig] runtime pending threads=" << snapshot.size() << "\n";
-    std::vector<std::thread> workers;
     for (auto& th : snapshot) {
         PendingThread copy = th;
-        workers.emplace_back([copy, searchRoot]() {
+        spawnLpcThread([copy, searchRoot]() {
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
             bool isTelnet = copy.fun == "telnet_daemon" || copy.fun == "buildin_telnet_daemon";
@@ -4294,9 +4442,9 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
                 std::cerr << "[thread] " << copy.fun << " error: unknown\n";
             }
             setThreadTelnetClient(-1);
-        });
+        }, "orig-thread:" + copy.fun);
     }
-    for (auto& w : workers) w.detach();
 }
 
 } // namespace lpc
+

@@ -254,6 +254,10 @@ void saveEscapeString(const std::string& s, std::string& out) {
 } // namespace
 
 std::string saveValueAscii(const Value& v) {
+    thread_local int depth = 0;
+    struct D { int& d; ~D() { --d; } } dg{depth};
+    if (++depth > 5000 && depth % 5000 == 0)
+        std::cerr << "[save-string-depth] " << depth << "\n";
     switch (v.index()) {
     case 0: return "U";
     case 1: return "V";
@@ -315,6 +319,15 @@ struct SaveParser {
             ++pos;
     }
     bool parse(Value& out) {
+        // Depth guard: restore_value recurses per nesting level; a malformed /
+        // cyclic / absurdly deep string would smash the C++ stack (0xc00000fd).
+        thread_local int depth = 0;
+        struct D { int& d; ~D() { --d; } } dg{depth};
+        if (++depth > 5000) {
+            if (depth == 5001)
+                std::cerr << "[restore-depth] exceeded 5000, aborting restore_value\n";
+            throw std::runtime_error("too deep restore_value");
+        }
         skipWs();
         if (pos >= s.size()) return false;
         char c = s[pos];

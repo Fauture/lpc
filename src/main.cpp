@@ -404,28 +404,57 @@ int main(int argc, char** argv) {
     // SEH crash catcher: print a backtrace so a segfault inside the VM or a
     // builtin (the current MSVCP140.dll 0xc0000005 crashes) can be located
     // without a debugger attached.
+    int dispatchDriverCommand(const std::string& cmd, const std::string& path,
+                              const std::vector<std::string>& args);
     SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* ep) -> LONG {
-        void* frames[32];
-        USHORT n = CaptureStackBackTrace(0, 32, frames, nullptr);
         std::cerr << "[crash] code=0x" << std::hex
                   << (ep ? ep->ExceptionRecord->ExceptionCode : 0)
                   << " addr=0x" << (ep ? ep->ExceptionRecord->ExceptionAddress : 0)
-                  << std::dec << " frames=" << n << "\n";
-        for (USHORT i = 0; i < n; ++i) {
+                  << std::dec << "\n";
+        // Unwind the FAULTING context (for 0xc00000fd the capture below runs
+        // on the exhausted stack, so walking the context is the only way to
+        // see the recursion).
+        if (ep && ep->ContextRecord) {
+            CONTEXT ctx = *ep->ContextRecord;
+            DWORD64 pc, sp;
+#if defined(_M_IX86)
+            pc = ctx.Eip; sp = ctx.Esp;
+#else
+            pc = ctx.Rip; sp = ctx.Rsp;
+#endif
             HMODULE mod = nullptr;
-            char modName[MAX_PATH] = "?";
             GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               static_cast<LPCSTR>(frames[i]), &mod);
-            if (mod) GetModuleFileNameA(mod, modName, MAX_PATH);
-            std::string mn = modName;
-            size_t bs = mn.find_last_of('\\');
-            if (bs != std::string::npos) mn = mn.substr(bs + 1);
+                               reinterpret_cast<LPCSTR>(pc), &mod);
             uintptr_t base = mod ? reinterpret_cast<uintptr_t>(mod) : 0;
-            std::cerr << "  #" << i << " 0x" << std::hex << frames[i] << std::dec
-                      << " rva=0x" << std::hex
-                      << (base ? (reinterpret_cast<uintptr_t>(frames[i]) - base) : 0)
-                      << std::dec << " in " << mn << "\n";
+            std::cerr << "  fault pc=0x" << std::hex << pc << std::dec
+                      << " rva=0x" << std::hex << (base ? pc - base : 0)
+                      << std::dec << " sp=0x" << std::hex << sp << std::dec << "\n";
+            // Scan the stack for return addresses into our image.  The stack
+            // grows DOWN: frames (with return addresses) are at LOWER
+            // addresses than sp.  Use the REAL module base (ASLR) so every
+            // frame in the recursion is matched.
+            HMODULE self = nullptr;
+            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(pc), &self);
+            const uintptr_t kBase = self ? reinterpret_cast<uintptr_t>(self) : 0x400000;
+            const uintptr_t kImageLo = kBase, kImageHi = kBase + 0x3B3000;
+            int printed = 0;
+            for (uintptr_t p = static_cast<uintptr_t>(sp);
+                 p > static_cast<uintptr_t>(sp) - 0x400000 && printed < 80;
+                 p -= sizeof(uintptr_t)) {
+                uintptr_t cand = 0;
+                SIZE_T rd = 0;
+                if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(p),
+                                       &cand, sizeof(cand), &rd) || rd != sizeof(cand))
+                    break;
+                if (cand >= kImageLo && cand < kImageHi) {
+                    std::cerr << "  #" << printed << " ra=0x" << std::hex << cand << std::dec
+                              << " rva=0x" << std::hex << (cand - kBase) << std::dec << "\n";
+                    ++printed;
+                }
+            }
         }
         std::cerr.flush();
         return EXCEPTION_CONTINUE_SEARCH;   // let the OS generate the dump
@@ -453,49 +482,72 @@ int main(int argc, char** argv) {
             usage();
             return 1;
         }
-        std::string cmd = args[0];
-        std::string path = args[1];
-        if (cmd == "run") {
-            if (hasSuffix(path, ".pak")) return runPak(path);
-            if (hasSuffix(path, ".o")) return runOriginalObject(path);
-            return runLpcSource(path);
-        }
-        if (cmd == "orig") {
-            if (hasSuffix(path, ".pak")) return runPakOriginal(path);
-            return runOriginalObject(path);
-        }
-        if (cmd == "disasm") {
-            return disasmOriginalObject(path);
-        }
-        if (cmd == "opstats") {
-            return opStats(path);
-        }
-        if (cmd == "disfn") {
-            if (args.size() < 3) { usage(); return 1; }
-            return disasmFunction(path, args[2]);
-        }
-        if (cmd == "server") {
-            int port = 4000;
-            if (args.size() >= 3) port = std::atoi(args[2].c_str());
-            return runServer(path, port);
-        }
-        if (cmd == "unpack") {
-            std::string outDir = "out";
-            if (args.size() >= 3) outDir = args[2];
-            lpc::extractPak(path, outDir);
-            std::cout << "Unpacked " << path << " to " << outDir << "\n";
-            return 0;
-        }
-        if (cmd == "sqlcmd") {
-            // Debug helper: query the configured MySQL directly.
-            //   lpcvm sqlcmd "select ..." [adb|mdb]
-            if (args.size() < 2) { usage(); return 1; }
-            return sqlDebug(path, args.size() >= 3 ? args[2] : std::string());
-        }
-        usage();
-        return 1;
+        // Run the driver work on a dedicated thread with a LARGE stack: the
+        // VM executes nested LPC calls on the C++ stack (Debug frames are
+        // several KB per level), and the GS boot legitimately recurses deep
+        // (zone/import data comparisons + _alloca probes) - the default 1MB
+        // thread stack overflows (0xc00000fd).  The original driver uses a
+        // heap VM stack (up to 16384 fun contexts); a 64MB stack gives the
+        // equivalent headroom here.  Spawned threads keep the small /STACK.
+        int driverRc = 1;
+        struct DriverArgs { std::string cmd, path; std::vector<std::string> args; };
+        DriverArgs da{args[0], args[1], args};
+        HANDLE h = CreateThread(nullptr, 64 * 1024 * 1024,
+                                [](LPVOID p) -> DWORD {
+                                    DriverArgs* a = static_cast<DriverArgs*>(p);
+                                    return static_cast<DWORD>(dispatchDriverCommand(a->cmd, a->path, a->args));
+                                }, &da, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+        if (!h) { std::cerr << "failed to create driver thread\n"; return 1; }
+        WaitForSingleObject(h, INFINITE);
+        GetExitCodeThread(h, reinterpret_cast<DWORD*>(&driverRc));
+        CloseHandle(h);
+        return driverRc;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
+}
+
+// The original driver's command dispatch (run on the big-stack thread).
+int dispatchDriverCommand(const std::string& cmd, const std::string& path,
+                          const std::vector<std::string>& args) {
+    if (cmd == "run") {
+        if (hasSuffix(path, ".pak")) return runPak(path);
+        if (hasSuffix(path, ".o")) return runOriginalObject(path);
+        return runLpcSource(path);
+    }
+    if (cmd == "orig") {
+        if (hasSuffix(path, ".pak")) return runPakOriginal(path);
+        return runOriginalObject(path);
+    }
+    if (cmd == "disasm") {
+        return disasmOriginalObject(path);
+    }
+    if (cmd == "opstats") {
+        return opStats(path);
+    }
+    if (cmd == "disfn") {
+        if (args.size() < 3) { usage(); return 1; }
+        return disasmFunction(path, args[2]);
+    }
+    if (cmd == "server") {
+        int port = 4000;
+        if (args.size() >= 3) port = std::atoi(args[2].c_str());
+        return runServer(path, port);
+    }
+    if (cmd == "unpack") {
+        std::string outDir = "out";
+        if (args.size() >= 3) outDir = args[2];
+        lpc::extractPak(path, outDir);
+        std::cout << "Unpacked " << path << " to " << outDir << "\n";
+        return 0;
+    }
+    if (cmd == "sqlcmd") {
+        // Debug helper: query the configured MySQL directly.
+        //   lpcvm sqlcmd "select ..." [adb|mdb]
+        if (args.size() < 2) { usage(); return 1; }
+        return sqlDebug(path, args.size() >= 3 ? args[2] : std::string());
+    }
+    usage();
+    return 1;
 }

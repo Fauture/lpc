@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <iostream>
 #include <sstream>
 
 namespace lpc {
@@ -347,6 +348,10 @@ std::string value_type_name(const Value& v) {
 }
 
 std::string to_string(const Value& v, bool quote_strings) {
+    thread_local int depth = 0;
+    struct D { int& d; ~D() { --d; } } dg{depth};
+    if (++depth > 5000 && depth % 5000 == 0)
+        std::cerr << "[to_string-depth] " << depth << "\n";
     switch (v.index()) {
     // Original type 0 = "undefined" (missing keys/uninit vars) renders as
     // "(undefined)" (vm_typeValueAt); type 1 = "void" (void fn result)
@@ -453,6 +458,17 @@ bool is_truthy(const Value& v) {
 }
 
 bool value_equal(const Value& a, const Value& b) {
+    // Guard against cyclic / absurdly deep structures: the original driver
+    // compares on its heap value stack and aborts the process (vm_error) when
+    // it runs out; our recursion is on the C++ stack, so a self-referential
+    // mapping/array would smash it (0xc00000fd) and kill the whole driver.
+    thread_local int depth = 0;
+    struct D { int& d; ~D() { --d; } } dg{depth};
+    if (++depth > 5000) {
+        if (depth == 5001)
+            std::cerr << "[value-equal-depth] exceeded 5000, aborting value comparison\n";
+        throw std::runtime_error("too deep value comparison");
+    }
     if (a.index() != b.index()) {
         // LPC usually converts int/float
         if (a.index() == 2 && b.index() == 3) {

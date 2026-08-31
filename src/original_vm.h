@@ -1,10 +1,21 @@
 #pragma once
+#include <functional>
 #include <iosfwd>
+#include <string>
 
 #include "o_loader.h"
 #include "value.h"
 
 namespace lpc {
+
+// Spawn a thread that runs LPC code.  LPC call chains recurse on the C++
+// stack (Debug frames are several KB per level), and a cyclic / over-deep
+// chain would smash a default 1MB stack (0xc00000fd) and kill the whole
+// driver.  Use a large stack AND catch the overflow: on
+// EXCEPTION_STACK_OVERFLOW, reset the guard page and abort just this thread's
+// LPC process (the original driver aborts the faulting process; the rest of
+// the driver keeps running).
+void spawnLpcThread(std::function<void()> fn, const std::string& what);
 
 // Runs the original action-bytecode VM for a parsed .o object.
 // Currently supports the common global-initializer opcodes and stubs efun/user
