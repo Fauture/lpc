@@ -368,3 +368,5 @@ linux/
 # local crash dumps
 crashdumps/
 
+
+logs_*.txt
