@@ -3477,7 +3477,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
         if (!db) return make_int(-1);
         char* err = nullptr;
+        uint64_t st0 = GetTickCount64();
         int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err);
+        uint64_t stDt = GetTickCount64() - st0;
+        if (stDt > 2000)
+            fprintf(stderr, "[sql-slow] %llums db=%d sql=%s\n", (unsigned long long)stDt,
+                    (int)id, sql.substr(0, 90).c_str());
         if (rc != SQLITE_OK) {
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[sql_execute] err " << rc << ": " << (err ? err : "?")
