@@ -807,6 +807,9 @@ int xdbcConnectResult(int fd) {
     getsockopt(static_cast<SOCKET>(se.realSock), SOL_SOCKET, SO_ERROR,
                reinterpret_cast<char*>(&err), &len);
     se.connecting = false;
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[connect-result] fd=" << fd << " so_error=" << err
+                  << " realSock=" << static_cast<uintptr_t>(se.realSock) << "\n";
     return err == 0 ? 0 : -1;
 }
 

@@ -744,6 +744,12 @@ public:
         // == vm, but a cross-object call_other executes on the TARGET's
         // registry VM, so the parked state (stack_/frames_/cond_) lives there.
         std::shared_ptr<OriginalVm> parkedVm;
+        // For a CROSS-VM blocking call: the process's OWN VM (whose frames -
+        // e.g. [do_init, start_service] - were detached by runDetached while
+        // the callee ran on parkedVm).  When the callee's top-level frame
+        // returns, the scheduler resumes THIS VM's suspended chain with the
+        // callee's result, otherwise the caller never continues.
+        std::shared_ptr<OriginalVm> callerVm;
         // The process's permanent VM (set at spawn, never overwritten by the
         // suspend handler's parkedVm reassignment).
         std::shared_ptr<OriginalVm> homeVm;
@@ -760,6 +766,10 @@ public:
         // resume them with the timeout result (-501).
         bool eventWoken = false;
         bool timedEvent = false;
+        // External-thread call (execOnMain): the calling thread blocks on this
+        // promise until the process's whole call chain completes; runProcess
+        // sets it (exactly once) when the process finishes.
+        std::shared_ptr<std::promise<Value>> resultPromise;
     };
 
     // Spawn a new process (create_thread / set_timer / post_init / network
@@ -814,6 +824,18 @@ public:
     // Main loop: run ready processes / fire due timers / wait for wakeups.
     void run();
 
+    // True when called from the scheduler's own thread (run()).  External
+    // threads (network accept/recv, telnet, mysql worker) MUST route VM
+    // execution through execOnMain so the driver stays single-threaded.
+    bool isSchedulerThread() const { return std::this_thread::get_id() == schedThreadId_; }
+
+    // Run an LPC function call on the scheduler thread.  When already there
+    // (nested call from a running process) it executes directly; otherwise it
+    // spawns a scheduler process for the call and BLOCKS on its result, so the
+    // VM's execution state is never touched concurrently by another thread.
+    Value execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::string& funName,
+                     const std::vector<Value>& args);
+
     void requestShutdown();
 
     // If the CURRENTLY RUNNING process should stop the whole driver, park it
@@ -836,6 +858,7 @@ private:
     bool shutdown_ = false;
     uint64_t step_ = 0;
     int64_t lastPollMs_ = 0;      // last socket poll tick (20ms throttle)
+    std::thread::id schedThreadId_;   // the thread running run() (set on entry)
 };
 
 // The driver-level scheduler instance (defined below; declared here so VM
@@ -2588,10 +2611,46 @@ private:
         returnValue_ = make_int(0);
         returned_ = false;
         execDepth_ = 0;
+        // The caller's continuation (this VM's stream at the call site): a
+        // SAME-VM detached callee that parks must return into it (see the
+        // SuspendSignal branch below).
+        const std::vector<OriginalInsn>* savedCode = code_;
+        const std::vector<uint8_t>* savedMeta = meta_;
+        size_t savedIp = ip_;
         for (int i = 0; i < d; ++i) execMutex_.unlock();
         Value r;
         try {
             r = fn();
+        } catch (const SuspendSignal&) {
+            // The detached call PARKED on THIS VM: merge the callee's frame
+            // chain (built on the detached empty stack) back ON TOP of the
+            // caller's restored frames so the parked process resumes
+            // coherently; the outermost callee frame returns into the caller's
+            // stream (savedCode/savedIp).  For a CROSS-VM callee the parked
+            // state lives on the other VM and this VM's frames are simply
+            // restored (the scheduler resumes the caller via callerVm).
+            for (int i = 0; i < d; ++i) execMutex_.lock();
+            execDepth_ = d;
+            if (!frames_.empty()) {
+                size_t calleeStart = f.size();
+                int shift = static_cast<int>(s.size());
+                for (auto& fr : frames_) fr.bp += shift;
+                s.insert(s.end(), stack_.begin(), stack_.end());
+                f.insert(f.end(), frames_.begin(), frames_.end());
+                if (calleeStart < f.size()) {
+                    f[calleeStart].retCode = savedCode;
+                    f[calleeStart].retMeta = savedMeta;
+                    f[calleeStart].retIp = savedIp;
+                }
+                stack_ = std::move(s);
+                frames_ = std::move(f);
+            } else {
+                stack_ = std::move(s);
+                frames_ = std::move(f);
+            }
+            returnValue_ = rv;
+            returned_ = rd;
+            throw;
         } catch (...) {
             for (int i = 0; i < d; ++i) execMutex_.lock();
             execDepth_ = d;
@@ -2892,6 +2951,27 @@ private:
         // All state is already clean; nothing to restore.
     }
 
+    // The result a just-completed top-level call left in returnValue_
+    // (used by runProcess to hand a resumed process's result to execOnMain).
+    Value lastReturnValue() const { return returnValue_; }
+
+    // Resume a CALLER VM whose frame chain was detached by runDetached while
+    // a cross-object callee ran (and blocked) on another VM.  Push the
+    // callee's result and continue the caller's stream from the saved ip_
+    // (the op after the case-8 call site).
+    void resumeCaller(Value result) {
+        ExecGuard lock(execMutex_, execDepth_, "resumeCaller " + objName_);
+        // Nothing to resume here (the detached callee was merged back into
+        // THIS VM's frame chain, so the continuation already happened inside
+        // the parked VM's resume) - skip.
+        if (frames_.empty()) return;
+        if (std::getenv("LPCVM_TRACE"))
+            std::cerr << "[resume-caller] vm=" << this << " obj=" << objName_
+                      << " frames=" << frames_.size() << " ip=" << ip_ << "\n";
+        pushValue(std::move(result));
+        runLoop();
+    }
+
     // True while this VM is parked (a blocking efun suspended it).
     bool isParked() const { return parked_; }
     // The condition the parked VM is waiting for (owned by the scheduler).
@@ -3031,6 +3111,12 @@ private:
                 if (f.savedObjVars) objVars_ = f.savedObjVars;
                 frames_.pop_back();
                 stack_.resize(static_cast<size_t>(newSize));
+                if (std::getenv("LPCVM_TRACE") && f.fn &&
+                    (f.fn->name == "query_entry" || f.fn->name == "process_command"))
+                    std::cerr << "[ret-qe] " << f.fn->name << " retCode=" << (retCode ? "set" : "NULL")
+                              << " framesAfter=" << frames_.size()
+                              << " newStack=" << newSize
+                              << " retIp=" << retIp << "\n";
                 if (retCode == nullptr) {
                     // Top-level frame (pushed by executeFunctionOnStack): the
                     // whole call is done; the result stays in returnValue_.
@@ -4721,7 +4807,8 @@ void Scheduler::requeue(std::shared_ptr<Process> p) {
 
 void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     std::lock_guard<std::mutex> lk(mtx_);
-    const ResumeCond& c = p->vm->resumeCond();
+    // The parked VM owns the ResumeCond (the VM that threw SuspendSignal).
+    const ResumeCond& c = p->parkedVm->resumeCond();
     // Fresh park: clear stale wake bookkeeping from any earlier park.
     p->eventWoken = false;
     p->timedEvent = false;
@@ -4795,6 +4882,28 @@ void Scheduler::wakeEvent(const std::string& ename) {
     }
 }
 
+// Run an LPC function call on the scheduler thread.  Direct (nested) when
+// already on it; otherwise spawn a scheduler process carrying a result
+// promise and block on it.  This keeps ALL VM execution on the scheduler
+// thread (stage F: network threads never touch VM state concurrently).
+Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::string& funName,
+                            const std::vector<Value>& args) {
+    if (isSchedulerThread()) return vm->callFunctionByName(funName, args);
+    auto p = std::make_shared<Process>();
+    p->vm = vm;
+    p->homeVm = vm;
+    p->entry = funName;
+    p->args = args;
+    p->resultPromise = std::make_shared<std::promise<Value>>();
+    auto fut = p->resultPromise->get_future();
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        ready_.push_back(p);
+    }
+    cv_.notify_one();
+    return fut.get();   // blocks until the whole call chain completes
+}
+
 // Construction-completion wake: the object's load_object caller resumes at the
 // FRONT of the ready queue (the original driver continues the loading process
 // inline, so its "Load: ... OK" print comes before any processes spawned
@@ -4821,7 +4930,7 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
             // Only wake waiters whose condition is satisfied; keep the rest.
             std::deque<std::shared_ptr<Process>> keep;
             for (auto& p : it->second) {
-                const ResumeCond& c = p->vm->resumeCond();
+                const ResumeCond& c = p->parkedVm->resumeCond();
                 if ((c.wantRead && readable) || (c.wantWrite && writable))
                     hits.push_back(std::move(p));
                 else
@@ -4835,6 +4944,7 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
 }
 
 void Scheduler::run() {
+    schedThreadId_ = std::this_thread::get_id();
     while (true) {
         // Poll parked sockets (kind-5 waits: connect/recv) REGARDLESS of
         // whether the ready queue is busy.  The original vm_mainLoop scans
@@ -4940,10 +5050,12 @@ int64_t Scheduler::nowMs() {
 }
 
 void Scheduler::runProcess(std::shared_ptr<Process> p) {
+    Value callResult = make_int(0);
     try {
         if (p->timerEntry && p->timerEntry->cancelled && *p->timerEntry->cancelled) {
             // delete_timer() cancelled this callback before it fired.
             p->done = true;
+            if (p->resultPromise) p->resultPromise->set_value(callResult);
             return;
         }
         if (std::getenv("LPCVM_TRACE")) {
@@ -4968,7 +5080,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 // object's global init code + create() (see runConstruction).
                 p->vm->runConstruction(p->args, p->doneEvent);
             } else {
-                p->vm->callFunctionByName(p->entry, p->args);
+                callResult = p->vm->callFunctionByName(p->entry, p->args);
             }
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[sched-call-done] " << p->entry << "\n";
@@ -4989,6 +5101,18 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // but cross-object blocking runs on the target's registry VM).
             auto rvm = p->parkedVm ? p->parkedVm : p->vm;
             rvm->resumeProcess(std::move(p->resumeValue));
+            callResult = rvm->lastReturnValue();
+            // Cross-object blocking call finished on the target's registry VM:
+            // continue the CALLER's suspended frame chain on its own VM with
+            // the callee's result (the caller's [do_init, start_service] etc.
+            // were detached by runDetached while the callee ran on rvm).
+            if (p->callerVm && p->callerVm != rvm) {
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[sched-caller] " << p->entry << " resume caller vm="
+                              << p->callerVm.get() << " with callee result\n";
+                p->callerVm->resumeCaller(rvm->lastReturnValue());
+                p->callerVm.reset();
+            }
             // The parked call finished; a construction process must advance
             // its phase machine (raise the done event), and the master must
             // continue its startup phases after load_all finished.
@@ -5005,6 +5129,9 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             timerUnregister(p->timerEntry);
             p->timerEntry.reset();
         }
+        // An external-thread call (execOnMain) is blocked on this promise:
+        // release it with the call's result exactly once.
+        if (p->resultPromise) p->resultPromise->set_value(callResult);
     } catch (const TimeSliceSignal&) {
         // Master process yielded its time slice (relinquish): VM execution
         // state stays in the members; requeue at the tail of ready_ so other
@@ -5020,6 +5147,12 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         // the process waits on that cond and resumes THAT VM (its stack holds
         // the parked call).  p->parkedVm records it for resume.
         if (sig.vm && sig.vm != p->vm.get()) {
+            // Cross-VM blocking: the process's own VM (whose frame chain was
+            // detached by runDetached) must be resumed after the callee
+            // returns; remember it as the caller VM.  p->vm is never
+            // overwritten by the park, so re-parks keep detecting cross-VM
+            // correctly.
+            p->callerVm = p->vm;
             std::shared_ptr<OriginalVm> holder;
             {
                 auto& reg = objectRegistry();
@@ -5037,7 +5170,6 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                       << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
                       << " vm=" << p->vm.get() << " parkedVm=" << p->parkedVm.get() << "\n";
         // Register the wakeup under the PARKED VM's cond (it owns cond_).
-        p->vm = p->parkedVm;
         parkCurrent(p);
     } catch (const std::exception& e) {
         if (std::getenv("LPCVM_TRACE"))
@@ -5050,6 +5182,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
             scheduler().wakeEventFront(p->doneEvent);
         }
+        if (p->resultPromise) p->resultPromise->set_value(make_int(0));
         p->done = true;
     } catch (...) {
         if (std::getenv("LPCVM_TRACE"))
@@ -5059,6 +5192,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
             scheduler().wakeEventFront(p->doneEvent);
         }
+        if (p->resultPromise) p->resultPromise->set_value(make_int(0));
         p->done = true;
     }
 }
@@ -5808,8 +5942,10 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
     // Call OUTSIDE the registry lock: the owner VM's execution may itself
     // touch the registry (clone_object, call_other, ...) and taking the
     // registry lock while holding another VM's exec lock deadlocks against a
-    // thread doing the reverse.
-    if (ownerVm) return ownerVm->callFunctionByName(cl->functionName, all);
+    // thread doing the reverse.  External threads (packet dispatch) must run
+    // on the scheduler thread (stage F: single-threaded VM execution).
+    if (ownerVm)
+        return scheduler().execOnMain(ownerVm, cl->functionName, all);
     return callMasterProgramFunction(cl->functionName, all, masterSearchRoot());
 }
 
@@ -5834,7 +5970,11 @@ Value callMasterProgramFunction(const std::string& funName, const std::vector<Va
         }
     }
     if (!target) return make_int(0);
-    return target->callFunctionByName(funName, args);
+    // Route through the scheduler: VM execution must be single-threaded.
+    // Nested calls from a running process (scheduler thread) run directly;
+    // calls from network/telnet/mysql threads spawn a scheduler process and
+    // block on its result (stage F).
+    return scheduler().execOnMain(target, funName, args);
 }
 
 void drainPendingOriginalThreads(const std::string& searchRoot) {
