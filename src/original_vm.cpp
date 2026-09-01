@@ -744,12 +744,22 @@ public:
         // == vm, but a cross-object call_other executes on the TARGET's
         // registry VM, so the parked state (stack_/frames_/cond_) lives there.
         std::shared_ptr<OriginalVm> parkedVm;
+        // The process's permanent VM (set at spawn, never overwritten by the
+        // suspend handler's parkedVm reassignment).
+        std::shared_ptr<OriginalVm> homeVm;
         // True after a TimeSliceSignal requeue: resume the master via
         // runAsMaster() (phase continuation), not resumeProcess().
         bool sliceResume = false;
         // Object-construction process (entry "__init__"): the event raised
         // when the object's init/create finished, waking the parked caller.
         std::string doneEvent;
+        // A timed wait_event (kind 3 with wakeAtMs) is registered in BOTH
+        // eventWaiters_ and timers_.  Whichever fires first marks eventWoken;
+        // the other path then drops the stale wakeup instead of double-running
+        // the process.  timedEvent marks such processes so the timer path can
+        // resume them with the timeout result (-501).
+        bool eventWoken = false;
+        bool timedEvent = false;
     };
 
     // Spawn a new process (create_thread / set_timer / post_init / network
@@ -837,6 +847,7 @@ public:
     explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
         : obj_(obj), searchRoot_(std::move(searchRoot)) {
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj.globalVarCount));
+        ownObjVars_ = objVars_;
         for (auto& g : *objVars_) g = make_int(0);
         for (const auto& fn : obj.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
@@ -850,6 +861,7 @@ public:
     explicit OriginalVm(std::shared_ptr<const OriginalObject> obj, std::string searchRoot = "")
         : obj_(*obj), objKeepAlive_(std::move(obj)), searchRoot_(std::move(searchRoot)) {
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj_.globalVarCount));
+        ownObjVars_ = objVars_;
         for (auto& g : *objVars_) g = make_int(0);
         for (const auto& fn : obj_.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
@@ -893,7 +905,14 @@ public:
     // Point this VM's instance-variable storage at another VM's (original
     // create_thread semantics: the thread shares the creator's thisObject,
     // so writes to instance vars are visible to other threads/callers).
-    void shareObjVars(OriginalVm* other) { objVars_ = other->objVars_; }
+    void shareObjVars(OriginalVm* other) {
+        objVars_ = other->objVars_;
+        // A shared table IS this VM's object context (create_thread copies
+        // share the owner's instance variables); the cross-object entry
+        // switch must treat it as "own" or it would always misfire on
+        // daemon-process VMs.
+        ownObjVars_ = objVars_;
+    }
     // Set the object identity this_object() resolves to (clone instances get
     // their "clone:<rel>#<seq>" registry key so cross-object calls and
     // set_client_agent store the REAL object, not the "<this>" placeholder).
@@ -923,7 +942,22 @@ public:
                 std::cerr << "[cfv-enter] account_login on obj=" << objName_
                           << " fnidx=" << fn->index << " code=" << fn->code.size()
                           << " args=" << args.size() << "\n";
+            // Cross-object entry on this VM: if an active cross-object INLINE
+            // frame switched objVars_ to another object's table (e.g. a cfg
+            // handler main inline on configd's VM calling configd's set_config
+            // via the case-8 runDetached fallback), the callee must run in
+            // THIS VM's own object context.  The frame records the switched
+            // table (savedObjVarsForNextCall_) so its pop restores it - even
+            // across a park/resume (the parked image keeps objVars_ = own).
+            std::shared_ptr<std::vector<Value>> savedVars;
+            if (objVars_ != ownObjVars_) {
+                savedVars = objVars_;
+                objVars_ = ownObjVars_;
+                savedObjVarsForNextCall_ = savedVars;
+            }
             Value r = executeFunctionFromOutside(*fn, args);
+            if (savedVars && !parked_)
+                objVars_ = savedVars;
             if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
                 std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
@@ -1342,6 +1376,16 @@ private:
     std::string thisObjectName_ = "<this>";   // object identity for this_object()
     std::vector<StackItem> stack_;
     std::shared_ptr<std::vector<Value>> objVars_;  // per-object instance variables (shared across threads of the same object)
+    // This VM's OWN object-variable table (never switched by cross-object
+    // inline frames).  A top-level function call (external entry) must run in
+    // this table even when an active inline frame switched objVars_ to another
+    // object's table - otherwise the callee writes into the wrong table.
+    std::shared_ptr<std::vector<Value>> ownObjVars_;
+    // Cross-object entry switch (callFunctionByName): when an active inline
+    // frame switched objVars_ and a cross-object call runs on THIS VM, the
+    // next executeFunctionOnStack frame records the switched table here so
+    // its pop restores it (survives park/resume via the frame's savedObjVars).
+    std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall_;
     std::vector<Frame> frames_;
     std::map<int, const OriginalFunction*> funcsByIndex_;
     std::vector<std::shared_ptr<OriginalFunction>> inheritedFuncs_;  // owned copies of merged parents
@@ -2725,6 +2769,13 @@ private:
         // check_args_num and push the missing defaults inline.
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
                     fn.strings.empty() ? &obj_.strings : &fn.strings};
+        // A cross-object entry call (callFunctionByName) pre-switched
+        // objVars_ to this VM's own table and parked the previous (switched)
+        // table here: record it on the frame so the pop restores it.
+        if (savedObjVarsForNextCall_) {
+            frame.savedObjVars = std::move(savedObjVarsForNextCall_);
+            savedObjVarsForNextCall_.reset();
+        }
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
         frame.zeroArgPlaceholder = zeroArgPlaceholder;
@@ -2763,7 +2814,10 @@ private:
             code_ = savedCode;
             meta_ = savedMeta;
             ip_ = savedIp;
-            if (!frames_.empty() && frames_.back().fn == &fn) frames_.pop_back();
+            if (!frames_.empty() && frames_.back().fn == &fn) {
+                if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
+                frames_.pop_back();
+            }
             returnValue_ = savedReturn;
             returned_ = savedReturned;
             throw;
@@ -2781,6 +2835,7 @@ private:
             int newSize = liveBp - usedArgs + 1 - (frames_.back().zeroArgPlaceholder ? 1 : 0);
             if (newSize < 0) newSize = 0;
             stack_.resize(static_cast<size_t>(newSize));
+            if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
             frames_.pop_back();
         }
         code_ = savedCode;
@@ -3641,6 +3696,16 @@ private:
                         ResumeCond cond;
                         cond.kind = 3;
                         cond.ename = ename;
+                        // A finite timeout ALSO parks with a wake timer (stage
+                        // C): raise_event before the park must not leave the
+                        // waiter asleep forever.  The timer fires at
+                        // now + secs and resumes with the timeout result.
+                        if (secs >= 0) {
+                            using namespace std::chrono;
+                            int64_t nowMs = duration_cast<milliseconds>(
+                                steady_clock::now().time_since_epoch()).count();
+                            cond.wakeAtMs = nowMs + static_cast<int64_t>(secs * 1000.0);
+                        }
                         // The resume hook consumes the raised bits via a
                         // blocking-free wait on the already-raised event.
                         auto hook = [this, eref, mask]() {
@@ -3885,7 +3950,7 @@ private:
                             std::cerr << "[case8-wc2] targetVm=" << (targetVm ? targetVm->objName() : "NULL")
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " fns=" << (targetVm ? targetVm->object().functions.size() : -1) << "\n";
-                        if (targetFn && targetFn->index >= 0 && false) {   // case-8 inline OFF (regresses aaa)
+                        if (targetFn && targetFn->index >= 0 && false) {   // case-8 inline OFF (regresses aaa: global-fn frame return)
                             const OriginalFunction& fn = *targetFn;
                             int declared = fn.argCount;
                             int pad = (declared > static_cast<int>(args.size())) ? declared - static_cast<int>(args.size()) : 0;
@@ -3893,10 +3958,10 @@ private:
                             for (int i = static_cast<int>(args.size()) - 1; i >= 0; --i) pushValue(args[static_cast<size_t>(i)]);
                             if (declared == 0 && args.empty()) {
                                 pushValue(Value{});
-                                inlineStarted = startInlineFunction(fn, true, 0, nullptr);   // TEST: no objVars switch
+                                inlineStarted = startInlineFunction(fn, true, 0, nullptr);
                             } else {
                                 inlineStarted = startInlineFunction(fn, false, static_cast<int>(args.size()),
-                                                                    nullptr);   // TEST: no objVars switch
+                                                                    nullptr);
                             }
                             if (!inlineStarted) {
                                 // Stack too shallow: pop the pushed args back and
@@ -4376,10 +4441,6 @@ private:
                 int number = fromMeta ? m1 : 0;
                 Value v = top().value;
                 bool hit = (v.index() == 2 && std::get<int64_t>(v) == number);
-                if (std::getenv("LPCVM_TRACE_CASE"))
-                    std::cerr << "[case] num offset=" << offset << " value=" << number
-                              << " top=" << to_string(v, false) << " idx=" << v.index()
-                              << " hit=" << hit << " ip=" << ip_ << "\n";
                 if (hit) {
                     pop();
                     ip_ += offset;
@@ -4585,6 +4646,7 @@ void Scheduler::spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
                       std::vector<Value> args) {
     auto p = std::make_shared<Process>();
     p->vm = std::move(vm);
+    p->homeVm = p->vm;
     p->entry = entry;
     p->args = std::move(args);
     {
@@ -4598,6 +4660,7 @@ void Scheduler::spawnConstruction(std::shared_ptr<OriginalVm> vm, std::vector<Va
                                   std::string doneEvent) {
     auto p = std::make_shared<Process>();
     p->vm = std::move(vm);
+    p->homeVm = p->vm;
     p->entry = "__init__";
     p->args = std::move(args);
     p->doneEvent = std::move(doneEvent);
@@ -4618,6 +4681,7 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
                              std::shared_ptr<TimerEntry> timerEntry) {
     auto p = std::make_shared<Process>();
     p->vm = std::move(vm);
+    p->homeVm = p->vm;
     p->entry = entry;
     p->args = std::move(args);
     p->timerEntry = std::move(timerEntry);
@@ -4658,6 +4722,9 @@ void Scheduler::requeue(std::shared_ptr<Process> p) {
 void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     std::lock_guard<std::mutex> lk(mtx_);
     const ResumeCond& c = p->vm->resumeCond();
+    // Fresh park: clear stale wake bookkeeping from any earlier park.
+    p->eventWoken = false;
+    p->timedEvent = false;
     switch (c.kind) {
     case 1:   // timer
         timers_.emplace(c.wakeAtMs, p);
@@ -4667,6 +4734,13 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
         break;
     case 3:   // event
         eventWaiters_[c.ename].push_back(p);
+        // A finite-timeout wait_event (wakeAtMs set) also parks a wake timer:
+        // if the event never gets raised again (e.g. it was raised BEFORE this
+        // park), the timer resumes the waiter with the timeout result (-501).
+        if (c.wakeAtMs > 0) {
+            p->timedEvent = true;
+            timers_.emplace(c.wakeAtMs, p);
+        }
         break;
     case 5:   // socket (connect/recv)
         sockWaiters_[c.fd].push_back(p);
@@ -4712,7 +4786,13 @@ void Scheduler::wakeEvent(const std::string& ename) {
             eventWaiters_.erase(it);
         }
     }
-    for (auto& p : hits) wake(std::move(p));
+    for (auto& p : hits) {
+        // A timed wait_event parks in BOTH maps; if the timeout timer already
+        // woke it, drop this stale event wakeup.
+        if (p->eventWoken) continue;
+        p->eventWoken = true;
+        wake(std::move(p));
+    }
 }
 
 // Construction-completion wake: the object's load_object caller resumes at the
@@ -4789,8 +4869,16 @@ void Scheduler::run() {
             // Move due timers to ready.
             while (!timers_.empty() && timers_.begin()->first <= now) {
                 auto it = timers_.begin();
-                ready_.push_back(it->second);
+                auto tp = it->second;
                 timers_.erase(it);
+                // Timed wait_event: the event already woke it -> drop the
+                // stale timer; otherwise this IS the timeout -> resume with
+                // the timeout result (-501, matching the zero-timeout branch).
+                if (tp->eventWoken) continue;
+                tp->eventWoken = true;
+                if (tp->timedEvent && tp->vm)
+                    tp->vm->parkedResumeValue() = make_int(-501);
+                ready_.push_back(std::move(tp));
             }
             if (!ready_.empty()) {
                 p = std::move(ready_.front());
@@ -4905,9 +4993,9 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // its phase machine (raise the done event), and the master must
             // continue its startup phases after load_all finished.
             if (p->entry == "__init__")
-                p->vm->runConstruction(p->args, p->doneEvent);
-            else if (p->entry == "__master__" && !p->vm->masterInitDone_)
-                p->vm->runAsMaster();
+                p->homeVm->runConstruction(p->args, p->doneEvent);
+            else if (p->entry == "__master__" && !p->homeVm->masterInitDone_)
+                p->homeVm->runAsMaster();
             p->done = true;
         }
         // A set_timer callback finished (or was cancelled): remove its entry
