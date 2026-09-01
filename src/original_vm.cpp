@@ -766,6 +766,12 @@ public:
         // resume them with the timeout result (-501).
         bool eventWoken = false;
         bool timedEvent = false;
+        // Cancellation token for the wake timer this process parked with.  A
+        // process can RE-PARK on a different condition while its previous
+        // (timed) wake timer is still pending in timers_; the stale timer must
+        // not resume the new park.  parkCurrent sets the old token before
+        // registering the new one, and the timer path drops cancelled entries.
+        std::shared_ptr<std::atomic<bool>> parkTimerCancelled;
         // External-thread call (execOnMain): the calling thread blocks on this
         // promise until the process's whole call chain completes; runProcess
         // sets it (exactly once) when the process finishes.
@@ -849,7 +855,15 @@ private:
     std::mutex mtx_;
     std::condition_variable cv_;
     std::deque<std::shared_ptr<Process>> ready_;
-    std::multimap<int64_t, std::shared_ptr<Process>> timers_;       // wakeAtMs -> p
+    // wakeAtMs -> {process, cancellation token}.  A process can re-park on a
+    // new condition while an older wake timer is still pending; each timer
+    // entry carries its OWN token so the old timer can be cancelled without
+    // touching the process's current park state.
+    struct TimerEntry2 {
+        std::shared_ptr<Process> p;
+        std::shared_ptr<std::atomic<bool>> cancelled;
+    };
+    std::multimap<int64_t, TimerEntry2> timers_;       // wakeAtMs -> entry
     std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> queueWaiters_;
     std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> eventWaiters_;
     // fd -> processes parked in connect()/recv() (kind 5).  Polled by run().
@@ -2843,6 +2857,14 @@ private:
             frame.savedObjVars = std::move(savedObjVarsForNextCall_);
             savedObjVarsForNextCall_.reset();
         }
+        // This VM hosts many scheduler processes (execOnMain) and their frames
+        // share the members.  efunInlineStarted_ is set by a call_other_arg
+        // that started its callee INLINE and is meant to be consumed by the
+        // NEXT call_in_efun within the SAME execution; if the callee returns
+        // without another efun call the flag stays set and leaks into the NEXT
+        // process, which then skips its own efun dispatch.  Reset it here so
+        // every external entry starts clean.
+        efunInlineStarted_ = false;
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
         frame.zeroArgPlaceholder = zeroArgPlaceholder;
@@ -3866,11 +3888,25 @@ private:
                     break;
                 }
                 if (efunInlineStarted_) {
-                    // An efun (call_other_arg) started its callee INLINE; the
-                    // callee's return op pushes the result - do not push here.
+                    // A leaked flag (a previous inline start whose callee
+                    // returned without another efun call) must not swallow
+                    // THIS efun: consume it and dispatch normally.
                     efunInlineStarted_ = false;
-                } else {
                     pushValue(callEfun(efun, argc));
+                } else {
+                    // call_other_arg sets the flag DURING its dispatch (when it
+                    // starts the callee inline).  The callee's return op pushes
+                    // the result, so the placeholder call_other_arg returned
+                    // must NOT be pushed - otherwise the flag check above (which
+                    // runs BEFORE the call) would leak the flag into the
+                    // callee's FIRST efun and swallow it (e.g. read_content's
+                    // mysql_bind_parameters, dropping the WHERE clause).
+                    Value r = callEfun(efun, argc);
+                    if (efunInlineStarted_) {
+                        efunInlineStarted_ = false;   // callee return pushes the result
+                    } else {
+                        pushValue(r);
+                    }
                 }
                 if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
                     frames_.back().fn->name == "save_to_text" && efun == 102)
@@ -4801,7 +4837,7 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
     p->timerEntry = std::move(timerEntry);
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        timers_.emplace(atMs, p);
+        timers_.emplace(atMs, TimerEntry2{p, nullptr});
     }
     cv_.notify_one();
 }
@@ -4812,11 +4848,17 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
         // The resume hook (run inside resumeProcess BEFORE the value is
         // pushed) may update parkedResumeValue (e.g. connect's result check);
         // re-read it there rather than snapshotting here.
+        if (std::getenv("LPCVM_TRACE")) {
+            ResumeCond c;
+            if (p->parkedVm) c = p->parkedVm->resumeCond();
+            std::cerr << "[wake] " << p->entry << " cond.kind=" << c.kind
+                      << " key=" << (c.qkey.empty() ? c.ename : c.qkey)
+                      << " evWoken=" << p->eventWoken << " timed=" << p->timedEvent << "\n";
+        }
         ready_.push_back(std::move(p));
     }
     cv_.notify_one();
 }
-
 void Scheduler::wakeFront(std::shared_ptr<Process> p) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -4840,9 +4882,21 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     // Fresh park: clear stale wake bookkeeping from any earlier park.
     p->eventWoken = false;
     p->timedEvent = false;
+    // A process can re-park on a new condition while the wake timer of a
+    // PREVIOUS park is still pending in timers_.  Cancel that timer so it
+    // cannot spuriously resume the new park (the oid:32 timed wait's timer
+    // firing after share_datad's init re-parked on ev_filed0 resumed the
+    // wrong park and made do_operate's wait_event return success early).
+    if (p->parkTimerCancelled) *p->parkTimerCancelled = true;
+    p->parkTimerCancelled.reset();
+    std::shared_ptr<std::atomic<bool>> newToken;
+    if (c.kind == 1 || (c.kind == 3 && c.wakeAtMs > 0)) {
+        newToken = std::make_shared<std::atomic<bool>>(false);
+        p->parkTimerCancelled = newToken;
+    }
     switch (c.kind) {
     case 1:   // timer
-        timers_.emplace(c.wakeAtMs, p);
+        timers_.emplace(c.wakeAtMs, TimerEntry2{p, newToken});
         break;
     case 2:   // queue
         queueWaiters_[c.qkey].push_back(p);
@@ -4854,7 +4908,7 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
         // park), the timer resumes the waiter with the timeout result (-501).
         if (c.wakeAtMs > 0) {
             p->timedEvent = true;
-            timers_.emplace(c.wakeAtMs, p);
+            timers_.emplace(c.wakeAtMs, TimerEntry2{p, newToken});
         }
         break;
     case 5:   // socket (connect/recv)
@@ -5007,8 +5061,13 @@ void Scheduler::run() {
             // Move due timers to ready.
             while (!timers_.empty() && timers_.begin()->first <= now) {
                 auto it = timers_.begin();
-                auto tp = it->second;
+                auto te = it->second;
                 timers_.erase(it);
+                auto tp = te.p;
+                // A re-park cancelled this wake timer (the process is now
+                // waiting on a DIFFERENT condition); drop it - it must not
+                // resume the new park.
+                if (te.cancelled && *te.cancelled) continue;
                 // Timed wait_event: the event already woke it -> drop the
                 // stale timer; otherwise this IS the timeout -> resume with
                 // the timeout result (-501, matching the zero-timeout branch).
@@ -5413,6 +5472,8 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[call_other] " << objectPath << " -> " << funName
                   << " args=" << args.size() << "\n";
+    if (std::getenv("LPCVM_TRACE") && funName == "msg_read_content")
+        std::cerr << "[co-mrc] path=" << objectPath << " root='" << searchRoot << "'\n";
     // Clone instances are registered under "clone:<rel>#<seq>"; resolve them
     // by exact key first (vm_callInOtherFun with an object value).  This must
     // run BEFORE the searchRoot check: clone keys carry no search root.
@@ -5453,6 +5514,8 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
         if (existing) {
             if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
                 std::cerr << "[call_other] -> " << c << " (exact)\n";
+            if (std::getenv("LPCVM_TRACE") && funName == "msg_read_content")
+                std::cerr << "[co-mrc] exact-hit " << c << "\n";
             return existing->callFunctionByName(funName, args);
         }
     }
