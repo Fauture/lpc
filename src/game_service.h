@@ -50,6 +50,14 @@ struct GameClient {
     // stats
     uint64_t recvPkts = 0, recvBytes = 0, recvBadPkts = 0;
     std::string account;       // authenticated account name (if any)
+    // Vm_Client_Info timing fields (vm_bindToClient sets timeStamp and
+    // timeRecvEcho = time(0); vm_cmdEcho refreshes timeRecvEcho on each
+    // valid echo and tickServer with the reply tick).
+    time_t timeStamp = 0;      // bind time -> "time_stamp" in get_client_info
+    time_t timeRecvEcho = 0;   // last echo time -> "time_receive_echo"
+    uint32_t tickServer = 0;   // last tick we sent in an echo reply
+    uint32_t tickLastRecvLastEcho = 0;  // client tick of the last echo (bad-echo check)
+    time_t timeLastReportHeartBeat = 0; // 180s heartbeat-report throttle
 };
 
 // Start the game client service on `port` (start_service_on).  Returns 0 on

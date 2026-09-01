@@ -116,6 +116,11 @@ const CmdEntry kCmdList[] = {
     { 0x5351, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_l_auth", 0 }, // vm_msgLAuth
     { 0xF9D3, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_login_done", 0 }, // vm_msgLoginDone
     { 0x20D2, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "cmd_echo", 0 }, // vm_cmdEcho
+    // 0xF9C3 MSG_REPLY_ECHO - inbound echo reply (cmdList entry at
+    // .data:083CA158: cmd=0xF9C3 type=3 vm_msgReplyEcho).  Registered so the
+    // dba/aaa/ccs accept the gs's echo replies instead of logging "bad
+    // command" (which does not matter for liveness, but keeps stats clean).
+    { 0xF9C3, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_reply_echo", 0 }, // vm_msgReplyEcho
     // cmdList entries (Vm_Command_List_T, .data:083C8E60).  These are the
     // DRIVER-level config messages that gs/ccs/dba (which ship without a
     // comm_desc.txt) rely on: the C handler parses the value-typed body and
@@ -1077,13 +1082,34 @@ void handleMsgLAuth(GameClient& cl, const uint8_t* body, size_t len) {
 // vm_cmdEcho (0x8053178): echo/heartbeat (CMD_ECHO 0x20D2).  body = client
 // tick (be:u32).  Replies MSG_REPLY_ECHO (0xF9C3) carrying the server's
 // current tick so the remote end (dba/gs/cta) can verify the link is alive.
+// Mirrors the original: refreshes timeRecvEcho on a valid echo (so the gs's
+// scansocketd daemon does not drop the connection as dead) and reports the
+// heartbeat to LPC cmd_echo() at most once per 180s.
 void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     (void)body;
     if (len < 4) return;
+    // Original reads the client tick (v9) and an optional server tick (v5);
+    // tickLastRecvLastEcho guards against replayed/duplicate echoes.
+    uint32_t v9 = rd32be(body);
+    uint32_t v5 = 0;
+    if (len >= 8) v5 = rd32be(body + 4);
+    if (cl.tickLastRecvLastEcho != 0) {
+        uint32_t period = v9 - cl.tickLastRecvLastEcho;
+        if (period <= 0x270F) {  // <= 9999ms: "Got bad ECHO" - drop it
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[game] bad echo client=" << cl.clientNo
+                          << " period=" << period << "ms\n";
+            return;
+        }
+    }
+    cl.tickLastRecvLastEcho = v9;
+    time_t now = time(nullptr);
+    if (!v5 || cl.tickServer == v5) cl.timeRecvEcho = now;
     uint64_t nowMs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
     uint32_t tick = static_cast<uint32_t>(nowMs);
+    cl.tickServer = tick;
     std::string frame;
     frame += "MZ";
     frame += std::string(2, '\0');     // checksum
@@ -1101,6 +1127,21 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[game] echo reply client=" << cl.clientNo << " tick=" << tick << "\n";
     gameServiceSend(cl.clientNo, frame);
+    if (now - cl.timeLastReportHeartBeat > 179) {
+        cl.timeLastReportHeartBeat = now;
+        applyLpc("cmd_echo", {make_int(cl.clientNo)});
+    }
+}
+
+// vm_msgReplyEcho (0x8066958): inbound MSG_REPLY_ECHO (0xF9C3).  body =
+// server tick (be:u32).  The driver applies LPC "msg_reply_echo" with
+// (clientNo, tick); gs's start_gs.c forwards reply_echo to the user object.
+void handleMsgReplyEcho(GameClient& cl, const uint8_t* body, size_t len) {
+    if (len < 4) return;
+    uint32_t tick = rd32be(body);
+    if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "[game] reply_echo client=" << cl.clientNo << " tick=" << tick << "\n";
+    applyLpc("msg_reply_echo", {make_int(cl.clientNo), make_int(tick)});
 }
 
 // value-type body reader (vm_padVariable / vm_pktPadVariable wire form):
@@ -11766,6 +11807,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     switch (cmdNo) {
     case 0x5351: handleMsgLAuth(cl, body, len); break;
     case 0x20D2: handleCmdEcho(cl, body, len); break;
+    case 0xF9C3: handleMsgReplyEcho(cl, body, len); break;
     case 0x3365: handleMsgCfgMyInfo(cl, body, len); break;
     case 0x40F5: handleMsgCfgSpaInfo(cl, body, len); break;
     case 0x435F: handleMsgCfgGameServerList(cl, body, len); break;
@@ -12831,6 +12873,8 @@ int startGameService(int port) {
                 cl.clientNo = clientNo;
                 cl.attrib = ATTRIB_CLIENT_USER;  // CLIENT_USER initially
                 cl.status = 1;
+                cl.timeStamp = time(nullptr);
+                cl.timeRecvEcho = cl.timeStamp;
                 {
                     std::lock_guard<std::mutex> lk(gameMutex());
                     gameClients()[clientNo] = std::move(cl);
@@ -12977,6 +13021,8 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
         cl.clientNo = clientNo;
         cl.attrib = clientType;
         cl.status = 1;
+        cl.timeStamp = time(nullptr);
+        cl.timeRecvEcho = cl.timeStamp;
         std::lock_guard<std::mutex> lk(gameMutex());
         gameClients()[clientNo] = std::move(cl);
     }
@@ -13051,8 +13097,8 @@ Value gameGetClientInfo(int clientNo) {
     add("client_no", make_int(cl.clientNo));
     add("alive", make_int(cl.fd > 0 ? 1 : 0));
     add("peek", make_int(cl.peekMsgNum));
-    add("time_stamp", make_int(0));
-    add("time_receive_echo", make_int(0));
+    add("time_stamp", make_int(cl.timeStamp));
+    add("time_receive_echo", make_int(cl.timeRecvEcho));
     add("total_receive", make_int(static_cast<int64_t>(cl.recvPkts)));
     add("failed_count", make_int(static_cast<int64_t>(cl.recvBadPkts)));
     add("debug_enabled", make_int(0));

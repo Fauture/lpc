@@ -1107,20 +1107,34 @@ Value xdbcGetSockInfo(int fd) {
     if (it == socketTable().end() || !it->second.used) return make_mapping();
     const SocketEntry& se = it->second;
     auto mp = std::make_shared<MappingValue>();
-    auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
+    auto addInt = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
+    auto addStr = [&](const char* k, const std::string& v) { mp->insert(make_string(k), make_string(v)); };
+    // vm_generateSocketInfo: id (fd+1), vm_fd, local_address/port,
+    // remote_address/port, remain_send_data, oper_error.  remote_address is a
+    // STRING (inet_ntoa) - ccs_serverd's accept_daemon rejects connections
+    // whose remote_address is falsy, so a missing/misnamed key closed every
+    // accepted gs connection.
+    addInt("id", fd + 1);
+    addInt("vm_fd", fd);
     if (se.isListener) {
-        add("local_port", se.listenPort);
+        addInt("local_port", se.listenPort);
     } else if (se.realSock) {
         sockaddr_in local{};
         int llen = sizeof(local);
         getsockname(static_cast<SOCKET>(se.realSock), reinterpret_cast<sockaddr*>(&local), &llen);
-        add("local_port", ntohs(local.sin_port));
+        addInt("local_port", ntohs(local.sin_port));
+        char lbuf[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &local.sin_addr, lbuf, sizeof(lbuf));
+        addStr("local_address", lbuf);
         sockaddr_in rem{};
         int rlen = sizeof(rem);
         getpeername(static_cast<SOCKET>(se.realSock), reinterpret_cast<sockaddr*>(&rem), &rlen);
-        add("remote_port", ntohs(rem.sin_port));
-        add("remote_ip", static_cast<int64_t>(ntohl(rem.sin_addr.S_un.S_addr)));
+        addInt("remote_port", ntohs(rem.sin_port));
+        char rbuf[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &rem.sin_addr, rbuf, sizeof(rbuf));
+        addStr("remote_address", rbuf);
     }
+    addInt("remain_send_data", 0);
     return mp;
 }
 

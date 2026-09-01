@@ -581,6 +581,12 @@ struct PendingThread {
     const OriginalObject* obj;
     std::string fun;
     std::vector<Value> args;
+    // For register_post_init closures that wrap a builtin efun (e.g.
+    // ccs_clientd/tts_clientd create(): register_post_init((: create_thread,
+    // "tccsclient", (: daemon :) :))).  Spawning such an entry by LPC name
+    // fails ("create_thread" is an efun, not a master function), so keep the
+    // original closure and invoke it through the efun fallback.
+    std::shared_ptr<ClosureValue> closure;
 };
 class OriginalVm;
 struct ObjectRegistry {
@@ -918,6 +924,11 @@ public:
         for (const auto& kv : funcsByIndex_)
             if (kv.second->name == name && kv.second->index >= 0) return kv.second;
         return nullptr;
+    }
+    // Public efun dispatch used by runPostInitFunctions for post-init closures
+    // that wrap a builtin efun (ccs_clientd/tts_clientd create_thread).
+    Value callEfunPublic(int efunIndex, const std::vector<Value>& args) {
+        return callEfunWithArgs(efunIndex, args);
     }
     const OriginalFunction* functionByIndex(int index) const {
         auto it = funcsByIndex_.find(index);
@@ -2140,12 +2151,10 @@ private:
                 }).detach();
                 return make_int(1);
             }  // nm == "create_thread"
-            if (nm == "register_post_init" && args.size() >= 1 && args[0].index() == 8) {
-                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
-                postInitFuncs().push_back({&obj_, cl->functionName, cl->boundArgs});
-                if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
-                    std::cerr << "[rpi] " << cl->functionName << " obj=" << objName_
-                              << " vm=" << this << "\n";
+            if (nm == "register_post_init") {
+                // Not intercepted (see callUserFunction): the master's LPC
+                // post_init() runs registered closures inline from its global
+                // code; the scheduler parks the master on blocking closures.
                 return make_int(1);
             }
             if (nm == "set_timer" && args.size() >= 3) {
@@ -2356,6 +2365,31 @@ private:
                 pushValue(make_int(1));
                 throw TimeSliceSignal{};
             }
+            if (nm == "accept") {
+                // vm_f_accept (0x80e53c4): accept(fd, &addr, &port) -> new fd
+                // or -1.  ccs_serverd's accept_daemon runs `while(1) { if ((fd
+                // = accept(...)) < 0) continue; ... }` as a SCHEDULER process.
+                // The builtins accept() BLOCKS on the scheduler thread, which
+                // freezes the whole driver once no connection is pending
+                // (ccs accepted the gs once, then its log stopped dead at the
+                // next accept()).  Park on the listener socket (kind 5,
+                // wantRead) and call the real accept only when readable.
+                if (args.empty()) return make_int(-1);
+                int fd = static_cast<int>(toInt(args[0]));
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[accept] fd=" << fd << " park-wait\n";
+                ResumeCond cond;
+                cond.kind = 5;
+                cond.fd = fd;
+                cond.wantRead = true;
+                auto hook = [this, fd]() {
+                    // Listener readable: accept now (non-blocking enough - a
+                    // pending connection is present).
+                    resumeValue_ = make_int(xdbcAccept(fd));
+                };
+                parkAndSuspend(cond, std::move(hook), make_int(-1));
+                return make_int(-1);   // unreachable (SuspendSignal thrown)
+            }
             if (nm == "connect") {
                 // vm_f_connect (0x80e83b4): connect(fd, host, port, timeout).
                 // The original performs a NON-BLOCKING connect: on EINPROGRESS
@@ -2434,27 +2468,19 @@ private:
         result = make_int(0);
         if (flags & 0x80) {
             if (const OriginalFunction* gfn = findMasterFunction(index)) {
-                if (gfn->name == "register_post_init" && (flags & 0x3F) >= 1) {
-                    // register_post_init is a LPC GLOBAL function (not an efun):
-                    // it appends the closure to the master's _post_init_funcs
-                    // array, and the LPC post_init() then calls each closure
-                    // SYNCHRONOUSLY inside the master's run().  That lets a
-                    // blocking closure (wait_config -> wait_event) throw
-                    // SuspendSignal out of the master run() (no scheduler
-                    // process to park it) - 0xe06d7363.  Collect the closure in
-                    // the C++ postInitFuncs() instead and run each as a
-                    // SCHEDULER process where blocking efuns park/resume.
-                    Value cl = pop().value;   // the function argument
-                    if (cl.index() == 8) {
-                        auto closure = std::get<std::shared_ptr<ClosureValue>>(cl);
-                        postInitFuncs().push_back({&obj_, closure->functionName, closure->boundArgs});
-                        if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
-                            std::cerr << "[rpi-gfn] " << closure->functionName
-                                      << " obj=" << objName_ << " vm=" << this << "\n";
-                    }
-                    result = make_int(1);
-                    return false;
-                }
+                // register_post_init is NOT intercepted: the master runs
+                // LPC post_init() from its global code on aaa/ccs/dba/gs
+                // alike, iterating the LPC _post_init_funcs array.  The
+                // master is a SCHEDULER process, so a blocking closure
+                // (wait_config -> wait_event) throws SuspendSignal which
+                // the scheduler catches and parks - exactly the original
+                // cooperative driver.  Stealing the closure into the C++
+                // postInitFuncs() (which only drains after the master's
+                // global code RETURNS) starved the LPC array on gs, whose
+                // global code never returns (post_init() then
+                // init_service_module() run inline, and init blocks on
+                // try_to_sync_time waiting for the ccs_clientd daemon that
+                // the stolen create_thread closure was supposed to spawn).
                 if (std::getenv("LPCVM_TRACE") || index >= 600 || gfn->name == "mysql_select" ||
                     gfn->name == "mixed_mysql_select") {
                     std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
@@ -2528,7 +2554,32 @@ private:
                 std::cerr << "[auth] " << impl->name << " obj=" << objName_
                           << " argc=" << ac << " args=[" << adbg << "]\n";
             }
-            if (startInlineFunction(*impl, false, flags & 0x3F)) return true;
+            // Pad missing DECLARED arguments with undefined so the callee's
+            // param slots never alias stale caller stack data.  case 7 pops
+            // nothing for the callee - the bytecode pushed only the args it
+            // had (fill_pic_pool calls generate_hanzi_info() with 0 args while
+            // it declares char_arr); without padding, bp = stack.size()-1
+            // points at the CALLER's stale top and the callee's first param
+            // reads garbage (a dangling array crashed picd's second
+            // generate_hanzi_info call in `loop (str in chars)`).
+            {
+                int ac = flags & 0x3F;
+                int declared = impl->argCount;
+                int pad = (declared > ac) ? declared - ac : 0;
+                if (pad) {
+                    // param0 must sit on top; missing declared params are the
+                    // LOW slots below the passed ones, exactly like
+                    // pushArgsForFunction.  The bytecode already pushed the
+                    // real args (param0 on top): pull them off, push the pad
+                    // undefineds, then push the real args back so param0 ends
+                    // on top and bp = stack.size()-1 lands on it.
+                    std::vector<StackItem> args2;
+                    for (int i = 0; i < ac && !stack_.empty(); ++i) args2.push_back(pop());
+                    for (int i = 0; i < pad; ++i) pushValue(Value{});
+                    for (auto it = args2.rbegin(); it != args2.rend(); ++it) stack_.push_back(*it);
+                }
+                if (startInlineFunction(*impl, false, ac + pad)) return true;
+            }
             if (authTrace)
                 std::cerr << "[auth] " << impl->name << " START FAILED (stack too shallow)\n";
             return false;
@@ -3280,6 +3331,39 @@ private:
                 if (in.b & 0x80) {
                     fn = findMasterFunction(in.a);
                     fnOwner = objectRegistry().masterObj;
+                    if (!fn) {
+                        // Some global closure indices are builtin efuns
+                        // (e.g. (: create_thread, ... :) in ccs_clientd /
+                        // tts_clientd create()), exactly like the call path's
+                        // efun fallback below.  The original resolves them via
+                        // vm_pGlobalProgram->pFunctions[index] which includes
+                        // the efun slots, so a closure over create_thread
+                        // (efun 268) must resolve here too - otherwise the
+                        // closure collapses to int 0 and the daemon thread is
+                        // never spawned.
+                        const auto& names = efunNameTable();
+                        if (in.a >= 0 && static_cast<size_t>(in.a) < names.size() &&
+                            !names[in.a].empty()) {
+                            auto cl = std::make_shared<ClosureValue>();
+                            cl->functionName = names[in.a];
+                            cl->funcIndex = in.a;
+                            cl->func = nullptr;   // efun: resolved by name at call time
+                            // owner = nullptr so invocation reaches the efun
+                            // fallback (call_fun_ptr's final else) instead of
+                            // the cross-object owner-resolve path.
+                            cl->owner = nullptr;
+                            int boundCount = in.b & 0x3F;
+                            std::vector<Value> bound;
+                            for (int i = 0; i < boundCount && !stack_.empty(); ++i)
+                                bound.push_back(pop().value);
+                            cl->boundArgs = std::move(bound);
+                            if (std::getenv("LPCVM_TRACE"))
+                                std::cerr << "[cfv] efun-closure " << cl->functionName
+                                          << " idx=" << in.a << " bind=" << boundCount << "\n";
+                            pushValue(cl);
+                            break;
+                        }
+                    }
                 } else {
                     // The closure's function index is LOCAL to the CURRENT
                     // function's program.  For an inline cross-object frame
@@ -4497,11 +4581,17 @@ private:
                         args.push_back(stack_[static_cast<size_t>(f.bp - i)]);
                     stack_.resize(static_cast<size_t>(f.bp - f.argNum + 1));
                     // Parameter layout is [paramN ... param1, param0(top)]: the
-                    // compiler pushes the default-value block in REVERSE param
-                    // order (paramN's default first, param1's default last),
-                    // so they land in order param1..paramN when copied down
-                    // as-is below the caller's real arguments.
-                    for (auto& d : defaults) stack_.push_back(d);
+                    // compiler pushes the default-value block in FORWARD param
+                    // order (param1's default first, paramN's default last),
+                    // and the original vm_resortStack assigns the FIRST-pushed
+                    // default to the FIRST default param slot (param argNum).
+                    // With our up-growing stack that means the defaults must be
+                    // re-pushed in REVERSE order so param(argNum) ends up
+                    // closest to the real args.  (get_all_catalog's
+                    // condition=""/timeout=1800 were landing swapped, corrupting
+                    // the cmd_get_catalog_ex wire body.)
+                    for (auto it = defaults.rbegin(); it != defaults.rend(); ++it)
+                        stack_.push_back(*it);
                     for (auto& a : args) stack_.push_back(a);
                     f.argNum += defaultPushed;
                     f.bp = static_cast<int>(stack_.size()) - 1;
@@ -5630,6 +5720,19 @@ void runPostInitFunctions(const std::string& searchRoot) {
             // Object not registered: fall back to a fresh VM over a copy.
             auto objPtr = std::make_shared<OriginalObject>(*fn.obj);
             ownerVm = std::make_shared<OriginalVm>(objPtr, searchRoot);
+        }
+        if (fn.closure && !fn.closure->func) {
+            // The registered closure wraps a builtin efun (create_thread in
+            // ccs_clientd/tts_clientd create()).  Spawning "create_thread" as
+            // an LPC entry would not resolve; run the efun with the closure's
+            // bound args on the owner VM instead.  The efun itself (create_thread)
+            // spawns the daemon as a scheduler process, so this stays on the
+            // cooperative scheduler.
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                std::cerr << "[orig] post_init efun-closure -> " << fn.fun
+                          << " args=" << fn.args.size() << "\n";
+            ownerVm->callEfunPublic(fn.closure->funcIndex, fn.args);
+            continue;
         }
         scheduler().spawn(ownerVm, fn.fun, fn.args);
     }
