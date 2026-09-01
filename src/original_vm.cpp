@@ -5598,6 +5598,7 @@ std::string registerObjectVM(const std::string& virtualPath, const std::string& 
             if (reg.vms.find(key) != reg.vms.end()) return key;
         }
         auto vmPtr = std::make_shared<OriginalVm>(*pakObj, searchRoot);
+        vmPtr->setThisObjectName(key);
         {
             std::lock_guard<std::recursive_mutex> rl(registryMutex());
             reg.objects[key] = pakObj;
@@ -5616,6 +5617,7 @@ std::string registerObjectVM(const std::string& virtualPath, const std::string& 
         }
         auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(c));
         auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot);
+        vmPtr->setThisObjectName(c);
         {
             std::lock_guard<std::recursive_mutex> rl(registryMutex());
             reg.objects[c] = objPtr;
