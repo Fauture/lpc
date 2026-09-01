@@ -909,6 +909,14 @@ public:
         auto it = funcsByIndex_.find(index);
         return it == funcsByIndex_.end() ? nullptr : it->second;
     }
+    // True when this VM's function table contains fn (used to find the owning
+    // VM of an inline cross-object frame for closure index resolution).
+    bool ownsFunction(const OriginalFunction* fn) const {
+        for (const auto& f : obj_.functions)
+            if (&f == fn) return true;
+        auto it = funcsByIndex_.find(fn->index);
+        return it != funcsByIndex_.end() && it->second == fn;
+    }
     // The shared object-variable table (cross-object inline calls switch to
     // the target object's table for the duration of the call).
     std::shared_ptr<std::vector<Value>> objVarsShared() { return objVars_; }
@@ -3111,12 +3119,6 @@ private:
                 if (f.savedObjVars) objVars_ = f.savedObjVars;
                 frames_.pop_back();
                 stack_.resize(static_cast<size_t>(newSize));
-                if (std::getenv("LPCVM_TRACE") && f.fn &&
-                    (f.fn->name == "query_entry" || f.fn->name == "process_command"))
-                    std::cerr << "[ret-qe] " << f.fn->name << " retCode=" << (retCode ? "set" : "NULL")
-                              << " framesAfter=" << frames_.size()
-                              << " newStack=" << newSize
-                              << " retIp=" << retIp << "\n";
                 if (retCode == nullptr) {
                     // Top-level frame (pushed by executeFunctionOnStack): the
                     // whole call is done; the result stays in returnValue_.
@@ -3252,10 +3254,36 @@ private:
                 // like call_in_user_fun; the index must resolve against the
                 // master program, not this object's merged table.
                 const OriginalFunction* fn = nullptr;
-                if (in.b & 0x80) fn = findMasterFunction(in.a);
-                else {
-                    auto it = funcsByIndex_.find(in.a);
-                    if (it != funcsByIndex_.end()) fn = it->second;
+                const OriginalObject* fnOwner = nullptr;
+                if (in.b & 0x80) {
+                    fn = findMasterFunction(in.a);
+                    fnOwner = objectRegistry().masterObj;
+                } else {
+                    // The closure's function index is LOCAL to the CURRENT
+                    // function's program.  For an inline cross-object frame
+                    // (e.g. a cfg handler's main running on the serverd VM),
+                    // resolve against the OWNING object's table first - this
+                    // VM's merged table may map the same index to a DIFFERENT
+                    // function (serverd's empty_entries at index 3 vs the
+                    // handler's write_etc), which dispatched the wrong closure.
+                    const OriginalFunction* cur = frames_.empty() ? nullptr : frames_.back().fn;
+                    if (cur) {
+                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                        for (auto& kv : objectRegistry().vms) {
+                            if (kv.second.get() != this && kv.second->ownsFunction(cur)) {
+                                const OriginalFunction* own = kv.second->functionByIndex(in.a);
+                                if (own && own->index >= 0) {
+                                    fn = own;
+                                    fnOwner = &kv.second->object();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!fn) {
+                        auto it = funcsByIndex_.find(in.a);
+                        if (it != funcsByIndex_.end()) fn = it->second;
+                    }
                 }
                 if (std::getenv("LPCVM_TRACE"))
                     std::cerr << "[cfv] index=" << in.a << " global=" << ((in.b & 0x80) != 0)
@@ -3281,7 +3309,7 @@ private:
                     cl->funcIndex = in.a;   // global/merged index of the exact function
                     cl->func = fn;          // exact function: invoke directly
                     cl->boundArgs = bound;
-                    cl->owner = (in.b & 0x80) ? objectRegistry().masterObj : &obj_;
+                    cl->owner = fnOwner ? fnOwner : &obj_;
                     pushValue(cl);
                 } else {
                     pushValue(make_int(0));
