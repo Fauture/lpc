@@ -4842,14 +4842,17 @@ private:
                         }
                         std::cerr << " chain=[" << chain << "]\n";
                     }
-                    if (std::getenv("LPCVM_EVENT_TRACE"))
+                    if (std::getenv("LPCVM_EVENT_TRACE")) {
+                        std::string wfn = frames_.empty() || !frames_.back().fn
+                                              ? "<global>" : frames_.back().fn->name;
                         std::cerr << "[wait_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " secs=" << secs
-                                  << " vm=" << this << " obj=" << objName_ << "\n";
+                                  << " vm=" << this << " obj=" << objName_
+                                  << " fn=" << wfn << " ip=" << ip_ << "\n";
+                    }
                     // Cooperative scheduling: probe with timeout 0 first.  If
                     // the event is already raised, return immediately; else
-                    // PARK this VM on the event (raise_event wakes it).  A
-                    // finite timeout also parks with a wake timer (stage C).
+                    // PARK this VM on the event (raise_event wakes it).
                     int64_t probe = lpc::eventWait(eref, mask, 0.0);
                     if (probe == -101) {
                         // The event token does not resolve to a REGISTERED event
@@ -4863,6 +4866,12 @@ private:
                         // failure path runs instead of parking forever.
                         if (std::getenv("LPCVM_EVENT_TRACE"))
                             std::cerr << "[wait_event] unknown-event " << ename << " -> -101\n";
+                        if (std::getenv("LPCVM_EVENT_TRACE")) {
+                            std::string wfn = frames_.empty() || !frames_.back().fn
+                                                  ? "<global>" : frames_.back().fn->name;
+                            std::cerr << "[wait-unknown] " << ename << " obj=" << objName_
+                                      << " fn=" << wfn << " ip=" << ip_ << " stack=" << stack_.size() << "\n";
+                        }
                         pushValue(make_int(-101));
                     } else if (probe == 0) {
                         if (std::getenv("LPCVM_EVENT_TRACE"))
@@ -5533,6 +5542,9 @@ private:
                                 try {
                                     if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
                                     else result = ownerVm->callFunctionByName(cl->functionName, all);
+                                    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                                        std::cerr << "[postinit-ok] " << cl->functionName
+                                                  << " on " << ownerVm->object().sourceName << "\n";
                                 } catch (const VmError& e) {
                                     // The LPC post_init loop wraps each
                                     // (*f)() in try/catch and continues; an
@@ -6371,6 +6383,15 @@ void Scheduler::run() {
                                       << " entry=" << w->entry << "\n";
                     for (auto& w : parked_)
                         std::cerr << "[idle-wait] parked entry=" << w->entry << "\n";
+                    // Timer waits (kind-1 sleeps / timed event re-parks) are not
+                    // otherwise dumped - without them a process parked on a
+                    // long/far timer is invisible in the idle snapshot.
+                    if (std::getenv("LPCVM_SVC_TRACE") || std::getenv("LPCVM_STUCK_TRACE")) {
+                        for (auto& te : timers_)
+                            if (te.second.p)
+                                std::cerr << "[idle-timer] at=" << te.first
+                                          << " entry=" << te.second.p->entry << "\n";
+                    }
                 }
             }
             ++step_;
