@@ -4735,14 +4735,23 @@ private:
                                       << " obj=" << objName_ << " fn=" << cf
                                       << " this=" << thisObjectName_ << " qv=" << qvdesc << "\n";
                         }
-                        if (!ok && std::getenv("LPCVM_TRACE")) {
-                            // Detailed dump (trace only): what the LPC global
-                            // resolved to + registered queues.
+                        if (!ok && (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))) {
+                            // Detailed dump: what the LPC global resolved to +
+                            // registered queues + the caller chain.
                             std::string cf = frames_.empty() || !frames_.back().fn
                                                  ? "<global>" : frames_.back().fn->name;
+                            std::string chain;
+                            for (int fi = 0; fi < static_cast<int>(frames_.size()); ++fi) {
+                                const Frame& fr = frames_[static_cast<size_t>(fi)];
+                                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                if (!chain.empty()) chain += "<-";
+                                chain += fnm;
+                                if (chain.size() > 300) break;
+                            }
                             std::cerr << "[q-fail] qv=" << to_string(qv, false)
                                       << " qid=" << qid << " obj=" << objName_
-                                      << " fn=" << cf << " reg={" << lpc::queueNameDump()
+                                      << " fn=" << cf << " chain=[" << chain
+                                      << "] reg={" << lpc::queueNameDump()
                                       << "} this=" << thisObjectName_ << "\n";
                         }
                         // Wake any process parked on this queue (cooperative
@@ -4820,7 +4829,18 @@ private:
                                               ? "<global>" : frames_.back().fn->name;
                         std::cerr << "[wait-oid] " << ename << " obj=" << objName_
                                   << " fn=" << wf << " frames=" << frames_.size()
-                                  << " stack=" << stack_.size() << "\n";
+                                  << " stack=" << stack_.size();
+                        // Full call chain (most recent LAST) so the LPC module
+                        // that issued the int-oid wait is identifiable.
+                        std::string chain;
+                        for (int fi = 0; fi < static_cast<int>(frames_.size()); ++fi) {
+                            const Frame& fr = frames_[static_cast<size_t>(fi)];
+                            std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                            if (!chain.empty()) chain += "<-";
+                            chain += fnm;
+                            if (chain.size() > 300) break;
+                        }
+                        std::cerr << " chain=[" << chain << "]\n";
                     }
                     if (std::getenv("LPCVM_EVENT_TRACE"))
                         std::cerr << "[wait_event] " << ename << " mask=0x" << std::hex
@@ -4831,7 +4851,20 @@ private:
                     // PARK this VM on the event (raise_event wakes it).  A
                     // finite timeout also parks with a wake timer (stage C).
                     int64_t probe = lpc::eventWait(eref, mask, 0.0);
-                    if (probe == 0) {
+                    if (probe == -101) {
+                        // The event token does not resolve to a REGISTERED event
+                        // (an int oid with no create_event mapping, e.g. a
+                        // misread/zeroed handle).  The original would never wait
+                        // on an unknown pend object; parking here can NEVER be
+                        // woken (raise_event on the name/oid hits a different or
+                        // missing key) and froze gs's boot forever inside
+                        // filed's nested do_operate (qianyuanshan.o's master
+                        // restore).  Return -101 so the caller's wait_event != 0
+                        // failure path runs instead of parking forever.
+                        if (std::getenv("LPCVM_EVENT_TRACE"))
+                            std::cerr << "[wait_event] unknown-event " << ename << " -> -101\n";
+                        pushValue(make_int(-101));
+                    } else if (probe == 0) {
                         if (std::getenv("LPCVM_EVENT_TRACE"))
                             std::cerr << "[wait_event] immediate " << ename << "\n";
                         pushValue(make_int(0));
