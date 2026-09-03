@@ -31,6 +31,16 @@ void setVfsProfile(const std::string& vfsRoot, const std::string& dataRoot,
 // loader to try "<objPrefix>/x" and "x" variants of a virtual path.
 std::string vfsObjPrefix();
 
+// Caller context (object + LPC function) for [efun-stub] log lines.  The VM
+// sets this right before falling through to call_builtin() so every log of an
+// unimplemented efun names the exact object::function that invoked it - that
+// makes the runtime stub list attributable to the boot stage that needs it.
+struct StubCallCtx {
+    std::string obj;
+    std::string fn;
+};
+StubCallCtx& stubCallCtx();
+
 // Driver predefines injected at boot (the original's /D CONFIG=... flags).
 // expand_macro() consults this table first; entries are plain strings (no
 // surrounding quotes).  Called by runPakOriginal() so start_<prefix>.o
@@ -78,6 +88,8 @@ void queueDelete(int64_t qid);
 // Resolve a queue reference (int qid or registered name string) to a qid,
 // or -1 if unknown.  Thread-safe.
 int64_t queueResolveId(const Value& v);
+// Diagnostic: "name=qid" for every registered queue (empty when none).
+std::string queueNameDump();
 // Block until an element is available or timeoutMs elapses (timeoutMs < 0 =
 // forever).  Returns the element; `ok` is false on timeout / missing queue.
 Value queueReceive(int64_t qid, int timeoutMs, bool& ok);
@@ -106,6 +118,13 @@ int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs);
 // Current LPC thread's unique, stable id (the original's PCB->tid).  Used to
 // build per-thread event names ("ev_filed" + tid/32) and bits (1 << tid%32).
 int64_t lpcThreadId();
+// The tid of the LPC PROCESS currently executing on the cooperative scheduler
+// (the original's PCB->tid).  get_thread_id() must return a DIFFERENT value
+// per process - configd's read_etc builds its event name from it, and two
+// processes sharing an id would wake each other's wait_event.  On the single
+// scheduler thread lpcThreadId() is identical for every process, so the efun
+// prefers this when a process is running.
+int64_t schedulerCurrentTid();
 // True when no function closure is currently in flight on a driver queue (all
 // dispatched services have been received AND invoked to completion).  The game
 // accept thread polls this before feeding a packet so a dispatched

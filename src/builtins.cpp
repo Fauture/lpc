@@ -1,5 +1,6 @@
 #include "builtins.h"
 #include "efun_table.h"
+#include "map_module.h"
 
 #include "d3des.h"
 #include "game_service.h"
@@ -417,6 +418,16 @@ int64_t queueResolveId(const Value& v) {
     return resolveQidLocked(v);
 }
 
+std::string queueNameDump() {
+    std::string out;
+    std::lock_guard<std::mutex> lk(queueRegistry().mtx);
+    for (auto& kv : queueRegistry().nameToQid) {
+        if (!out.empty()) out += " ";
+        out += kv.first + "=" + std::to_string(kv.second);
+    }
+    return out;
+}
+
 bool serviceQueueIdle() {
     return g_pendingServices.load(std::memory_order_acquire) == 0;
 }
@@ -698,6 +709,10 @@ std::string vfsRoot() {
     if (fs::exists("out/game", ec)) return "out/game";
     return "out/lib_aaa32";
 }
+
+// ---------------------------------------------------------------------------
+// Reference load-order tables ---- REMOVED (no reference-order sorting).
+// ---------------------------------------------------------------------------
 
 // The driver's run directory (see above).  "/<objPrefix>/x" -> <runDir>/x.
 std::string dataRoot() {
@@ -1000,6 +1015,9 @@ std::string readVfsFile(const std::string& vpath) {
     if (vpath.rfind(etcPrefix, 0) == 0) {
         std::string name = vpath.substr(etcPrefix.size());
         std::string etc = etcRoot();
+        if (std::getenv("LPCVM_TRACE") && name == "valid_chinese.list")
+            std::cerr << "[etc-read] name=" << name << " etcRoot=" << (etc.empty() ? "<empty>" : etc)
+                      << "\n";
         if (!etc.empty()) {
             fs::path alt = etc + "/" + name;
             if (fs::is_regular_file(alt, ec)) {
@@ -1007,9 +1025,13 @@ std::string readVfsFile(const std::string& vpath) {
                 if (in) {
                     std::ostringstream ss;
                     ss << in.rdbuf();
+                    if (std::getenv("LPCVM_TRACE") && name == "valid_chinese.list")
+                        std::cerr << "[etc-read] OK bytes=" << ss.str().size() << "\n";
                     return ss.str();
                 }
             }
+            if (std::getenv("LPCVM_TRACE") && name == "valid_chinese.list")
+                std::cerr << "[etc-read] not a regular file: " << alt.string() << "\n";
         }
     }
     // /<objPrefix>/pack_data/<pak>/<entry> fallback: read from the real pak
@@ -1033,6 +1055,13 @@ std::string readVfsFile(const std::string& vpath) {
                 try {
                     lpc::PakFile pak = lpc::loadPak(pakPath);
                     const lpc::PakEntry* e = lpc::findPakEntry(pak, entry);
+                    if (std::getenv("LPCVM_TRACE") && (vpath.find("etc.pak/") != std::string::npos ||
+                                                       vpath.find("server_maps.pak/") != std::string::npos))
+                        std::cerr << "[readvfs] pak=" << pakPath << " entry=" << entry
+                                  << " found=" << (e ? "Y" : "N") << " isDir=" << (e && e->isDir)
+                                  << " off=" << (e ? e->offset : -1)
+                                  << " comp=" << (e ? e->compSize : -1)
+                                  << " orig=" << (e ? e->origSize : -1) << "\n";
                     if (!e || e->isDir) continue;
                     std::ifstream in(pakPath, std::ios::binary);
                     if (!in) continue;
@@ -1046,8 +1075,14 @@ std::string readVfsFile(const std::string& vpath) {
                                              data.begin() + e->offset + e->compSize);
                     std::vector<uint8_t> out;
                     if (lzssDecompress(src, e->origSize, out)) {
+                        if (std::getenv("LPCVM_TRACE") && vpath.find("etc.pak/") != std::string::npos)
+                            std::cerr << "[readvfs] decompress OK orig=" << e->origSize
+                                      << " got=" << out.size() << "\n";
                         return std::string(out.begin(), out.end());
                     }
+                    if (std::getenv("LPCVM_TRACE") && vpath.find("etc.pak/") != std::string::npos)
+                        std::cerr << "[readvfs] decompress FAIL comp=" << e->compSize
+                                  << " orig=" << e->origSize << "\n";
                     if (e->compSize == e->origSize) {
                         return std::string(src.begin(), src.end());
                     }
@@ -1972,75 +2007,52 @@ std::string sqliteRealPath(const std::string& vpath) {
 }
 } // namespace
 
+StubCallCtx& stubCallCtx() {
+    static thread_local StubCallCtx ctx;
+    return ctx;
+}
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
     // ------------------------------------------------------------------
-    // Stub-efun tracker: these efuns have placeholder implementations (fixed
-    // return values / no real logic) because the underlying feature is not
-    // ported yet.  Log the first few calls per efun so we can see which
-    // stubs the running game actually invokes and how often - that tells us
-    // which ones matter enough to implement properly.  (Real implementations
-    // are NOT in this set and produce no log.)
+    // Stub-efun tracker.  The name list is GENERATED (tools/gen_stubset.py)
+    // from the full efun table minus every efun that has a real dispatch
+    // branch in builtins.cpp / original_vm.cpp, so it cannot silently miss
+    // unimplemented efuns the way a hand-maintained list did.  Any efun the
+    // running game invokes that lands here logs obj::fn + rate-limited count.
+    // Implement one efun for real -> remove it from the generated list.
     // ------------------------------------------------------------------
     {
         static std::mutex m;
         static std::unordered_map<std::string, int> counts;
         static const std::unordered_set<std::string> stubSet = {
-            // language/introspection stubs
-            "get_args", "is_compiling", "set_nohalt", "set_as_daemon",
-            "is_compiled_object", "get_all_global_vars", "var_info",
-            "get_function_owner", "get_obj_function", "get_obj_var",
-            "size_object", "size_value", "info_object", "objects",
-            "child_objects", "env_object", "lodger_object", "move_object",
-            "replace_owner", "compile_program", "config_driver",
-            // thread stubs
-            "get_thread_info", "delete_thread", "suspend_thread",
-            "get_all_threads", "get_thread_attr", "get_thread_name",
-            "get_thread_priority", "get_thread_seq_no", "set_thread_attr",
-            "set_thread_deletion", "set_priority", "resume_thread",
-            // socket/network stubs
-            "set_sock_opt", "get_sock_opt", "ioctl_socket", "send_to",
-            "recv_from",
-            // logging stubs
-            "log_file", "set_log_on", "set_log_file",
-            // stat/message stubs
-            "get_client_stat", "get_message_stat", "reset_client_stat",
-            "reset_message_stat", "enable_client_record",
-            "enable_client_snapshot", "enable_message_stat",
-            // profiling/debug stubs
-            "pp_start_profiling", "pp_stop_profiling", "pp_is_profiling",
-            "pp_get_report", "pp_get_profiling_time", "debug_on",
-            "debug_off", "debug_client", "enable_trace", "set_trace_level",
-            "set_driver_caption", "switch_include_dir", "shift_time",
-            // banned-word / map-module stubs
-            "attach_illegal_list", "detach_illegal_list",
-            "find_illegal_string", "is_blocked",
-            "set_valid_chinese", "get_resource_string",
-            "remove_resource_string", "add_resource_string",
-            "load_resource_strings", "decrypt", "tixml_parse",
-            // sqlite stubs (SQL served via MySQL instead)
-            "sql_open_db", "sql_close_db", "sql_finalize", "sql_query",
-            "sql_step", "sql_get_db_info", "sql_get_error",
-            // mysql aux stubs
-            "mysql_debug_on", "mysql_debug_off", "mysql_set_auto_commit",
-            "mysql_field_name", "mysql_int_field",
-            "mysql_get_connection_info", "mysql_get_view_info",
-            "mysql_get_version_info", "mysql_escape_string",
-            "mysql_get_insert_id", "sql_get_insert_id",
-            // timer stubs
-            "get_timer", "delete_timer", "get_all_timers", "get_timer_id",
-            // misc
-            "get_prompt", "set_prompt", "check_event", "pend_on_event",
-            "create_mailbox", "delete_mailbox", "list_mailbox",
-            "peek_mailbox", "post_mailbox", "pend_on_mailbox",
+#include "stub_efuns.inc"
         };
         if (stubSet.find(name) != stubSet.end()) {
             std::lock_guard<std::mutex> lk(m);
             int c = ++counts[name];
-            if (c <= 5 || c % 500 == 0)
-                std::cerr << "[efun-stub] " << name << " args=" << args.size()
-                          << " calls=" << c << " (placeholder efun)\n";
+            if (c <= 20 || c % 500 == 0) {
+                std::string ad;
+                if (!args.empty()) {
+                    if (args[0].index() == 4) {
+                        std::string s = std::get<std::string>(args[0]);
+                        if (s.size() > 48) s = s.substr(0, 48) + "...";
+                        ad = "a0='" + s + "'";
+                    } else if (args[0].index() == 2) {
+                        ad = "a0=" + std::to_string(std::get<int64_t>(args[0]));
+                    } else {
+                        ad = "a0=t" + std::to_string(args[0].index());
+                    }
+                }
+                std::cerr << "[efun-stub] " << name << " @" << stubCallCtx().obj
+                          << "::" << stubCallCtx().fn << " args=" << args.size()
+                          << " " << ad << " calls=" << c << " (unimplemented efun)\n";
+            }
+            // The generated list covers ONLY efuns with no dispatch branch
+            // below, so return immediately (avoid double-logging at the
+            // catch-all).  Unknown efuns silently return 0.
+            return make_int(0);
         }
     }
 
@@ -2057,6 +2069,57 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "int32") {
         // vm_f_int32 (0x80d7b5c): cast to int32 (vm_getArgument with type 2).
         return args.empty() ? make_int(0) : make_int(as_int(args[0]));
+    }
+    // ------------------------------------------------------------------
+    // Standard attribute-value efuns (basic_objectd import / NPC & item
+    // attribute rolls).  IDA semantics (vm_f_std_life 0x807d508 etc.):
+    //   - at most 1 argument, else vm_error("Too many argument...");
+    //   - an int argument is widened to real THROUGH float32, a real used
+    //     directly (anything else errors "Expected real as argument...");
+    //   - the arithmetic is x87 long-double, the result rounded through
+    //     float32, then truncated to int and returned (argument slot
+    //     written in place, which is how the VM returns an efun result).
+    //   std_life(l)   = (int) (100 + 85b + 1.39 b^2),  b = max(l-1, 0)
+    //   std_mana(l)   = (int) (80  + 56b + 0.93 b^2)
+    //   std_attack(l) = 4 * (int)(100 + 85b + 1.39 b^2) / 10
+    //   std_defense(l)= (int)(100 + 85b + 1.39 b^2) / 15
+    //   std_speed(l)  = (int) (50 + 6b)            (std_dodge identical)
+    //   std_tao(l)    = max(1, (int) (0.29 * l^3))   (l NOT decremented)
+    if (name == "std_life" || name == "std_mana" || name == "std_attack" ||
+        name == "std_defense" || name == "std_speed" || name == "std_dodge" ||
+        name == "std_tao") {
+        if (args.size() > 1) {
+            // Original raises a VM error; fall back to 0 so the caller can
+            // continue instead of aborting the boot.
+            return make_int(0);
+        }
+        double raw;
+        if (args.empty()) raw = 0.0;
+        else if (args[0].index() == 2) raw = static_cast<double>(static_cast<float>(as_int(args[0])));
+        else if (args[0].index() == 3) raw = std::get<double>(args[0]);
+        else return make_int(0);
+        long double r = static_cast<long double>(raw);
+        int64_t result = 0;
+        if (name == "std_tao") {
+            if (r < 0.0L) r = 0.0L;
+            long double f = static_cast<long double>(static_cast<float>(r * r * r * 0.29L));
+            int64_t v = static_cast<int64_t>(f);
+            result = (v <= 0) ? 1 : v;
+        } else {
+            long double b = r - 1.0L;
+            if (b < 0.0L) b = 0.0L;
+            float f;
+            if (name == "std_life") f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
+            else if (name == "std_mana") f = static_cast<float>(80.0L + 56.0L * b + 0.93L * b * b);
+            else if (name == "std_attack") f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
+            else if (name == "std_defense") f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
+            else /* speed / dodge */ f = static_cast<float>(50.0L + 6.0L * b);
+            int64_t iv = static_cast<int64_t>(f);
+            if (name == "std_attack") result = 4 * iv / 10;
+            else if (name == "std_defense") result = iv / 15;
+            else result = iv;
+        }
+        return make_int(result);
     }
 
     if (name == "write" || name == "printf" || name == "dump_file") {
@@ -2191,9 +2254,34 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "clone_object") {
         // vm_f_clone_object (0x80f8eac): clone_object(path, createArgs...) clones
         // a loaded template object into a fresh instance, passing the remaining
-        // arguments to its create(), and returns it; 0 on failure.
+        // arguments to its create(), and returns it; 0 on failure.  The target
+        // may be a path string OR a loaded object value (create_basic_object
+        // clones the /gs/clone/npc/basic.c template object it already loaded:
+        // clone_object(basic_ob)); as_string() on an object value yields
+        // "<object>" garbage, so extract the program path for object args.
         if (args.empty()) return make_int(0);
-        std::string path = as_string(args[0]);
+        std::string path;
+        if (args[0].index() == 7) {
+            auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+            path = ov->programName;
+            // clone:<rel>#<seq> / pak:<rel>: normalize to the program path.
+            // A CLONE target keeps its "#<seq>" instance identity: cloning the
+            // basic object (e.g. clone_object(find_basic_object_by_import_name(
+            // "tianyongcheng/shouhutianshen.c")) from place_char) must clone
+            // THAT instance (whose dbase has name/file_id/my_import_name), not
+            // the bare basic.c template - otherwise the new NPC has no name
+            // and guardd can't find 守护天神@天墉城.
+            if (path.compare(0, 6, "clone:") == 0) {
+                size_t hash = path.find('#');
+                if (hash != std::string::npos) path = path.substr(6);  // keep #seq
+                else path = path.substr(6);
+            } else if (path.compare(0, 4, "pak:") == 0) {
+                path = path.substr(4);
+            }
+            if (!path.empty() && path.front() != '/') path = "/" + path;
+        } else {
+            path = as_string(args[0]);
+        }
         if (path.empty()) return make_int(0);
         std::vector<Value> createArgs;
         for (size_t i = 1; i < args.size(); ++i) createArgs.push_back(args[i]);
@@ -2214,7 +2302,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "keys") {
         if (args.empty() || args[0].index() != 6) return make_array();
         auto arr = std::make_shared<ArrayValue>();
-        for (auto& kv : std::get<std::shared_ptr<MappingValue>>(args[0])->items()) arr->items.push_back(kv.first);
+        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        for (auto& kv : mp->items()) arr->items.push_back(kv.first);
         return arr;
     }
     if (name == "values") {
@@ -2535,12 +2624,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             return arr;
         }
 
-        // real filesystem: readdir order (NTFS gives name order; the original
-        // relied on ext3 readdir order, but on the deployed servers these
-        // plain .c directories were empty - everything lived in the pak).
+        // real filesystem: readdir order (no sorting, like the original's
+        // opendir/readdir traversal).
         fs::path dir = resolveVfsPath(dirPart.empty() ? "/" : dirPart);
         std::error_code ec;
         if (!fs::exists(dir, ec)) return arr;
+        std::vector<std::string> plainNames;
+        std::vector<std::pair<int64_t, int64_t>> plainMeta;
         for (auto& p : fs::directory_iterator(dir, ec)) {
             std::string name = p.path().filename().string();
             if (!matchString(name, pat)) continue;
@@ -2551,8 +2641,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 auto ft = fs::last_write_time(p.path(), ec2);
                 mtime = static_cast<int64_t>(ft.time_since_epoch().count() / 10000000);
             }
-            pushPlain(name, size, mtime);
+            plainNames.push_back(name);
+            plainMeta.emplace_back(size, mtime);
         }
+        for (size_t i = 0; i < plainNames.size(); ++i)
+            pushPlain(plainNames[i], plainMeta[i].first, plainMeta[i].second);
         return arr;
     }
     if (name == "get_sub_dirs_ex") {
@@ -2759,31 +2852,67 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "object_name") {
-        // object_name(ob) - return the object's path.
+        // object_name(ob) - return the object's path.  The original driver
+        // returns the mudlib path the object was loaded from (e.g.
+        // "/gs/zone/tianyongcheng/tianyongcheng.o").  Our registry keys carry a
+        // "pak:" prefix (and clone keys a "clone:" prefix); roomd.c's
+        // place_char does sscanf(object_name(room_ob), "/gs/zone/%s/%*s") to
+        // resolve THIS_PLACE, so a raw registry key ("pak:gs/zone/...") breaks
+        // NPC placement.  Strip the scheme prefix and normalize to a leading
+        // slash.  object_name(ob, flag): with a truthy second arg the original
+        // returns the CLONE's program path WITHOUT the "#<seq>" instance
+        // suffix (basic_object.c's init_basic_object derives file_id via
+        // object_name(this_object(), 1)); flag==0 keeps the instance suffix.
+        bool noInstance = args.size() >= 2 && !(args[1].index() == 2 && std::get<int64_t>(args[1]) == 0);
         if (!args.empty() && args[0].index() == 7) {
             auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
-            if (!ov->programName.empty()) return make_string(ov->programName);
+            std::string p = ov->programName;
+            if (p.compare(0, 4, "pak:") == 0) p = p.substr(4);
+            else if (p.compare(0, 6, "clone:") == 0) {
+                // clone:<rel>#<seq> -> keep the rel part (the original clone's
+                // object_name is the program path, no instance suffix).
+                p = p.substr(6);
+                size_t hash = p.find('#');
+                if (hash != std::string::npos) p = p.substr(0, hash);
+            }
+            if (!p.empty() && p.front() != '/') p = "/" + p;
+            if (!p.empty() && noInstance) {
+                size_t hash = p.find('#');
+                if (hash != std::string::npos) p = p.substr(0, hash);
+            }
+            if (!p.empty()) return make_string(p);
         }
         return make_string("");
     }
     if (name == "file_size") {
+        // vm_f_file_size: -1 when missing, -2 for a directory, else the byte
+        // size.  The LPC assure_file() (filed's write_data) switches on these
+        // codes: -1 -> mkdir, -2 -> exists.  Returning 0 for a missing path
+        // made assure_file skip every mkdir, so /data content files were never
+        // created and every filed read came back -1.
         if (args.empty()) return make_int(0);
         std::error_code ec;
-        auto sz = fs::file_size(resolveVfsPath(as_string(args[0])), ec);
-        return make_int(static_cast<int64_t>(sz));
+        fs::path p = resolveVfsPath(as_string(args[0]));
+        if (fs::is_directory(p, ec)) return make_int(-2);
+        if (!fs::exists(p, ec)) return make_int(-1);
+        return make_int(static_cast<int64_t>(fs::file_size(p, ec)));
     }
     if (name == "read_file") {
         if (args.empty()) return make_string("");
         std::string vpath = as_string(args[0]);
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+        if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[read_file] path=" << vpath << "\n";
         std::string content = readVfsFile(vpath);
         if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
             std::cerr << "[read_file] -> " << content.size() << " bytes, head=["
                       << content.substr(0, 20) << "]\n";
-        // mode "b" (buffer): the original returns a buffer; we represent
-        // buffers as byte strings so is_string() sees a string and slicing
-        // works.  Content is already raw bytes.
+        // mode "b" (buffer): the original returns a real buffer (Vm_Buffer_T)
+        // and callers gate on is_buffer() (derive_map_info / read_animate_info
+        // do read_file(path, "b") then is_buffer(buf) && read_map_info(buf)).
+        // Return a BufferValue so is_buffer() sees true; buffer contents are
+        // carried as raw bytes.
+        if (args.size() >= 2 && as_string(args[1]).find('b') != std::string::npos)
+            return make_buffer(content);
         return make_string(content);
     }
     if (name == "write_file") {
@@ -3147,7 +3276,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                             if (cell.isNull) {
                                 mp->insert(make_string(res.cols[i]), make_string(""));
                             } else if (cell.isNumber) {
-                                mp->insert(make_string(res.cols[i]), make_int(cell.num));
+                                mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
                             } else {
                                 mp->insert(make_string(res.cols[i]), make_string(cell.str));
                             }
@@ -3278,7 +3407,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
                             const auto& cell = row[i];
                             if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
-                            else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_int(cell.num));
+                            else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
                             else mp->insert(make_string(res.cols[i]), make_string(cell.str));
                         }
                         arr->items.push_back(mp);
@@ -3408,7 +3537,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
                     const auto& cell = row[i];
                     if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
-                    else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_int(cell.num));
+                    else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
                     else mp->insert(make_string(res.cols[i]), make_string(cell.str));
                 }
                 arr->items.push_back(mp);
@@ -3998,9 +4127,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "get_thread_id") {
         // vm_f_get_thread_id (0x80ed79c): get_thread_id() -> the current
         // process's tid; get_thread_id(name/int) resolves another process
-        // (returns its tid or -1).  We assign a unique stable id per LPC
-        // thread; a named lookup returns -1 (no named process registry).
-        if (args.empty()) return make_int(lpc::lpcThreadId());
+        // (returns its tid or -1).  The original assigns a unique tid per LPC
+        // PROCESS (PCB->tid); the cooperative scheduler runs all processes on
+        // one OS thread, so prefer the current process's id (the thread_local
+        // lpcThreadId() would be identical for every process, and configd's
+        // read_etc builds its wait/raise event name from this tid - sharing an
+        // id made the master's read_etc get woken by a reply meant for another
+        // process, timing out and returning -1 instead of the config value).
+        if (args.empty()) {
+            int64_t pid = lpc::schedulerCurrentTid();
+            return make_int(pid >= 0 ? pid : lpc::lpcThreadId());
+        }
         return make_int(-1);
     }
     if (name == "time" || name == "time_desc")
@@ -4964,11 +5101,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_log_on" || name == "set_log_file") return make_int(1);
     if (name == "ischinese") {
         // vm_f_ischinese: is the byte the start of a multi-byte (GBK) char?
-        // Treat high bytes as Chinese like the original.
+        // Treat high bytes as Chinese like the original.  The argument is an
+        // int holding a byte value (e.g. attrib[0] in convert_to_value), so
+        // LOBYTE is tested -- as_string(202) would give "202" whose first
+        // byte '2' is <0x80, silently misclassifying every GBK lead byte and
+        // making convert_to_value() turn bare Chinese columns into 0.
         if (args.empty()) return make_int(0);
-        std::string s = as_string(args[0]);
-        if (s.empty()) return make_int(0);
-        unsigned char c = static_cast<unsigned char>(s[0]);
+        unsigned char c;
+        if (args[0].index() == 2) {  // int byte value
+            c = static_cast<unsigned char>(as_int(args[0]) & 0xFF);
+        } else {
+            std::string s = as_string(args[0]);
+            if (s.empty()) return make_int(0);
+            c = static_cast<unsigned char>(s[0]);
+        }
         return make_int((c >= 0x80) ? 1 : 0);
     }
     if (name == "ucmp") {
@@ -4991,8 +5137,95 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return mp;
     }
     if (name == "is_blocked") {
-        // vm_f_is_blocked (map module): whether the map cell is blocked.  The
-        // ccs build rarely uses the map module; return 0 (not blocked).
+        // vm_f_is_blocked (map module): whether the map cell is blocked.
+        // Returns bitsMap[x*height+y] & 0x21 (PLOT_IS_OBSTACLE=1|PLOT_IS_WATER=32),
+        // or -1 when the coordinate is out of range.
+        return lpc::mapModule().is_blocked(args);
+    }
+    if (name == "allocate_id") {
+        // vm_f_allocate_id: allocate an id from the pool for the given object.
+        return lpc::mapModule().allocateId(args.empty() ? Value{} : args[0]);
+    }
+    if (name == "free_id") {
+        return lpc::mapModule().freeId(args.empty() ? Value{} : args[0]);
+    }
+    if (name == "get_object_by_id") {
+        return lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
+    }
+    if (name == "init_id_pool") {
+        // init_id_pool(poolSize[, startId]) - startId defaults to 10000.
+        int64_t size = args.empty() ? 0 : as_int(args[0]);
+        int64_t start = args.size() >= 2 ? as_int(args[1]) : 10000;
+        lpc::mapModule().initIdPool(size, start);
+        return make_int(1);
+    }
+    if (name == "build_map") {
+        return lpc::mapModule().buildMap(args);
+    }
+    if (name == "destruct_map") {
+        return lpc::mapModule().destructMap(args.empty() ? Value{} : args[0]);
+    }
+    if (name == "get_map_info") {
+        return lpc::mapModule().getMapInfo(args.empty() ? Value{} : args[0]);
+    }
+    if (name == "get_all_map") {
+        return lpc::mapModule().getAllMap();
+    }
+    if (name == "put_in_map") {
+        return lpc::mapModule().putInMap(args);
+    }
+    if (name == "remove_from_map") {
+        return lpc::mapModule().removeFromMap(args);
+    }
+    if (name == "move_in_map") {
+        return lpc::mapModule().moveInMap(args);
+    }
+    if (name == "get_from_map") {
+        return lpc::mapModule().getFromMap(args);
+    }
+    if (name == "get_in_sight") {
+        return lpc::mapModule().getInSight(args);
+    }
+    if (name == "get_id_in_map") {
+        return lpc::mapModule().getIdInMap(args);
+    }
+    if (name == "get_all_objects") {
+        return lpc::mapModule().getAllObjects();
+    }
+    if (name == "read_map_info") {
+        return lpc::mapModule().readMapInfo(args);
+    }
+    if (name == "calc_offset") {
+        return lpc::mapModule().calcOffset(args);
+    }
+    if (name == "mark_map_plot" || name == "unmark_map_plot" || name == "get_map_plot") {
+        // vm_f_mark_map_plot (0x807a8b4) / vm_f_unmark_map_plot (0x8079be8) /
+        // vm_f_get_map_plot (0x807aca8): the plot layer IS the obstacle bit
+        // plane (x-major, bits[x*height+y], same layout is_blocked reads).
+        // mark ORs the flag byte in, unmark ANDs ~flag out, get returns the
+        // byte.  Out-of-range / missing map: original vm_error()s; roomd's
+        // square_plot_mark clamps coordinates first and ignores the return,
+        // so tolerate (return 0) instead.
+        auto* m = lpc::mapModule().findMap(args.empty() ? Value{} : args[0]);
+        if (!m || m->bits.empty() || args.size() < 3) return make_int(0);
+        int64_t x = as_int(args[1]), y = as_int(args[2]);
+        if (x < 0 || y < 0 || x >= m->width || y >= m->height) return make_int(0);
+        size_t idx = static_cast<size_t>(x * m->height + y);
+        if (name == "get_map_plot") return make_int(m->bits[idx]);
+        int64_t flag = (args.size() >= 4) ? as_int(args[3]) : 1;
+        if (name == "mark_map_plot")
+            m->bits[idx] = static_cast<uint8_t>(m->bits[idx] | (flag & 0xFF));
+        else
+            m->bits[idx] = static_cast<uint8_t>(m->bits[idx] & ~(flag & 0xFF));
+        return make_int(1);
+    }
+    if (name == "write_buffer") {
+        // vm_f_write_buffer (0x80dd90c): write_buffer(&buf, offset, int|buffer|
+        // string) writes big-endian int / raw bytes into a REFERENCED buffer
+        // and returns the length written.  The efun bridge passes values by
+        // copy, so a true write-back is not possible here; notice_others_appear
+        // (gs basic.o) is the only caller at boot (5 calls) and tolerates a
+        // failure - return 0.
         return make_int(0);
     }
     if (name == "get_client_stat") {
@@ -5012,7 +5245,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(g_debug);
     }
     if (name == "enable_trace") return make_int(1);
-    if (name == "set_driver_caption") return make_int(1);
+    if (name == "set_driver_caption") {
+        // vm_f_set_driver_caption -> vm_setWindowCaption prints "Driver: %s\n"
+        // (the gameshell window title / server line identity).  Not a stub:
+        // gs startup logs "Driver: 一线" right before configd loads.
+        if (!args.empty())
+            std::cerr << "Driver: " << as_string(args[0]) << "\n";
+        return make_int(1);
+    }
     if (name == "config_driver") return make_int(1);
     if (name == "switch_include_dir") return make_int(1);
     if (name == "compile_program") {
@@ -5297,6 +5537,82 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         out->items = std::move(items);
         return out;
     }
+    if (name == "set_uid" || name == "set_euid") {
+        // vm_f_set_uid (0x80f8ae8): set_uid(obj|objName, uid) assigns the
+        // object's uid field.  vm_f_set_euid (0x80f8594): set_euid(uid) sets
+        // the CURRENT object's euid, gated by "no priviledge (uid = %d) to
+        // set euid to %d" when uid > euid.  Every daemon calls set_euid(0)
+        // from create() (verified in sorterrord.o pseudo) and require_uid()
+        // calls set_uid(obj, uid) - both with NO consumer: nothing in the
+        // booted game reads uid/euid back (get_uid/get_euid are never called
+        // at runtime), so accepting the values and returning 1 is exactly
+        // equivalent to the original behaviour here (the original's return is
+        // void and its privilege checks only gate later uid queries, which
+        // never happen).
+        return make_int(1);
+    }
+    if (name == "create_mailbox") {
+        // vm_f_create_mailbox (0x80ef08c): create_mailbox([name, count]) ->
+        // oid of a new mailbox pend-object (type 15, slot table with a
+        // per-slot mask; only antibotd.o::create calls it at boot and no
+        // post/peek/list/pend caller exists, so hand out a unique id exactly
+        // like the create_queue path does).
+        static std::atomic<int64_t> nextMailbox{1000000};
+        return make_int(nextMailbox.fetch_add(1));
+    }
+    if (name == "verigen_load_font") {
+        // vm_f_verigen_load_font (0x81767f0): load a captcha font file
+        // (aaa picd.o::create calls it).  Captcha rendering is intentionally
+        // not ported (user decision) - accept and succeed.
+        return make_int(1);
+    }
+    if (name == "verigen_render_chars") {
+        // vm_f_verigen_render_chars (0x8176700): render chars into a 16bpp
+        // picture buffer (verify_coded's generate_pic_by_str calls it with
+        // (font_array, background, foreground, width, height, 0.8) and feeds
+        // the result to sizeof()/lzss_compress()/slice).  No real rendering:
+        // return a zeroed width*height*2 buffer so that pipeline stays valid.
+        int64_t w = (args.size() >= 4) ? as_int(args[3]) : 100;
+        int64_t h = (args.size() >= 5) ? as_int(args[4]) : 30;
+        if (w <= 0 || w > 4096) w = 100;
+        if (h <= 0 || h > 4096) h = 30;
+        return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
+    }
+    if (name == "verigen_render") {
+        // vm_f_verigen_render: render text into a 16bpp picture buffer
+        // (picd's generate_pic calls it twice: verigen_render(text, 65535,
+        // 0, w, h)).  Placeholder canvas like verigen_render_chars.
+        int64_t w = (args.size() >= 4) ? as_int(args[3]) : 96;
+        int64_t h = (args.size() >= 5) ? as_int(args[4]) : 96;
+        if (w <= 0 || w > 4096) w = 96;
+        if (h <= 0 || h > 4096) h = 96;
+        return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
+    }
+    if (name == "verigen_merge") {
+        // vm_f_verigen_merge(buf1, buf2, x, y, flag, fg, w, h): overlay two
+        // pictures into a 16bpp w*h*2 canvas.  Placeholder: zeroed canvas.
+        int64_t w = (args.size() >= 7) ? as_int(args[6]) : 96;
+        int64_t h = (args.size() >= 8) ? as_int(args[7]) : 96;
+        if (w <= 0 || w > 4096) w = 96;
+        if (h <= 0 || h > 4096) h = 96;
+        return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
+    }
+    if (name == "set_priority") {
+        // vm_f_set_priority (0x80ee66c): set_priority(prio, [tid|procName])
+        // changes an LPC thread's priority via vm_setThreadPriority; single
+        // arg targets the current process.  The ported scheduler is
+        // cooperative with no priority levels - accept and report success.
+        return make_int(1);
+    }
+    if (name == "verigen_take_word_glyph" || name == "verigen_render_glyph" ||
+        name == "verigen_transform_glyph" || name == "verigen_layout_word_glyphs" ||
+        name == "verigen_add_noise_to_glyph") {
+        // gs picd glyph pipeline (take_word_glyph -> transform/noise ->
+        // layout_word_glyphs_by_row/column -> render_glyph), a handful of
+        // calls at boot and never erroring on 0 today.  Same placeholder
+        // decision as the aaa captcha verigen_*: no real glyph rendering.
+        return make_int(0);
+    }
 
 
 #endif  // CRASH-DIAG: end of new efun batch
@@ -5308,8 +5624,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         static std::unordered_map<std::string, int> counts;
         std::lock_guard<std::mutex> lk(m);
         int c = ++counts[name];
-        if (c <= 5 || c % 1000 == 0)
-            std::cerr << "[efun-stub] " << name << " args=" << args.size()
+        if (c <= 20 || c % 500 == 0)
+            std::cerr << "[efun-stub] " << name << " @" << stubCallCtx().obj
+                      << "::" << stubCallCtx().fn << " args=" << args.size()
                       << " calls=" << c << " (unimplemented efun)\n";
     }
     return make_int(0);

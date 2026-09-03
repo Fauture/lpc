@@ -119,11 +119,13 @@
     <Link>
       <AdditionalDependencies>ws2_32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86</AdditionalOptions>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.lib</ImportLibrary>
+      <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.pdb</ProgramDataBaseFile>
+      <StackReserveSize>0x100000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -166,11 +168,13 @@
     <Link>
       <AdditionalDependencies>ws2_32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86</AdditionalOptions>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/Release/lpcvm.lib</ImportLibrary>
+      <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/Release/lpcvm.pdb</ProgramDataBaseFile>
+      <StackReserveSize>0x100000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -213,11 +217,13 @@
     <Link>
       <AdditionalDependencies>ws2_32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86</AdditionalOptions>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/MinSizeRel/lpcvm.lib</ImportLibrary>
+      <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/MinSizeRel/lpcvm.pdb</ProgramDataBaseFile>
+      <StackReserveSize>0x100000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -259,11 +265,13 @@
     <Link>
       <AdditionalDependencies>ws2_32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86</AdditionalOptions>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/RelWithDebInfo/lpcvm.lib</ImportLibrary>
+      <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/RelWithDebInfo/lpcvm.pdb</ProgramDataBaseFile>
+      <StackReserveSize>0x100000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -339,6 +347,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\lzss.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\pak_loader.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\original_vm.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\map_module.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\game_service.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\pkt_protocol.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\mysql_client.cpp" />

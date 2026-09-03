@@ -1186,7 +1186,17 @@ void handleMsgCfgMyInfo(GameClient& cl, const uint8_t* body, size_t len) {
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[game] msg_cfg_my_info client=" << cl.clientNo << " name='" << name
                   << "' port=" << port << " dist='" << dist << "' id=" << id
-                  << " distId=" << distId << " settings=" << m->size() << "\n";
+                  << " distId=" << distId << " settings=" << m->size();
+    if (std::getenv("LPCVM_TRACE")) {
+        auto items = m->items();
+        std::string ks;
+        for (auto& kv : items) {
+            if (!ks.empty()) ks += ",";
+            ks += to_string(kv.first, false) + "=" + to_string(kv.second, false).substr(0, 20);
+        }
+        std::cerr << " keys=[" << ks << "]\n";
+    } else if (std::getenv("LPCVM_TRACE"))
+        std::cerr << "\n";
     applyLpc("msg_cfg_my_info",
              {make_int(cl.clientNo), make_string(dist), make_string(name),
               make_int(port), make_int(id), make_int(distId), m});
@@ -13046,7 +13056,8 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
                 for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
-                std::cerr << "[recv] fd=" << fd << " cno=" << clientNo << " n=" << n << " " << hex << "\n";
+                if (std::getenv("LPCVM_TRACE"))
+                    std::cerr << "[recv] fd=" << fd << " cno=" << clientNo << " n=" << n << " " << hex << "\n";
             }
             if (n <= 0) break;
             GameClient* cur;

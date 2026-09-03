@@ -424,12 +424,26 @@ Value Interpreter::evalBinary(const std::string& op, const Value& a, const Value
             return arr;
         }
         if (a.index() == 4 || b.index() == 4) return make_string(as_string(a) + as_string(b));
-        if (a.index() == 3 || b.index() == 3) return make_float(as_float(a) + as_float(b));
+        // original VM: mixed int/real keeps the LEFT operand's type
+        if (a.index() == 3) return make_float(as_float(a) + as_float(b));
+        if (b.index() == 3) return make_int(static_cast<int64_t>(as_float(a) + as_float(b)));
         return make_int(as_int(a) + as_int(b));
     }
-    if (op == "-") return a.index() == 3 || b.index() == 3 ? make_float(as_float(a) - as_float(b)) : make_int(as_int(a) - as_int(b));
-    if (op == "*") return a.index() == 3 || b.index() == 3 ? make_float(as_float(a) * as_float(b)) : make_int(as_int(a) * as_int(b));
-    if (op == "/") return a.index() == 3 || b.index() == 3 ? make_float(as_float(a) / as_float(b)) : make_int(as_int(a) / as_int(b));
+    if (op == "-") {
+        if (a.index() == 3) return make_float(as_float(a) - as_float(b));
+        if (b.index() == 3) return make_int(static_cast<int64_t>(as_float(a) - as_float(b)));
+        return make_int(as_int(a) - as_int(b));
+    }
+    if (op == "*") {
+        if (a.index() == 3) return make_float(as_float(a) * as_float(b));
+        if (b.index() == 3) return make_int(static_cast<int64_t>(as_float(a) * as_float(b)));
+        return make_int(as_int(a) * as_int(b));
+    }
+    if (op == "/") {
+        if (a.index() == 3) return make_float(as_float(a) / as_float(b));
+        if (b.index() == 3) return make_int(static_cast<int64_t>(as_float(a) / as_float(b)));
+        return make_int(as_int(a) / as_int(b));
+    }
     if (op == "%") return make_int(as_int(a) % as_int(b));
     if (op == "==") return make_int(value_equal(a, b) ? 1 : 0);
     if (op == "!=") return make_int(value_equal(a, b) ? 0 : 1);

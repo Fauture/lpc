@@ -302,7 +302,11 @@ std::vector<std::pair<Value, Value>> MappingValue::items() const {
 }
 
 Value make_int(int64_t v) { return v; }
-Value make_float(double v) { return v; }
+// Original VM reals are IEEE single precision (probed live on the original:
+// 100.0/3.0 prints 33.333332, and 0.1+0.2==0.3 is true because every op
+// rounds through float32).  Round every real at creation so stored values and
+// the comparisons/prints on top of them match the original exactly.
+Value make_float(double v) { return static_cast<double>(static_cast<float>(v)); }
 Value make_string(std::string s) { return std::move(s); }
 Value make_buffer(std::string data) {
     auto b = std::make_shared<BufferValue>();
@@ -322,6 +326,7 @@ Value make_object_owned(std::string programName, const struct OriginalObject* ow
     o->owner = owner;
     return o;
 }
+Value make_crossvm_ref(std::shared_ptr<CrossVmRef> r) { return std::move(r); }
 Value make_closure(std::string name, std::vector<Value> args) {
     auto c = std::make_shared<ClosureValue>();
     c->functionName = std::move(name);
@@ -424,6 +429,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         out += ":";
         return out;
     }
+    case 11: return "<crossvm-ref>";
     default: return "<?>";
     }
 }

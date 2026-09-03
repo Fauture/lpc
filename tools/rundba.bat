@@ -1,1 +1,0 @@
-python lpc_decompiler_v37.py lib_dba32 -r -o lib_dba32-c -q lib_dba32/dba/start_dba.o

@@ -1,0 +1,3331 @@
+PDB is initialized by vmmemlib.
+Loaded boot object from pak: /aaa/pack_data/lib_aaa32.pak/aaa/start_aaa.o
+  strings=699 functions=274 globalNodes=661
+Original .o VM finished.
+Done of init_startup_module.
+Not exists online_update file.
+Done of init_compile_module.
+Done of init_sql_module.
+Done of init_debug_cmds_module.
+Init platform ok.
+Load all global feature.
+Load sub dir: /feature/common
+Load: /feature/common/daemon.c... OK
+Load: /feature/common/save.c... OK
+Load: /feature/common/ob_source.c... OK
+Load: /feature/common/dbase.c... OK
+Load: /feature/common/agent.c... OK
+Load: /feature/common/module_stat.c... OK
+Load: /feature/common/module_maintain.c... OK
+Load: /feature/common/gid.c... OK
+Load: /feature/common/iid.c... OK
+Load: /feature/common/updatehook.c... OK
+Load: /feature/common/batch_log.c... OK
+Load: /feature/common/name.c... OK
+Load: /feature/common/comm.c... OK
+Load: /feature/common/default_interface.c... OK
+Load sub dir: /feature/daemon
+Load: /feature/daemon/handler_module.c... OK
+Load: /feature/daemon/eternal_data.c... OK
+Load: /feature/daemon/module_data.c... OK
+Load: /feature/daemon/register_v37.c... OK
+Load: /feature/daemon/attention.c... OK
+Load: /feature/daemon/register.c... OK
+Load all global inherits.
+Load sub dir: /inherit/misc
+Load: /inherit/misc/handler.c... OK
+Load: /inherit/misc/httpd_handler.c... OK
+Load: /inherit/misc/agent.c... OK
+Load all global objects.
+Load sub dir: /clone/misc
+Load: /clone/misc/unauthed_agent.c... OK
+Load: /clone/misc/mixed_agent.c... OK
+Load all global cmds.
+Load sub dir: /cmds/cta
+Load: /cmds/cta/start_telnet_service.c... OK
+Load: /cmds/cta/reboot_server.c... OK
+Load: /cmds/cta/reboot_dist.c... OK
+Load: /cmds/cta/get_server_version.c... OK
+Load: /daemons/rpcd.c... OK
+Load: /daemons/default_interfaced.c... OK
+Load: /daemons/sorterrord.c... OK
+Load: /daemons/data_save/item.c... OK
+Load: /daemons/data_save/party_members.c... OK
+Load: /daemons/data_save/purchase.c... OK
+Load: /daemons/data_save/store.c... OK
+Load: /daemons/data_save/guard.c... OK
+Load: /daemons/data_save/achieve.c... OK
+Load: /daemons/data_save/shop_counter.c... OK
+Load: /daemons/data_save/share_store.c... OK
+Load: /daemons/data_save/monster.c... OK
+Load: /daemons/data_save/user.c... OK
+Load: /daemons/datasaved.c... OK
+Load: /daemons/loginnotifyd.c... OK
+Load: /daemons/encryptd.c... OK
+Load: /daemons/system_monitord.c... OK
+Load: /cmds/cta/start_telnet_service.c... OK
+Load: /cmds/cta/reboot_server.c... OK
+Load: /cmds/cta/reboot_dist.c... OK
+Load: /cmds/cta/get_server_version.c... OK
+Load: /daemons/ctacommandd.c... OK
+Load: /daemons/dbd.c... OK
+Load: /daemons/check_dbased.c... OK
+Load: /daemons/verify_coded.c... OK
+Load: /daemons/ctad.c... OK
+Load: /daemons/statmoduled.c... OK
+Load: /daemons/io_char_datad.c... OK
+Load: /daemons/filed.c... OK
+Load: /daemons/http_clientd.c... OK
+Load: /daemons/dbd.c... OK
+Load: /daemons/servertimed.c... OK
+Load: /daemons/http_serverd.c... OK
+Load: /daemons/connectiond.c... OK
+Load: /daemons/online_updated.c... OK
+Load: /daemons/scheduled.c... OK
+Load: /daemons/omd.c... OK
+Start MMD.all services.
+Load: /daemons/mmd.c... OK
+Start THREAD_D.all services.
+Load: /daemons/threadd.c... OK
+Load: /daemons/communicated.c... OK
+Load: /daemons/syncd.c... OK
+MMD.service daemon start.
+THREAD_D.service(9) daemon start...
+THREAD_D.service(10) daemon start...
+THREAD_D.service(11) daemon start...
+THREAD_D.service(12) daemon start...
+THREAD_D.service(13) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(14) daemon start...
+THREAD_D.service(16) daemon start...
+THREAD_D.service(17) daemon start...
+THREAD_D.service(18) daemon start...
+THREAD_D.service(19) daemon start...
+THREAD_D.service(20) daemon start...
+THREAD_D.service(21) daemon start...
+THREAD_D.service(22) daemon start...
+THREAD_D.service(23) daemon start...
+THREAD_D.service(24) daemon start...
+THREAD_D.service(25) daemon start...
+THREAD_D.service(26) daemon start...
+THREAD_D.service(27) daemon start...
+THREAD_D.service(28) daemon start...
+THREAD_D.service(29) daemon start...
+THREAD_D.service(30) daemon start...
+THREAD_D.service(31) daemon start...
+THREAD_D.service(32) daemon start...
+THREAD_D.service(33) daemon start...
+THREAD_D.service(34) daemon start...
+THREAD_D.service(35) daemon start...
+THREAD_D.service(40) daemon start...
+THREAD_D.service(40) daemon start...
+THREAD_D.service(40) daemon start...
+THREAD_D.service(40) daemon start...
+THREAD_D.service(40) daemon start...
+THREAD_D.service(40) daemon start...
+Load: /daemons/recycled.c... OK
+Load: /daemons/timerd.c... OK
+Load: /daemons/echod.c... OK
+Load: /daemons/autorecoverd.c... OK
+Load: /daemons/logd.c... OK
+Load: /daemons/log_server_startup_shutdownd.c... OK
+Load: /daemons/check_logd.c... OK
+Load: /daemons/configd.c... OK
+Load: /daemons/threadd.c... OK
+Load: /aaa/daemons/rebootd.c... OK
+Load: /aaa/daemons/pwdprotect_authd.c... OK
+Load: /aaa/daemons/passpodd.c... OK
+Load: /aaa/daemons/coin_traded.c... OK
+Load: /aaa/daemons/cta/cmd_cta_oper_adb_config.c... OK
+Load: /aaa/daemons/cta/cmd_cta_get_dist_info.c... OK
+Load: /aaa/daemons/ctad.c... OK
+Load: /aaa/daemons/account_transactiond.c... OK
+Load: /aaa/daemons/shopd.c... OK
+Load: /aaa/daemons/repair_checksum.c... OK
+Load: /aaa/daemons/admintool/cmd_cfg_get_spa_info.c... OK
+Load: /aaa/daemons/admintoold.c... OK
+Load: /aaa/daemons/share_stored.c... OK
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+Load: /aaa/daemons/ecardd.c... OK
+Load: /aaa/daemons/easyutild.c... OK
+Load: /aaa/daemons/span_servers_combatd.c... OK
+Load: /aaa/daemons/qr_coded.c... OK
+Load: /aaa/daemons/vip_smsd.c... OK
+Load: /aaa/daemons/picd.c... OK
+Load: /aaa/daemons/express_recharged.c... OK
+Load: /aaa/daemons/antibotd.c... OK
+Load: /aaa/daemons/gameserverd.c... OK
+Load: /aaa/daemons/server/cmd_l_clone_account.c... OK
+Load: /aaa/daemons/server/cmd_l_set_protect_bonus.c... OK
+Load: /aaa/daemons/server/cmd_l_block_account.c... OK
+Load: /aaa/daemons/server/cmd_l_get_acc_comp_char.c... OK
+Load: /aaa/daemons/server/cmd_l_query_addiction.c... OK
+Load: /aaa/daemons/server/cmd_l_verify_password.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_dist_list.c... OK
+Load: /aaa/daemons/server/cmd_l_query_random_coupon.c... OK
+Load: /aaa/daemons/server/cmd_l_convert_silver_coin.c... OK
+Load: /aaa/daemons/server/cmd_cfg_write_etc.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_dba_list.c... OK
+Load: /aaa/daemons/server/cmd_aaa_shutdown.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_ddb_list.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_ccs_list.c... OK
+Load: /aaa/daemons/server/cmd_l_borrow_local_encrypt.c... OK
+Load: /aaa/daemons/server/cmd_l_query_ip_area.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_cta_list.c... OK
+Load: /aaa/daemons/server/cmd_l_update_recharge_return_credit.c... OK
+Load: /aaa/daemons/server/cmd_l_auth_all_protect.c... OK
+Load: /aaa/daemons/server/cmd_ma_l_account_from_spa.c... OK
+Load: /aaa/daemons/server/cmd_l_add_coin.c... OK
+Load: /aaa/daemons/server/cmd_l_temp_block_account.c... OK
+Load: /aaa/daemons/server/cmd_l_do_alipay_recharge.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_spa_info.c... OK
+Load: /aaa/daemons/server/cmd_l_precost_coin.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_aaa_list.c... OK
+Load: /aaa/daemons/server/cmd_l_query_coin.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_server_list.c... OK
+Load: /aaa/daemons/server/cmd_l_update_first_credit_bonus.c... OK
+Load: /aaa/daemons/server/cmd_l_manage_mp_device.c... OK
+Load: /aaa/daemons/server/cmd_l_set_safe_ctrl_var.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_ccs_info.c... OK
+Load: /aaa/daemons/server/cmd_l_send_vip_sms.c... OK
+Load: /aaa/daemons/server/cmd_l_query_coupon.c... OK
+Load: /aaa/daemons/server/cmd_l_ssb_update_account.c... OK
+Load: /aaa/daemons/server/cmd_l_manage_vip_sms.c... OK
+Load: /aaa/daemons/server/cmd_l_request_ip_card.c... OK
+Load: /aaa/daemons/server/cmd_cfg_read_etc.c... OK
+Load: /aaa/daemons/server/cmd_l_log_cost_coin.c... OK
+Load: /aaa/daemons/server/cmd_l_set_acc_comp_char.c... OK
+Load: /aaa/daemons/server/cmd_ma_l_account.c... OK
+Load: /aaa/daemons/server/cmd_l_cost_coin.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_ahserver_info.c... OK
+Load: /aaa/daemons/server/cmd_l_ssb_copy_account.c... OK
+Load: /aaa/daemons/server/cmd_l_notice_login.c... OK
+Load: /aaa/daemons/server/cmd_l_get_local_encrypt_info.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_csa_info.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_ldba_list.c... OK
+Load: /aaa/daemons/server/cmd_l_do_inquiry.c... OK
+Load: /aaa/daemons/server/cmd_l_get_protect_info.c... OK
+Load: /aaa/daemons/server/cmd_l_query_account_state.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_tts_info.c... OK
+Load: /aaa/daemons/server/cmd_l_query_citys.c... OK
+Load: /aaa/daemons/server/cmd_l_set_account_info.c... OK
+Load: /aaa/daemons/server/cmd_l_update_addiction.c... OK
+Load: /aaa/daemons/server/cmd_l_change_coupon.c... OK
+Load: /aaa/daemons/server/cmd_l_oper_protect_range.c... OK
+Load: /aaa/daemons/server/cmd_l_get_credit_coins.c... OK
+Load: /aaa/daemons/server/cmd_l_set_local_encrypt_info.c... OK
+Load: /aaa/daemons/server/cmd_l_ecard_business.c... OK
+Load: /aaa/daemons/server/cmd_l_get_ssb_finish_flag.c... OK
+Load: /aaa/daemons/server/cmd_l_do_recharge.c... OK
+Load: /aaa/daemons/server/cmd_l_lock_account.c... OK
+Load: /aaa/daemons/server/cmd_l_set_safe_ctrl_str.c... OK
+Load: /aaa/daemons/server/cmd_l_set_phah_bonus_info.c... OK
+Load: /aaa/daemons/server/cmd_ma_oper.c... OK
+Load: /aaa/daemons/server/cmd_l_get_safe_ctrl_info.c... OK
+Load: /aaa/daemons/server/cmd_l_notice_level_up.c... OK
+Load: /aaa/daemons/server/cmd_l_request_coupon.c... OK
+Load: /aaa/daemons/server/cmd_l_enable_auto_lock.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_server_list_v37.c... OK
+Load: /aaa/daemons/server/cmd_l_add_encourage_coupon.c... OK
+Load: /aaa/daemons/server/cmd_l_get_ssb_combatd_conf.c... OK
+Load: /aaa/daemons/server/cmd_cfg_get_my_info.c... OK
+Load: /aaa/daemons/server/cmd_l_cost_coupon.c... OK
+Load: /aaa/daemons/serverd.c... OK
+Load: /aaa/daemons/aaaserverd.c... OK
+Load: /aaa/daemons/stalld.c... OK
+Load: /aaa/daemons/account/cmd_l_auth_matrix.c... OK
+Load: /aaa/daemons/account/cmd_l_auth_refresh_pic.c... OK
+Load: /aaa/daemons/account/cmd_l_auth_verify_code.c... OK
+Load: /aaa/daemons/account/msg_l_server_result.c... OK
+Load: /aaa/daemons/account/cmd_l_get_server_list.c... OK
+Load: /aaa/daemons/account/cmd_l_client_connect_agent.c... OK
+Load: /aaa/daemons/account/cmd_l_reselect_verify_code.c... OK
+Load: /aaa/daemons/account/cmd_l_auth_local_encrypt.c... OK
+Load: /aaa/daemons/accountd.c... OK
+Load: /aaa/daemons/configd.c... OK
+Load: /aaa/clone/admintool.c... OK
+Load: /aaa/clone/account.c... OK
+Load: /aaa/clone/server.c... OK
+Invoke registered initialization routines.
+Pack database of sqlite: /aaa/log/log_aaa_daili.sql.
+[1;32mStart AAA service on port: 8001
+[2;37;0mService started on port 8001
+[1;33mDriver load ok!
+[2;37;0mDriver startup
+
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] fd=1 entry=ecard_daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=1 agent-type=7
+[recv-accept] client=1 n=28 4D5A00000000000000123A010004096462615F6461696C6900000000
+[pkt-filed] cmd=0x3a01 client=1 attrib=771 len=16 tid=2452 body=0004096462615F6461696C6900000000
+[pkt-filed] dispatch cmd_internal_auth funcType=8
+[case8] /daemons/communicated.o -> clone:clone/misc/unauthed_agent.o#0::process_command argc=2
+[case8] /clone/misc/unauthed_agent.o -> /daemons/connectiond.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:clone/misc/unauthed_agent.o#0::relay_agent argc=1
+[pkt-filed] closure process_command returned
+[recv-accept] client=1 n=340 4D5A000000000000000E24780004096462615F6461696C694D5A000000000000000E235A0004096462615F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=4
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=7
+[recv-accept] client=1 n=16 4D5A000000000000000620D26619F07F
+[recv-accept] client=1 n=71 4D5A000000000000003D447408CAD4BDA3C4DAB2E206676C6F62616C086C64625F686F7374000000103139322E313638
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=11 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=11
+[case8] /aaa/daemons/server/cmd_cfg_write_etc.o -> clone:aaa/clone/server.o#1::send_message argc=3
+[recv-accept] client=1 n=71 4D5A000000000000003D447408CAD4BDA3C4DAB2E206676C6F62616C086D64625F686F7374000000103139322E313638
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=11 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=11
+[case8] /aaa/daemons/server/cmd_cfg_write_etc.o -> clone:aaa/clone/server.o#1::send_message argc=3
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=2 agent-type=7
+[recv-accept] client=2 n=28 4D5A00000000000000123A010007096363735F6461696C6900000000
+[pkt-filed] cmd=0x3a01 client=2 attrib=771 len=16 tid=13820 body=0007096363735F6461696C6900000000
+[pkt-filed] dispatch cmd_internal_auth funcType=8
+[case8] /daemons/communicated.o -> clone:clone/misc/unauthed_agent.o#2::process_command argc=2
+[case8] /clone/misc/unauthed_agent.o -> /daemons/connectiond.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:clone/misc/unauthed_agent.o#2::relay_agent argc=1
+[pkt-filed] closure process_command returned
+[recv-accept] client=2 n=340 4D5A000000000000000E24780007096363735F6461696C694D5A000000000000000E235A0007096363735F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=7
+[recv-accept] client=2 n=16 4D5A000000000000000620D26619F830
+[recv-accept] client=2 n=54 4D5A000000000000002C447008CAD4BDA3C4DAB2E206676C6F62616C0B67735F6370755F66756C6C09312E36302E3039
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=12 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=12
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=60 4D5A0000000000000032447008CAD4BDA3C4DAB2E206676C6F62616C11737461745F67735F6C6F675F6C6576656C0931
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=9 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=9
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C096C6F675F6572726F7209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=10 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=10
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=61 4D5A0000000000000033447008CAD4BDA3C4DAB2E206676C6F62616C12696C6C6567616C5F74616F5F70756E69736809
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=9 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=9
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=54 4D5A000000000000002C447008CAD4BDA3C4DAB2E206676C6F62616C0B6C696D69745F6C6F67696E09312E36302E3039
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=58 4D5A0000000000000030447008CAD4BDA3C4DAB2E206676C6F62616C0F78696E66755F63686F6E6762616E6709312E36
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=10 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=10
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C09656C697869725F6E7309312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=12 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=12
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=3 agent-type=7
+[recv-accept] client=3 n=23 4D5A000000000000000D3A01000504D2BBCFDF00000000
+[pkt-filed] cmd=0x3a01 client=3 attrib=771 len=11 tid=5680 body=000504D2BBCFDF00000000
+[pkt-filed] dispatch cmd_internal_auth funcType=8
+[case8] /daemons/communicated.o -> clone:clone/misc/unauthed_agent.o#4::process_command argc=2
+[case8] /clone/misc/unauthed_agent.o -> /daemons/connectiond.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:clone/misc/unauthed_agent.o#4::relay_agent argc=1
+[pkt-filed] closure process_command returned
+[recv-accept] client=3 n=270 4D5A00000000000000092478000504D2BBCFDF4D5A0000000000000009235A000504D2BBCFDF4D5A0000000000000009
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#5::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#5::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#5::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#5::send_message argc=4
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#5::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#5::send_message argc=7
+[recv-accept] client=1 n=16 4D5A0000000000000006F9C311D9B595
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311D9B596
+[recv-accept] client=3 n=16 4D5A0000000000000006F9C311D9B5A2
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661A178F
+[recv-accept] client=3 n=51 4D5A0000000000000029447008CAD4BDA3C4DAB2E206676C6F62616C087573655F6C64626109312E36302E3039303500
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=10 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=10
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#5::send_message argc=3
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=4 agent-type=7
+[recv-accept] client=4 n=0 
+[recv-accept] client=2 n=51 4D5A0000000000000029447008CAD4BDA3C4DAB2E206676C6F62616C08B0F1C9CFD3D0C3FB09312E36302E3039303500
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=10 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=10
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661A1F46
+[recv-accept] client=2 n=60 4D5A0000000000000032447008CAD4BDA3C4DAB2E206676C6F62616C116C6F74746572795F7469636B65745F6E730931
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=57 4D5A000000000000002F447008CAD4BDA3C4DAB2E206676C6F62616C0E636F6E76656E616E745F696E666F09312E3630
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C0961615F73657276657209312E36302E30393035
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=11 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=11
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=55 4D5A000000000000002D447008CAD4BDA3C4DAB2E206676C6F62616C0C7265645F656E76656C6F706509312E36302E30
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C096D705F73657276657209312E36302E30393035
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=12 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=12
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=62 4D5A0000000000000034447008CAD4BDA3C4DAB2E206676C6F62616C1377616E67777A647A5F73746172745F74696D65
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=3 n=[recv-accept] client=116 4D5A0000000000000006F9C311D9DCC4 n=[recv-accept] client=16
+ 4D5A0000000000000006F9C311D9DCC4
+2 n=16 4D5A0000000000000006F9C311D9DCC4
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=5 agent-type=7
+[recv-accept] client=5 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661A3EA5
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661A4662
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=6 agent-type=7
+[recv-accept] client=6 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=3 n=[recv-accept] client=116  n=4D5A0000000000000006F9C311DA03DD16 
+4D5A0000000000000006F9C311DA03DD
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311DA03DD
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=7 agent-type=7
+[recv-accept] client=7 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661A65B9
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661A6D7E
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=8 agent-type=7
+[recv-accept] client=8 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=1 n=16[recv-accept] client=[recv-accept] client= 32 n=4D5A0000000000000006F9C311DA2AF316
+  n=4D5A0000000000000006F9C311DA2AF316 
+4D5A0000000000000006F9C311DA2AF3
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=9 agent-type=7
+[recv-accept] client=9 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661A8CD3
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661A9496
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=10 agent-type=7
+[recv-accept] client=10 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=[recv-accept] client=2 n=163 n=16 4D5A0000000000000006F9C311DA5205[recv-accept] client=
+1 n=16 4D5A0000000000000006F9C311DA5205
+ 4D5A0000000000000006F9C311DA5205
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=11 agent-type=7
+[recv-accept] client=11 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661AB3EA
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661ABBA7
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=12 agent-type=7
+[recv-accept] client=12 n=0 
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311DA791B
+[recv-accept] client=3 n=[recv-accept] client=161  n=16 4D5A0000000000000006F9C311DA791B
+4D5A0000000000000006F9C311DA791B
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661ADB08
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=13 agent-type=7
+[recv-accept] client=13 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661AE2C6
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=14 agent-type=7
+[recv-accept] client=14 n=0 
+[recv-accept] client=1 n=16[recv-accept] client=[recv-accept] client= 23 n=4D5A0000000000000006F9C311DAA03A16
+ 4D5A0000000000000006F9C311DAA03A
+ n=16 4D5A0000000000000006F9C311DAA03A
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661B0227
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=15 agent-type=7
+[recv-accept] client=15 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661B09E3
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C0961615F73657276657209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C096D705F73657276657209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=11 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=11
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=16 agent-type=7
+[recv-accept] client=16 n=0 
+[recv-accept] client=1[recv-accept] client=2 n=[recv-accept] client=3 n= n=16 16 16 4D5A0000000000000006F9C311DAC74E
+4D5A0000000000000006F9C311DAC74F
+4D5A0000000000000006F9C311DAC74F
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661B2944
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661B30FD
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=17 agent-type=7
+[recv-accept] client=17 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=3 n=[recv-accept] client=216  n=4D5A0000000000000006F9C311DAEE6D16 
+4D5A0000000000000006F9C311DAEE6D
+[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DAEE6E
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=18 agent-type=7
+[recv-accept] client=18 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661B5057
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661B5816
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=19 agent-type=7
+[recv-accept] client=19 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311DB1586
+[recv-accept] client=[recv-accept] client=31 n= n=1616  4D5A0000000000000006F9C311DB15864D5A0000000000000006F9C311DB1586
+
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=20 agent-type=7
+[recv-accept] client=20 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661B7770
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661B7F2D
+[recv-accept] client=3 n=56 4D5A000000000000002E447008CAD4BDA3C4DAB2E206676C6F62616C0D70726F746563745F70686F6E6509312E36302E
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#5::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=9 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=9
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#5::send_message argc=3
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=21 agent-type=7
+[recv-accept] client=21 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DB3C8D
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311DB3C8E
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=22 agent-type=7
+[recv-accept] client=22 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661B9E8F
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661BA64A
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=23 agent-type=7
+[recv-accept] client=23 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311DB63B5
+[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DB63B6
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661BC5A1
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=24 agent-type=7
+[recv-accept] client=24 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661BCD64
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=25 agent-type=7
+[recv-accept] client=25 n=0 
+[recv-accept] client=2 n=16 4D5A0000000000000006F9C311DB8AD3
+[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DB8AD3
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661BECC0
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=26 agent-type=7
+[recv-accept] client=26 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661BF47A
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C0961615F73657276657209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=11 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=11
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C096D705F73657276657209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=10 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=10
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=27 agent-type=7
+[recv-accept] client=27 n=0 
+[recv-accept] client=[recv-accept] client=21 n=16 n= 164D5A0000000000000006F9C311DBB1E7 
+4D5A0000000000000006F9C311DBB1E7
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661C13D3
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=28 agent-type=7
+[recv-accept] client=28 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661C1B94
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=2 n=[recv-accept] client=1 n=16 16 4D5A0000000000000006F9C311DBD8FC4D5A0000000000000006F9C311DBD8FC
+
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=29 agent-type=7
+[recv-accept] client=29 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661C3AF1
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661C42B0
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=30 agent-type=7
+[recv-accept] client=30 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=[recv-accept] client=1 n=162 n=16  4D5A0000000000000006F9C311DC00174D5A0000000000000006F9C311DC0017
+
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=31 agent-type=7
+[recv-accept] client=31 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661C6204
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661C69CE
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=32 agent-type=7
+[recv-accept] client=32 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DC27292 n=16 4D5A0000000000000006F9C311DC2729
+
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=33 agent-type=7
+[recv-accept] client=33 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661C8921
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661C90DE
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=34 agent-type=7
+[recv-accept] client=34 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DC4E3F[recv-accept] client=2
+ n=16 4D5A0000000000000006F9C311DC4E3F
+[recv-accept] client=1 n=24 4D5A000000000000000E24780004096462615F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[recv-accept] client=1 n=268 4D5A000000000000000E235A0004096462615F6461696C694D5A000000000000000E23600004096462615F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=4
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[recv-accept] client=1 n=48 4D5A000000000000000E24720004096462615F6461696C694D5A000000000000000E23640004096462615F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#1::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#1::send_message argc=7
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=35 agent-type=7
+[recv-accept] client=35 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661CB039
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=2 n=24 4D5A000000000000000E24780007096363735F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[recv-accept] client=2 n=220 4D5A000000000000000E235A0007096363735F6461696C694D5A000000000000000E23600007096363735F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[recv-accept] client=2 n=96 4D5A000000000000000E246E0007096363735F6461696C694D5A000000000000000E247E0007096363735F6461696C69
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=2
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[case8] /aaa/daemons/serverd.o -> clone:aaa/clone/server.o#3::send_message argc=7
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661CB7F1
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=36 agent-type=7
+[recv-accept] client=36 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[recv-accept] client=[recv-accept] client=1 n=2 n=16 16 4D5A0000000000000006F9C311DC755B4D5A0000000000000006F9C311DC755B
+
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661CD74B
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=37 agent-type=7
+[recv-accept] client=37 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661CDF08
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C0961615F73657276657209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=13 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=13
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[recv-accept] client=2 n=52 4D5A000000000000002A447008CAD4BDA3C4DAB2E206676C6F62616C096D705F73657276657209312E36302E30393035
+[case8] /daemons/communicated.o -> clone:aaa/clone/server.o#3::process_command argc=2
+[case8] /aaa/clone/server.o -> /aaa/daemons/serverd.c::process_command argc=3
+[q-send] qid=9 ok=1 obj=/daemons/threadd.o fn=dispatch this=pak:daemons/threadd.o qv=9
+[case8] /aaa/daemons/server/cmd_cfg_read_etc.o -> clone:aaa/clone/server.o#3::send_message argc=3
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=38 agent-type=7
+[recv-accept] client=38 n=0 
+[recv-accept] client=2 n=[recv-accept] client=1 n=16 4D5A0000000000000006F9C311DC9C74
+16 4D5A0000000000000006F9C311DC9C74
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661CFE6A
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=39 agent-type=7
+[recv-accept] client=39 n=0 
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661D061B
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=[recv-accept] client=1 n=162 n=16  4D5A0000000000000006F9C311DCC38C4D5A0000000000000006F9C311DCC38C
+
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=40 agent-type=7
+[recv-accept] client=40 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661D257A
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=2 n=16 4D5A000000000000000620D2661D2D30
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=41 agent-type=7
+[recv-accept] client=41 n=0 
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon
+[recv-accept] client=2 n=16[recv-accept] client=1 n=16  4D5A0000000000000006F9C311DCEAA54D5A0000000000000006F9C311DCEAA5
+
+[q-send] qid=14 ok=1 obj=/daemons/threadd.o fn=dispatch_service this=pak:daemons/threadd.o qv=14
+[auth] call_fun_ptr do_when_new_connection obj=/daemons/threadd.o bound=0 args=1
+[accept] client=42 agent-type=7
+[recv-accept] client=42 n=0 
+[recv-accept] client=1 n=16 4D5A000000000000000620D2661D4C8F
+[idle-wait] event=scheme_event entry=daemon
+[idle-wait] queue=q:9 entry=daemon
+[idle-wait] queue=q:12 entry=daemon
+[idle-wait] queue=q:1 entry=daemon
+[idle-wait] queue=q:19 entry=daemon
+[idle-wait] queue=q:2 entry=daemon
+[idle-wait] queue=q:4 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:14 entry=daemon
+[idle-wait] queue=q:16 entry=daemon
+[idle-wait] queue=q:17 entry=daemon
+[idle-wait] queue=q:18 entry=daemon
+[idle-wait] queue=q:20 entry=daemon
+[idle-wait] queue=q:21 entry=daemon
+[idle-wait] queue=q:22 entry=daemon
+[idle-wait] queue=q:23 entry=daemon
+[idle-wait] queue=q:24 entry=daemon
+[idle-wait] queue=q:25 entry=daemon
+[idle-wait] queue=q:26 entry=daemon
+[idle-wait] queue=q:27 entry=daemon
+[idle-wait] queue=q:28 entry=daemon
+[idle-wait] queue=q:29 entry=daemon
+[idle-wait] queue=q:30 entry=daemon
+[idle-wait] queue=q:31 entry=daemon
+[idle-wait] queue=q:32 entry=daemon
+[idle-wait] queue=q:33 entry=daemon
+[idle-wait] queue=q:34 entry=daemon
+[idle-wait] queue=q:35 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:40 entry=daemon
+[idle-wait] queue=q:11 entry=daemon
+[idle-wait] queue=q:10 entry=daemon
+[idle-wait] queue=q:13 entry=daemon

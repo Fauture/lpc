@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,10 @@ struct OriginalFunction {
     // String table of the program this function belongs to.  Shared-string
     // indexes inside the bytecode resolve against THIS table (inherited
     // functions keep their own program's strings, not the inheritor's).
-    std::vector<std::string> strings;
+    // Shared pointer: the master program copies ALL its functions into one
+    // shared table (copying the whole table per function cost ~500MB for
+    // start_gs.o's 1308 functions x 2978 strings).
+    std::shared_ptr<const std::vector<std::string>> strings;
     // Accumulated baseVarOffset of the constitution this function belongs to.
     // push_obj_var/set_obj_var/push_obj_vptr add it to the variable index
     // (vm_pushObjVar: pObjectValues[valueNo + consititution->baseVarOffset]).

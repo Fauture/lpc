@@ -27,6 +27,7 @@ add_executable(lpcvm
     src/lzss.cpp
     src/pak_loader.cpp
     src/original_vm.cpp
+    src/map_module.cpp
     src/game_service.cpp
     src/pkt_protocol.cpp
     src/mysql_client.cpp
@@ -38,4 +39,12 @@ add_executable(lpcvm
 target_include_directories(lpcvm PRIVATE src third_party/sqlite)
 if(WIN32)
     target_link_libraries(lpcvm PRIVATE ws2_32)
+    # 32-bit driver process: the original gameshell binary is X86 with
+    # LARGEADDRESSAWARE, giving the process a 4GB user address space on 64-bit
+    # Windows.  Without it the 2GB cap exhausts during GS boot (bad allocation
+    # at ~1.9GB, dropping the rest of post_init -> tasks/zone data never
+    # loads).  /STACK:0x100000 keeps the main thread's reserved stack small so
+    # the address space stays available for LPC heap data; deep LPC call
+    # chains run on explicitly-reserved big-stack threads (create_thread).
+    target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x100000)
 endif()

@@ -403,6 +403,11 @@ void usage() {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Unbuffered stdout/stderr: the service logs are redirected to files and
+    // must appear line-by-line like the original driver (Load:/printf lines
+    // otherwise sit in the C++ stdio buffer for minutes).
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
     // SEH crash catcher: print a backtrace so a segfault inside the VM or a
     // builtin (the current MSVCP140.dll 0xc0000005 crashes) can be located
     // without a debugger attached.

@@ -19,6 +19,24 @@ struct Program;
 
 struct UndefinedTag {};
 
+// A cross-VM object-variable reference passed as a call_other argument.
+// The original driver's reference parameters (&var) point straight at the
+// CALLER's instance variable; a callee's assignment writes through it.  Our
+// registry-VM path passes deref'd VALUES, which works for shared_ptr-backed
+// mappings (in-place mutation) but not for arrays REASSIGNED with `=`/`+=`
+// (a fresh array is built and the caller's variable never changes) - see
+// importd.create_data(file, &attrib_index, &attrib_list): attrib_list (a
+// mapping) survives, attrib_index (an array) never gets written back, so
+// import/npc.o's import() sees an empty attrib_index and raw NPCs (守护天神
+// etc.) never receive their npc.list attributes.  Wrapping such arguments in
+// a CrossVmRef makes every callee-side read/write forward to the caller's
+// object variable (the slot keeps the CrossVmRef, so repeated `+=` all land
+// in the caller's variable).
+struct CrossVmRef {
+    void* vm = nullptr;        // OriginalVm* of the caller (opaque to value.h)
+    int objIndex = -1;         // index into the caller's objVars
+};
+
 using Value = std::variant<
     std::monostate,          // nil / 0
     UndefinedTag,            // undefined
@@ -30,7 +48,8 @@ using Value = std::variant<
     std::shared_ptr<ObjectValue>,
     std::shared_ptr<ClosureValue>,
     std::shared_ptr<LoopCtrl>,
-    std::shared_ptr<BufferValue>>;   // buffer (binary bytes, distinct from text)
+    std::shared_ptr<BufferValue>,
+    std::shared_ptr<CrossVmRef>>;   // cross-VM object-variable reference
 
 struct ArrayValue {
     std::vector<Value> items;
@@ -142,6 +161,7 @@ Value make_array();
 Value make_mapping();
 Value make_object(std::string programName);
 Value make_object_owned(std::string programName, const struct OriginalObject* owner);
+Value make_crossvm_ref(std::shared_ptr<CrossVmRef> r);
 Value make_closure(std::string name, std::vector<Value> args = {});
 
 std::string value_type_name(const Value& v);
