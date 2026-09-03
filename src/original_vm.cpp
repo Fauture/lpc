@@ -89,16 +89,44 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e) {
 // (the -b directory /aaa/pack_data/lib_aaa32.pak), then the extracted tree
 // on disk.  Returns nullptr when neither holds the file.
 std::shared_ptr<OriginalObject> loadOriginalObjectByRelPath(const std::string& rel) {
+    // Parse-once cache.  runInheritedInitsOf / mergeInheritedFunctions reload
+    // the SAME inherited programs for every object construction; with no cache
+    // each construction re-read the object bytes from the pak and re-parsed
+    // them, and basic_objectd's create constructs thousands of templates
+    // (item/npc/monster basic.o) - the crawl's native profile is dominated by
+    // pak file reads (filebuf::xsgetn) + runPakOriginal + parse churn.
+    // Parsed programs are immutable after loading, so sharing is safe (the
+    // registry already shares template programs the same way).
+    static std::recursive_mutex cacheMx;
+    static std::unordered_map<std::string, std::shared_ptr<OriginalObject>> cache;
+    {
+        std::lock_guard<std::recursive_mutex> lk(cacheMx);
+        auto it = cache.find(rel);
+        if (it != cache.end()) return it->second;
+    }
+    std::shared_ptr<OriginalObject> obj;
     if (pakMounted()) {
         std::vector<uint8_t> bytes;
         if (pakReadFile(pakVirtualPrefix() + "/" + rel, bytes)) {
             try {
-                auto obj = std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
+                obj = std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
                 obj->sourceName = "/" + rel;
-                return obj;
             } catch (...) {
             }
         }
+    }
+    if (obj) {
+        std::lock_guard<std::recursive_mutex> lk(cacheMx);
+        auto& slot = cache[rel];
+        if (!slot) slot = obj;
+        else obj = slot;
+        if (std::getenv("LPCVM_LOAD_PROF")) {
+            static int64_t loadCalls = 0;
+            if ((++loadCalls % 5000) == 0)
+                std::cerr << "[load-prof] calls=" << loadCalls
+                          << " cachedDistinct=" << cache.size() << "\n";
+        }
+        return obj;
     }
     return nullptr;
 }
@@ -649,6 +677,20 @@ struct PendingThread {
     std::shared_ptr<ClosureValue> closure;
 };
 class OriginalVm;
+// ---- efun watchdog globals (filled by callEfunWithArgs, reported by a
+// scheduler watchdog thread when one efun call runs >3s). ----
+namespace {
+extern std::string g_curEfunName, g_curEfunObj, g_curEfunFn;
+extern std::mutex g_curEfunMx;
+extern std::atomic<int64_t> g_curEfunStartMs;
+// Per-efun CPU profiler (LPCVM_EFUN_PROF=1): efun name -> accumulated time.
+struct EfunProfEntry {
+    int64_t ns = 0;
+    int64_t calls = 0;
+};
+extern std::mutex g_efunProfMx;
+extern std::unordered_map<std::string, EfunProfEntry> g_efunProf;
+} // namespace
 struct ObjectRegistry {
     std::unordered_map<std::string, std::shared_ptr<OriginalObject>> objects;
     std::unordered_map<std::string, std::shared_ptr<OriginalVm>> vms;
@@ -2086,6 +2128,80 @@ private:
     // Call an efun by index with already-collected arguments.
     Value callEfunWithArgs(int efunIndex, const std::vector<Value>& args) {
         const auto& names = efunNameTable();
+        // Watchdog record for a single efun call that runs >3s (a C++ spin
+        // inside the efun implementation; LPC-level [vm-stuck] never fires).
+        struct EfunWatch {
+            std::string name, obj, fn;
+            EfunWatch(std::string n, std::string o, std::string f)
+                : name(std::move(n)), obj(std::move(o)), fn(std::move(f)) {
+                using namespace std::chrono;
+                std::lock_guard<std::mutex> lk(g_curEfunMx);
+                g_curEfunName = name; g_curEfunObj = obj; g_curEfunFn = fn;
+                g_curEfunStartMs = duration_cast<milliseconds>(
+                    steady_clock::now().time_since_epoch()).count();
+            }
+            ~EfunWatch() {
+                std::lock_guard<std::mutex> lk(g_curEfunMx);
+                g_curEfunStartMs = 0;
+            }
+        };
+        // The consumer thread in Scheduler::run() only starts under
+        // LPCVM_STUCK_TRACE, so keep the producer (steady_clock stamp + two
+        // mutex locks + several string copies, ~0.3us per efun call) gated the
+        // same way - unconditional it measurably slows the boot/import phases
+        // (millions of efun calls, e.g. importd create_data row parsing).
+        static const bool efunWatchOn = (std::getenv("LPCVM_STUCK_TRACE") != nullptr);
+        if (efunWatchOn) {
+            std::string nm0 = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
+                                  ? names[efunIndex] : "?";
+            std::string fn0 = "<global>";
+            if (!frames_.empty() && frames_.back().fn) fn0 = frames_.back().fn->name;
+            EfunWatch efunWatch(nm0, objName_, fn0);
+        }
+        // Per-efun CPU profiler (LPCVM_EFUN_PROF=1): accumulate wall time per
+        // efun name and dump the top consumers every ~5s.  When the env var is
+        // unset the cost is a single static-bool test per call.
+        static const bool efunProfOn = (std::getenv("LPCVM_EFUN_PROF") != nullptr);
+        if (efunProfOn) {
+            using namespace std::chrono;
+            struct EfunProf {
+                std::string name;
+                int64_t t0;
+                EfunProf(std::string n)
+                    : name(std::move(n)),
+                      t0(duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count()) {}
+                ~EfunProf() {
+                    int64_t dt = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count() - t0;
+                    {
+                        std::lock_guard<std::mutex> lk(g_efunProfMx);
+                        EfunProfEntry& e = g_efunProf[name];
+                        e.ns += dt;
+                        e.calls += 1;
+                    }
+                    static int64_t lastDumpMs = 0;
+                    int64_t nowMs =
+                        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+                    if (nowMs - lastDumpMs < 5000) return;
+                    lastDumpMs = nowMs;
+                    std::vector<std::pair<std::string, EfunProfEntry>> all;
+                    {
+                        std::lock_guard<std::mutex> lk(g_efunProfMx);
+                        all.assign(g_efunProf.begin(), g_efunProf.end());
+                        g_efunProf.clear();
+                    }
+                    std::sort(all.begin(), all.end(),
+                              [](const auto& a, const auto& b) { return a.second.ns > b.second.ns; });
+                    std::cerr << "[efun-prof] top " << std::min<size_t>(14, all.size()) << " of "
+                              << all.size() << ":\n";
+                    for (size_t i = 0; i < all.size() && i < 14; ++i)
+                        std::cerr << "  " << all[i].first << " " << all[i].second.ns / 1000000 << "ms ("
+                                  << all[i].second.calls << " calls, avg "
+                                  << (all[i].second.calls ? all[i].second.ns / all[i].second.calls : 0)
+                                  << "ns)\n";
+                }
+            } efunProf((efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
+                           ? names[efunIndex] : std::string("?"));
+        }
         if (std::getenv("LPCVM_TRACE")) {
             std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                  ? names[efunIndex] : "?";
@@ -3098,7 +3214,7 @@ private:
                                                      "create_content", "create_content_to", "process_request",
                                                      "fetch_data", "write_data"};
                     for (auto* ff : filedFns) {
-                        if (impl->name == ff) {
+                        if (impl->name == ff && std::getenv("LPCVM_SVC_TRACE")) {
                             std::string chain;
                             for (int fi = 0; fi < static_cast<int>(frames_.size()) && fi < 5; ++fi) {
                                 if (!chain.empty()) chain += "<-";
@@ -3664,6 +3780,15 @@ private:
     // returning from here and resume by re-entering with the saved ip_ -
     // exactly like the original scheduler restoring a PCB.
     void runLoop() {
+        // Step-throughput meter (LPCVM_STEP_PROF=1): prints obj/fn/ip plus
+        // cumulative instruction and runLoop-activation counts once per second
+        // of wall time while instructions execute.  When the env var is unset
+        // the only cost is a static-bool test per instruction.
+        static const bool stepProfOn = (std::getenv("LPCVM_STEP_PROF") != nullptr);
+        static int64_t stepProfInsns = 0;
+        static int64_t stepProfActs = 0;
+        static int64_t stepProfLastMs = 0;
+        if (stepProfOn) ++stepProfActs;
         while (code_ && ip_ < code_->size()) {
             const OriginalInsn& in = (*code_)[ip_++];
             lastOp_ = in.op;
@@ -3676,6 +3801,20 @@ private:
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
             if (++stepCounter_ > 20000000) return;
+            if (stepProfOn) {
+                ++stepProfInsns;
+                using namespace std::chrono;
+                int64_t now2 = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+                if (now2 - stepProfLastMs >= 1000) {
+                    stepProfLastMs = now2;
+                    std::string cur = "<global>";
+                    if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
+                    std::cerr << "[step-prof] obj=" << objName_ << " fn=" << cur
+                              << " ip=" << ip_ << "/" << (code_ ? code_->size() : 0)
+                              << " op=" << in.op << " insns=" << stepProfInsns
+                              << " acts=" << stepProfActs << "\n";
+                }
+            }
             if ((std::getenv("LPCVM_LOCK_TRACE") || std::getenv("LPCVM_STUCK_TRACE")) &&
                 (stepCounter_ % 500000) == 0) {
                 std::string cur = "<global>";
@@ -4676,7 +4815,7 @@ private:
                         if (tv.index() == 2) secs = static_cast<double>(std::get<int64_t>(tv));
                         else if (tv.index() == 3) secs = std::get<double>(tv);
                     }
-                    if (ename.rfind("oid:", 0) == 0) {
+                    if (ename.rfind("oid:", 0) == 0 && std::getenv("LPCVM_SVC_TRACE")) {
                         std::string wf = frames_.empty() || !frames_.back().fn
                                               ? "<global>" : frames_.back().fn->name;
                         std::cerr << "[wait-oid] " << ename << " obj=" << objName_
@@ -6062,6 +6201,35 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
 }
 
 void Scheduler::run() {
+    // Efun watchdog: report a single efun call running >3s (C++ spin inside
+    // the efun implementation - the LPC-level [vm-stuck] printer never fires
+    // because no instruction boundary is crossed).
+    static std::once_flag efunWatchFlag;
+    std::call_once(efunWatchFlag, []() {
+        if (!std::getenv("LPCVM_STUCK_TRACE")) return;
+        std::thread([]() {
+            int64_t lastReported = 0;
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                int64_t start;
+                {
+                    std::lock_guard<std::mutex> lk(g_curEfunMx);
+                    start = g_curEfunStartMs.load();
+                }
+                if (!start) continue;
+                using namespace std::chrono;
+                int64_t now = duration_cast<milliseconds>(
+                    steady_clock::now().time_since_epoch()).count();
+                if (now - start < 3000) continue;
+                if (lastReported == start) continue;   // already reported this hang
+                lastReported = start;
+                std::lock_guard<std::mutex> lk(g_curEfunMx);
+                std::cerr << "[efun-hang] efun=" << g_curEfunName
+                          << " obj=" << g_curEfunObj << " fn=" << g_curEfunFn
+                          << " durMs=" << (now - start) << "\n";
+            }
+        }).detach();
+    });
     schedThreadId_ = std::this_thread::get_id();
     while (true) {
         // Poll parked sockets (kind-5 waits: connect/recv) REGARDLESS of
@@ -6433,6 +6601,15 @@ Scheduler& scheduler() {
     static Scheduler s;
     return s;
 }
+
+// ---- efun watchdog state definitions ----
+namespace {
+std::string g_curEfunName, g_curEfunObj, g_curEfunFn;
+std::mutex g_curEfunMx;
+std::atomic<int64_t> g_curEfunStartMs{0};
+std::mutex g_efunProfMx;
+std::unordered_map<std::string, EfunProfEntry> g_efunProf;
+} // namespace
 
 std::atomic<int64_t> Scheduler::nextTid_{1};
 
@@ -7074,6 +7251,25 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
     // new object.  Clones are registered under "clone:<rel>#<seq>" so later
     // call_other through the object value resolves to the clone.
     if (virtualPath.empty()) return make_int(0);
+    // Phase profiler (LPCVM_CLONE_PROF=1): split each clone's cost into
+    // lookup/vm-construction / runInit / NPC-extras and report averages + the
+    // registry sizes every 2000 clones, to localize the per-clone CPU.
+    static const bool cloneProfOn = (std::getenv("LPCVM_CLONE_PROF") != nullptr);
+    static int64_t cpCalls = 0, cpLookup = 0, cpInit = 0, cpNpc = 0, cpTail = 0;
+    auto cpNow = [] {
+        using namespace std::chrono;
+        return duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
+    };
+    int64_t cpT = cloneProfOn ? cpNow() : 0;
+    auto cpMark = [&](const char* what) {
+        if (!cloneProfOn) return;
+        int64_t n = cpNow();
+        int64_t d = n - cpT; cpT = n;
+        if (what == std::string("lookup")) cpLookup += d;
+        else if (what == std::string("init")) cpInit += d;
+        else if (what == std::string("npc")) cpNpc += d;
+        else cpTail += d;
+    };
     std::string rel = virtualPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
@@ -7163,6 +7359,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         reg.objects[cloneKey] = tmplObj;   // share the read-only program
         reg.vms[cloneKey] = vmPtr;
     }
+    cpMark("lookup");
     try {
         // vm_f_construct_object2 runs the full construction: the global
         // initializer code (initOrderList constitutions -> initCodeSegment)
@@ -7171,6 +7368,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // createArgs (e.g. clone_object(path, (["account": account])) in
         // account_login) become create()'s arguments.
         vmPtr->runInit(createArgs);
+        cpMark("init");
         // Inherit the template's import identity.  The original driver's
         // clone runs every constitution's create(); basic_object.c's create()
         // sets my_import_name from object_template() so a clone's
@@ -7215,6 +7413,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                 }
             }
         }
+        cpMark("npc");
     } catch (const std::exception& e) {
         std::cerr << "[clone] " << cloneKey << " create error: " << e.what() << "\n";
     } catch (...) {
@@ -7222,6 +7421,20 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
     {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
         reg.initialized[cloneKey] = true;
+    }
+    if (cloneProfOn) {
+        cpTail += cpNow() - cpT;
+        ++cpCalls;
+        if ((cpCalls % 2000) == 0) {
+            int64_t tot = cpLookup + cpInit + cpNpc + cpTail;
+            std::cerr << "[clone-prof] calls=" << cpCalls << " avg=" << (cpCalls ? tot / cpCalls : 0)
+                      << "us (lookup=" << (cpCalls ? cpLookup / cpCalls : 0)
+                      << " init=" << (cpCalls ? cpInit / cpCalls : 0)
+                      << " npc=" << (cpCalls ? cpNpc / cpCalls : 0)
+                      << " tail=" << (cpCalls ? cpTail / cpCalls : 0)
+                      << ") reg.vms=" << reg.vms.size() << " objects=" << reg.objects.size() << "\n";
+            cpLookup = cpInit = cpNpc = cpTail = 0;
+        }
     }
     auto ov = std::make_shared<ObjectValue>();
     ov->programName = cloneKey;

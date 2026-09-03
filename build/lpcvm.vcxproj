@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
@@ -125,6 +125,7 @@
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.lib</ImportLibrary>
       <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.pdb</ProgramDataBaseFile>
+      <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86 /MAP:C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.map</AdditionalOptions>
       <StackReserveSize>0x100000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>

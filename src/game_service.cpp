@@ -11704,8 +11704,9 @@ void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
     // result is a SIGNED int32 in the original wire protocol (0xFFFFFFFF = -1
     // "not found"); passing it unsigned made ccs's filed do_operate see
     // 4294967295 instead of -1 and share_datad's restore loop forever.
-    std::cerr << "[readcontent] client=" << cl.clientNo << " cookie=" << a
-              << " result=" << (int32_t)b << " len=" << slen << "\n";
+    if (std::getenv("LPCVM_SVC_TRACE"))
+        std::cerr << "[readcontent] client=" << cl.clientNo << " cookie=" << a
+                  << " result=" << (int32_t)b << " len=" << slen << "\n";
     applyLpc("msg_read_content",
              {make_int(cl.clientNo), make_int((int32_t)a), make_int((int32_t)b), make_string(s)});
 }
