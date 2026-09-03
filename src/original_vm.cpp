@@ -4385,7 +4385,26 @@ private:
                 Value target = deref(ref);
                 Value result = make_int(0);
                 switch (op) {
-                case 2: result = addValues(target, rhs); break;
+                case 2: {
+                    // array += array (e.g. importd's `matter += ({ val })`
+                    // growing a row mapping one element at a time): the plain
+                    // path deep-copies the whole LHS every append -> O(n^2)
+                    // with heavy alloc/memcpy churn for large lists.  When the
+                    // LHS array is uniquely owned (only the source variable +
+                    // this temporary), append the RHS elements IN PLACE.
+                    if (target.index() == 5 && rhs.index() == 5) {
+                        auto trg = std::get<std::shared_ptr<ArrayValue>>(target);
+                        auto rv = std::get<std::shared_ptr<ArrayValue>>(rhs);
+                        if (trg.use_count() <= 2) {
+                            trg->items.insert(trg->items.end(), rv->items.begin(), rv->items.end());
+                            writeThrough(ref, Value(trg));
+                            pushValue(Value(trg));
+                            break;
+                        }
+                    }
+                    result = addValues(target, rhs);
+                    break;
+                }
                 case 3: result = subValues(target, rhs); break;
                 case 4: result = mulValues(target, rhs); break;
                 case 5: result = divValues(target, rhs); break;
