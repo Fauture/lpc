@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
@@ -100,12 +100,12 @@
       <SupportJustMyCode></SupportJustMyCode>
       <UseFullPaths>false</UseFullPaths>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;_ITERATOR_DEBUG_LEVEL=0;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;_ITERATOR_DEBUG_LEVEL=0;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>C:\Users\Administrator\Desktop\lpc\src;C:\Users\Administrator\Desktop\lpc\third_party\sqlite;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
@@ -125,7 +125,6 @@
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.lib</ImportLibrary>
       <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.pdb</ProgramDataBaseFile>
-      <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86 /MAP:C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.map</AdditionalOptions>
       <StackReserveSize>0x100000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -16,6 +17,142 @@ struct ClosureValue;
 struct LoopCtrl;
 struct BufferValue;
 struct Program;
+
+// ---------------------------------------------------------------------------
+// SharedString: the string slot of a Value.
+//
+// The original driver stores strings as reference-counted shared objects
+// (push/assign/copy of a string value only moves a pointer and bumps a
+// count).  std::string's copy semantics deep-copied the whole buffer on every
+// push/assignment/parameter/local read, which showed up as heavy malloc +
+// memcpy + free churn wherever Values holding text were duplicated (mapping
+// inserts, array pushes, stack traffic, save/serialize).
+//
+// SharedString reproduces the shared model: the text lives in a heap Block
+// whose refcount is shared by every copy of the SharedString.  Copying a
+// SharedString is one atomic increment; destroying one is one decrement.
+// Strings are IMMUTABLE - there is no in-place mutation on this type.  Code
+// that needs an independent, writable buffer copies explicitly (e.g. through
+// the std::string materialization below, .substr(), ...).
+//
+// The Block stores a real std::string, which gives read sites a zero-copy
+// window onto the text: str()/the implicit conversion to const std::string&
+// bind straight to the block's string, so existing code that reads a string
+// Value through a `const std::string&` keeps working without byte copies.
+// Each freshly-created string costs one block allocation (small strings ride
+// the std::string SSO inside the block).  The refcount is atomic because
+// Values cross scheduler/telnet threads (a producer on one thread may still
+// hold a copy while another thread destroys its own).
+// ---------------------------------------------------------------------------
+class SharedString {
+public:
+    struct Block {
+        std::atomic<int32_t> refs;
+        std::string s;
+        explicit Block(std::string&& v) : refs(1), s(std::move(v)) {}
+    };
+
+    SharedString() noexcept : b_(nullptr) {}
+    SharedString(const char* s) : b_(nullptr) {
+        if (s && s[0]) b_ = new Block(std::string(s));
+    }
+    SharedString(const std::string& s) : b_(nullptr) {
+        if (!s.empty()) b_ = new Block(std::string(s));
+    }
+    SharedString(std::string&& s) : b_(nullptr) {
+        if (!s.empty()) b_ = new Block(std::move(s));
+    }
+    SharedString(const SharedString& o) noexcept : b_(o.b_) { retain(); }
+    SharedString(SharedString&& o) noexcept : b_(o.b_) { o.b_ = nullptr; }
+    SharedString& operator=(const SharedString& o) noexcept {
+        if (this != &o) {
+            SharedString t(o);
+            release();
+            b_ = t.b_;
+            t.b_ = nullptr;
+        }
+        return *this;
+    }
+    SharedString& operator=(SharedString&& o) noexcept {
+        if (this != &o) {
+            release();
+            b_ = o.b_;
+            o.b_ = nullptr;
+        }
+        return *this;
+    }
+    ~SharedString() { release(); }
+
+    // True when this slot does not hold a text payload.  (An empty string is
+    // represented by a null block, exactly like an empty std::string slot.)
+    bool empty() const noexcept { return b_ == nullptr || b_->s.empty(); }
+    size_t size() const noexcept { return b_ ? b_->s.size() : 0; }
+    const char* c_str() const noexcept { return b_ ? b_->s.c_str() : kEmpty.c_str(); }
+    const char* data() const noexcept { return b_ ? b_->s.data() : kEmpty.data(); }
+    char operator[](size_t i) const noexcept { return str()[i]; }
+
+    // Read-only view of the text.  Binds to the block's std::string with no
+    // copy; do not keep the reference past this SharedString's last copy
+    // being destroyed (same lifetime rule as today's variant slot).
+    const std::string& str() const noexcept { return b_ ? b_->s : kEmpty; }
+
+    // Implicit read interop: lets a SharedString flow into code that expects
+    // const std::string& (function parameters, bindings, std::string member
+    // calls) without copying bytes.  Copying INTO an owned std::string still
+    // happens for std::string by-value targets, which is the explicit-copy
+    // boundary for code that wants an independent buffer.
+    operator const std::string&() const noexcept { return str(); }
+
+    using const_iterator = std::string::const_iterator;
+    const_iterator begin() const noexcept { return str().begin(); }
+    const_iterator end() const noexcept { return str().end(); }
+
+private:
+    static const std::string kEmpty;
+
+    void retain() noexcept {
+        if (b_) b_->refs.fetch_add(1, std::memory_order_relaxed);
+    }
+    void release() noexcept {
+        if (b_ && b_->refs.fetch_sub(1, std::memory_order_acq_rel) == 1)
+            delete b_;
+    }
+    Block* b_;
+};
+
+// std::string's comparison operators are templates and cannot deduce through
+// SharedString, so provide our own, comparing through the underlying text
+// (str() binds the block's std::string with no copy).
+inline bool operator==(const SharedString& a, const SharedString& b) noexcept { return a.str() == b.str(); }
+inline bool operator!=(const SharedString& a, const SharedString& b) noexcept { return a.str() != b.str(); }
+inline bool operator<(const SharedString& a, const SharedString& b) noexcept { return a.str() < b.str(); }
+inline bool operator<=(const SharedString& a, const SharedString& b) noexcept { return a.str() <= b.str(); }
+inline bool operator>(const SharedString& a, const SharedString& b) noexcept { return a.str() > b.str(); }
+inline bool operator>=(const SharedString& a, const SharedString& b) noexcept { return a.str() >= b.str(); }
+inline bool operator==(const SharedString& a, const char* b) noexcept { return a.str() == b; }
+inline bool operator!=(const SharedString& a, const char* b) noexcept { return a.str() != b; }
+inline bool operator<(const SharedString& a, const char* b) noexcept { return a.str() < b; }
+inline bool operator<=(const SharedString& a, const char* b) noexcept { return a.str() <= b; }
+inline bool operator>(const SharedString& a, const char* b) noexcept { return a.str() > b; }
+inline bool operator>=(const SharedString& a, const char* b) noexcept { return a.str() >= b; }
+inline bool operator==(const char* a, const SharedString& b) noexcept { return a == b.str(); }
+inline bool operator!=(const char* a, const SharedString& b) noexcept { return a != b.str(); }
+inline bool operator<(const char* a, const SharedString& b) noexcept { return a < b.str(); }
+inline bool operator<=(const char* a, const SharedString& b) noexcept { return a <= b.str(); }
+inline bool operator>(const char* a, const SharedString& b) noexcept { return a > b.str(); }
+inline bool operator>=(const char* a, const SharedString& b) noexcept { return a >= b.str(); }
+inline bool operator==(const SharedString& a, const std::string& b) noexcept { return a.str() == b; }
+inline bool operator!=(const SharedString& a, const std::string& b) noexcept { return a.str() != b; }
+inline bool operator<(const SharedString& a, const std::string& b) noexcept { return a.str() < b; }
+inline bool operator<=(const SharedString& a, const std::string& b) noexcept { return a.str() <= b; }
+inline bool operator>(const SharedString& a, const std::string& b) noexcept { return a.str() > b; }
+inline bool operator>=(const SharedString& a, const std::string& b) noexcept { return a.str() >= b; }
+inline bool operator==(const std::string& a, const SharedString& b) noexcept { return a == b.str(); }
+inline bool operator!=(const std::string& a, const SharedString& b) noexcept { return a != b.str(); }
+inline bool operator<(const std::string& a, const SharedString& b) noexcept { return a < b.str(); }
+inline bool operator<=(const std::string& a, const SharedString& b) noexcept { return a <= b.str(); }
+inline bool operator>(const std::string& a, const SharedString& b) noexcept { return a > b.str(); }
+inline bool operator>=(const std::string& a, const SharedString& b) noexcept { return a >= b.str(); }
 
 struct UndefinedTag {};
 
@@ -42,7 +179,7 @@ using Value = std::variant<
     UndefinedTag,            // undefined
     int64_t,                 // integer
     double,                  // float
-    std::string,             // string
+    SharedString,            // string (reference-counted shared text)
     std::shared_ptr<ArrayValue>,
     std::shared_ptr<MappingValue>,
     std::shared_ptr<ObjectValue>,
@@ -166,6 +303,11 @@ Value make_closure(std::string name, std::vector<Value> args = {});
 
 std::string value_type_name(const Value& v);
 std::string to_string(const Value& v, bool quote_strings = true);
+// Append v's unquoted textual form (exactly what to_string(v,false) yields) to
+// out WITHOUT deep-copying a string Value first (its shared text is appended
+// straight from the block).  Used by string concatenation points so a + b
+// builds the result in one buffer instead of copying each operand twice.
+void append_text(std::string& out, const Value& v);
 bool is_truthy(const Value& v);
 bool value_equal(const Value& a, const Value& b);
 bool value_less(const Value& a, const Value& b);

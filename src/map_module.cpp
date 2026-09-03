@@ -20,13 +20,13 @@ int64_t valToInt(const Value& v) {
     if (v.index() == 2) return std::get<int64_t>(v);
     if (v.index() == 3) return static_cast<int64_t>(std::get<double>(v));
     if (v.index() == 4) {
-        try { return std::stoll(std::get<std::string>(v)); } catch (...) { return 0; }
+        try { return std::stoll(std::get<SharedString>(v)); } catch (...) { return 0; }
     }
     return 0;
 }
 
 std::string valToStr(const Value& v) {
-    if (v.index() == 4) return std::get<std::string>(v);
+    if (v.index() == 4) return std::get<SharedString>(v);
     if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
     return "";
 }
@@ -46,7 +46,7 @@ MapModule::MapInfo* MapModule::getMapInfoByValue(const Value& v) {
     // mapIndex is an int; the original vm_getMapInfo also accepts a name
     // string, but the game always passes the int index.
     if (v.index() == 4) {
-        auto it = mapByName_.find(std::get<std::string>(v));
+        auto it = mapByName_.find(std::get<SharedString>(v));
         if (it == mapByName_.end()) return nullptr;
         return findMapIndex(it->second);
     }

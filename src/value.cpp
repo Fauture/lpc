@@ -1,10 +1,18 @@
 #include "value.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <iostream>
+#include <limits>
 #include <sstream>
 
 namespace lpc {
+
+// Out-of-line definition of SharedString's empty-text anchor (str() of a
+// null-block / empty SharedString returns this).
+const std::string SharedString::kEmpty;
 
 // ---------------------------------------------------------------------------
 // Original vm_mapping.c support: whashstr/whashstrc with the driver's T table
@@ -68,6 +76,93 @@ bool striequal(const std::string& a, const std::string& b) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Fast numeric -> text.  The previous to_string() number paths built a
+// std::ostringstream per conversion, and EIP sampling showed ~85% of CPU
+// during gs's basic_objectd import inside the stream/locale machinery
+// (basic_ostringstream/_ltod3_default/_ultod3_default/...).  These printers
+// emit byte-identical text to the old `os << int64` / `os << double`
+// (C locale, default precision 6 = %g semantics) without any stream object.
+// ---------------------------------------------------------------------------
+inline void appendInt64(std::string& out, int64_t v) {
+    char buf[24];
+    char* p = buf + sizeof(buf);
+    uint64_t u = v < 0 ? 0ULL - static_cast<uint64_t>(v) : static_cast<uint64_t>(v);
+    do {
+        *--p = static_cast<char>('0' + (u % 10));
+        u /= 10;
+    } while (u);
+    if (v < 0) *--p = '-';
+    out.append(p, static_cast<size_t>(buf + sizeof(buf) - p));
+}
+
+inline std::string formatInt64(int64_t v) {
+    std::string r;
+    appendInt64(r, v);
+    return r;
+}
+
+// Real text: integral reals render as integers (the old ostringstream branch
+// printed `(int64)d` when d == (int64)d); everything else renders like
+// ostream << double with the default precision (6), i.e. printf %.6g.
+inline void appendReal64(std::string& out, double d) {
+    if (d == static_cast<int64_t>(d)) {
+        appendInt64(out, static_cast<int64_t>(d));
+        return;
+    }
+    char buf[40];
+    int n = std::snprintf(buf, sizeof(buf), "%.6g", d);
+    if (n > 0) out.append(buf, static_cast<size_t>(n));
+}
+
+// Byte-parity self check (LPCVM_FMT_CHECK=1): exercises the fast printers
+// against the ostringstream reference over an integer corpus plus a sweep of
+// the float32 space, then reports any mismatch once to stderr.
+bool fmtSelfCheckOnce() {
+    static const bool on = (std::getenv("LPCVM_FMT_CHECK") != nullptr);
+    static bool done = [] {
+        if (!on) return false;
+        int mism = 0, tested = 0;
+        auto cmpI = [&](int64_t v) {
+            ++tested;
+            std::ostringstream ref; ref << v;
+            if (formatInt64(v) != ref.str()) {
+                if (mism < 5) std::cerr << "[fmt-check] int mismatch " << v << " fast="
+                                        << formatInt64(v) << " ref=" << ref.str() << "\n";
+                ++mism;
+            }
+        };
+        cmpI(0); cmpI(1); cmpI(-1); cmpI(9); cmpI(10); cmpI(-10);
+        cmpI(std::numeric_limits<int64_t>::min()); cmpI(std::numeric_limits<int64_t>::max());
+        cmpI(123456789012345678LL); cmpI(-123456789012345678LL); cmpI(1000000);
+        auto cmpD = [&](double d) {
+            ++tested;
+            std::ostringstream ref;
+            if (d == static_cast<int64_t>(d)) ref << static_cast<int64_t>(d);
+            else ref << d;
+            std::string fast;
+            appendReal64(fast, d);
+            if (fast != ref.str()) {
+                if (mism < 8) std::cerr << "[fmt-check] real mismatch d=" << d
+                                        << " fast=" << fast << " ref=" << ref.str() << "\n";
+                ++mism;
+            }
+        };
+        cmpD(0.0); cmpD(-0.0); cmpD(0.5); cmpD(-0.5); cmpD(0.1); cmpD(33.333332f);
+        cmpD(1.0 / 3.0); cmpD(1e6); cmpD(1e-6); cmpD(1e20); cmpD(1e-20); cmpD(123.456);
+        // float32-space sweep (uniform stride + band edges)
+        for (uint64_t b = 0; b < 0x100000000ULL; b += 65536u) {
+            float f;
+            uint32_t bits = static_cast<uint32_t>(b);
+            std::memcpy(&f, &bits, 4);
+            cmpD(static_cast<double>(f));
+        }
+        std::cerr << "[fmt-check] tested=" << tested << " mismatches=" << mism << "\n";
+        return true;
+    }();
+    return done;
+}
+
 } // namespace
 
 uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive);
@@ -105,7 +200,7 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         return static_cast<uint32_t>(low >> 4);
     }
     case 4: {
-        const std::string& s = std::get<std::string>(key);
+        const std::string& s = std::get<SharedString>(key);
         return caseSensitive ? whashstr(s.c_str(), 32) : whashstrc(s.c_str(), 32);
     }
     default: {
@@ -133,8 +228,8 @@ bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {
     case 2: return std::get<int64_t>(a) == std::get<int64_t>(b);
     case 3: return std::get<double>(a) == std::get<double>(b);
     case 4:
-        if (caseSensitive) return std::get<std::string>(a) == std::get<std::string>(b);
-        return striequal(std::get<std::string>(a), std::get<std::string>(b));
+        if (caseSensitive) return std::get<SharedString>(a) == std::get<SharedString>(b);
+        return striequal(std::get<SharedString>(a), std::get<SharedString>(b));
     case 5: return std::get<std::shared_ptr<ArrayValue>>(a).get() == std::get<std::shared_ptr<ArrayValue>>(b).get();
     case 6: return std::get<std::shared_ptr<MappingValue>>(a).get() == std::get<std::shared_ptr<MappingValue>>(b).get();
     case 7: return std::get<std::shared_ptr<ObjectValue>>(a).get() == std::get<std::shared_ptr<ObjectValue>>(b).get();
@@ -307,7 +402,10 @@ Value make_int(int64_t v) { return v; }
 // rounds through float32).  Round every real at creation so stored values and
 // the comparisons/prints on top of them match the original exactly.
 Value make_float(double v) { return static_cast<double>(static_cast<float>(v)); }
-Value make_string(std::string s) { return std::move(s); }
+// String values now live in a reference-counted shared slot (SharedString):
+// the incoming buffer is moved into one shared block, so every later copy of
+// the Value (push/assign/param/local read) is a pointer + refcount bump.
+Value make_string(std::string s) { return SharedString(std::move(s)); }
 Value make_buffer(std::string data) {
     auto b = std::make_shared<BufferValue>();
     b->data = std::move(data);
@@ -360,22 +458,19 @@ std::string to_string(const Value& v, bool quote_strings) {
     case 0: return "(undefined)";
     case 1: return "(void)";
     case 2: {
-        std::ostringstream os;
-        os << std::get<int64_t>(v);
-        return os.str();
+        // int -> text without ostringstream (was ~85% of gs import CPU)
+        (void)fmtSelfCheckOnce();
+        return formatInt64(std::get<int64_t>(v));
     }
     case 3: {
-        std::ostringstream os;
         double d = std::get<double>(v);
-        if (d == static_cast<int64_t>(d)) {
-            os << static_cast<int64_t>(d);
-        } else {
-            os << d;
-        }
-        return os.str();
+        (void)fmtSelfCheckOnce();
+        std::string out;
+        appendReal64(out, d);
+        return out;
     }
     case 4: {
-        const std::string& s = std::get<std::string>(v);
+        const std::string& s = std::get<SharedString>(v);
         if (!quote_strings) return s;
         std::string out = "\"";
         for (char c : s) {
@@ -434,6 +529,15 @@ std::string to_string(const Value& v, bool quote_strings) {
     }
 }
 
+void append_text(std::string& out, const Value& v) {
+    if (v.index() == 4) {
+        const std::string& s = std::get<SharedString>(v).str();
+        out.append(s.data(), s.size());
+        return;
+    }
+    out += to_string(v, false);
+}
+
 bool is_truthy(const Value& v) {
     switch (v.index()) {
     case 0: return false;
@@ -474,7 +578,7 @@ bool value_equal(const Value& a, const Value& b) {
     case 1: return true;
     case 2: return std::get<int64_t>(a) == std::get<int64_t>(b);
     case 3: return std::get<double>(a) == std::get<double>(b);
-    case 4: return std::get<std::string>(a) == std::get<std::string>(b);
+    case 4: return std::get<SharedString>(a) == std::get<SharedString>(b);
     case 5: {
         auto& aa = *std::get<std::shared_ptr<ArrayValue>>(a);
         auto& bb = *std::get<std::shared_ptr<ArrayValue>>(b);
@@ -517,7 +621,7 @@ bool value_less(const Value& a, const Value& b) {
     switch (a.index()) {
     case 2: return std::get<int64_t>(a) < std::get<int64_t>(b);
     case 3: return std::get<double>(a) < std::get<double>(b);
-    case 4: return std::get<std::string>(a) < std::get<std::string>(b);
+    case 4: return std::get<SharedString>(a) < std::get<SharedString>(b);
     default: return false;
     }
 }

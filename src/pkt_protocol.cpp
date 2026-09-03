@@ -190,7 +190,7 @@ int64_t valInt(const Value& v) {
     if (v.index() == 2) return std::get<int64_t>(v);
     if (v.index() == 3) return static_cast<int64_t>(std::get<double>(v));
     if (v.index() == 4) {
-        const std::string& t = std::get<std::string>(v);
+        const std::string& t = std::get<SharedString>(v);
         return t.empty() ? 0 : std::strtoll(t.c_str(), nullptr, 10);
     }
     return 0;
@@ -225,7 +225,7 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
     } else if (f.type.rfind("string", 0) == 0 || f.type.rfind("buffer", 0) == 0) {
         // length-prefixed string/buffer (1/2/4 byte length)
         std::string s;
-        if (val.index() == 4) s = std::get<std::string>(val);
+        if (val.index() == 4) s = std::get<SharedString>(val);
         else if (val.index() == 10)
             s = std::get<std::shared_ptr<BufferValue>>(val)->data;   // raw buffer bytes
         // Original vm_pktPadDefValue: for string/buffer fields a NON-string/
@@ -469,10 +469,10 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     }
     if (func.index() == 4) {
         if (std::getenv("LPCVM_TRACE"))
-            std::cerr << "[pkt] calling string fn " << std::get<std::string>(func) << "\n";
-        callMasterProgramFunction(std::get<std::string>(func), args, lpc::masterSearchRoot());
+            std::cerr << "[pkt] calling string fn " << std::get<SharedString>(func).str() << "\n";
+        callMasterProgramFunction(std::get<SharedString>(func), args, lpc::masterSearchRoot());
         if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
-            std::cerr << "[pkt-filed] string fn " << std::get<std::string>(func) << " returned\n";
+            std::cerr << "[pkt-filed] string fn " << std::get<SharedString>(func).str() << " returned\n";
         return 1;
     }
     if (std::getenv("LPCVM_TRACE"))

@@ -6,6 +6,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
     add_compile_options(/W3 /EHsc)
+    # The Debug CRT enables per-container STL checks (_ITERATOR_DEBUG_LEVEL=2
+    # under /MDd); every stack push/pop / vector op in the interpreter then
+    # pays range/orphan bookkeeping measured at ~1-2us per VM opcode in Debug.
+    # The boot/import regressions run Debug builds, so disable the container
+    # debug checks for Debug configs too (pure codegen switch, no semantics
+    # change; _DEBUG CRT heap checks stay on).
+    add_compile_definitions($<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=0>)
 else()
     add_compile_options(-Wall -Wextra)
 endif()

@@ -30,7 +30,7 @@ int64_t as_int(const Value& v) {
     case 1: return 0;
     case 2: return std::get<int64_t>(v);
     case 3: return static_cast<int64_t>(std::get<double>(v));
-    case 4: return std::get<std::string>(v).empty() ? 0 : 1;
+    case 4: return std::get<SharedString>(v).empty() ? 0 : 1;
     default: return 0;
     }
 }
@@ -41,7 +41,7 @@ double as_float(const Value& v) {
     case 1: return 0.0;
     case 2: return static_cast<double>(std::get<int64_t>(v));
     case 3: return std::get<double>(v);
-    case 4: return std::stod(std::get<std::string>(v));
+    case 4: return std::stod(std::get<SharedString>(v));
     default: return 0.0;
     }
 }
@@ -423,7 +423,14 @@ Value Interpreter::evalBinary(const std::string& op, const Value& a, const Value
             arr->items.insert(arr->items.end(), bv.begin(), bv.end());
             return arr;
         }
-        if (a.index() == 4 || b.index() == 4) return make_string(as_string(a) + as_string(b));
+        if (a.index() == 4 || b.index() == 4) {
+            std::string r;
+            r.reserve((a.index() == 4 ? std::get<SharedString>(a).str().size() : 0) +
+                      (b.index() == 4 ? std::get<SharedString>(b).str().size() : 0) + 16);
+            append_text(r, a);
+            append_text(r, b);
+            return make_string(std::move(r));
+        }
         // original VM: mixed int/real keeps the LEFT operand's type
         if (a.index() == 3) return make_float(as_float(a) + as_float(b));
         if (b.index() == 3) return make_int(static_cast<int64_t>(as_float(a) + as_float(b)));
@@ -476,7 +483,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     if (rhs->kind == Expr::Kind::Range) {
         int64_t len = 0;
         if (c.index() == 5) len = static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(c)->items.size());
-        else if (c.index() == 4) len = static_cast<int64_t>(std::get<std::string>(c).size());
+        else if (c.index() == 4) len = static_cast<int64_t>(std::get<SharedString>(c).size());
         int64_t start = resolveIndex(rhs->lhs, len);
         int64_t end = resolveIndex(rhs->rhs, len);
         if (c.index() == 5) {
@@ -494,7 +501,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
             return out;
         }
         if (c.index() == 4) {
-            const std::string& s = std::get<std::string>(c);
+            const std::string& s = std::get<SharedString>(c);
             int64_t len = static_cast<int64_t>(s.size());
             if (start < 0) start += len;
             if (end < 0) end += len;
@@ -522,7 +529,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
         return Value{};   // miss -> undefined (type 0)
     }
     if (c.index() == 4) {
-        const std::string& s = std::get<std::string>(c);
+        const std::string& s = std::get<SharedString>(c);
         int64_t len = static_cast<int64_t>(s.size());
         int64_t i = resolveIndex(rhs, len);
         if (i < 0) i += len;
@@ -592,7 +599,7 @@ Value Interpreter::evalCallOther(ExprPtr target, const std::string& fn, const st
     // the requested function through the original bytecode VM.
     if (obj.index() == 4) {
         if (functions_.find(fn) != functions_.end()) return callFunction(fn, argValues);
-        return callOriginalObjectFunction(std::get<std::string>(obj), fn, argValues, "out/lib_aaa32");
+        return callOriginalObjectFunction(std::get<SharedString>(obj), fn, argValues, "out/lib_aaa32");
     }
     return make_int(0);
 }

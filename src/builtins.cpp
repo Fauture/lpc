@@ -234,7 +234,7 @@ static std::atomic<int64_t> g_pendingServices{0};
 int64_t resolveQidLocked(const Value& v) {
     if (v.index() == 2) return std::get<int64_t>(v);
     if (v.index() == 4) {
-        const std::string& s = std::get<std::string>(v);
+        const std::string& s = std::get<SharedString>(v);
         auto& reg = queueRegistry();
         auto it = reg.nameToQid.find(s);
         if (it != reg.nameToQid.end()) return it->second;
@@ -276,7 +276,7 @@ EventRegistry& eventRegistry() {
 // Resolve an event reference: a string name, or an int oid from
 // create_event().  Returns the event name, or "" if unknown.
 std::string resolveEventNameLocked(const Value& v, EventRegistry& reg) {
-    if (v.index() == 4) return std::get<std::string>(v);
+    if (v.index() == 4) return std::get<SharedString>(v);
     if (v.index() == 2) {
         auto it = reg.oidToName.find(std::get<int64_t>(v));
         if (it != reg.oidToName.end()) return it->second;
@@ -518,7 +518,7 @@ int64_t as_int(const Value& v) {
     case 1: return 0;
     case 2: return std::get<int64_t>(v);
     case 3: return static_cast<int64_t>(std::get<double>(v));
-    case 4: return std::get<std::string>(v).empty() ? 0 : 1;
+    case 4: return std::get<SharedString>(v).empty() ? 0 : 1;
     default: return 0;
     }
 }
@@ -565,7 +565,25 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
             continue;
         }
         const Value& v = args[argi++];
-        if (type == 's' || type == 'S') {
+        if (type == 's') {
+            if (v.index() == 4 && spec.find('.') == std::string::npos &&
+                spec.find('*') == std::string::npos) {
+                // string Value: format straight from the shared block instead
+                // of materializing an as_string copy first.  %.*s reproduces
+                // %s (including width/flags); a NUL inside the text truncates
+                // exactly like the old .c_str() path.  Only for plain specs -
+                // an explicit precision (%.3s) or width-* is left to the old
+                // path so the exact format string reaches snprintf unchanged.
+                const std::string& sv = std::get<SharedString>(v).str();
+                size_t len = sv.find('\0');
+                if (len == std::string::npos) len = sv.size();
+                std::string ns = spec.substr(0, spec.size() - 1) + ".*s";
+                snprintf(buf, sizeof(buf), ns.c_str(), static_cast<int>(len), sv.data());
+            } else {
+                snprintf(buf, sizeof(buf), spec.c_str(), as_string(v).c_str());
+            }
+            out += buf;
+        } else if (type == 'S') {
             snprintf(buf, sizeof(buf), spec.c_str(), as_string(v).c_str());
             out += buf;
         } else if (type == 'f' || type == 'F' || type == 'e' || type == 'E' || type == 'g' || type == 'G') {
@@ -583,7 +601,7 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
             //   sprintf("%O", (buffer)"({[]})") -> "28 7B 5B 5D 7D 29 ...({[]})").
             if (v.index() == 4) {
                 out += "\"";
-                out += std::get<std::string>(v);
+                out += std::get<SharedString>(v);
                 out += "\"";
             } else if (v.index() == 0) {
                 out += "(undefined)";
@@ -1880,7 +1898,7 @@ void padVariableValue(const Value& v, std::string& out) {
         break;
     }
     case 4: {
-        const std::string& s = std::get<std::string>(v);
+        const std::string& s = std::get<SharedString>(v);
         if (s.find('\0') != std::string::npos) {
             out.append(s);  // buffer: raw bytes
         } else {
@@ -2036,7 +2054,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::string ad;
                 if (!args.empty()) {
                     if (args[0].index() == 4) {
-                        std::string s = std::get<std::string>(args[0]);
+                        std::string s = std::get<SharedString>(args[0]);
                         if (s.size() > 48) s = s.substr(0, 48) + "...";
                         ad = "a0='" + s + "'";
                     } else if (args[0].index() == 2) {
@@ -2183,7 +2201,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         const Value& v = args[0];
         if (v.index() == 2) return v;
         if (v.index() == 4) {
-            try { return make_int(static_cast<int64_t>(std::stoll(sqlTrim(std::get<std::string>(v))))); }
+            try { return make_int(static_cast<int64_t>(std::stoll(sqlTrim(std::get<SharedString>(v))))); }
             catch (...) { return make_int(0); }
         }
         return make_int(0);
@@ -2194,7 +2212,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (v.index() == 3) return v;
         if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
         if (v.index() == 4) {
-            try { return make_float(std::stod(sqlTrim(std::get<std::string>(v)))); }
+            try { return make_float(std::stod(sqlTrim(std::get<SharedString>(v)))); }
             catch (...) { return make_float(0); }
         }
         return make_float(0);
@@ -2204,7 +2222,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         const Value& v = args[0];
         if (v.index() == 5) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size()));
         if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size()));
-        if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<std::string>(v).size()));
+        if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<SharedString>(v).size()));
         // vm_f_sizeof (0x80dbcec) case 5 (buffer): byte length
         // (*(pValue+12) = Vm_Buffer_T length).
         if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<BufferValue>>(v)->data.size()));
@@ -2355,12 +2373,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string dbg;
             for (size_t i = 0; i < arr->items.size() && i < 4; ++i) {
                 if (!dbg.empty()) dbg += "|";
-                const std::string& e = std::get<std::string>(arr->items[i]);
+                const std::string& e = std::get<SharedString>(arr->items[i]);
                 dbg += "[" + e.substr(0, 12) + "]";
             }
             std::string hex0;
             if (!arr->items.empty()) {
-                const std::string& e0 = std::get<std::string>(arr->items[0]);
+                const std::string& e0 = std::get<SharedString>(arr->items[0]);
                 char b[8];
                 for (size_t k = 0; k < e0.size() && k < 8; ++k) { snprintf(b, sizeof(b), "%02X ", (unsigned char)e0[k]); hex0 += b; }
             }
@@ -2495,7 +2513,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // __BIN_DIR__ (vm_getBinDir) returns the -b directory WRAPPED IN
         // DOUBLE QUOTES; the LPC startup strips them with [1..<2].
         if (!args.empty() && args[0].index() == 4) {
-            const std::string& key = std::get<std::string>(args[0]);
+            const std::string& key = std::get<SharedString>(args[0]);
             {
                 // Boot-injected predefines (/D CONFIG=...) win over the .o
                 // define table, matching the original driver's runtime
@@ -2752,7 +2770,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     // expand_macro returns a STRING (original vm_f_expand_macro
                     // always pushes a string).  Parse the numeric define
                     // (accepts "0x2478" / "9336" / "                  0x5351").
-                    const std::string& es = std::get<std::string>(mv);
+                    const std::string& es = std::get<SharedString>(mv);
                     size_t b0 = es.find_first_not_of(" \t\r\n");
                     size_t e0 = es.find_last_not_of(" \t\r\n");
                     std::string trimS = (b0 == std::string::npos) ? "" : es.substr(b0, e0 - b0 + 1);
@@ -2834,7 +2852,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     out.push_back(static_cast<char>((u >> 8) & 0xFF));
                     out.push_back(static_cast<char>(u & 0xFF));
                 } else if (v.index() == 4) {
-                    const std::string& s = std::get<std::string>(v);
+                    const std::string& s = std::get<SharedString>(v);
                     size_t n = s.size(); if (n > 255) n = 255;
                     out.push_back(static_cast<char>(n));
                     out.append(s.data(), n);
@@ -3459,7 +3477,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 break;
             }
             case 4: {  // string, single-quoted with escaping
-                const std::string& s = std::get<std::string>(p);
+                const std::string& s = std::get<SharedString>(p);
                 out += '\'';
                 for (char sc : s) {
                     if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
@@ -3501,7 +3519,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             case 2: out += std::to_string(std::get<int64_t>(p)); break;
             case 3: { char buf[64]; snprintf(buf, sizeof(buf), "%g", std::get<double>(p)); out += buf; break; }
             case 4: {
-                const std::string& s = std::get<std::string>(p);
+                const std::string& s = std::get<SharedString>(p);
                 out += '\'';
                 for (char sc : s) {
                     if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
@@ -3843,9 +3861,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
                 for (auto& kv : mp->items()) {
                     if (kv.first.index() != 4) continue;
-                    std::string k = std::get<std::string>(kv.first);
+                    std::string k = std::get<SharedString>(kv.first);
                     if (k == "type" && kv.second.index() == 4) {
-                        const std::string& t = std::get<std::string>(kv.second);
+                        const std::string& t = std::get<SharedString>(kv.second);
                         if (_stricmp(t.c_str(), "internal") == 0) attribOr |= 0x302;
                         else if (_stricmp(t.c_str(), "client") == 0) attribOr |= 1;
                         else if (_stricmp(t.c_str(), "from_server") == 0) attribOr |= 0x404;
@@ -4207,7 +4225,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         static std::atomic<int64_t> pendSeq{0};
         int64_t qid = pendSeq.fetch_add(1, std::memory_order_relaxed) + 1;
         std::string qname;
-        if (!args.empty() && args[0].index() == 4) qname = std::get<std::string>(args[0]);
+        if (!args.empty() && args[0].index() == 4) qname = std::get<SharedString>(args[0]);
         if (name == "create_queue") lpc::queueCreate(qid, qname);
         else if (!qname.empty()) lpc::eventCreate(qname, qid);
         if (std::getenv("LPCVM_EVENT_TRACE") || std::getenv("LPCVM_TRACE"))
@@ -4221,7 +4239,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (qid >= 0) lpc::queueDelete(qid);
         }
         if (name == "delete_event" && !args.empty() && args[0].index() == 4)
-            lpc::eventDelete(std::get<std::string>(args[0]));
+            lpc::eventDelete(std::get<SharedString>(args[0]));
         return make_int(1);
     }
     if (name == "raise_event") {
@@ -4238,7 +4256,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // input lets the caller's is_mapping check fail the same way.
         if (!args.empty() && args[0].index() == 4) {
             Value out;
-            if (restoreValueAscii(std::get<std::string>(args[0]), out)) return out;
+            if (restoreValueAscii(std::get<SharedString>(args[0]), out)) return out;
         }
         return args.empty() ? make_int(0) : args[0];
     }
@@ -4544,8 +4562,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             return x < y ? -1 : (x > y ? 1 : 0);
         }
         if (a.index() == 4 && b.index() == 4) {
-            const auto& x = std::get<std::string>(a);
-            const auto& y = std::get<std::string>(b);
+            const auto& x = std::get<SharedString>(a);
+            const auto& y = std::get<SharedString>(b);
             return x < y ? -1 : (x > y ? 1 : 0);
         }
         int64_t x = as_int(a), y = as_int(b);
@@ -4875,7 +4893,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "isupper") {
         if (args.empty() || args[0].index() != 4) return make_int(0);
-        const std::string& s = std::get<std::string>(args[0]);
+        const std::string& s = std::get<SharedString>(args[0]);
         if (s.empty()) return make_int(0);
         bool all = true;
         for (unsigned char c : s)

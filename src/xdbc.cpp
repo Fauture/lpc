@@ -21,7 +21,7 @@ namespace {
 std::string asStr(const Value& v) {
     switch (v.index()) {
     case 2: return std::to_string(std::get<int64_t>(v));
-    case 4: return std::get<std::string>(v);
+    case 4: return std::get<SharedString>(v);
     case 3: {
         char buf[32];
         snprintf(buf, sizeof(buf), "%g", std::get<double>(v));
@@ -42,7 +42,7 @@ int64_t toInt64(const Value& v) {
     switch (v.index()) {
     case 2: return std::get<int64_t>(v);
     case 3: return static_cast<int64_t>(std::get<double>(v));
-    case 4: return std::strtoll(std::get<std::string>(v).c_str(), nullptr, 10);
+    case 4: return std::strtoll(std::get<SharedString>(v).c_str(), nullptr, 10);
     default: return 0;
     }
 }
@@ -266,7 +266,7 @@ std::string saveValueAscii(const Value& v) {
     case 4:
     {
         std::string out;
-        saveEscapeString(std::get<std::string>(v), out);
+        saveEscapeString(std::get<SharedString>(v), out);
         return out;
     }
     case 5: {
@@ -520,7 +520,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
     std::string cmd;
     {
         Value c = get("cmd");
-        if (c.index() == 4) cmd = std::get<std::string>(c);
+        if (c.index() == 4) cmd = std::get<SharedString>(c);
     }
     if (cmd == "set_key") {
         int64_t key = 0;
@@ -674,7 +674,7 @@ void processXdbcFrames(SocketEntry& se) {
         std::string cmd = "unknown";
         {
             const Value* c = std::get<std::shared_ptr<MappingValue>>(para)->find(make_string("cmd"));
-            if (c && c->index() == 4) cmd = std::get<std::string>(*c);
+            if (c && c->index() == 4) cmd = std::get<SharedString>(*c);
         }
         auto resp = std::make_shared<MappingValue>();
         resp->insert(make_string("cmd"), make_string(cmd));

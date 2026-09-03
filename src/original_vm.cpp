@@ -34,6 +34,60 @@ namespace fs = std::filesystem;
 
 namespace lpc {
 
+// Cached copies of the LPCVM_* trace/diagnostic environment switches.  The
+// interpreter consults these on per-opcode / per-efun hot paths; std::getenv
+// itself is expensive (locked environ scan; the boot notes measured ~0.5-1.5us
+// per uncached call), so every hot-path switch is read ONCE and cached.
+// Environment is fixed before the services start, so caching is exact.
+static bool vmEnvTrace() { static const bool v = (std::getenv("LPCVM_TRACE") != nullptr); return v; }
+static bool vmEnvEventTrace() { static const bool v = (std::getenv("LPCVM_EVENT_TRACE") != nullptr); return v; }
+static bool vmEnvSvcTrace() { static const bool v = (std::getenv("LPCVM_SVC_TRACE") != nullptr); return v; }
+static bool vmEnvTraceC8() { static const bool v = (std::getenv("LPCVM_TRACE_C8") != nullptr); return v; }
+static bool vmEnvDbgObjVar() { static const bool v = (std::getenv("LPCVM_DBG_OBJVAR") != nullptr); return v; }
+static const char* vmEnvTraceFn() { static const char* v = std::getenv("LPCVM_TRACE_FN"); return v ? v : ""; }
+
+namespace {
+// Env-gated profiler for objectRegistry lookup cost (LPCVM_REG_PROF=1):
+// aggregates wall time of the whole lookup helpers to size the linear suffix
+// scans against the rest of the boot.  Off = one static-bool test per helper.
+bool regProfOn() {
+    static const bool v = (std::getenv("LPCVM_REG_PROF") != nullptr);
+    return v;
+}
+static thread_local int t_regScanDepth = 0;
+struct RegScanT {
+    int64_t t0 = 0;
+    RegScanT() {
+        if (regProfOn()) {
+            using namespace std::chrono;
+            if (t_regScanDepth++ == 0)
+                t0 = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+        }
+    }
+    ~RegScanT() {
+        if (!regProfOn()) return;
+        if (t_regScanDepth > 0) --t_regScanDepth;
+        if (!t0 || t_regScanDepth != 0) return;
+        using namespace std::chrono;
+        static int64_t gNs = 0;
+        static int64_t gCnt = 0;
+        static std::mutex gMx;
+        int64_t dt = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count() - t0;
+        std::lock_guard<std::mutex> lk(gMx);
+        gNs += dt;
+        ++gCnt;
+        static int64_t lastMs = 0;
+        int64_t nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+        if (nowMs - lastMs >= 10000) {
+            lastMs = nowMs;
+            std::cerr << "[reg-prof] scan=" << gNs / 1000000 << "ms calls=" << gCnt << "\n";
+            gNs = 0;
+            gCnt = 0;
+        }
+    }
+};
+} // namespace
+
 namespace {
 // ---------------------------------------------------------------------------
 // Timer registry backing set_timer / get_timer / delete_timer, faithfully
@@ -263,7 +317,7 @@ int64_t toInt(const Value& v) {
     case 2: return std::get<int64_t>(v);
     case 3: return static_cast<int64_t>(std::get<double>(v));
     case 4: {
-        const std::string& s = std::get<std::string>(v);
+        const std::string& s = std::get<SharedString>(v);
         return s.empty() ? 0 : std::strtoll(s.c_str(), nullptr, 10);
     }
     case 5: return static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size());
@@ -276,7 +330,7 @@ double toReal(const Value& v) {
     switch (v.index()) {
     case 2: return static_cast<double>(std::get<int64_t>(v));
     case 3: return std::get<double>(v);
-    case 4: return std::strtod(std::get<std::string>(v).c_str(), nullptr);
+    case 4: return std::strtod(std::get<SharedString>(v).c_str(), nullptr);
     default: return 0.0;
     }
 }
@@ -342,8 +396,17 @@ Value addValues(const Value& a, const Value& b) {
         };
         return make_buffer(cat(a) + cat(b));
     }
-    if (a.index() == 4 || b.index() == 4)
-        return make_string(to_string(a, false) + to_string(b, false));
+    if (a.index() == 4 || b.index() == 4) {
+        // String concatenation: append both operands' text into ONE result
+        // buffer (string operands are appended straight from their shared
+        // blocks instead of being materialized through to_string first).
+        std::string r;
+        r.reserve((a.index() == 4 ? std::get<SharedString>(a).str().size() : 0) +
+                  (b.index() == 4 ? std::get<SharedString>(b).str().size() : 0) + 8);
+        append_text(r, a);
+        append_text(r, b);
+        return make_string(std::move(r));
+    }
     if (a.index() == 3) return make_float(f32(toReal(a)) + f32(toReal(b)));
     if (b.index() == 3) return make_int(truncWrap(f32(toReal(a)) + f32(toReal(b))));
     return make_int(i32(toInt(a) + toInt(b)));
@@ -426,7 +489,7 @@ Value lshValues(const Value& a, const Value& b) {
     if (a.index() == 6 && b.index() == 6) {
         auto left = std::get<std::shared_ptr<MappingValue>>(a);
         auto right = std::get<std::shared_ptr<MappingValue>>(b);
-        if (std::getenv("LPCVM_DBG_OBJVAR")) {
+        if (vmEnvDbgObjVar()) {
             auto li = left->items(), ri = right->items();
             std::cerr << "[lsh-map] left=" << li.size() << " right=" << ri.size() << " rkeys=[";
             int show = std::min<int>(12, static_cast<int>(ri.size()));
@@ -456,8 +519,8 @@ int compareValues(const Value& a, const Value& b) {
         return x < y ? -1 : (x > y ? 1 : 0);
     }
     if (a.index() == 4 && b.index() == 4) {
-        const auto& x = std::get<std::string>(a);
-        const auto& y = std::get<std::string>(b);
+        const auto& x = std::get<SharedString>(a);
+        const auto& y = std::get<SharedString>(b);
         return x < y ? -1 : (x > y ? 1 : 0);
     }
     int64_t x = toInt(a), y = toInt(b);
@@ -473,7 +536,7 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
             // vm_castType: (int)string -> strtol; (int)buffer -> big-endian
             // first 4 bytes.  Buffers are byte strings in this VM: when the
             // content is not a decimal number treat it as a buffer.
-            const std::string& s = std::get<std::string>(v);
+            const std::string& s = std::get<SharedString>(v);
             char* end = nullptr;
             long long parsed = std::strtoll(s.c_str(), &end, 10);
             if (end && *end == '\0' && end != s.c_str()) return make_int(parsed);
@@ -498,7 +561,7 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
         return v;
     case 3:
         if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
-        if (v.index() == 4) return make_float(std::strtod(std::get<std::string>(v).c_str(), nullptr));
+        if (v.index() == 4) return make_float(std::strtod(std::get<SharedString>(v).c_str(), nullptr));
         if (v.index() == 1 || v.index() == 0) return make_float(0.0);
         return v;
     case 4:
@@ -542,7 +605,7 @@ Value castValue(Value v, int targetType, bool setConstAttr = false) {
             s += static_cast<char>(n & 0xFF);
             return make_buffer(s);
         }
-        if (v.index() == 4) return make_buffer(std::get<std::string>(v));
+        if (v.index() == 4) return make_buffer(std::get<SharedString>(v));
         if (v.index() == 1 || v.index() == 0) return make_buffer("");
         if (v.index() == 10) return v;
         return make_buffer(to_string(v, false));
@@ -1254,26 +1317,26 @@ public:
         // owner-resolve paths where the caller's identity is known; record it
         // here (the caller sets previousObjectName_ on this VM before
         // invoking, see tryCallOtherObject and the case-8 owner branch).
-        if (std::getenv("LPCVM_TRACE") &&
+        if (vmEnvTrace() &&
             (name == "lite_query_temp" || name == "lite_set_temp" || name == "set_temp" ||
              name == "query_temp" || name == "set"))
             std::cerr << "[lqt] callFunctionByName vm=" << this << " obj=" << objName_
                       << " fn=" << name << " args=" << args.size()
                       << " thisObj=" << thisObjectName_ << " a0=["
                       << (args.empty() ? "" : to_string(args[0], false).substr(0, 40)) << "]\n";
-        if (std::getenv("LPCVM_TRACE") && (name == "register_entry" || name == "query_entry"))
+        if (vmEnvTrace() && (name == "register_entry" || name == "query_entry"))
             std::cerr << "[reg] callFunctionByName vm=" << this << " obj=" << objName_
                       << " fn=" << name << " args=" << args.size() << " a0=["
                       << (args.empty() ? "" : to_string(args[0], false).substr(0, 50)) << "]\n";
         if (const OriginalFunction* fn = findFunctionAny(name)) {
-            if (std::getenv("LPCVM_TRACE") && name == "lite_query_temp")
+            if (vmEnvTrace() && name == "lite_query_temp")
                 std::cerr << "[lqt] found idx=" << fn->index << " code=" << fn->code.size()
                           << " argCount=" << fn->argCount << "\n";
-            if (std::getenv("LPCVM_TRACE") && name == "account_login")
+            if (vmEnvTrace() && name == "account_login")
                 std::cerr << "[cfv-enter] account_login on obj=" << objName_
                           << " fnidx=" << fn->index << " code=" << fn->code.size()
                           << " args=" << args.size() << "\n";
-            if (std::getenv("LPCVM_DBG_OBJVAR") && name == "query_entire_dbase") {
+            if (vmEnvDbgObjVar() && name == "query_entire_dbase") {
                 std::string keys;
                 if (objVars_->size() > 0 && (*objVars_)[0].index() == 6) {
                     auto m = std::get<std::shared_ptr<MappingValue>>((*objVars_)[0]);
@@ -1309,16 +1372,16 @@ public:
             Value r = executeFunctionFromOutside(*fn, args);
             if (savedVars && !parked_)
                 objVars_ = savedVars;
-            if (std::getenv("LPCVM_TRACE") && name == "mysql_select") {
+            if (vmEnvTrace() && name == "mysql_select") {
                 std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
                 std::cerr.flush();
             }
-            if (std::getenv("LPCVM_TRACE") && name == "account_login")
+            if (vmEnvTrace() && name == "account_login")
                 std::cerr << "[cfv-exit] account_login done\n";
             return r;
         }
-        if (std::getenv("LPCVM_TRACE") && name == "account_login")
+        if (vmEnvTrace() && name == "account_login")
             std::cerr << "[cfv-miss] account_login NOT FOUND on obj=" << objName_ << "\n";
         return make_int(0);
     }
@@ -1385,7 +1448,7 @@ public:
             auto it = reg.vms.find(key);
             if (it != reg.vms.end()) vm = it->second;
         }
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[loadobj-cop] " << vpath << " key=" << key
                       << " spawn __init__ createArgs=" << createArgs.size() << "\n";
         scheduler().spawnConstruction(vm, createArgs, "obj-init:" + key);
@@ -1474,7 +1537,7 @@ public:
     // runAsMaster() call continues from the saved ip_ instead of restarting.
     // Returns normally only when the whole startup finished.
     void runAsMaster() {
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[master-enter] phase=" << masterPhase_
                       << " code=" << (code_ ? code_->size() : -1)
                       << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
@@ -1493,7 +1556,7 @@ public:
             code_ = nullptr;
             if (masterPhase_ == 0) {
                 masterPhase_ = 1;
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[master-phase] 0->1 inherited\n";
             }
         }
@@ -1503,7 +1566,7 @@ public:
             masterNoYield_ = false;
             code_ = nullptr;
             masterPhase_ = 2;
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[master-phase] 1->2 create\n";
         }
         if (masterPhase_ == 2) {
@@ -1515,7 +1578,7 @@ public:
             masterNoYield_ = false;
             code_ = nullptr;
             masterPhase_ = 3;
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[master-phase] 2->3 post_init\n";
             runPostInitFunctions(searchRoot_);
             masterInitDone_ = true;
@@ -1568,7 +1631,7 @@ public:
             // Construction finished: mark the object initialized in the
             // registry and wake the load_object caller parked on this event.
             markObjectInitialized();
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[construct-done] " << objName_ << " event=" << initDoneEvent_ << "\n";
             scheduler().wakeEventFront(initDoneEvent_);
             initPhase_ = 4;
@@ -1611,11 +1674,11 @@ public:
                     parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
                 }
             } catch (...) {
-                if (std::getenv("LPCVM_DBG_OBJVAR"))
+                if (vmEnvDbgObjVar())
                     std::cerr << "[inhinit] FAIL load " << inh.path << " for " << obj_.sourceName << "\n";
                 continue;
             }
-            if (std::getenv("LPCVM_DBG_OBJVAR") && obj_.sourceName.find("/zone/") != std::string::npos)
+            if (vmEnvDbgObjVar() && obj_.sourceName.find("/zone/") != std::string::npos)
                 std::cerr << "[inhinit] " << obj_.sourceName << " <- " << inh.path
                           << " gc=" << parentObj->globalCode.size() << " vars=" << objVars_->size() << "\n";
             int funOff = accFun + inh.baseFunOffset;
@@ -1675,12 +1738,12 @@ public:
         std::sort(creates.begin(), creates.end(), [](const OriginalFunction* a, const OriginalFunction* b) {
             return a->index < b->index;
         });
-        if (std::getenv("LPCVM_TRACE") && objName_.find("npc/basic") != std::string::npos) {
+        if (vmEnvTrace() && objName_.find("npc/basic") != std::string::npos) {
             std::string dbg;
             for (auto* c : creates) { if (!dbg.empty()) dbg += ","; dbg += std::to_string(c->index); }
             std::cerr << "[create-multi] obj=" << objName_ << " n=" << creates.size() << " idx=[" << dbg << "]\n";
         }
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_CREATE") && objName_.find("npc/basic") != std::string::npos) {
+        if (vmEnvTrace() && std::getenv("LPCVM_TRACE_CREATE") && objName_.find("npc/basic") != std::string::npos) {
             for (auto* c : creates) {
                 std::string src = c->strings && !c->strings->empty() ? "[strtable]" : "?";
                 std::cerr << "[create-src] idx=" << c->index << " args=" << c->argCount
@@ -1689,7 +1752,7 @@ public:
             }
         }
         for (const OriginalFunction* createFn : creates) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[create] object=" << obj_.magic << " fn=" << createFn->name
                           << " index=" << createFn->index << " args=" << createFn->argCount
                           << " extArgs=" << createArgs.size() << "\n";
@@ -1917,14 +1980,14 @@ private:
                     try {
                         parentObj = loadInheritFile(inh.path);
                     } catch (...) {
-                        if (std::getenv("LPCVM_DBG_OBJVAR"))
+                        if (vmEnvDbgObjVar())
                             std::cerr << "[inh-merge] FAIL load " << inh.path << " for "
                                       << obj_.sourceName << "\n";
                         continue;   // failed to load the inherited file
                     }
                     loaded[inh.path] = parentObj;
                 }
-                if (std::getenv("LPCVM_DBG_OBJVAR") && obj_.sourceName.find("/zone/") != std::string::npos)
+                if (vmEnvDbgObjVar() && obj_.sourceName.find("/zone/") != std::string::npos)
                     std::cerr << "[inh-merge] " << obj_.sourceName << " <- " << inh.path
                               << " fns=" << parentObj->functions.size() << "\n";
                 int funOff = accFun + inh.baseFunOffset;
@@ -2202,7 +2265,7 @@ private:
             } efunProf((efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                            ? names[efunIndex] : std::string("?"));
         }
-        if (std::getenv("LPCVM_TRACE")) {
+        if (vmEnvTrace()) {
             std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                  ? names[efunIndex] : "?";
             std::string fn = "<global>";
@@ -2261,7 +2324,7 @@ private:
                 size_t slash = n.find_last_of('/');
                 std::string base = slash == std::string::npos ? n : n.substr(slash + 1);
                 std::string res = "/" + base;
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[obj-name] this=" << thisObjectName_ << " -> " << res << "\n";
                 return make_string(res);
             }
@@ -2274,7 +2337,7 @@ private:
                 auto& reg0 = objectRegistry();
                 const Value& obv = args[0];
                 const Value& funv = args[1];
-                std::string funName = funv.index() == 4 ? std::get<std::string>(funv) : "";
+                std::string funName = funv.index() == 4 ? std::get<SharedString>(funv) : "";
                 std::vector<Value> callArgs(args.begin() + 2, args.end());
                 std::shared_ptr<OriginalVm> targetVm;
                 std::string path;
@@ -2288,7 +2351,7 @@ private:
                         if (targetVm) path = targetVm->objName();
                     }
                 } else if (obv.index() == 4) {
-                    path = std::get<std::string>(obv);
+                    path = std::get<SharedString>(obv);
                 }
                 if (path.empty() || path == "<this>" || path == ".") {
                     return callFunctionByName(funName, callArgs);
@@ -2314,7 +2377,7 @@ private:
                         // registry VM instead.
                         return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                     }
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[co-inline] " << objName_ << " -> "
                                   << (targetVm ? targetVm->objName() : "?") << "::" << funName
                                   << " argc=" << callArgs.size() << "\n";
@@ -2373,7 +2436,7 @@ private:
                 const Value& obv = args[0];
                 const Value& funv = args[1];
                 const Value& listv = args[2];
-                std::string funName = funv.index() == 4 ? std::get<std::string>(funv) : "";
+                std::string funName = funv.index() == 4 ? std::get<SharedString>(funv) : "";
                 std::vector<Value> callArgs;
                 if (listv.index() == 5) {
                     auto arr = std::get<std::shared_ptr<ArrayValue>>(listv);
@@ -2393,7 +2456,7 @@ private:
                         if (targetVm) path = targetVm->objName();
                     }
                 } else if (obv.index() == 4) {
-                    path = std::get<std::string>(obv);
+                    path = std::get<SharedString>(obv);
                 }
                 if (path.empty() || path == "<this>" || path == ".") {
                     return callFunctionByName(funName, callArgs);
@@ -2412,7 +2475,7 @@ private:
                     const OriginalFunction* targetFn = nullptr;
                     if (targetVm) targetFn = targetVm->findFunctionAny(funName);
                     if (targetFn && targetFn->index >= 0) {
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (vmEnvTrace())
                             std::cerr << "[coa-inline] " << objName_ << " -> "
                                       << (targetVm ? targetVm->objName() : "?") << "::" << funName
                                       << " argc=" << callArgs.size() << "\n";
@@ -2461,7 +2524,7 @@ private:
                 // set_cmd_module(); returning 0 here skipped those, leaving
                 // cmd_module unset so process_command could not forward.
                 bool isClone = thisObjectName_.find('#') != std::string::npos;
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[is_clone] no-arg this=" << thisObjectName_
                               << " -> " << (isClone ? 1 : 0) << "\n";
                 return make_int(isClone ? 1 : 0);
@@ -2494,7 +2557,7 @@ private:
                     };
                     if (fn0.index() == 8) return makeBound(std::get<std::shared_ptr<ClosureValue>>(fn0));
                     if (fn0.index() == 4) {
-                        const std::string& fname = std::get<std::string>(fn0);
+                        const std::string& fname = std::get<SharedString>(fn0);
                         if (const OriginalFunction* fn = findMergedFunction(fname)) {
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
@@ -2550,7 +2613,7 @@ private:
                         return bindClosure(std::get<std::shared_ptr<ClosureValue>>(a));
                     }
                     if (a.index() == 4) {
-                        const std::string& fname = std::get<std::string>(a);
+                        const std::string& fname = std::get<SharedString>(a);
                         if (const OriginalFunction* fn = findFunctionAny(fname)) {
                             auto cl = std::make_shared<ClosureValue>();
                             cl->functionName = fname;
@@ -2602,7 +2665,7 @@ private:
                 return make_int(1);
             }
             if (nm == "create_thread") {
-                if (std::getenv("LPCVM_TRACE")) {
+                if (vmEnvTrace()) {
                     std::string dbg;
                     for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
                     std::cerr << "[cthread] args=[" << dbg << "] argc=" << args.size() << "\n";
@@ -2624,7 +2687,7 @@ private:
                         threadArgs = cl->boundArgs;
                         owner = cl->owner ? cl->owner : &obj_;
                     } else if (args[1].index() == 4) {
-                        funName = std::get<std::string>(args[1]);
+                        funName = std::get<SharedString>(args[1]);
                         for (size_t i = 2; i < args.size(); ++i) threadArgs.push_back(args[i]);
                         owner = &obj_;
                     }
@@ -2635,7 +2698,7 @@ private:
                     owner = cl->owner ? cl->owner : &obj_;
                 }
                 if (funName.empty()) return make_int(0);
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[cthread] fun=" << funName << " args=" << threadArgs.size() << "\n";
                 // The original driver spawns the process immediately; the new
                 // process shares the creator object's context (globals are
@@ -2681,7 +2744,7 @@ private:
                         }
                     }
                     if (ownerVm) {
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (vmEnvTrace())
                             std::cerr << "[config] sync first update_config before post_init\n";
                         try {
                             ownerVm->callFunctionByName("update_config", {});
@@ -2709,7 +2772,7 @@ private:
                             }
                         }
                     }
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[sched] spawn " << funName << " args=" << threadArgs.size()
                                   << " owner=[" << (owner ? owner->sourceName : "NULL")
                                   << "] copyObj=[" << objPtr->sourceName << "]\n";
@@ -2720,7 +2783,7 @@ private:
                              objVarsSnapshot = std::move(objVarsSnapshot)]() {
                     if (isTelnetThread && telnetCno >= 0)
                         setThreadTelnetClient(telnetCno);
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[thread] run " << funName << " args=" << threadArgs.size() << "\n";
                     // The original driver's create_thread shares the creator's
                     // thisObject: the new PCB runs on the same object, so
@@ -2756,7 +2819,7 @@ private:
                         // Client disconnected: end the daemon thread quietly
                         // (matches the original driver killing the pended
                         // process on session close).
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (vmEnvTrace())
                             std::cerr << "[thread] " << funName << " client closed\n";
                     } catch (const std::exception& e) {
                         std::cerr << "[thread] " << funName << " error: " << e.what() << "\n";
@@ -2785,7 +2848,7 @@ private:
                     fnName = cl->functionName;
                     bound = cl->boundArgs;
                 } else if (fn.index() == 4) {
-                    fnName = std::get<std::string>(fn);
+                    fnName = std::get<SharedString>(fn);
                 }
                 if (!fnName.empty()) {
                     int64_t timeout = std::max<int64_t>(1, toInt(args[0]));
@@ -2797,12 +2860,12 @@ private:
                     // callback VM gets the initialized instance variables.
                     const OriginalObject* owner = cl ? cl->owner : nullptr;
                     if (!owner) owner = &obj_;
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[timer] schedule " << fnName << " in " << timeout << "s\n";
                     // arg2 is the timer name (string) or 0/&ref (anonymous).
                     std::string timerName;
                     if (args.size() >= 2 && args[1].index() == 4)
-                        timerName = std::get<std::string>(args[1]);
+                        timerName = std::get<SharedString>(args[1]);
                     auto entry = std::make_shared<TimerEntry>();
                     entry->id = g_timerSeq.fetch_add(1);
                     entry->name = timerName;
@@ -2867,7 +2930,7 @@ private:
                 std::shared_ptr<TimerEntry> e;
                 if (!args.empty()) {
                     if (args[0].index() == 4)
-                        e = timerFindByName(std::get<std::string>(args[0]));
+                        e = timerFindByName(std::get<SharedString>(args[0]));
                     else if (args[0].index() == 2)
                         e = timerFindById(toInt(args[0]));
                 }
@@ -2913,7 +2976,7 @@ private:
                 std::shared_ptr<TimerEntry> e;
                 if (!args.empty()) {
                     if (args[0].index() == 4)
-                        e = timerFindByName(std::get<std::string>(args[0]));
+                        e = timerFindByName(std::get<SharedString>(args[0]));
                     else if (args[0].index() == 2)
                         e = timerFindById(toInt(args[0]));
                 }
@@ -2968,7 +3031,7 @@ private:
                 // scheduler requeues this process at the tail of ready_ and
                 // its VM state (stack_/frames_/ip_) is preserved, so it
                 // resumes here (returning 1) after the other processes ran.
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[relinquish] vm=" << this << " obj=" << objName_
                               << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
                 if (masterNoYield_) {
@@ -2992,7 +3055,7 @@ private:
                 // wantRead) and call the real accept only when readable.
                 if (args.empty()) return make_int(-1);
                 int fd = static_cast<int>(toInt(args[0]));
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[accept] fd=" << fd << " park-wait\n";
                 ResumeCond cond;
                 cond.kind = 5;
@@ -3016,10 +3079,10 @@ private:
                     int fd = static_cast<int>(toInt(args[0]));
                     std::string host = to_string(args[1], false);
                     int port = static_cast<int>(toInt(args[2]));
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[connect] fd=" << fd << " " << host << ":" << port << "\n";
                     int rc = xdbcConnectAsync(fd, host, port);
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[connect] rc=" << rc << "\n";
                     if (rc == 0) return make_int(0);          // connected immediately
                     if (rc == -1) return make_int(-1);        // hard failure
@@ -3032,7 +3095,7 @@ private:
                         // Socket writable: check the connect result.
                         resumeValue_ = make_int(xdbcConnectResult(fd));
                     };
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[connect] parking fd=" << fd << " kind=" << cond.kind << "\n";
                     parkAndSuspend(cond, std::move(hook), make_int(0));
                     return make_int(0);   // unreachable (SuspendSignal thrown)
@@ -3054,7 +3117,7 @@ private:
                 // resume with the object value.
                 if (args.empty()) return make_int(0);
                 std::string vpath;
-                if (args[0].index() == 4) vpath = std::get<std::string>(args[0]);
+                if (args[0].index() == 4) vpath = std::get<SharedString>(args[0]);
                 else if (args[0].index() == 2) vpath = std::to_string(std::get<int64_t>(args[0]));
                 else vpath = to_string(args[0], false);
                 std::vector<Value> createArgs;
@@ -3102,7 +3165,7 @@ private:
                 // init_service_module() run inline, and init blocks on
                 // try_to_sync_time waiting for the ccs_clientd daemon that
                 // the stolen create_thread closure was supposed to spawn).
-                if (std::getenv("LPCVM_TRACE")) {
+                if (vmEnvTrace()) {
                     std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
                     std::cerr << "[gfn] inline global fn=" << gfn->name << " idx=" << index
                               << " argc=" << (flags & 0x3F) << " vm=" << this
@@ -3115,7 +3178,7 @@ private:
                     std::cerr << "[gfn] " << gfn->name << " START FAILED (stack too shallow)\n";
                 return false;
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[gfn] global fn idx=" << index << " NOT FOUND in master\n";
             return false;
         }
@@ -3124,7 +3187,7 @@ private:
         auto it = tab.find(index);
         if (it != tab.end()) {
             const OriginalFunction& fn = *it->second;
-            if (std::getenv("LPCVM_TRACE") &&
+            if (vmEnvTrace() &&
                 ((index >= 50 && index <= 60) || (objName_.find("connectiond") != std::string::npos && index <= 15) ||
                  objName_.find("config") != std::string::npos))
                 std::cerr << "[cfu] local fn=" << fn.name << " idx=" << index
@@ -3139,7 +3202,7 @@ private:
                 for (const auto& kv : tab) {
                     if (kv.second->name == fn.name && !kv.second->code.empty() && kv.second != &fn) {
                         impl = kv.second;
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (vmEnvTrace())
                             std::cerr << "[cfu] fwd " << fn.name << " idx=" << index
                                       << " -> impl idx=" << kv.first
                                       << " varOff=" << kv.second->varOffset
@@ -3148,7 +3211,7 @@ private:
                     }
                 }
                 if (impl == &fn) {
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[cfu] fwd " << fn.name << " idx=" << index << " NO IMPL\n";
                     // No implementation anywhere: keep a zero result but still
                     // consume the declared arguments.
@@ -3214,7 +3277,7 @@ private:
                                                      "create_content", "create_content_to", "process_request",
                                                      "fetch_data", "write_data"};
                     for (auto* ff : filedFns) {
-                        if (impl->name == ff && std::getenv("LPCVM_SVC_TRACE")) {
+                        if (impl->name == ff && vmEnvSvcTrace()) {
                             std::string chain;
                             for (int fi = 0; fi < static_cast<int>(frames_.size()) && fi < 5; ++fi) {
                                 if (!chain.empty()) chain += "<-";
@@ -3268,11 +3331,11 @@ private:
             }
         }
         if (target) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
             std::vector<Value> args;
             for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
-            if (std::getenv("LPCVM_TRACE")) {
+            if (vmEnvTrace()) {
                 std::string dbg;
                 for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
                 std::cerr << "[fallback] vm=" << this << " index=" << index << " name=" << name
@@ -3285,7 +3348,7 @@ private:
         // helpers). The low 6 bits of the flags carry the argument count.
         const auto& names = efunNameTable();
         if (index >= 0 && static_cast<size_t>(index) < names.size() && !names[index].empty()) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[vm] global efun fallback index=" << index << " name=" << names[index]
                           << " argc=" << argCount << "\n";
             result = callEfun(index, argCount);
@@ -3410,7 +3473,7 @@ private:
         // same registry VM concurrently; pushing outside the lock let one
         // thread's arguments land on another thread's stack (seen as a
         // shifted mixed_mysql_select parameter list -> bogus cno/sql).
-        bool diag = std::getenv("LPCVM_TRACE") != nullptr;
+        bool diag = vmEnvTrace();
         bool diagMe = diag && (objName_ == "<obj>" || objName_ == "/aaa/daemons/accountd.o" ||
                                objName_ == "/clone/misc/unauthed_agent.o" ||
                                fn.name == "account_login" || fn.name == "set_dynamic_key" ||
@@ -3449,7 +3512,7 @@ private:
         // The original VM pushes args in reverse (param0 last, on top).
         // For a zero-arg function the stack top would be -1; reserve one slot
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
-        if (std::getenv("LPCVM_TRACE") && fn.name == "save_to_text")
+        if (vmEnvTrace() && fn.name == "save_to_text")
             std::cerr << "[efo-dbg] save_to_text args=" << args.size()
                       << " stackBefore=" << stack_.size()
                       << " caller=" << (frames_.empty() || !frames_.back().fn
@@ -3536,7 +3599,7 @@ private:
         if (static_cast<int>(stack_.size()) < need) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
-        if (std::getenv("LPCVM_TRACE") && (fn.name == "register_entry" || fn.name == "query_entry")) {
+        if (vmEnvTrace() && (fn.name == "register_entry" || fn.name == "query_entry")) {
             std::string dbg;
             for (int i = 0; i < fn.argCount; ++i)
                 dbg += (i ? "," : "") + to_string(slotValue(bp - i), false);
@@ -3557,11 +3620,11 @@ private:
                           << " keys=[" << keys.substr(0, 120) << "]\n";
             }
         }
-        if (std::getenv("LPCVM_TRACE") && (fn.name == "load_comm_desc" || fn.name == "load_file_dependence")) {
+        if (vmEnvTrace() && (fn.name == "load_comm_desc" || fn.name == "load_file_dependence")) {
             std::cerr << "[xfn] " << fn.name << " bp=" << bp << " argc=" << fn.argCount
                       << " argsPassed=" << fn.argCount << " stackSize=" << stack_.size()
                       << " localCount=" << fn.localCount << " frames=" << frames_.size() << "\n";
-        } else if (std::getenv("LPCVM_TRACE") && (fn.name == "mixed_mysql_select" || fn.name == "mysql_select" ||
+        } else if (vmEnvTrace() && (fn.name == "mixed_mysql_select" || fn.name == "mysql_select" ||
                                            fn.name == "fetch_config_list" || fn.name == "update_config" ||
                                            fn.name == "assure_connection" || fn.name == "choose_one_url" ||
                                            fn.name == "do_init")) {
@@ -3740,7 +3803,7 @@ private:
         // THIS VM's frame chain, so the continuation already happened inside
         // the parked VM's resume) - skip.
         if (frames_.empty()) return;
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[resume-caller] vm=" << this << " obj=" << objName_
                       << " frames=" << frames_.size() << " ip=" << ip_ << "\n";
         pushValue(std::move(result));
@@ -3765,7 +3828,7 @@ private:
         SuspendSignal sig;
         sig.vm = this;
         sig.cond = cond_;
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[suspend] vm=" << this << " obj=" << objName_
                       << " kind=" << cond.kind << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
         throw sig;
@@ -3785,6 +3848,7 @@ private:
         // of wall time while instructions execute.  When the env var is unset
         // the only cost is a static-bool test per instruction.
         static const bool stepProfOn = (std::getenv("LPCVM_STEP_PROF") != nullptr);
+        static const bool opProfOn = (std::getenv("LPCVM_OP_PROF") != nullptr);
         static int64_t stepProfInsns = 0;
         static int64_t stepProfActs = 0;
         static int64_t stepProfLastMs = 0;
@@ -3796,10 +3860,10 @@ private:
         // the interpreter's inner loop (4+ getenv/instruction dominated the
         // boot: ~0.5-1.5us per LPC op).
         static const bool traceFnGated =
-            (std::getenv("LPCVM_TRACE") != nullptr && std::getenv("LPCVM_TRACE_FN") != nullptr);
+            (vmEnvTrace() && vmEnvTraceFn() != nullptr);
         static const bool stuckDiagGated =
             (std::getenv("LPCVM_LOCK_TRACE") != nullptr || std::getenv("LPCVM_STUCK_TRACE") != nullptr);
-        static const bool traceGated = (std::getenv("LPCVM_TRACE") != nullptr);
+        static const bool traceGated = (vmEnvTrace());
         if (stepProfOn) ++stepProfActs;
         while (code_ && ip_ < code_->size()) {
             const OriginalInsn& in = (*code_)[ip_++];
@@ -3808,7 +3872,7 @@ private:
             if (traceFnGated) {
                 std::string cur = "<global>";
                 if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
-                if (cur == std::getenv("LPCVM_TRACE_FN"))
+                if (cur == vmEnvTraceFn())
                     std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (ip_ - 1) << " op=" << in.op
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
@@ -3844,6 +3908,47 @@ private:
                               << " ip=" << ip_ << "/" << (code_ ? code_->size() : 0)
                               << " op=" << in.op << " insns=" << stepProfInsns
                               << " acts=" << stepProfActs << "\n";
+                }
+            }
+            // Per-opcode CPU profiler (LPCVM_OP_PROF=1): wall time + executions
+            // per opcode, dumping the top consumers every ~5s.  The duration of
+            // an instruction is measured as the gap to the next instruction's
+            // dispatch (so it includes any nested VM activity); off = one
+            // static-bool test per instruction.
+            if (opProfOn) {
+                using namespace std::chrono;
+                static int64_t opPrevNs = 0;
+                static int64_t opNs[128] = {0};
+                static int64_t opCnt[128] = {0};
+                static int opPrev = -1;
+                int64_t nowNs =
+                    duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+                int64_t dt = opPrevNs ? (nowNs - opPrevNs) : 0;
+                if (opPrev >= 0 && opPrev < 128) opNs[opPrev] += dt;
+                opPrevNs = nowNs;
+                if (in.op < 128) ++opCnt[in.op];
+                opPrev = in.op;
+                static int64_t opLastReport = 0;
+                if (nowNs - opLastReport >= 5000000000LL) {
+                    opLastReport = nowNs;
+                    std::vector<int> idx;
+                    for (int i = 0; i < 128; ++i)
+                        if (opCnt[i]) idx.push_back(i);
+                    std::sort(idx.begin(), idx.end(), [&](int a, int b) {
+                        return opNs[a] > opNs[b];
+                    });
+                    std::cerr << "[op-prof] top " << std::min<int>(12, idx.size()) << "/"
+                              << idx.size() << " of last 5s:\n";
+                    for (size_t i = 0; i < idx.size() && i < 12; ++i) {
+                        int o = idx[i];
+                        std::cerr << "  " << actionInfo(o).name << " " << opNs[o] / 1000000
+                                  << "ms (" << opCnt[o] << " calls, avg "
+                                  << (opCnt[o] ? opNs[o] / opCnt[o] : 0) << "ns)\n";
+                    }
+                    memset(opNs, 0, sizeof(opNs));
+                    memset(opCnt, 0, sizeof(opCnt));
+                    opPrev = -1;
+                    opPrevNs = 0;
                 }
             }
             if (stuckDiagGated &&
@@ -3960,8 +4065,8 @@ private:
                 // resume a caller stream - it just ends the init segment.
                 if (frames_.empty()) { returned_ = true; return; }
                 const Frame& f = frames_.back();
-                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN") &&
-                    f.fn && f.fn->name == std::getenv("LPCVM_TRACE_FN"))
+                if (vmEnvTrace() && vmEnvTraceFn() &&
+                    f.fn && f.fn->name == vmEnvTraceFn())
                     std::cerr << "[ret-enter] " << f.fn->name << " bp=" << f.bp
                               << " argNum=" << f.argNum << " stack=" << stack_.size()
                               << " frames=" << frames_.size() << " op=" << in.op << "\n";
@@ -3970,7 +4075,7 @@ private:
                     else returnValue_ = make_int(0);
                 } else {
                     size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
-                    if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
+                    if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
                         std::cerr << "[ret] " << f.fn->name << " bp=" << f.bp << " stack=" << stack_.size()
                                   << " expVoid=" << expectedVoid << " top="
                                   << (stack_.empty() ? "empty" : to_string(stack_.back().value, false)) << "\n";
@@ -3984,7 +4089,7 @@ private:
                         else returnValue_ = UndefinedTag{};
                     }
                 }
-                if (std::getenv("LPCVM_TRACE") && f.fn && f.fn->name == "save_to_text")
+                if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
                     std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 returned_ = true;
                 // Context frame (fn == nullptr): this is a global init code
@@ -4019,8 +4124,8 @@ private:
                 code_ = retCode;
                 meta_ = retMeta;
                 ip_ = retIp;
-                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN") &&
-                    f.fn && f.fn->name == std::getenv("LPCVM_TRACE_FN"))
+                if (vmEnvTrace() && vmEnvTraceFn() &&
+                    f.fn && f.fn->name == vmEnvTraceFn())
                     std::cerr << "[ret-t] " << f.fn->name << " bp=" << f.bp << " argNum=" << f.argNum
                               << " retCode=" << (retCode ? "set" : "null")
                               << " retCodePtr=" << (retCode ? std::to_string(reinterpret_cast<uintptr_t>(retCode)) : "-")
@@ -4077,7 +4182,7 @@ private:
                                   << " vm=" << this << "\n";
                     }
                 }
-                if (std::getenv("LPCVM_DBG_OBJVAR") &&
+                if (vmEnvDbgObjVar() &&
                     ((objName_.find("/zone/") != std::string::npos && vi < 2) || isQed)) {
                     std::cerr << "[zvar] obj=" << objName_ << " fn="
                               << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
@@ -4126,7 +4231,7 @@ private:
             case 78: { // set_obj_var
                 int vi = static_cast<int>(in.a) + currentVarOffset();
                 Value sv = pop().value;
-                if (std::getenv("LPCVM_DBG_OBJVAR") && objName_.find("/zone/") != std::string::npos &&
+                if (vmEnvDbgObjVar() && objName_.find("/zone/") != std::string::npos &&
                     sv.index() == 6) {
                     std::cerr << "[setvar-map] obj=" << objName_ << " fn="
                               << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
@@ -4218,7 +4323,7 @@ private:
                             for (int i = 0; i < boundCount && !stack_.empty(); ++i)
                                 bound.push_back(pop().value);
                             cl->boundArgs = std::move(bound);
-                            if (std::getenv("LPCVM_TRACE"))
+                            if (vmEnvTrace())
                                 std::cerr << "[cfv] efun-closure " << cl->functionName
                                           << " idx=" << in.a << " bind=" << boundCount << "\n";
                             pushValue(cl);
@@ -4252,7 +4357,7 @@ private:
                         if (it != funcsByIndex_.end()) fn = it->second;
                     }
                 }
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[cfv] index=" << in.a << " global=" << ((in.b & 0x80) != 0)
                               << " found=" << (fn != nullptr)
                               << (fn ? " name=" + fn->name : "") << "\n";
@@ -4260,7 +4365,7 @@ private:
                     std::vector<Value> bound;
                     int boundCount = in.b & 0x3F;
                     for (int i = 0; i < boundCount && !stack_.empty(); ++i) bound.push_back(pop().value);
-                    if (std::getenv("LPCVM_TRACE") && fn->name == "process_command" &&
+                    if (vmEnvTrace() && fn->name == "process_command" &&
                         (in.a == 32 || in.a == 153)) {
                         std::string dbg;
                         for (size_t k = 0; k < bound.size(); ++k)
@@ -4336,7 +4441,7 @@ private:
             case 38: { // lsh_value
                 Value b = pop().value;
                 Value a = pop().value;
-                if (std::getenv("LPCVM_DBG_OBJVAR") &&
+                if (vmEnvDbgObjVar() &&
                     objName_.find("import/room") != std::string::npos)
                     std::cerr << "[lsh-import] obj=" << objName_ << " aType=" << a.index()
                               << " bType=" << b.index()
@@ -4460,7 +4565,7 @@ private:
                 Value v = resolveCrossVmRef(pop().value);
                 switch (v.index()) {
                 case 4:
-                    pushValue(make_int(static_cast<int64_t>(std::get<std::string>(v).size())));
+                    pushValue(make_int(static_cast<int64_t>(std::get<SharedString>(v).size())));
                     break;
                 case 5:
                     pushValue(make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size())));
@@ -4505,7 +4610,7 @@ private:
                 Value container = c.isRef ? deref(c) : c.value;
                 if (mflag & 1) {
                     size_t len = 0;
-                    if (container.index() == 4) len = std::get<std::string>(container).size();
+                    if (container.index() == 4) len = std::get<SharedString>(container).size();
                     else if (container.index() == 5) len = std::get<std::shared_ptr<ArrayValue>>(container)->items.size();
                     else if (container.index() == 10) len = std::get<std::shared_ptr<BufferValue>>(container)->data.size();
                     key = make_int(static_cast<int64_t>(len) - toInt(key));
@@ -4521,7 +4626,7 @@ private:
                 Value container = c.isRef ? deref(c) : c.value;
                 if (mflag & 1) {
                     size_t len = 0;
-                    if (container.index() == 4) len = std::get<std::string>(container).size();
+                    if (container.index() == 4) len = std::get<SharedString>(container).size();
                     else if (container.index() == 5) len = std::get<std::shared_ptr<ArrayValue>>(container)->items.size();
                     else if (container.index() == 10) len = std::get<std::shared_ptr<BufferValue>>(container)->data.size();
                     key = make_int(static_cast<int64_t>(len) - toInt(key));
@@ -4548,7 +4653,7 @@ private:
             case 6: { // call_in_efun
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
-                if (std::getenv("LPCVM_TRACE") && objName_.find("cmd_log_important") != std::string::npos)
+                if (vmEnvTrace() && objName_.find("cmd_log_important") != std::string::npos)
                     std::cerr << "[efun-pre] efun=" << efun << " argc=" << argc
                               << " stack=" << stack_.size() << " frames=" << frames_.size()
                               << " meta=" << (meta_ ? meta_->size() : 0)
@@ -4582,7 +4687,7 @@ private:
                             } else if (dv.index() == 10) {
                                 data = std::get<std::shared_ptr<BufferValue>>(dv)->data;
                             } else if (dv.index() == 4) {
-                                data = std::get<std::string>(dv);
+                                data = std::get<SharedString>(dv);
                             }
                             int64_t off = toInt(offv);
                             if (off >= 0 && !data.empty()) {
@@ -4605,7 +4710,7 @@ private:
                     if (argc >= 2) {
                         auto strOf = [&](const StackItem& r) -> std::string {
                             Value v = r.isRef ? deref(r) : r.value;
-                            if (v.index() == 4) return std::get<std::string>(v);
+                            if (v.index() == 4) return std::get<SharedString>(v);
                             return to_string(v, false);
                         };
                         // Pop all args (top of stack = last argument pushed =
@@ -4620,7 +4725,7 @@ private:
                         // a trailing-input match only counts when a ref exists.
                         int maxOutputs = static_cast<int>(refs.size()) - 2;
                         int n = lpcSscanf(input, fmtStr, outs, maxOutputs);
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (vmEnvTrace())
                             std::cerr << "[sscanf] input=[" << input.substr(0, 30) << "] fmt=[" << fmtStr
                                       << "] n=" << n << " outs=" << outs.size() << "\n";
                         for (size_t i = 0; i + 2 < refs.size() && i < outs.size(); ++i)
@@ -4643,13 +4748,13 @@ private:
                             Value lenv = items[2].isRef ? deref(items[2]) : items[2].value;
                             int fd = static_cast<int>(toInt(fdv));
                             int len = static_cast<int>(toInt(lenv));
-                            if (std::getenv("LPCVM_TRACE"))
+                            if (vmEnvTrace())
                                 std::cerr << "[recv] fd=" << fd << " len=" << len << "\n";
                             bool ok = false;
                             std::string data = xdbcRecvAsync(fd, len, ok);
                             if (ok || !xdbcSocketExists(fd)) {
                                 if (ok && !data.empty()) writeThrough(items[1], make_string(data));
-                                if (std::getenv("LPCVM_TRACE"))
+                                if (vmEnvTrace())
                                     std::cerr << "[recv] fd=" << fd << " got=" << data.size() << "\n";
                                 pushValue(make_int(static_cast<int64_t>(data.size())));
                             } else {
@@ -4713,7 +4818,7 @@ private:
                     // on top), so pop() yields arg0 first.
                     std::vector<StackItem> items;
                     for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
-                    if (std::getenv("LPCVM_TRACE")) {
+                    if (vmEnvTrace()) {
                         std::string dbg;
                         for (auto& it : items) {
                             Value v = it.isRef ? deref(it) : it.value;
@@ -4732,7 +4837,7 @@ private:
                                                           : static_cast<double>(toInt(tv));
                             timeoutMs = secs < 0 ? -1 : static_cast<int>(secs * 1000.0);
                         }
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (vmEnvTrace())
                             std::cerr << "[queue] receive qid=" << qid
                                       << " timeoutMs=" << timeoutMs << "\n";
                         // Cooperative scheduling: try a non-blocking receive
@@ -4785,7 +4890,7 @@ private:
                                       << " obj=" << objName_ << " fn=" << cf
                                       << " this=" << thisObjectName_ << " qv=" << qvdesc << "\n";
                         }
-                        if (!ok && (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))) {
+                        if (!ok && (vmEnvTrace() || vmEnvSvcTrace())) {
                             // Detailed dump: what the LPC global resolved to +
                             // registered queues + the caller chain.
                             std::string cf = frames_.empty() || !frames_.back().fn
@@ -4860,7 +4965,7 @@ private:
                     Value eref;
                     if (!items.empty()) {
                         eref = items[0].isRef ? deref(items[0]) : items[0].value;
-                        if (eref.index() == 4) ename = std::get<std::string>(eref);
+                        if (eref.index() == 4) ename = std::get<SharedString>(eref);
                         else if (eref.index() == 2) ename = "oid:" + std::to_string(std::get<int64_t>(eref));
                     }
                     uint32_t mask = 0;
@@ -4874,7 +4979,7 @@ private:
                         if (tv.index() == 2) secs = static_cast<double>(std::get<int64_t>(tv));
                         else if (tv.index() == 3) secs = std::get<double>(tv);
                     }
-                    if (ename.rfind("oid:", 0) == 0 && std::getenv("LPCVM_SVC_TRACE")) {
+                    if (ename.rfind("oid:", 0) == 0 && vmEnvSvcTrace()) {
                         std::string wf = frames_.empty() || !frames_.back().fn
                                               ? "<global>" : frames_.back().fn->name;
                         std::cerr << "[wait-oid] " << ename << " obj=" << objName_
@@ -4892,7 +4997,7 @@ private:
                         }
                         std::cerr << " chain=[" << chain << "]\n";
                     }
-                    if (std::getenv("LPCVM_EVENT_TRACE")) {
+                    if (vmEnvEventTrace()) {
                         std::string wfn = frames_.empty() || !frames_.back().fn
                                               ? "<global>" : frames_.back().fn->name;
                         std::cerr << "[wait_event] " << ename << " mask=0x" << std::hex
@@ -4914,9 +5019,9 @@ private:
                         // filed's nested do_operate (qianyuanshan.o's master
                         // restore).  Return -101 so the caller's wait_event != 0
                         // failure path runs instead of parking forever.
-                        if (std::getenv("LPCVM_EVENT_TRACE"))
+                        if (vmEnvEventTrace())
                             std::cerr << "[wait_event] unknown-event " << ename << " -> -101\n";
-                        if (std::getenv("LPCVM_EVENT_TRACE")) {
+                        if (vmEnvEventTrace()) {
                             std::string wfn = frames_.empty() || !frames_.back().fn
                                                   ? "<global>" : frames_.back().fn->name;
                             std::cerr << "[wait-unknown] " << ename << " obj=" << objName_
@@ -4924,7 +5029,7 @@ private:
                         }
                         pushValue(make_int(-101));
                     } else if (probe == 0) {
-                        if (std::getenv("LPCVM_EVENT_TRACE"))
+                        if (vmEnvEventTrace())
                             std::cerr << "[wait_event] immediate " << ename << "\n";
                         pushValue(make_int(0));
                     } else if (secs < 0 || secs > 0.0001) {
@@ -4966,7 +5071,7 @@ private:
                     Value eref;
                     if (!items.empty()) {
                         eref = items[0].isRef ? deref(items[0]) : items[0].value;
-                        if (eref.index() == 4) ename = std::get<std::string>(eref);
+                        if (eref.index() == 4) ename = std::get<SharedString>(eref);
                         else if (eref.index() == 2) ename = "oid:" + std::to_string(std::get<int64_t>(eref));
                     }
                     uint32_t mask = 0;
@@ -4975,7 +5080,7 @@ private:
                         mask = static_cast<uint32_t>(toInt(mv));
                     }
                     int64_t rc = lpc::eventRaise(eref, mask);
-                    if (std::getenv("LPCVM_EVENT_TRACE"))
+                    if (vmEnvEventTrace())
                         std::cerr << "[raise_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " -> " << rc
                                   << " vm=" << this << " obj=" << objName_ << "\n";
@@ -5007,7 +5112,7 @@ private:
                         pushValue(r);
                     }
                 }
-                if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
+                if (vmEnvTrace() && !frames_.empty() && frames_.back().fn &&
                     frames_.back().fn->name == "save_to_text" && efun == 102)
                     std::cerr << "[efun-dbg] save_string after: stack=" << stack_.size()
                               << " top=" << to_string(top().value, false) << " idx=" << top().value.index() << "\n";
@@ -5028,7 +5133,7 @@ private:
                     off = frames_.empty() ? 0 : frames_.back().funOffset;
                     if (off != 0) funIndex += off;
                 }
-                if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
+                if (vmEnvTrace() && !frames_.empty() && frames_.back().fn &&
                     frames_.back().fn->name == "save_to_text") {
                     auto it = funcsByIndex_.find(funIndex);
                     std::cerr << "[cfu-dbg] save_to_text call a=" << (fromMeta ? m0 : static_cast<int16_t>(in.a))
@@ -5036,7 +5141,7 @@ private:
                               << " -> " << (it != funcsByIndex_.end() ? it->second->name : "NOT FOUND")
                               << " flags=0x" << std::hex << flags << std::dec << "\n";
                 }
-                if ((std::getenv("LPCVM_EVENT_TRACE")) &&
+                if ((vmEnvEventTrace()) &&
                     objName_.find("filed.o") != std::string::npos &&
                     (funIndex >= 108 && funIndex <= 115)) {
                     std::string nm;
@@ -5057,22 +5162,22 @@ private:
                 Value pathVal = pop().value;
                 Value funVal = pop().value;
                 int argn = fromMeta ? m1 : in.b;
-                if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN") &&
-                    frames_.back().fn && frames_.back().fn->name == std::getenv("LPCVM_TRACE_FN"))
+                if (vmEnvTrace() && vmEnvTraceFn() &&
+                    frames_.back().fn && frames_.back().fn->name == vmEnvTraceFn())
                     std::cerr << "[case8-t] cur=" << frames_.back().fn->name
                               << " pathIdx=" << pathVal.index()
-                              << " path=" << (pathVal.index() == 4 ? std::get<std::string>(pathVal).substr(0, 60) : "?")
+                              << " path=" << (pathVal.index() == 4 ? std::get<SharedString>(pathVal).str().substr(0, 60) : "?")
                               << " funIdx=" << funVal.index()
-                              << " fun=" << (funVal.index() == 4 ? std::get<std::string>(funVal) : "?")
+                              << " fun=" << (funVal.index() == 4 ? std::get<SharedString>(funVal).str() : std::string("?"))
                               << " argn=" << argn << " stack=" << stack_.size() << "\n";
-                if (std::getenv("LPCVM_TRACE") && !frames_.empty() && frames_.back().fn &&
-                    funVal.index() == 4 && std::get<std::string>(funVal) == "save_to_text")
+                if (vmEnvTrace() && !frames_.empty() && frames_.back().fn &&
+                    funVal.index() == 4 && std::get<SharedString>(funVal) == "save_to_text")
                     std::cerr << "[case8-dbg] save_to_text cur=" << frames_.back().fn->name
                               << " stack=" << stack_.size() << " argn=" << argn
                               << " frames=" << frames_.size() << "\n";
-                if (std::getenv("LPCVM_TRACE")) {
+                if (vmEnvTrace()) {
                     std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
-                    std::string fv = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
+                    std::string fv = funVal.index() == 4 ? std::get<SharedString>(funVal) : "";
                     if (fv == "lite_query_temp")
                         std::cerr << "[case8-lqt] pathIdx=" << static_cast<int>(pathVal.index())
                                   << " path='" << to_string(pathVal, false).substr(0, 60)
@@ -5085,7 +5190,7 @@ private:
                 // get_save_path) stay as live refs to the caller's slots and
                 // assignments inside the callee write back to the caller.
                 // Only genuinely cross-VM / cross-object calls pop the args.
-                std::string funName = funVal.index() == 4 ? std::get<std::string>(funVal) : "";
+                std::string funName = funVal.index() == 4 ? std::get<SharedString>(funVal) : "";
                 int funIndex = -1;
                 if (funVal.index() == 2) funIndex = static_cast<int>(std::get<int64_t>(funVal));
                 if (funName.empty() && funIndex >= 0) {
@@ -5124,7 +5229,7 @@ private:
                         // across the VM boundary and is a known limitation.)
                         if (it.isRef) {
                             Value dv = deref(it);
-                            if (std::getenv("LPCVM_TRACE") && funName == "create_data")
+                            if (vmEnvTrace() && funName == "create_data")
                                 std::cerr << "[popref] create_data arg[" << i << "] refKind="
                                           << (it.slotIndex >= 0 ? "slot" : it.globalIndex >= 0 ? "global"
                                              : it.objIndex >= 0 ? "obj" : "member")
@@ -5192,21 +5297,21 @@ private:
                 };
                 if (funName == "process_command" || funName == "cmd_internal_auth" ||
                     funName == "relay_agent" || funName == "main" || funName == "send_message") {
-                    std::string pv = pathVal.index() == 4 ? std::get<std::string>(pathVal)
+                    std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal)
                         : (pathVal.index() == 7 ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName : "?");
                     std::cerr << "[case8] " << objName_ << " -> " << pv << "::" << funName
                               << " argc=" << argn << "\n";
                 }
                 if (pathVal.index() == 4) {
-                    std::string path = std::get<std::string>(pathVal);
-                    if (std::getenv("LPCVM_TRACE_C8")) {
+                    std::string path = std::get<SharedString>(pathVal);
+                    if (vmEnvTraceC8()) {
                         std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
                         std::cerr << "[c8] vm=" << this << " obj=" << objName_ << " fn=" << cur
                                   << " pathIdx=" << pathVal.index() << " funIdx=" << funVal.index()
                                   << " path='" << path << "' funName='" << funName << "'"
                                   << " funIndex=" << funIndex << " argn=" << argn << "\n";
                     }
-                    if (std::getenv("LPCVM_TRACE") && funName == "wait_config")
+                    if (vmEnvTrace() && funName == "wait_config")
                         std::cerr << "[case8-wc] path=" << path << " fun=" << funName
                                   << " argn=" << argn << " pathIdx=" << pathVal.index()
                                   << " funIdx=" << funVal.index() << "\n";
@@ -5240,11 +5345,11 @@ private:
                             if (funName.empty()) targetFn = targetVm->functionByIndex(funIndex);
                             else targetFn = targetVm->findFunctionAny(funName);
                         }
-                        if (std::getenv("LPCVM_TRACE") && funName == "wait_config")
+                        if (vmEnvTrace() && funName == "wait_config")
                             std::cerr << "[case8-wc2] targetVm=" << (targetVm ? targetVm->objName() : "NULL")
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " fns=" << (targetVm ? targetVm->object().functions.size() : -1) << "\n";
-                        if (std::getenv("LPCVM_TRACE_C8"))
+                        if (vmEnvTraceC8())
                             std::cerr << "[c8-res] targetVm=" << (targetVm ? targetVm->objName() : "NULL")
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " fnCode=" << (targetFn ? targetFn->code.size() : -1)
@@ -5350,7 +5455,7 @@ private:
                                 }
                             }
                             if (ownerVm) {
-                                if (std::getenv("LPCVM_TRACE"))
+                                if (vmEnvTrace())
                                     std::cerr << "[obj-this] owner-resolve -> "
                                               << ownerVm->object().sourceName
                                               << (ownerVm.get() == this ? " (same VM)" : "") << "\n";
@@ -5401,7 +5506,7 @@ private:
                 if (!found && pathVal.index() == 4 && !funName.empty()) {
                     auto args = popArgs();
                     result = runDetached([&] {
-                        return tryCallOtherObject(searchRoot_, std::get<std::string>(pathVal), funName, args,
+                        return tryCallOtherObject(searchRoot_, std::get<SharedString>(pathVal), funName, args,
                                                   thisObjectName_);
                     });
                 }
@@ -5413,13 +5518,13 @@ private:
                 // An inline start means the callee's return_from_fun will push
                 // its own result; do NOT pushValue(result) in that case.
                 if (!inlineStarted) pushValue(result);
-                if (std::getenv("LPCVM_TRACE") && funVal.index() == 4 &&
-                    std::get<std::string>(funVal) == "get_registered_name")
+                if (vmEnvTrace() && funVal.index() == 4 &&
+                    std::get<SharedString>(funVal) == "get_registered_name")
                     std::cerr << "[grn] result=[" << to_string(result, false).substr(0, 60)
                               << "] cur=" << (frames_.empty() || !frames_.back().fn
                                                   ? "<top>" : frames_.back().fn->name) << "\n";
-                if (std::getenv("LPCVM_TRACE") && funVal.index() == 4 &&
-                    std::get<std::string>(funVal) == "save_to_text")
+                if (vmEnvTrace() && funVal.index() == 4 &&
+                    std::get<SharedString>(funVal) == "save_to_text")
                     std::cerr << "[case8-ret] save_to_text result=" << to_string(result, false)
                               << " idx=" << result.index() << " stack=" << stack_.size()
                               << " cur=" << (frames_.empty() || !frames_.back().fn
@@ -5453,11 +5558,11 @@ private:
                     inPostInit = true;
                 if (funItem.value.index() == 8) {
                     auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
-                    if (std::getenv("LPCVM_EVENT_TRACE"))
+                    if (vmEnvEventTrace())
                         std::cerr << "[cfptr] " << cl->functionName << " obj=" << objName_
                                   << " bound=" << cl->boundArgs.size() << " inPostInit=" << inPostInit
                                   << " vm=" << this << "\n";
-                    if ((std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) &&
+                    if ((vmEnvTrace() || vmEnvEventTrace()) &&
                         (cl->functionName == "init" || cl->functionName == "do_init" ||
                          cl->functionName == "listen_daemon" || cl->functionName == "accept_daemon" ||
                          cl->functionName == "update_config_daemon" || cl->functionName == "daemon"))
@@ -5471,7 +5576,7 @@ private:
                                   << " obj=" << objName_ << " bound=" << cl->boundArgs.size()
                                   << " args=" << args.size() << "\n";
                     }
-                    if ((std::getenv("LPCVM_EVENT_TRACE")) &&
+                    if ((vmEnvEventTrace()) &&
                         cl->functionName == "operate_done") {
                         std::string dbg;
                         for (auto& b : cl->boundArgs) {
@@ -5512,7 +5617,7 @@ private:
                             fn = gfn;
                         }
                     }
-                    if (std::getenv("LPCVM_TRACE") && cl->funcIndex >= 0)
+                    if (vmEnvTrace() && cl->funcIndex >= 0)
                         std::cerr << "[cfv] closure by-index " << cl->functionName
                                   << " idx=" << cl->funcIndex
                                   << " -> " << (fn ? fn->name : "?") << "\n";
@@ -5525,12 +5630,12 @@ private:
                             // blocking efun inside the init parks the VM
                             // (SuspendSignal) and the scheduler resumes it; it
                             // never spawns a second OS thread.
-                            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                            if (vmEnvTrace() || vmEnvEventTrace())
                                 std::cerr << "[postinit-sync] " << cl->functionName << " on " << obj_.sourceName << "\n";
                             bool ph = pushArgsForFunction(*fn, all);
                             inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()));
                         } else {
-                            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
+                            if (vmEnvTrace() || vmEnvEventTrace()) {
                                 std::string adbg;
                                 for (auto& a : all) {
                                     if (!adbg.empty()) adbg += ", ";
@@ -5546,7 +5651,7 @@ private:
                             bool ph = pushArgsForFunction(*fn, all);
                             inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()));
                         }
-                        if ((std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) &&
+                        if ((vmEnvTrace() || vmEnvEventTrace()) &&
                             (cl->functionName == "init" || cl->functionName == "do_init"))
                             std::cerr << "[cfptr] DONE " << cl->functionName << " obj=" << objName_
                                       << " vm=" << this << "\n";
@@ -5560,7 +5665,7 @@ private:
                             std::lock_guard<std::recursive_mutex> rl(registryMutex());
                             for (auto& kv : reg.vms) {
                                 if (&kv.second->object() == cl->owner) {
-                                    if (std::getenv("LPCVM_TRACE"))
+                                    if (vmEnvTrace())
                                         std::cerr << "[cfv] owner-resolve " << cl->functionName
                                                   << " in " << kv.first << "\n";
                                     ownerVm = kv.second;
@@ -5569,12 +5674,12 @@ private:
                             }
                         }
                         if (ownerVm) {
-                            if ((std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) &&
+                            if ((vmEnvTrace() || vmEnvEventTrace()) &&
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
                                 std::cerr << "[cfptr] owner-init " << cl->functionName
                                           << " on " << ownerVm->object().sourceName
                                           << " vm=" << this << "\n";
-                            if (std::getenv("LPCVM_TRACE"))
+                            if (vmEnvTrace())
                                 std::cerr << "[cfv] calling " << cl->functionName << " on " << ownerVm->object().sourceName
                                           << " args=" << all.size() << "\n";
                             // Use the captured function pointer when available so
@@ -5585,14 +5690,14 @@ private:
                                 // on the owner's VM, matching the original
                                 // driver's sequential post_init loop.  No second
                                 // OS thread - blocking efuns park the process.
-                                if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                                if (vmEnvTrace() || vmEnvEventTrace())
                                     std::cerr << "[postinit-sync] " << cl->functionName
                                               << " on " << ownerVm->object().sourceName << "\n";
                                 ownerVm->setPreviousObjectName(thisObjectName_);
                                 try {
                                     if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
                                     else result = ownerVm->callFunctionByName(cl->functionName, all);
-                                    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+                                    if (vmEnvTrace() || vmEnvEventTrace())
                                         std::cerr << "[postinit-ok] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName << "\n";
                                 } catch (const VmError& e) {
@@ -5601,7 +5706,7 @@ private:
                                     // error from one daemon init (e.g. a task
                                     // template register that fails validation)
                                     // must not kill the master's post_init.
-                                    if (std::getenv("LPCVM_TRACE"))
+                                    if (vmEnvTrace())
                                         std::cerr << "[postinit-err] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName
                                                   << ": " << e.what() << "\n";
@@ -5617,7 +5722,7 @@ private:
                                 result = runDetached([&] { return ownerVm->callFunctionPointer(cl->func, all); });
                             else
                                 result = runDetached([&] { return ownerVm->callFunctionByName(cl->functionName, all); });
-                            if ((std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) &&
+                            if ((vmEnvTrace() || vmEnvEventTrace()) &&
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
                                 std::cerr << "[cfptr] owner-init DONE " << cl->functionName
                                           << " on " << ownerVm->object().sourceName << "\n";
@@ -5630,7 +5735,7 @@ private:
                             // (e.g. a task template register that errors) cannot
                             // kill the master's post_init loop and stall the
                             // whole startup.
-                            if (std::getenv("LPCVM_TRACE"))
+                            if (vmEnvTrace())
                                 std::cerr << "[postinit-skip] " << cl->functionName
                                           << " owner VM missing, continue\n";
                         }
@@ -5646,7 +5751,7 @@ private:
                         }
                     }
                 } else if (funItem.value.index() == 4) {
-                    const std::string& fnName = std::get<std::string>(funItem.value);
+                    const std::string& fnName = std::get<SharedString>(funItem.value);
                     const OriginalFunction* fn = findFunctionAny(fnName);
                     if (fn) {
                         bool ph = pushArgsForFunction(*fn, args);
@@ -5672,7 +5777,7 @@ private:
                 break;
             case 27: { // enter_function
                 const Frame& f = frames_.back();
-                bool traceEnter = std::getenv("LPCVM_TRACE") && f.fn &&
+                bool traceEnter = vmEnvTrace() && f.fn &&
                     (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc");
                 if (traceEnter)
                     std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
@@ -5698,7 +5803,7 @@ private:
                 int declared = frames_.empty() || !frames_.back().fn ? 0 : frames_.back().fn->argCount;
                 int maxArgNo = skipAll;
                 if (maxArgNo < declared) maxArgNo = declared;
-                if (std::getenv("LPCVM_TRACE") && frames_.back().fn &&
+                if (vmEnvTrace() && frames_.back().fn &&
                     frames_.back().fn->name == "read_etc_file")
                     std::cerr << "[checkargs] read_etc_file passed=" << passed
                               << " declared=" << declared << " skipAll=" << skipAll
@@ -5746,7 +5851,7 @@ private:
                 Value second = pop().value;
                 StackItem varRef = pop();
                 int number = static_cast<int>(toInt(typeV));
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[loop] init fn=" << (frames_.empty() || !frames_.back().fn
                                                            ? "<global>" : frames_.back().fn->name)
                               << " varNo=" << varNo << " slot=" << slot
@@ -5773,7 +5878,7 @@ private:
                 }
                 if (slot >= 0 && static_cast<size_t>(slot) < stack_.size())
                     stack_[static_cast<size_t>(slot)].value = ctrl;
-                else if (std::getenv("LPCVM_TRACE"))
+                else if (vmEnvTrace())
                     std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size()
                               << " fn=" << (frames_.empty() || !frames_.back().fn
                                                 ? "<global>" : frames_.back().fn->name)
@@ -5836,14 +5941,14 @@ private:
                     frames_.empty() || !frames_.back().strings ? &obj_.strings : frames_.back().strings;
                 if (v.index() == 4 && strIndex >= 0 &&
                     static_cast<size_t>(strIndex) < tbl->size() &&
-                    std::get<std::string>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
+                    std::get<SharedString>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
                     pop();
                     ip_ += offset;
                 }
                 break;
             }
             default:
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[vm] unhandled op " << in.op << " " << ai.name
                               << " at ip=" << (ip_ - 1) << "\n";
                 break;
@@ -5852,7 +5957,7 @@ private:
                 // Master time-slice yield: execution state stays in the
                 // members; unwind runLoop untouched (the scheduler requeues
                 // the master at the tail of ready_ and resumes it later).
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[slice-yield] vm=" << this << " obj=" << objName_
                               << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
                 throw;
@@ -5860,7 +5965,7 @@ private:
                 // A blocking efun parked this process.  Execution state stays
                 // in the members; unwind runLoop untouched (the scheduler
                 // re-enters via resumeProcess).
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[loop-suspend] vm=" << this << " obj=" << objName_
                               << " sigVm=" << (sig.vm ? reinterpret_cast<void*>(sig.vm) : nullptr)
                               << " frames=" << frames_.size() << "\n";
@@ -5876,7 +5981,7 @@ private:
                 stack_.resize(rec.stackSize);
                 pushValue(make_string(std::string(e.what())));
                 ip_ = rec.ipTarget;
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[catch] error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
             } catch (const std::exception& e) {
                 if (!catches_.empty()) {
@@ -5886,7 +5991,7 @@ private:
                     stack_.resize(rec.stackSize);
                     pushValue(make_string(std::string(e.what())));
                     ip_ = rec.ipTarget;
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[catch] std error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
                 } else {
                     throw;
@@ -5900,7 +6005,7 @@ private:
     // ------------------------------------------------------------------
     void loopStep(size_t& ip, int ctrlSlot, int breakOffset, int continueOffset) {
         if (ctrlSlot < 0 || static_cast<size_t>(ctrlSlot) >= stack_.size()) {
-            if (std::getenv("LPCVM_TRACE")) {
+            if (vmEnvTrace()) {
                 std::string fn = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
                 std::cerr << "[loop] ctrl slot out of range: " << ctrlSlot << " size=" << stack_.size()
                           << " fn=" << fn << " bp=" << (frames_.empty() ? -1 : frames_.back().bp)
@@ -5910,7 +6015,7 @@ private:
         }
         StackItem& slotItem = stack_[static_cast<size_t>(ctrlSlot)];
         if (slotItem.value.index() != 9) {    // LoopCtrl is variant index 9
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[loop] ctrl slot " << ctrlSlot << " not a LoopCtrl (index="
                           << slotItem.value.index() << ")\n";
             return;
@@ -5931,12 +6036,12 @@ private:
         } else if (c->type == 901) {
             if (!c->arr) return;
             size_t iter = c->iter++;
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[loop] 901 iter=" << iter << " size=" << c->arr->items.size()
                           << " break=" << breakOffset << " cont=" << continueOffset << "\n";
             if (iter < c->arr->items.size()) {
                 setVar(c->arr->items[iter]);
-                if (std::getenv("LPCVM_TRACE") && iter == 0)
+                if (vmEnvTrace() && iter == 0)
                     std::cerr << "[loop] 901 setVar slot=" << c->slotOfVar << " val="
                               << to_string(c->arr->items[iter], false).substr(0, 20) << "\n";
                 ip += continueOffset;
@@ -5965,7 +6070,7 @@ private:
 
     Value queryMemberValue(const Value& rawContainer, const Value& key) {
         const Value& container = resolveCrossVmRef(rawContainer);
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_MEMBER")) {
+        if (vmEnvTrace() && std::getenv("LPCVM_TRACE_MEMBER")) {
             std::string msg = "[member] key=" + to_string(key, false) + " cont=" + to_string(container, false) + "\n";
             std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
         }
@@ -5984,7 +6089,7 @@ private:
         if (container.index() == 4) {
             // LPC string indexing returns the ASCII code (int), e.g.
             // path[strlen-1] != 47 in load_all_path/load_all.
-            const std::string& s = std::get<std::string>(container);
+            const std::string& s = std::get<SharedString>(container);
             int64_t i = toInt(key);
             if (i >= 0 && i < static_cast<int64_t>(s.size()))
                 return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
@@ -5999,7 +6104,7 @@ private:
         int64_t b = toInt(to);
         size_t len = 0;
         if (container.index() == 5) len = std::get<std::shared_ptr<ArrayValue>>(container)->items.size();
-        else if (container.index() == 4) len = std::get<std::string>(container).size();
+        else if (container.index() == 4) len = std::get<SharedString>(container).size();
         else if (container.index() == 10)
             len = std::get<std::shared_ptr<BufferValue>>(container)->data.size();
         if (flag & 1) { if (b <= 0) b = 1; b = static_cast<int64_t>(len) - b; }
@@ -6016,7 +6121,7 @@ private:
             return make_array();
         }
         if (container.index() == 4) {
-            const std::string& s = std::get<std::string>(container);
+            const std::string& s = std::get<SharedString>(container);
             return make_string(s.substr(static_cast<size_t>(a), static_cast<size_t>(b - a + 1)));
         }
         if (container.index() == 10) {
@@ -6094,7 +6199,7 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
         // The resume hook (run inside resumeProcess BEFORE the value is
         // pushed) may update parkedResumeValue (e.g. connect's result check);
         // re-read it there rather than snapshotting here.
-        if (std::getenv("LPCVM_TRACE")) {
+        if (vmEnvTrace()) {
             ResumeCond c;
             if (p->parkedVm) c = p->parkedVm->resumeCond();
             std::cerr << "[wake] " << p->entry << " cond.kind=" << c.kind
@@ -6185,7 +6290,7 @@ void Scheduler::wakeQueue(const std::string& qkey) {
         }
     }
     if (hit) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[wq] " << qkey << " wake1\n";
         wake(std::move(hit));
     }
@@ -6345,7 +6450,7 @@ void Scheduler::run() {
             }
             std::vector<int> rd = fds, wr = fds;
             int nrd = lpc::xdbcPoll(fds, rd, wr, 0);
-            if (std::getenv("LPCVM_TRACE") && nrd != 0)
+            if (vmEnvTrace() && nrd != 0)
                 std::cerr << "[sock-poll] n=" << nrd << "\n";
             for (int fd : fds) {
                 bool r = std::find(rd.begin(), rd.end(), fd) != rd.end();
@@ -6382,7 +6487,7 @@ void Scheduler::run() {
             }
         }
         if (p) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched-pop] " << p->entry << " first=" << (p->firstRun ? 1 : 0)
                           << " vm=" << p->vm.get() << "\n";
             runProcess(p);
@@ -6397,14 +6502,14 @@ void Scheduler::run() {
                 // woken by replies meant for the other process and time out.
                 releaseTid(p->tid);
             }
-            if (std::getenv("LPCVM_TRACE") && !p->done)
+            if (vmEnvTrace() && !p->done)
                 std::cerr << "[sched-pop] " << p->entry << " NOT DONE after runProcess\n";
             continue;
         }
         {
             std::unique_lock<std::mutex> lk(mtx_);
             if (shutdown_ && ready_.empty() && timers_.empty()) return;
-            if (std::getenv("LPCVM_TRACE") && (step_ % 10000) == 0)
+            if (vmEnvTrace() && (step_ % 10000) == 0)
                 std::cerr << "[sched-idle] ready=" << ready_.size()
                           << " timers=" << timers_.size()
                           << " qwait=" << queueWaiters_.size()
@@ -6436,7 +6541,7 @@ void Scheduler::run() {
                     // Timer waits (kind-1 sleeps / timed event re-parks) are not
                     // otherwise dumped - without them a process parked on a
                     // long/far timer is invisible in the idle snapshot.
-                    if (std::getenv("LPCVM_SVC_TRACE") || std::getenv("LPCVM_STUCK_TRACE")) {
+                    if (vmEnvSvcTrace() || std::getenv("LPCVM_STUCK_TRACE")) {
                         for (auto& te : timers_)
                             if (te.second.p)
                                 std::cerr << "[idle-timer] at=" << te.first
@@ -6490,7 +6595,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             if (p->resultPromise) p->resultPromise->set_value(callResult);
             return;
         }
-        if (std::getenv("LPCVM_TRACE")) {
+        if (vmEnvTrace()) {
             std::cerr << "[sched-run] entry=" << p->entry << " first=" << (p->firstRun ? 1 : 0) << "\n";
             std::cerr << "  obj=[" << p->vm->object().sourceName << "]" << "\n";
             std::cerr << "  objName=[" << p->vm->objName() << "]" << "\n";
@@ -6501,7 +6606,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         }
         if (p->firstRun) {
             p->firstRun = false;
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched-call] " << p->entry << " args=" << p->args.size() << "\n";
             if (p->entry == "__master__") {
                 // The driver's master process: run the global init code and
@@ -6514,7 +6619,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             } else {
                 callResult = p->vm->callFunctionByName(p->entry, p->args);
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched-call-done] " << p->entry << "\n";
             p->done = true;
         } else if (p->resumeRunLoop) {
@@ -6526,12 +6631,12 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // post_init loop) via resumeCaller().
             p->resumeRunLoop = false;
             auto rvm = p->parkedVm ? p->parkedVm : p->vm;
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched-xvm-resume] " << p->entry << " vm=" << rvm.get() << "\n";
             rvm->resumeRunLoop();
             callResult = rvm->lastReturnValue();
             if (p->callerVm && p->callerVm != rvm) {
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[sched-caller] " << p->entry << " resume caller vm="
                               << p->callerVm.get() << " with callee result\n";
                 p->callerVm->resumeCaller(rvm->lastReturnValue());
@@ -6572,7 +6677,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             for (auto it = p->callers_.rbegin(); it != p->callers_.rend(); ++it) {
                 auto cv = *it;
                 if (cv == rvm) continue;
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[sched-caller-chain] " << p->entry
                               << " resume " << cv->objName() << "\n";
                 cv->resumeCaller(res);
@@ -6580,7 +6685,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             }
             p->callers_.clear();
             if (p->callerVm && p->callerVm != rvm) {
-                if (std::getenv("LPCVM_TRACE"))
+                if (vmEnvTrace())
                     std::cerr << "[sched-caller] " << p->entry << " resume caller vm="
                               << p->callerVm.get() << " with callee result\n";
                 p->callerVm->resumeCaller(res);
@@ -6627,7 +6732,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             }
             p->parkedVm = holder ? std::move(holder) : p->vm;
             p->resumeRunLoop = true;
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched-slice-xvm] " << p->entry
                           << " park owner vm=" << p->parkedVm.get()
                           << " caller=" << p->callerVm.get() << "\n";
@@ -6638,7 +6743,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // ready_ so other processes (daemons created during load_all) get
             // a turn, then the master resumes via runAsMaster() (phase
             // continuation).
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched-slice] " << p->entry << " requeue\n";
             p->sliceResume = true;
             requeue(p);
@@ -6667,30 +6772,30 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         } else {
             p->parkedVm = p->vm;
         }
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[sched-park] " << p->entry << " kind=" << sig.cond.kind
                       << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
                       << " vm=" << p->vm.get() << " parkedVm=" << p->parkedVm.get() << "\n";
         // Register the wakeup under the PARKED VM's cond (it owns cond_).
         parkCurrent(p);
     } catch (const std::exception& e) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[sched] process " << p->entry << " error: " << e.what() << "\n";
         // A construction process that failed must still wake its parked
         // load_object caller (its resume hook reads the registry and yields
         // make_int(0) when the object never got initialized).
         if (p->entry == "__init__" && !p->doneEvent.empty()) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
             scheduler().wakeEventFront(p->doneEvent);
         }
         if (p->resultPromise) p->resultPromise->set_value(make_int(0));
         p->done = true;
     } catch (...) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (vmEnvTrace())
             std::cerr << "[sched] process " << p->entry << " error: unknown\n";
         if (p->entry == "__init__" && !p->doneEvent.empty()) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
             scheduler().wakeEventFront(p->doneEvent);
         }
@@ -6820,7 +6925,7 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
                 std::lock_guard<std::recursive_mutex> rl(registryMutex());
                 if (reg.vms.find(full) != reg.vms.end()) continue;
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[load] " << full << "\n";
             try {
                 auto objPtr = std::make_shared<OriginalObject>(loadOriginalObject(full));
@@ -6903,10 +7008,11 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args,
                          const std::string& callerThisName) {
-    if (std::getenv("LPCVM_TRACE"))
+    RegScanT _regScan;
+    if (vmEnvTrace())
         std::cerr << "[call_other] " << objectPath << " -> " << funName
                   << " args=" << args.size() << "\n";
-    if (std::getenv("LPCVM_TRACE") && funName == "msg_read_content")
+    if (vmEnvTrace() && funName == "msg_read_content")
         std::cerr << "[co-mrc] path=" << objectPath << " root='" << searchRoot << "'\n";
     // Clone instances are registered under "clone:<rel>#<seq>"; resolve them
     // by exact key first (vm_callInOtherFun with an object value).  This must
@@ -6919,7 +7025,7 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             auto it0 = reg0.vms.find(objectPath);
             if (it0 != reg0.vms.end()) hit = it0->second;
         }
-        if (std::getenv("LPCVM_TRACE") && funName == "lite_query_temp")
+        if (vmEnvTrace() && funName == "lite_query_temp")
             std::cerr << "[lqt] tryCallOtherObject clone path=" << objectPath
                       << " hit=" << (hit ? "YES" : "NO") << "\n";
         if (hit) return hit->callFunctionByName(funName, args);
@@ -6946,9 +7052,9 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             if (it != reg.vms.end()) existing = it->second;
         }
         if (existing) {
-            if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
+            if (vmEnvTrace() && funName == "get_my_info")
                 std::cerr << "[call_other] -> " << c << " (exact)\n";
-            if (std::getenv("LPCVM_TRACE") && funName == "msg_read_content")
+            if (vmEnvTrace() && funName == "msg_read_content")
                 std::cerr << "[co-mrc] exact-hit " << c << "\n";
             // previous_object() in the callee sees the caller: the VM that
             // executed the call_other (the current VM's this_object identity).
@@ -6964,14 +7070,14 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             std::lock_guard<std::recursive_mutex> rl(registryMutex());
             for (auto& kv : reg.vms) {
                 if (hasSuffix(kv.first, rel)) {
-                    if (std::getenv("LPCVM_TRACE") && funName == "get_my_info")
+                    if (vmEnvTrace() && funName == "get_my_info")
                         std::cerr << "[call_other] -> " << kv.first << " (suffix)\n";
                     hit = kv.second;
                     break;
                 }
             }
         }
-        if (std::getenv("LPCVM_TRACE") && funName == "process_command" &&
+        if (vmEnvTrace() && funName == "process_command" &&
             rel.find("connectiond") != std::string::npos)
             std::cerr << "[call_other-pc] rel=" << rel << " hit=" << (hit ? "YES" : "NO")
                       << " root='" << searchRoot << "'\n";
@@ -6993,14 +7099,14 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
         std::lock_guard<std::mutex> lk(pendingThreadsMutex());
         snapshot.swap(pendingThreads());
     }
-    if (std::getenv("LPCVM_TRACE")) std::cerr << "[orig] pending threads=" << snapshot.size() << "\n";
+    if (vmEnvTrace()) std::cerr << "[orig] pending threads=" << snapshot.size() << "\n";
     // Run each thread concurrently so a long-running loop (e.g. a service loop)
     // does not block the other threads.
     std::vector<std::thread> workers;
     for (auto& th : snapshot) {
         PendingThread copy = th;   // capture by value; the vector is cleared below
         workers.emplace_back([copy, searchRoot]() {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
             // A telnet daemon thread serves one client; tell the builtins layer
             // which client it is so input_string()/printf route to the socket.
@@ -7041,7 +7147,7 @@ void runPendingOriginalThreads(const std::string& searchRoot) {
 
 void runPostInitFunctions(const std::string& searchRoot) {
     auto& funcs = postInitFuncs();
-    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+    if (vmEnvTrace() || vmEnvEventTrace())
         std::cerr << "[orig] post_init funcs=" << funcs.size() << "\n";
     // The original driver runs post_init closures SEQUENTIALLY on the single
     // cooperative scheduler: each init runs to completion OR parks on a
@@ -7053,7 +7159,7 @@ void runPostInitFunctions(const std::string& searchRoot) {
     // process instead: the same sequential semantics, but blocking efuns park
     // and resume through the scheduler.
     for (auto& fn : funcs) {
-        if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+        if (vmEnvTrace() || vmEnvEventTrace())
             std::cerr << "[orig] post_init -> " << fn.obj->sourceName << "::" << fn.fun
                       << " args=" << fn.args.size() << "\n";
         // Share the registered VM's initialized instance variables (the
@@ -7078,7 +7184,7 @@ void runPostInitFunctions(const std::string& searchRoot) {
             // bound args on the owner VM instead.  The efun itself (create_thread)
             // spawns the daemon as a scheduler process, so this stays on the
             // cooperative scheduler.
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+            if (vmEnvTrace() || vmEnvEventTrace())
                 std::cerr << "[orig] post_init efun-closure -> " << fn.fun
                           << " args=" << fn.args.size() << "\n";
             ownerVm->callEfunPublic(fn.closure->funcIndex, fn.args);
@@ -7333,6 +7439,7 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
 }
 
 Value findObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot) {
+    RegScanT _regScan;
     (void)searchRoot;
     std::string rel = virtualPath;
     if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
@@ -7350,6 +7457,7 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
 
 Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot,
                             const std::vector<Value>& createArgs) {
+    RegScanT _regScan;
     // vm_f_clone_object (0x80f8eac): look up the loaded template, clone it
     // (fresh instance variables), run its create() initializer and return the
     // new object.  Clones are registered under "clone:<rel>#<seq>" so later
@@ -7485,10 +7593,10 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // attributes including name).
         if (tmplVm && rel.find("npc/basic") != std::string::npos) {
             Value tmplImp = tmplVm->callFunctionByName("get_import_name", {});
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[clone-imp] " << cloneKey << " tmpl=" << tmplVm->objName()
                           << " import=[" << to_string(tmplImp, false).substr(0, 40) << "]\n";
-            if (tmplImp.index() == 4 && !std::get<std::string>(tmplImp).empty()) {
+            if (tmplImp.index() == 4 && !std::get<SharedString>(tmplImp).empty()) {
                 vmPtr->setPreviousObjectName(tmplVm->objName());
                 vmPtr->callFunctionByName("import", {tmplImp});
             }
@@ -7509,7 +7617,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                         int slot = getFn->varOffset + 0;   // _id is id.c var 0
                         if (slot >= 0 && slot < (int)vmPtr->objVars().size()) {
                             vmPtr->objVars()[static_cast<size_t>(slot)] = idv;
-                            if (std::getenv("LPCVM_TRACE"))
+                            if (vmEnvTrace())
                                 std::cerr << "[clone-id] " << cloneKey << " id="
                                           << std::get<int64_t>(idv) << " slot=" << slot << "\n";
                         }
@@ -7594,7 +7702,7 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
             std::lock_guard<std::recursive_mutex> rl(registryMutex());
             for (auto& kv : reg.vms) {
                 if (&kv.second->object() == cl->owner) {
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (vmEnvTrace())
                         std::cerr << "[applyClosure] owner-resolve " << cl->functionName
                                   << " in " << kv.first << "\n";
                     ownerVm = kv.second;
@@ -7602,10 +7710,10 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
                 }
             }
         }
-        if (!ownerVm && std::getenv("LPCVM_TRACE"))
+        if (!ownerVm && vmEnvTrace())
             std::cerr << "[applyClosure] owner not in registry: " << cl->functionName
                       << " owner=" << (cl->owner ? cl->owner->sourceName : "?") << "\n";
-    } else if (std::getenv("LPCVM_TRACE")) {
+    } else if (vmEnvTrace()) {
         std::cerr << "[applyClosure] no owner for " << cl->functionName << "\n";
     }
     // Call OUTSIDE the registry lock: the owner VM's execution may itself
@@ -7655,13 +7763,13 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
         snapshot.swap(pendingThreads());
     }
     if (snapshot.empty()) return;
-    if (std::getenv("LPCVM_TRACE"))
+    if (vmEnvTrace())
         std::cerr << "[orig] runtime pending threads=" << snapshot.size() << "\n";
     std::vector<std::thread> workers;
     for (auto& th : snapshot) {
         PendingThread copy = th;
         workers.emplace_back([copy, searchRoot]() {
-            if (std::getenv("LPCVM_TRACE"))
+            if (vmEnvTrace())
                 std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
             bool isTelnet = copy.fun == "telnet_daemon" || copy.fun == "buildin_telnet_daemon";
             if (isTelnet && !copy.args.empty() && copy.args[0].index() == 2) {
