@@ -3788,12 +3788,24 @@ private:
         static int64_t stepProfInsns = 0;
         static int64_t stepProfActs = 0;
         static int64_t stepProfLastMs = 0;
+        static const bool slowOpOn = (std::getenv("LPCVM_SLOW_OP") != nullptr);
+        static int64_t slowOpPrevNs = 0;
+        static int64_t slowOpLastReport = 0;
+        // std::getenv is expensive (locked environ scan); these run once per
+        // instruction, so cache them in statics instead of calling getenv in
+        // the interpreter's inner loop (4+ getenv/instruction dominated the
+        // boot: ~0.5-1.5us per LPC op).
+        static const bool traceFnGated =
+            (std::getenv("LPCVM_TRACE") != nullptr && std::getenv("LPCVM_TRACE_FN") != nullptr);
+        static const bool stuckDiagGated =
+            (std::getenv("LPCVM_LOCK_TRACE") != nullptr || std::getenv("LPCVM_STUCK_TRACE") != nullptr);
+        static const bool traceGated = (std::getenv("LPCVM_TRACE") != nullptr);
         if (stepProfOn) ++stepProfActs;
         while (code_ && ip_ < code_->size()) {
             const OriginalInsn& in = (*code_)[ip_++];
             lastOp_ = in.op;
             lastIp_ = ip_ - 1;
-            if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_FN")) {
+            if (traceFnGated) {
                 std::string cur = "<global>";
                 if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
                 if (cur == std::getenv("LPCVM_TRACE_FN"))
@@ -3801,6 +3813,25 @@ private:
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
             if (++stepCounter_ > 20000000) return;
+            // Slow-op sampler (LPCVM_SLOW_OP=1): wall time from the PREVIOUS
+            // iteration's start to this one = the previous instruction's
+            // duration (the loop body runs straight through).  Report any
+            // single instruction > 8us - that identifies the exact op/ip
+            // burning the CPU in a crawl (importd convert_to_value etc.).
+            if (slowOpOn) {
+                using namespace std::chrono;
+                int64_t nowNs = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+                int64_t prevDur = nowNs - slowOpPrevNs;
+                slowOpPrevNs = nowNs;
+                if (prevDur > 8000 && (nowNs - slowOpLastReport) > 100000000) {
+                    slowOpLastReport = nowNs;
+                    std::string cur = "<global>";
+                    if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
+                    std::cerr << "[slow-op] " << prevDur / 1000 << "us op=" << lastOp_
+                              << "(" << actionInfo(lastOp_).name << ") obj=" << objName_
+                              << " fn=" << cur << " ip=" << lastIp_ << "\n";
+                }
+            }
             if (stepProfOn) {
                 ++stepProfInsns;
                 using namespace std::chrono;
@@ -3815,7 +3846,7 @@ private:
                               << " acts=" << stepProfActs << "\n";
                 }
             }
-            if ((std::getenv("LPCVM_LOCK_TRACE") || std::getenv("LPCVM_STUCK_TRACE")) &&
+            if (stuckDiagGated &&
                 (stepCounter_ % 500000) == 0) {
                 std::string cur = "<global>";
                 if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
