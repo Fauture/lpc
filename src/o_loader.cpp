@@ -254,6 +254,21 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
     OriginalCode globalCode = r.codeSegment();
     obj.globalCode = std::move(globalCode.insns);
     obj.globalMeta = std::move(globalCode.meta);
+
+    // Each function's shared-string constants resolve against the PROGRAM's
+    // OWN string table.  fn.strings is null for natively-parsed functions, and
+    // when such a function ran cross-object INLINE / via a closure on ANOTHER
+    // object's VM stack, the push_s resolver fell back to &obj_.strings - the
+    // CALLER object's table.  filed's do_operate then read the caller's string
+    // #22 (party_war: "/gs/daemons/channeld.c" instead of filed: "ev_filed"),
+    // concatenated tid/32=0 and wait_event'd forever on "/gs/daemons/
+    // channeld.c0": nothing raises it, the caller retried endlessly, and the
+    // master's post_init loop stalled before the remaining daemon loads.
+    if (!obj.functions.empty() && !obj.strings.empty()) {
+        auto ownTable = std::make_shared<const std::vector<std::string>>(obj.strings);
+        for (auto& fn : obj.functions)
+            if (!fn.strings) fn.strings = ownTable;
+    }
     return obj;
 }
 
