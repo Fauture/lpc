@@ -451,6 +451,11 @@ bool queueSend(int64_t qid, const Value& v) {
         q->items.push_back(v);
     }
     if (v.index() == 8) g_pendingServices.fetch_add(1, std::memory_order_acq_rel);
+    if (std::getenv("LPCVM_QUEUE_TRACE")) {
+        std::lock_guard<std::mutex> lk2(reg.mtx);
+        std::cerr << "[q-push] qid=" << qid << " depth=" << q->items.size()
+                  << " cls=" << (v.index() == 8 ? 1 : 0) << "\n";
+    }
     reg.cv.notify_all();
     return true;
 }
@@ -1311,14 +1316,6 @@ Value regexpMatch(const std::string& str, const std::string& pattern) {
 
 } // namespace mini_regex
 
-// ---------------------------------------------------------------------------
-// In-memory SQL dump database (linux/new_sql/*.sql, Navicat dumps). The real
-// server keeps MySQL on a separate host; we never open a network connection
-// to it. Dumps are parsed once into memory tables:
-//   CREATE TABLE `t` ( `c1` type ..., `c2` ... ) ENGINE=...;
-//   INSERT INTO `t` VALUES ('a', 1, null), ('b', 2, 'x');
-// Only adb.sql carries data rows in this tree; the other dumps are schema.
-// ---------------------------------------------------------------------------
 struct SqlCol {
     std::string name;
     bool numeric = false;
@@ -1422,8 +1419,8 @@ static bool sqlTypeNumeric(const std::string& ty) {
     return false;
 }
 
-// Convert one raw value token (as written in the dump) into a Value.
-// Numeric columns become ints even when Navicat quotes them ('8001').
+// Convert one raw SQL literal into a Value.
+// Numeric columns become ints even when the text is quoted ('8001').
 static Value sqlValue(const std::string& raw, bool numeric) {
     std::string t = sqlTrim(raw);
     if (t.empty()) return numeric ? make_int(0) : make_string("");
@@ -1434,6 +1431,22 @@ static Value sqlValue(const std::string& raw, bool numeric) {
         for (size_t k = 1; k + 1 < t.size(); ++k) {
             if (t[k] == '\'' && k + 1 < t.size() && t[k + 1] == '\'') {
                 out += '\'';
+                ++k;
+            } else if (t[k] == '\\' && k + 1 < t.size()) {
+                // MySQL backslash escapes (mysql_bind_parameters writes \',
+                // \\, \n, \r, \0, \Z, \" ...) - unescape so a written value
+                // round-trips byte-exactly (filed's read_content re-checks
+                // the stored checksum against the decoded content).
+                char nc = t[k + 1];
+                switch (nc) {
+                case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break;
+                case '0': out += '\0'; break;
+                case 'Z': out += '\x1a'; break;
+                case 'b': out += '\b'; break;
+                case 't': out += '\t'; break;
+                default: out += nc; break;
+                }
                 ++k;
             } else {
                 out += t[k];
@@ -1454,14 +1467,95 @@ static Value sqlValue(const std::string& raw, bool numeric) {
     return make_string(t);
 }
 
-static void sqlLoadFile(const fs::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return;
-    std::stringstream ss;
-    ss << in.rdbuf();
-    const std::string s = ss.str();
+// Parse "col = literal [AND col = literal]*" starting at k (a mysql_execute
+// WHERE clause; bind_parameters has already substituted literals).  Returns
+// false when the clause does not fit that shape (caller then refuses to
+// emulate the statement).
+static bool sqlParseConds(const std::string& s, size_t k, size_t n,
+                          std::vector<std::pair<std::string, Value>>& out) {
+    while (k < n) {
+        while (k < n && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r' || s[k] == '\n' || s[k] == ';')) ++k;
+        if (k >= n) break;
+        std::string col;
+        if (s[k] == '`') {
+            ++k;
+            while (k < n && s[k] != '`') col += s[k++];
+            if (k < n) ++k;
+        } else {
+            while (k < n && sqlIsWord(s[k])) col += s[k++];
+        }
+        while (k < n && (s[k] == ' ' || s[k] == '\t')) ++k;
+        if (k >= n || s[k] != '=') return false;
+        ++k;
+        while (k < n && (s[k] == ' ' || s[k] == '\t')) ++k;
+        if (k >= n) return false;
+        std::string lit;
+        if (s[k] == '\'') {
+            ++k;
+            while (k < n) {
+                if (s[k] == '\'') {
+                    if (k + 1 < n && s[k + 1] == '\'') { lit += '\''; k += 2; continue; }
+                    ++k;
+                    break;
+                }
+                if (s[k] == '\\' && k + 1 < n) { lit += s[k + 1]; k += 2; continue; }
+                lit += s[k++];
+            }
+            out.emplace_back(col, make_string(lit));
+        } else {
+            while (k < n && s[k] != ' ' && s[k] != ';' && s[k] != ',') lit += s[k++];
+            out.emplace_back(col, sqlValue(lit, true));
+        }
+        size_t q = k;
+        while (q < n && (s[q] == ' ' || s[q] == '\t' || s[q] == ';' || s[q] == ',')) ++q;
+        if (q + 2 < n && sqlLower(s.substr(q, 3)) == "and") { k = q + 3; continue; }
+        break;
+    }
+    return true;
+}
+
+// Row/column matcher for the DELETE/UPDATE emulations: compare the condition
+// literal against the stored cell as strings (filed's data-table keys -
+// path/name/branch - are all string columns).
+static bool sqlRowMatches(const SqlTable& t, const std::vector<Value>& row,
+                          const std::vector<std::pair<std::string, Value>>& conds) {
+    for (const auto& cd : conds) {
+        int hit = -1;
+        for (size_t ci = 0; ci < t.cols.size() && ci < row.size(); ++ci) {
+            if (sqlLower(t.cols[ci].name) == sqlLower(cd.first)) { hit = static_cast<int>(ci); break; }
+        }
+        if (hit < 0) return false;
+        if (as_string(row[static_cast<size_t>(hit)]) != as_string(cd.second)) return false;
+    }
+    return true;
+}
+
+// Find a SQL keyword occurrence at [from, to) outside string literals
+// (backslash-escape aware) with word boundaries on both sides.
+static size_t sqlFindKeyword(const std::string& s, size_t from, size_t to, const char* kw) {
+    const size_t len = strlen(kw);
+    bool inSq = false;
+    for (size_t k = from; k < to;) {
+        char c = s[k];
+        if (c == '\\') { k += 2; continue; }
+        if (c == '\'') { inSq = !inSq; ++k; continue; }
+        if (!inSq && k + len <= to && sqlLower(s.substr(k, len)) == kw) {
+            bool b0 = (k == 0) || !sqlIsWord(s[k - 1]);
+            bool b1 = (k + len >= to) || !sqlIsWord(s[k + len]);
+            if (b0 && b1) return k;
+        }
+        ++k;
+    }
+    return std::string::npos;
+}
+
+// Apply a SQL script (CREATE/INSERT/DELETE/UPDATE statements) to the
+// in-memory fallback tables.  Returns the number of rows the write
+// statements affected (0 for schema statements).
+static int64_t sqlParseScript(const std::string& s) {
     const size_t n = s.size();
     size_t i = 0;
+    int64_t affected = 0;
     while (i < n) {
         // Skip comments and string literals so keywords inside them don't match.
         if (s[i] == '-' && i + 1 < n && s[i + 1] == '-') {  // -- line comment
@@ -1569,7 +1663,22 @@ static void sqlLoadFile(const fs::path& p) {
                 row.reserve(parts.size());
                 for (size_t k = 0; k < parts.size(); ++k)
                     row.push_back(sqlValue(parts[k], k < cols.size() && cols[k].numeric));
-                it->second.rows.push_back(std::move(row));
+                // Idempotent insert: a row identical to an existing one (the
+                // game's retry loops re-send the same create) counts as
+                // affected=0 instead of accumulating duplicates - duplicates
+                // would break cmd_read_content's "exactly one row" contract.
+                bool dup = false;
+                for (const auto& ex : it->second.rows) {
+                    if (ex.size() != row.size()) continue;
+                    bool same = true;
+                    for (size_t k = 0; k < row.size(); ++k)
+                        if (as_string(ex[k]) != as_string(row[k])) { same = false; break; }
+                    if (same) { dup = true; break; }
+                }
+                if (!dup) {
+                    it->second.rows.push_back(std::move(row));
+                    ++affected;
+                }
                 j = end + 1;
                 while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
                 if (j < n && s[j] == ',') {
@@ -1581,8 +1690,96 @@ static void sqlLoadFile(const fs::path& p) {
             i = j;
             continue;
         }
+        // DELETE FROM `name` WHERE col = 'v' AND ...  (mysql_execute offline
+        // emulation; the original cmd_delete_content issues exactly this form
+        // with bound path/name/branch literals).
+        if (i + 11 < n && sqlLower(s.substr(i, 11)) == "delete from") {
+            size_t j = i + 11;
+            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
+            std::string name;
+            if (j < n && s[j] == '`') {
+                ++j;
+                while (j < n && s[j] != '`') name += s[j++];
+                if (j < n) ++j;
+            } else {
+                while (j < n && sqlIsWord(s[j])) name += s[j++];
+            }
+            std::vector<std::pair<std::string, Value>> conds;
+            size_t w = sqlFindKeyword(s, j, n, "where");
+            if (w != std::string::npos) sqlParseConds(s, w + 5, n, conds);
+            auto it = sqlDb().find(sqlLower(name));
+            if (it != sqlDb().end() && !conds.empty()) {
+                auto& rows = it->second.rows;
+                std::vector<std::vector<Value>> keep;
+                keep.reserve(rows.size());
+                for (auto& row : rows) {
+                    if (sqlRowMatches(it->second, row, conds)) ++affected;
+                    else keep.push_back(std::move(row));
+                }
+                rows = std::move(keep);
+            }
+            i = n;
+            continue;
+        }
+        // UPDATE `name` SET col = 'v', ... WHERE col = 'v' AND ... (the
+        // original cmd_write_content issues exactly this form).
+        if (i + 6 < n && sqlLower(s.substr(i, 7)) == "update ") {
+            size_t j = i + 7;
+            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
+            std::string name;
+            if (j < n && s[j] == '`') {
+                ++j;
+                while (j < n && s[j] != '`') name += s[j++];
+                if (j < n) ++j;
+            } else {
+                while (j < n && sqlIsWord(s[j])) name += s[j++];
+            }
+            size_t setKw = sqlFindKeyword(s, j, n, "set");
+            if (setKw == std::string::npos) { i = n; continue; }
+            size_t setStart = setKw + 3;
+            while (setStart < n && (s[setStart] == ' ' || s[setStart] == '\t')) ++setStart;
+            size_t whereKw = sqlFindKeyword(s, setStart, n, "where");
+            size_t setEnd = (whereKw != std::string::npos) ? whereKw : n;
+            auto it = sqlDb().find(sqlLower(name));
+            if (it != sqlDb().end()) {
+                SqlTable& t = it->second;
+                std::vector<std::pair<std::string, Value>> sets;
+                for (const std::string& piece : sqlSplitTop(s, setStart, setEnd)) {
+                    size_t eq = piece.find('=');
+                    if (eq == std::string::npos) continue;
+                    std::string cn = sqlTrim(piece.substr(0, eq));
+                    if (!cn.empty() && cn[0] == '`') {
+                        size_t e2 = cn.find('`', 1);
+                        if (e2 != std::string::npos) cn = cn.substr(1, e2 - 1);
+                    }
+                    sets.emplace_back(cn, sqlValue(sqlTrim(piece.substr(eq + 1)), false));
+                }
+                std::vector<std::pair<std::string, Value>> conds;
+                if (whereKw != std::string::npos)
+                    sqlParseConds(s, whereKw + 5, n, conds);
+                for (auto& row : t.rows) {
+                    if (!sqlRowMatches(t, row, conds)) continue;
+                    ++affected;
+                    for (auto& st : sets) {
+                        for (size_t ci = 0; ci < t.cols.size() && ci < row.size(); ++ci)
+                            if (sqlLower(t.cols[ci].name) == sqlLower(st.first)) row[ci] = st.second;
+                    }
+                }
+            }
+            i = n;
+            continue;
+        }
         ++i;
     }
+    return affected;
+}
+
+static void sqlLoadFile(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    sqlParseScript(ss.str());
 }
 
 static void sqlLoadAll() {
@@ -1618,9 +1815,7 @@ Value simpleDbSelect(const std::string& table) {
             }
         }
     }
-    // Tables not present in the SQL dumps return an empty result set.  (The
-    // old local-CSV stub produced fabricated columns that did not match the
-    // real schema, so it has been removed.)
+    // Tables not present in the in-memory set return an empty result set.
     return arr;
 }
 
@@ -2288,7 +2483,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // "tianyongcheng/shouhutianshen.c")) from place_char) must clone
             // THAT instance (whose dbase has name/file_id/my_import_name), not
             // the bare basic.c template - otherwise the new NPC has no name
-            // and guardd can't find å®ˆæŠ¤å¤©ç¥ž@å¤©å¢‰åŸŽ.
+            // and guardd can't find ÊØ»¤ÌìÉñ@ÌìÜ­³Ç.
             if (path.compare(0, 6, "clone:") == 0) {
                 size_t hash = path.find('#');
                 if (hash != std::string::npos) path = path.substr(6);  // keep #seq
@@ -3226,13 +3421,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string err;
             int cno = nextMysqlCno();
             bool ok = client->connect(host, port, user, pass, db, err);
-            if (std::getenv("LPCVM_TRACE"))
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_connect] host=" << host << ":" << port << " db=" << db
                           << " user=" << user << " ok=" << ok
                           << (ok ? "" : (" err=" + err)) << " cno=" << cno << "\n";
             if (!ok) {
                 // Keep an offline handle so the game's connection flow
-                // proceeds; queries fall back to the in-memory dump tables.
+                // proceeds; queries fall back to the in-memory tables.
                 std::cerr << "[mysql] connect to " << host << ":" << port << "/" << db
                           << " failed: " << err << " (using in-memory tables)\n";
             }
@@ -3280,7 +3475,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t e = rest.find_first_of(" ;`");
                 table = rest.substr(0, e);
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_query] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
             MysqlClient::Result res;
             std::string err;
@@ -3315,9 +3510,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 // for writes): surface affected rows as a plain int.
                 return make_int(static_cast<int64_t>(res.affectedRows));
             }
-            if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[mysql_query] error: " << err << " -> in-memory fallback\n";
-            // Fall back to the in-memory dump tables (offline or SQL error).
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+                std::cerr << "[mysql_query] ERR cno=" << cno << " err=" << err << " -> in-memory fallback\n";
+            // Fall back to the in-memory tables (offline or SQL error).
             if (!table.empty()) {
                 Value r = simpleDbSelect(table);
                 if (r.index() == 5) {
@@ -3412,11 +3607,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t e = rest.find_first_of(" ;`");
                 table = rest.substr(0, e);
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_execute] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
             MysqlClient::Result res;
             std::string err;
             if (mysqlExecReal(cno, sql, res, err)) {
+                if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+                    std::cerr << "[mysql_execute] OK cno=" << cno << " affected=" << res.affectedRows
+                              << " resultSet=" << (res.hasResultSet ? 1 : 0) << "\n";
                 if (res.hasResultSet) {
                     // SELECT via execute: return the rows as an array.
                     auto arr = std::make_shared<ArrayValue>();
@@ -3434,8 +3632,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 }
                 return make_int(static_cast<int64_t>(res.affectedRows));
             }
-            if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[mysql_execute] error: " << err << "\n";
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+                std::cerr << "[mysql_execute] ERR cno=" << cno << " err=" << err << "\n";
             return make_int(0);
         }
         return make_int(0);
@@ -3810,8 +4008,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 for (size_t i = 2; i < args.size(); ++i) padVariableValue(args[i], data);
             } else {
                 data = as_string(args[1]);   // raw buffer (already cmdNo + body)
+                // Raw-frame sends carry the cmdNo in the first two bytes; log
+                // the filed/read-content family so request routing is visible.
+                if (data.size() >= 2) {
+                    uint16_t m2 = static_cast<uint16_t>(
+                        (static_cast<unsigned char>(data[0]) << 8) |
+                        static_cast<unsigned char>(data[1]));
+                    if (m2 == 0x4401 || m2 == 0x2403 || m2 == 0x3400 || m2 == 0x236F) {
+                        std::string hex;
+                        static const char* hx = "0123456789ABCDEF";
+                        for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+                        std::cerr << "[send-filed] cno=" << cno << " msgNo=0x" << std::hex
+                                  << m2 << std::dec << " raw data(" << data.size() << ")="
+                                  << hex << "\n";
+                    }
+                }
             }
-            if (args.size() >= 3 && (msgNo == 0x4401 || msgNo == 0x2403)) {
+            if (args.size() >= 3 &&
+                (msgNo == 0x4401 || msgNo == 0x2403 || msgNo == 0x3400 || msgNo == 0x236F)) {
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
                 for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
@@ -5266,7 +5480,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_driver_caption") {
         // vm_f_set_driver_caption -> vm_setWindowCaption prints "Driver: %s\n"
         // (the gameshell window title / server line identity).  Not a stub:
-        // gs startup logs "Driver: ä¸€çº¿" right before configd loads.
+        // gs startup logs "Driver: Ò»Ïß" right before configd loads.
         if (!args.empty())
             std::cerr << "Driver: " << as_string(args[0]) << "\n";
         return make_int(1);

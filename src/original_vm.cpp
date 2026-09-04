@@ -45,6 +45,7 @@ static bool vmEnvSvcTrace() { static const bool v = (std::getenv("LPCVM_SVC_TRAC
 static bool vmEnvTraceC8() { static const bool v = (std::getenv("LPCVM_TRACE_C8") != nullptr); return v; }
 static bool vmEnvDbgObjVar() { static const bool v = (std::getenv("LPCVM_DBG_OBJVAR") != nullptr); return v; }
 static const char* vmEnvTraceFn() { static const char* v = std::getenv("LPCVM_TRACE_FN"); return v ? v : ""; }
+static bool constructDiagOn() { static const bool v = (std::getenv("LPCVM_CONSTRUCT_TRACE") != nullptr); return v; }
 
 namespace {
 // Env-gated profiler for objectRegistry lookup cost (LPCVM_REG_PROF=1):
@@ -710,6 +711,15 @@ struct Frame {
     // caller's merged table found an unrelated function).  nullptr = use this
     // VM's own funcsByIndex_.
     const std::map<int, const OriginalFunction*>* savedFuncLookup = nullptr;
+    // True when this frame switched funcLookup_ (cross-object inline frame).
+    // Needed because savedFuncLookup may legitimately be nullptr (the caller
+    // was running on its own table), which the bare `if (savedFuncLookup)`
+    // restore check cannot distinguish from "never switched".  Without this,
+    // a cross-object frame that returns leaves funcLookup_ pointing at the
+    // TARGET program's table, so the caller's next call_in_user_fun resolves
+    // against the wrong table (e.g. party_war enable_war_a's #102 ->
+    // filed.o's ldba_conn).
+    bool funcLookupSwitched = false;
     // Loop control blocks.  The original VM keeps a loop's control value in a
     // local slot, but expression-stack pops can descend into the local region
     // in this interpreter (the prologue of load_comm_desc does); storing the
@@ -822,6 +832,12 @@ struct ResumeCond {
     int64_t wakeAtMs = 0;       // kind 1
     std::string qkey;           // kind 2
     std::string ename;          // kind 3
+    uint32_t mask = 0;          // kind 3: the wait_event mask bits this park
+                                // consumes.  raise_event wakes ONLY waiters
+                                // whose mask intersects the raised bits
+                                // (original vm_f_raise_event semantics); this
+                                // keeps one filed waiter's reply from
+                                // spuriously resuming its siblings.
     int fd = -1;                // kind 5
     bool wantRead = false;      // kind 5
     bool wantWrite = false;     // kind 5
@@ -987,6 +1003,25 @@ public:
         // promise until the process's whole call chain completes; runProcess
         // sets it (exactly once) when the process finishes.
         std::shared_ptr<std::promise<Value>> resultPromise;
+        // True while this process sits in ready_.  Multiple wake sources (a
+        // real event raise + its stale timeout timer, the construct watchdog
+        // + the late reply, two timers firing in the same tick) used to
+        // enqueue the SAME Process twice; the second runProcess then resumed
+        // a process whose execution state was parked elsewhere (or already
+        // finished) - corrupting the boot (master's expired __master__ timers
+        // piling up in timers_, ev_filed0 force-wake loops).  wake()/wakeFront()
+        // skip the enqueue when this is set; run() clears it on dequeue.
+        bool inReady = false;
+        // Park-condition snapshot taken by parkCurrent.  The VM's cond_ is a
+        // SINGLE slot: when two processes park on the same VM (nested/cross-
+        // object calls, e.g. two master-* clone __init__ processes that end up
+        // parked on one registry VM), the second park OVERWRITES cond_.  A
+        // raise_event that read the mask from the VM then matched the WRONG
+        // (newest) park and stranded the earlier waiter forever - gs's boot
+        // froze on ev_filed0 waits that were raised with the exact matching
+        // mask.  parkCurrent copies the park's own condition here so wake
+        // matching uses per-process data.
+        ResumeCond cond;
     };
 
     // Spawn a new process (create_thread / set_timer / post_init / network
@@ -1029,8 +1064,11 @@ public:
     // Wake every process waiting on queue `qkey` (send_to_queue side).
     void wakeQueue(const std::string& qkey);
 
-    // Wake every process waiting on event `ename` (raise_event side).
-    void wakeEvent(const std::string& ename);
+    // Wake the processes waiting on event `ename` whose wait mask intersects
+    // `raisedMask` (raise_event side).  Waiters with a disjoint mask stay
+    // parked for their own raise (original vm_f_raise_event resumes only the
+    // pend-list entries whose requested bits were raised).
+    void wakeEvent(const std::string& ename, uint32_t raisedMask);
 
     // True when some parked process is currently suspended ON `vm` (its
     // parkedVm).  Used by cross-object call dispatch: a target whose registry
@@ -1046,6 +1084,13 @@ public:
 
     // Main loop: run ready processes / fire due timers / wait for wakeups.
     void run();
+
+    // Diagnostic: dump every parked waiter on a wall-clock interval.  The
+    // idle-only dump inside run() never fires while a daemon keeps the ready
+    // queue fed (scansocketd sleeps only 14ms per iteration, so the queue is
+    // almost never empty) - a process parked forever on an event/queue then
+    // became invisible.  Call from the TOP of run() (no lock held).
+    void dumpWaiters();
 
     // True when called from the scheduler's own thread (run()).  External
     // threads (network accept/recv, telnet, mysql worker) MUST route VM
@@ -1109,6 +1154,13 @@ public:
     std::multimap<int64_t, TimerEntry2> timers_;       // wakeAtMs -> entry
     std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> queueWaiters_;
     std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> eventWaiters_;
+    // Construction-watchdog first-sight bookkeeping (keyed by event name):
+    // first-sight ms and the front waiter's identity.  Cleared by normal
+    // wakes so a re-park starts a fresh 15s window instead of inheriting a
+    // stale timestamp (which made the watchdog force-wake freshly parked
+    // zone masters and produce spurious "failed" reads).
+    std::unordered_map<std::string, int64_t> wdogFirst_;
+    std::unordered_map<std::string, uintptr_t> wdogWho_;
     // fd -> processes parked in connect()/recv() (kind 5).  Polled by run().
     std::unordered_map<int, std::deque<std::shared_ptr<Process>>> sockWaiters_;
     std::vector<std::shared_ptr<Process>> parked_;   // no automatic wakeup
@@ -1120,6 +1172,7 @@ public:
     bool shutdown_ = false;
     uint64_t step_ = 0;
     int64_t lastPollMs_ = 0;      // last socket poll tick (20ms throttle)
+    int64_t lastWaitDumpMs_ = 0;  // last [wait-dump] wall-clock stamp
     std::thread::id schedThreadId_;   // the thread running run() (set on entry)
 
     // Tid pool: a Process keeps its tid from spawn until it finishes (run()'s
@@ -1157,9 +1210,16 @@ public:
     }
 };
 
-// The driver-level scheduler instance (defined below; declared here so VM
+// The driver-level scheduler instance (declared below; defined here so VM
 // blocking efuns can wake parked processes).
 Scheduler& scheduler();
+
+// Resolve the registry VM that OWNS fn (its function table contains the
+// pointer).  Used when a captured closure function belongs to a DIFFERENT
+// object than the one currently executing: inline execution must switch to
+// the owner's variable/string/function tables (filed.o service functions run
+// from zone-master clone VMs, etc.).
+const OriginalVm* originalHomeVmOf(const OriginalFunction* fn);
 
 class OriginalVm {
 public:
@@ -1168,11 +1228,12 @@ public:
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj.globalVarCount));
         ownObjVars_ = objVars_;
         for (auto& g : *objVars_) g = make_int(0);
-        for (const auto& fn : obj.functions) {
+        for (const auto& fn : obj_.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
         }
         mergeInheritedFunctions();
         objName_ = obj.sourceName.empty() ? "<obj>" : obj.sourceName;
+        for (auto& kv : funcsByIndex_) ownedFns_.insert(kv.second);
     }
     // Scheduler-process constructor: keeps the source object alive so the VM
     // (whose obj_ is a reference) never dangles after the caller's temporary
@@ -1187,6 +1248,7 @@ public:
         }
         mergeInheritedFunctions();
         objName_ = obj_.sourceName.empty() ? "<obj>" : obj_.sourceName;
+        for (auto& kv : funcsByIndex_) ownedFns_.insert(kv.second);
     }
     // Clone constructor: shares the template's (read-only) program and its
     // already-merged inherited function table, allocating ONLY a fresh
@@ -1203,10 +1265,12 @@ public:
         if (tmpl) {
             funcsByIndex_ = tmpl->funcsByIndex_;
             inheritedFuncs_ = tmpl->inheritedFuncs_;
+            ownedFns_ = tmpl->ownedFns_;
         } else {
             for (const auto& fn : obj_.functions)
                 if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
             mergeInheritedFunctions();
+            for (auto& kv : funcsByIndex_) ownedFns_.insert(kv.second);
         }
         objName_ = obj_.sourceName.empty() ? "<obj>" : obj_.sourceName;
     }
@@ -1268,7 +1332,7 @@ public:
     }
     // The shared object-variable table (cross-object inline calls switch to
     // the target object's table for the duration of the call).
-    std::shared_ptr<std::vector<Value>> objVarsShared() { return objVars_; }
+    std::shared_ptr<std::vector<Value>> objVarsShared() const { return objVars_; }
     // Mark this VM as the driver's master process (time-sliced startup).
     void setMasterProcess(bool v) { isMasterProcess_ = v; }
     // baseVarOffset of the currently executing function's constitution.
@@ -1307,6 +1371,39 @@ public:
     // build an object value resolving to that VM.
     void setPreviousObjectName(const std::string& n) { previousObjectName_ = n; }
     const std::string& previousObjectName() const { return previousObjectName_; }
+
+    // Suspended-state diagnostic (shown under LPCVM_CONSTRUCT_TRACE): what the
+    // VM was executing when it parked and which event/queue it waits on.
+    std::string parkDiag(const ResumeCond& cond) const {
+        std::string out = "vm=";
+        out += objName_;
+        std::string chain;
+        for (size_t fi = 0; fi < frames_.size(); ++fi) {
+            const Frame& fr = frames_[fi];
+            std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+            if (!chain.empty()) chain += "<-";
+            chain += fnm;
+            if (chain.size() > 240) {
+                chain += "...";
+                break;
+            }
+        }
+        out += " chain=[";
+        out += chain;
+        out += "] wait=";
+        out += (cond.qkey.empty() ? cond.ename : cond.qkey);
+        out += " efun=";
+        if (lastEfunIndex_ >= 0) {
+            const auto& t = efunNameTable();
+            if (lastEfunIndex_ < static_cast<int>(t.size()))
+                out += t[static_cast<size_t>(lastEfunIndex_)];
+            else
+                out += "?";
+        } else {
+            out += "-";
+        }
+        return out;
+    }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
         // Resolve through own + inherited functions (like vm_lookupIdentInProgram
@@ -1599,42 +1696,84 @@ public:
     void runConstruction(const std::vector<Value>& createArgs, const std::string& doneEvent) {
         initCreateArgs_ = createArgs;
         initDoneEvent_ = doneEvent;
-        if (initPhase_ <= 0) {
-            if (!code_) {
-                execute(obj_.globalCode, obj_.globalMeta);
-            } else {
-                runLoop();   // resumed after a yield in the global code
+        if (constructDiagOn())
+            std::cerr << "[construct] " << objName_ << " phase=" << initPhase_
+                      << " event=" << doneEvent << " entry\n";
+        try {
+            if (initPhase_ <= 0) {
+                if (!code_) {
+                    execute(obj_.globalCode, obj_.globalMeta);
+                } else {
+                    runLoop();   // resumed after a yield in the global code
+                }
+                code_ = nullptr;
+                initPhase_ = 1;
             }
-            code_ = nullptr;
-            initPhase_ = 1;
-        }
-        if (initPhase_ == 1) {
-            masterNoYield_ = true;
-            runInheritedInits(0, 0);
-            masterNoYield_ = false;
-            code_ = nullptr;
-            initPhase_ = 2;
-        }
-        if (initPhase_ == 2) {
-            if (!initCreateStarted_) {
-                initCreateStarted_ = true;
+            if (initPhase_ == 1) {
                 masterNoYield_ = true;
-                callCreate(initCreateArgs_);
+                runInheritedInits(0, 0);
                 masterNoYield_ = false;
+                code_ = nullptr;
+                initPhase_ = 2;
             }
-            // create() finished (synchronously, or after a park-resume which
-            // ran the rest of the create via resumeProcess).
+            if (initPhase_ == 2) {
+                if (!initCreateStarted_) {
+                    initCreateStarted_ = true;
+                    masterNoYield_ = true;
+                    callCreate(initCreateArgs_);
+                    masterNoYield_ = false;
+                }
+                // create() finished (synchronously, or after a park-resume which
+                // ran the rest of the create via resumeProcess).
+                code_ = nullptr;
+                initPhase_ = 3;
+            }
+            if (initPhase_ == 3) {
+                // Construction finished: mark the object initialized in the
+                // registry and wake the load_object caller parked on this event.
+                markObjectInitialized();
+                if (constructDiagOn())
+                    std::cerr << "[construct-done] " << objName_ << " event=" << initDoneEvent_ << "\n";
+                scheduler().wakeEventFront(initDoneEvent_);
+                initPhase_ = 4;
+            }
+        } catch (const SuspendSignal& sig) {
+            // Parked (yielded) inside the construction: resumeProcess re-enters
+            // runConstruction when the condition fires.  Nothing to raise yet.
+            if (constructDiagOn()) {
+                std::string cf = "<global>";
+                if (!frames_.empty() && frames_.back().fn) cf = frames_.back().fn->name;
+                std::string chain;
+                for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                    const Frame& fr = frames_[fi];
+                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                    if (!chain.empty()) chain += "<-";
+                    chain += fnm;
+                    if (chain.size() > 260) break;
+                }
+                std::string efName = "?";
+                if (lastEfunIndex_ >= 0) {
+                    const auto& tbl = efunNameTable();
+                    if (lastEfunIndex_ < static_cast<int>(tbl.size()) && !tbl[lastEfunIndex_].empty())
+                        efName = tbl[static_cast<size_t>(lastEfunIndex_)];
+                }
+                std::cerr << "[construct] " << objName_ << " parked phase=" << initPhase_
+                          << " fn=" << cf << " efun=" << efName << "(" << lastEfunIndex_ << ")"
+                          << " wait kind=" << sig.cond.kind
+                          << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
+                          << " chain=[" << chain << "]\n";
+            }
+            throw;
+        } catch (const std::exception& e) {
+            // A failed construction must still wake the load_object caller so
+            // it does not park forever; the resume hook re-checks the registry
+            // and returns 0 for a failed object.
+            std::cerr << "[construct-err] " << objName_ << " event=" << initDoneEvent_
+                      << " phase=" << initPhase_ << " what=" << e.what() << "\n";
             code_ = nullptr;
-            initPhase_ = 3;
-        }
-        if (initPhase_ == 3) {
-            // Construction finished: mark the object initialized in the
-            // registry and wake the load_object caller parked on this event.
-            markObjectInitialized();
-            if (vmEnvTrace())
-                std::cerr << "[construct-done] " << objName_ << " event=" << initDoneEvent_ << "\n";
+            initPhase_ = 9;
             scheduler().wakeEventFront(initDoneEvent_);
-            initPhase_ = 4;
+            throw;
         }
     }
 
@@ -1846,6 +1985,15 @@ private:
     std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall_;
     std::vector<Frame> frames_;
     std::map<int, const OriginalFunction*> funcsByIndex_;
+    // Function pointers reachable in THIS object's constitution (own +
+    // inherited).  A closure/call whose captured function is NOT in this set
+    // belongs to another object's program; running it inline without switching
+    // to that program's variable table makes its obj-var reads (filed's srvQ
+    // etc.) hit THIS object's variables at the same index - e.g. filed's
+    // do_operate executed on a zone-master clone VM read the clone's "menu"
+    // mapping for filed's srvQ global and its send_to_queue never reached the
+    // queue, so restore() parked forever.
+    std::unordered_set<const OriginalFunction*> ownedFns_;
     // Active function-index table.  While a cross-object inline frame (from a
     // call_other to another object, e.g. filed.c read_content running on the
     // master's stack) is active this points at the TARGET object's
@@ -1854,6 +2002,7 @@ private:
     const std::map<int, const OriginalFunction*>* funcLookup_ = nullptr;
     std::vector<std::shared_ptr<OriginalFunction>> inheritedFuncs_;  // owned copies of merged parents
     int lastOp_ = -1;
+    int lastEfunIndex_ = -1;   // efun index of the last call_in_efun op (diag)
     size_t lastIp_ = 0;
     int stepCounter_ = 0;
     // Time-slice state (master process): after this many instructions the
@@ -2305,7 +2454,7 @@ private:
                 // template.  basic_object.c's create() uses it on clones to
                 // inherit my_import_name from the template, which is what lets
                 // a place_char'd NPC clone's get_name()/query() fall through to
-                // its basic object's dbase (name å®ˆæŠ¤å¤©ç¥ž etc.).
+                // its basic object's dbase (name ÊØ»¤ÌìÉñ etc.).
                 if (templateVm_) {
                     std::string tp = templateVm_->thisObjectName_;
                     if (tp == "<this>" || tp.empty()) tp = templateVm_->objName();
@@ -2917,8 +3066,18 @@ private:
                         std::cerr << "[timer] scheduling " << fnName
                                   << " on scheduler t=" << std::this_thread::get_id() << "\n";
                     using namespace std::chrono;
-                    int64_t atMs = duration_cast<milliseconds>(
-                        steady_clock::now().time_since_epoch()).count() + timeout * 1000;
+                    // Original set_timer timeouts are 32-bit SECOND values
+                    // (INT32_MAX = "effectively never"); clamp to that range
+                    // so a garbage read cannot wrap atMs into a huge negative
+                    // key (at=-2459565876494606883 = 0xCDCDCDCDCDCDCDCD as
+                    // double was seen sorting FIRST in timers_ and firing on
+                    // every scheduler iteration, starving real timers).
+                    if (timeout < 1) timeout = 1;
+                    if (timeout > 2147483647LL) timeout = 2147483647LL;
+                    int64_t nowMsV = duration_cast<milliseconds>(
+                        steady_clock::now().time_since_epoch()).count();
+                    int64_t atMs = nowMsV + timeout * 1000;
+                    if (atMs < nowMsV) atMs = nowMsV + 1000;   // wrapped: floor at 1s
                     scheduler().spawnDelayed(timerVm, fnName, bound, atMs, entry);
                     return make_int(entry->id);
                 }
@@ -3545,13 +3704,37 @@ private:
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
+        // AUTOMATIC cross-object switch: some dispatch paths reach the callee
+        // WITHOUT an explicit switchObjVars (an inline fallback, an index-based
+        // call site, ...).  A callee that belongs to ANOTHER object must still
+        // run in ITS object context - party_war's init_war -> filed
+        // delete_content -> do_operate used to keep the caller's table, so
+        // do_operate's srvQ resolved to party_war's same-named global (3600)
+        // and the filed request went to a nonexistent queue (q-send ok=0),
+        // parking the master on ev_filed0 forever.  Resolve the function's
+        // home VM and switch to it.  Master-program global functions (they run
+        // inline on every VM against the driver's shared global space) are
+        // excluded - switching them would break their caller's context.
+        std::shared_ptr<std::vector<Value>> autoVars;
+        const std::vector<std::string>* autoStrings = nullptr;
+        const std::map<int, const OriginalFunction*>* autoFuncs = nullptr;
+        if (!switchObjVars && !ownedFns_.count(&fn)) {
+            const OriginalVm* home = originalHomeVmOf(&fn);
+            if (home && home != this &&
+                objectRegistry().masterObj != &home->object()) {
+                autoVars = home->objVarsShared();
+                autoStrings = &home->object().strings;
+                autoFuncs = &home->functionTable();
+            }
+        }
         // Cross-object inline call: the callee's push_shared_string indexes its
         // OWN program's string table, not the caller's.  fn.strings carries the
         // per-function override when the .o has one; otherwise fall back to the
         // CALLEE object's table (targetStrings), never to this VM's object.
         const std::vector<std::string>* tbl = fn.strings ? fn.strings.get() : nullptr;
         if (!tbl || tbl->empty()) {
-            tbl = targetStrings ? targetStrings : &obj_.strings;
+            tbl = targetStrings ? targetStrings
+                                : (autoStrings ? autoStrings : &obj_.strings);
             if (tbl->empty()) tbl = fn.strings ? fn.strings.get() : nullptr;
         }
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount, tbl};
@@ -3560,16 +3743,17 @@ private:
         frame.zeroArgPlaceholder = zeroArgPlaceholder;
         // Cross-object inline call: temporarily switch the object variable
         // table to the callee's object; restore when the frame pops.
-        if (switchObjVars) {
+        if (switchObjVars || autoVars) {
             frame.savedObjVars = objVars_;
-            objVars_ = std::move(switchObjVars);
+            objVars_ = switchObjVars ? std::move(switchObjVars) : std::move(autoVars);
         }
         // ... and the function-index table (the callee's constitution): its
         // internal local-index calls (private do_operate etc.) must resolve in
         // ITS program, not the caller's merged table.
-        if (switchFuncs) {
+        if (switchFuncs || autoFuncs) {
             frame.savedFuncLookup = funcLookup_;
-            funcLookup_ = switchFuncs;
+            funcLookup_ = switchFuncs ? switchFuncs : autoFuncs;
+            frame.funcLookupSwitched = true;
         }
         // Save the caller's stream so return_from_fun can resume it.
         frame.retCode = code_;
@@ -3699,7 +3883,7 @@ private:
             ip_ = savedIp;
             if (!frames_.empty() && frames_.back().fn == &fn) {
                 if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
-                if (frames_.back().savedFuncLookup) funcLookup_ = frames_.back().savedFuncLookup;
+                if (frames_.back().funcLookupSwitched) funcLookup_ = frames_.back().savedFuncLookup;
                 frames_.pop_back();
             }
             returnValue_ = savedReturn;
@@ -3720,7 +3904,7 @@ private:
             if (newSize < 0) newSize = 0;
             stack_.resize(static_cast<size_t>(newSize));
             if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
-            if (frames_.back().savedFuncLookup) funcLookup_ = frames_.back().savedFuncLookup;
+            if (frames_.back().funcLookupSwitched) funcLookup_ = frames_.back().savedFuncLookup;
             frames_.pop_back();
         }
         code_ = savedCode;
@@ -4113,7 +4297,7 @@ private:
                 // Cross-object inline call: restore the caller's obj vars and
                 // function-index table (constitution).
                 if (f.savedObjVars) objVars_ = f.savedObjVars;
-                if (f.savedFuncLookup) funcLookup_ = f.savedFuncLookup;
+                if (f.funcLookupSwitched) funcLookup_ = f.savedFuncLookup;
                 frames_.pop_back();
                 stack_.resize(static_cast<size_t>(newSize));
                 if (retCode == nullptr) {
@@ -4653,6 +4837,7 @@ private:
             case 6: { // call_in_efun
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
+                lastEfunIndex_ = efun;
                 if (vmEnvTrace() && objName_.find("cmd_log_important") != std::string::npos)
                     std::cerr << "[efun-pre] efun=" << efun << " argc=" << argc
                               << " stack=" << stack_.size() << " frames=" << frames_.size()
@@ -4844,8 +5029,19 @@ private:
                         // first; if the queue is empty, PARK this VM on the
                         // queue (send_to_queue wakes it) instead of blocking
                         // the OS thread.
+                        const bool qTraceOn =
+                            (std::getenv("LPCVM_QUEUE_TRACE") != nullptr);
                         bool ok = false;
                         Value msg = queueReceive(qid, 0, ok);
+                        if (qTraceOn) {
+                            std::string mdump = ok ? to_string(msg, false) : std::string("<empty>");
+                            if (mdump.size() > 200) mdump = mdump.substr(0, 200) + "...";
+                            std::cerr << "[q-recv] qid=" << qid << " ok=" << ok
+                                      << " obj=" << objName_
+                                      << " tid=" << scheduler().currentProcessTid()
+                                      << " vm=" << this
+                                      << " msg=" << mdump << "\n";
+                        }
                         if (ok) {
                             writeThrough(items[1], msg);
                             pushValue(make_int(0));
@@ -4853,12 +5049,22 @@ private:
                             // Park: wake up when send_to_queue pushes to this
                             // queue.  The resume hook writes the message back
                             // through the reference; resume value is 0.
+                            int64_t rtid = scheduler().currentProcessTid();
                             ResumeCond cond;
                             cond.kind = 2;
                             cond.qkey = "q:" + std::to_string(qid);
-                            auto hook = [this, item = items[1], qid]() mutable {
+                            auto hook = [this, item = items[1], qid, rtid, qTraceOn]() mutable {
                                 bool rok = false;
                                 Value m = queueReceive(qid, 0, rok);
+                                if (qTraceOn) {
+                                    std::string mdump = rok ? to_string(m, false) : std::string("<empty>");
+                                    if (mdump.size() > 200) mdump = mdump.substr(0, 200) + "...";
+                                    std::cerr << "[q-hook] qid=" << qid << " ok=" << rok
+                                              << " obj=" << objName_
+                                              << " tid=" << rtid
+                                              << " vm=" << this
+                                              << " msg=" << mdump << "\n";
+                                }
                                 if (rok) writeThrough(item, m);
                             };
                             parkAndSuspend(cond, std::move(hook), make_int(0));
@@ -4888,24 +5094,93 @@ private:
                                                      : ("t" + std::to_string(qv.index()));
                             std::cerr << "[q-send] qid=" << qid << " ok=" << ok
                                       << " obj=" << objName_ << " fn=" << cf
-                                      << " this=" << thisObjectName_ << " qv=" << qvdesc << "\n";
+                                      << " this=" << thisObjectName_ << " qv=" << qvdesc
+                                      << " ip=" << lastIp_
+                                      << " vm=" << this << "\n";
                         }
-                        if (!ok && (vmEnvTrace() || vmEnvSvcTrace())) {
+                        if (!ok) {
                             // Detailed dump: what the LPC global resolved to +
-                            // registered queues + the caller chain.
+                            // registered queues + the caller chain (frame by
+                            // frame: fn name + whether the frame switched the
+                            // object-variable table = cross-object inline).
                             std::string cf = frames_.empty() || !frames_.back().fn
                                                  ? "<global>" : frames_.back().fn->name;
                             std::string chain;
-                            for (int fi = 0; fi < static_cast<int>(frames_.size()); ++fi) {
-                                const Frame& fr = frames_[static_cast<size_t>(fi)];
-                                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
-                                if (!chain.empty()) chain += "<-";
-                                chain += fnm;
-                                if (chain.size() > 300) break;
+                            // Resolve each frame's function to its owning
+                            // registry object (fn pointers live in object
+                            // function tables), so a wrong-table execution is
+                            // attributable to the exact dispatch that failed.
+                            std::vector<const OriginalVm*> frameObjs;
+                            if (!frames_.empty()) {
+                                std::vector<const OriginalFunction*> want;
+                                for (auto& fr : frames_) if (fr.fn) want.push_back(fr.fn);
+                                std::lock_guard<std::recursive_mutex> rl3(registryMutex());
+                                auto& reg3 = objectRegistry();
+                                std::vector<std::string> fobjs(want.size());
+                                for (auto& kv3 : reg3.vms) {
+                                    for (auto& f3 : kv3.second->object().functions) {
+                                        for (size_t fi3 = 0; fi3 < want.size(); ++fi3)
+                                            if (want[fi3] == &f3 && fobjs[fi3].empty())
+                                                fobjs[fi3] = kv3.first;
+                                    }
+                                }
+                                for (int fi = 0; fi < static_cast<int>(frames_.size()); ++fi) {
+                                    const Frame& fr = frames_[static_cast<size_t>(fi)];
+                                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                    std::string ob = (static_cast<size_t>(fi) < fobjs.size() && !fobjs[static_cast<size_t>(fi)].empty())
+                                                         ? fobjs[static_cast<size_t>(fi)] : "";
+                                    if (ob.empty()) ob = objName_;
+                                    size_t slash = ob.find_last_of("/\\");
+                                    if (slash != std::string::npos) ob = ob.substr(slash + 1);
+                                    fnm += "@" + ob;
+                                    if (fr.savedObjVars) fnm += "{%}";
+                                    if (fr.savedFuncLookup) fnm += "[fl]";
+                                    if (fr.fn && !ownedFns_.count(fr.fn)) fnm += "[x]";   // fn NOT in this VM's constitution
+                                    if (!chain.empty()) chain += "<-";
+                                    chain += fnm;
+                                    if (chain.size() > 360) break;
+                                }
                             }
-                            std::cerr << "[q-fail] qv=" << to_string(qv, false)
-                                      << " qid=" << qid << " obj=" << objName_
-                                      << " fn=" << cf << " chain=[" << chain
+                            // Constitution probes: is the executing function part
+                            // of this VM's table at all, and does name lookup
+                            // return the same pointer?  A "[x]" frame above means
+                            // the VM ran another object's function without a
+                            // table switch - the exact disease under test.
+                            std::string curFn = frames_.empty() || !frames_.back().fn
+                                                    ? "<none>" : frames_.back().fn->name;
+                            const OriginalFunction* backFn = frames_.empty() ? nullptr : frames_.back().fn;
+                            std::string ownedCur = backFn && ownedFns_.count(backFn) ? "yes" : "NO";
+                            std::string byName = "<none>";
+                            if (backFn) {
+                                const OriginalFunction* nf = findFunctionAny(backFn->name);
+                                byName = nf ? ((nf == backFn) ? "same" : "DIFF") : "miss";
+                            }
+                            std::string flk = funcLookup_ ? "yes" : "no";
+                            // Which object's variable table is active right now?
+                            std::string varsOwner = "?";
+                            {
+                                std::lock_guard<std::recursive_mutex> rl4(registryMutex());
+                                auto& reg4 = objectRegistry();
+                                for (auto& kv4 : reg4.vms)
+                                    if (kv4.second->objVarsShared().get() == objVars_.get())
+                                        { varsOwner = kv4.first; break; }
+                            }
+                            size_t slash2 = varsOwner.find_last_of("/\\");
+                            if (slash2 != std::string::npos) varsOwner = varsOwner.substr(slash2 + 1);
+                            std::string a0 = "t" + std::to_string(qv.index()) + ":"
+                                             + to_string(qv, false);
+                            if (a0.size() > 70) a0 = a0.substr(0, 70) + "...";
+                            std::string a1 = "t" + std::to_string(v.index()) + ":"
+                                             + to_string(v, false);
+                            if (a1.size() > 90) a1 = a1.substr(0, 90) + "...";
+                            std::cerr << "[q-fail] qid=" << qid << " arg0=" << a0
+                                      << " arg1=" << a1 << " obj=" << objName_
+                                      << " vars=" << varsOwner
+                                      << " curfn=" << curFn << " ownedCur=" << ownedCur
+                                      << " byName=" << byName << " funcLookup=" << flk
+                                      << " nFns=" << funcsByIndex_.size()
+                                      << " fn=" << cf << " ip=" << lastIp_
+                                      << " chain=[" << chain
                                       << "] reg={" << lpc::queueNameDump()
                                       << "} this=" << thisObjectName_ << "\n";
                         }
@@ -4941,7 +5216,15 @@ private:
                         using namespace std::chrono;
                         int64_t nowMs = duration_cast<milliseconds>(
                             steady_clock::now().time_since_epoch()).count();
-                        cond.wakeAtMs = nowMs + static_cast<int64_t>(secs * 1000.0);
+                        double wakeMs = static_cast<double>(nowMs) + secs * 1000.0;
+                        // Garbage-secs guard (see the set_timer clamp): only a
+                        // value that wraps int64 or lands in the past is bad.
+                        if (!(wakeMs > static_cast<double>(nowMs)) || wakeMs > 9.2e18) {
+                            std::cerr << "[sleep] BAD secs=" << secs << " obj=" << objName_
+                                      << "; clamping to 1s\n";
+                            wakeMs = static_cast<double>(nowMs) + 1000.0;
+                        }
+                        cond.wakeAtMs = static_cast<int64_t>(wakeMs);
                         parkAndSuspend(cond, nullptr, make_int(1));
                     }
                     break;
@@ -5032,19 +5315,37 @@ private:
                         if (vmEnvEventTrace())
                             std::cerr << "[wait_event] immediate " << ename << "\n";
                         pushValue(make_int(0));
-                    } else if (secs < 0 || secs > 0.0001) {
+                    } else if (secs == 0.0) {
+                        // zero timeout poll, not raised -> timeout immediately
+                        pushValue(make_int(-501));
+                    } else {
+                        // vm_f_wait_event (0x80f097c): park the process on the
+                        // event.  timeout > 0 parks with a wake timer (arg is in
+                        // SECONDS); timeout -1 parks forever (raise_event wakes
+                        // it).  Exact original semantics.
                         ResumeCond cond;
                         cond.kind = 3;
                         cond.ename = ename;
-                        // A finite timeout ALSO parks with a wake timer (stage
-                        // C): raise_event before the park must not leave the
-                        // waiter asleep forever.  The timer fires at
-                        // now + secs and resumes with the timeout result.
-                        if (secs >= 0) {
+                        cond.mask = mask;
+                        if (secs > 0.0) {
                             using namespace std::chrono;
                             int64_t nowMs = duration_cast<milliseconds>(
                                 steady_clock::now().time_since_epoch()).count();
-                            cond.wakeAtMs = nowMs + static_cast<int64_t>(secs * 1000.0);
+                            // INT32_MAX (and anything above) is the original's
+                            // "wait forever" idiom on 32-bit ticks - park on
+                            // the event only, with NO wake timer.
+                            if (secs < 2147483647.0) {
+                                double wakeMs = static_cast<double>(nowMs) + secs * 1000.0;
+                                // Overflow/garbage guard: only a value that
+                                // would WRAP int64 or land in the past is bad.
+                                if (!(wakeMs > static_cast<double>(nowMs)) ||
+                                    wakeMs > 9.2e18) {
+                                    std::cerr << "[wait_event] BAD secs=" << secs
+                                              << " for " << ename << "; clamping to 100ms\n";
+                                    wakeMs = static_cast<double>(nowMs) + 100.0;
+                                }
+                                cond.wakeAtMs = static_cast<int64_t>(wakeMs);
+                            }
                         }
                         // The resume hook consumes the raised bits via a
                         // blocking-free wait on the already-raised event.
@@ -5054,9 +5355,7 @@ private:
                             (void)rc;
                         };
                         parkAndSuspend(cond, std::move(hook), make_int(0));
-                    } else {
-                        // zero timeout, not raised -> timeout
-                        pushValue(make_int(-501));
+                        break;
                     }
                     break;
                 }
@@ -5084,10 +5383,11 @@ private:
                         std::cerr << "[raise_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " -> " << rc
                                   << " vm=" << this << " obj=" << objName_ << "\n";
-                    // Wake any process parked on this event (cooperative
-                    // scheduler).  The resumed waiter's hook consumes the
-                    // raised bits.
-                    if (rc == 0) scheduler().wakeEvent(ename);
+                    // Wake processes parked on this event whose wait mask
+                    // intersects the raised bits (original vm_f_raise_event
+                    // resumes only matching pend-list entries).  The resumed
+                    // waiter's hook consumes the raised bits.
+                    if (rc == 0) scheduler().wakeEvent(ename, mask);
                     pushValue(make_int(rc));
                     break;
                 }
@@ -5345,6 +5645,14 @@ private:
                             if (funName.empty()) targetFn = targetVm->functionByIndex(funIndex);
                             else targetFn = targetVm->findFunctionAny(funName);
                         }
+                        if (std::getenv("LPCVM_STUCK_TRACE") && targetVm &&
+                            targetVm->objName().find("filed.o") != std::string::npos) {
+                            std::cerr << "[c8f] from=" << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
+                                      << " funName='" << funName << "' funIndex=" << funIndex
+                                      << " targetFn=" << (targetFn ? targetFn->name : "NULL")
+                                      << " targetIdx=" << (targetFn ? targetFn->index : -1)
+                                      << " codeSz=" << (targetFn ? targetFn->code.size() : -1) << "\n";
+                        }
                         if (vmEnvTrace() && funName == "wait_config")
                             std::cerr << "[case8-wc2] targetVm=" << (targetVm ? targetVm->objName() : "NULL")
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
@@ -5489,17 +5797,37 @@ private:
                             }
                         }
                     } else {
-                        auto args = popArgs();
-                        if (funName.empty()) {
-                            result = runDetached([&] {
-                                return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
-                            });
-                            found = true;
-                        } else {
-                            result = runDetached([&] {
-                                return tryCallOtherObject(searchRoot_, path, funName, args);
-                            });
-                            found = true;
+                        // A real registry key (registered daemon / object).
+                        // This is this_object() on a REGISTERED object, e.g.
+                        // feature/common/save.c calling
+                        // this_object()->get_save_path(&path, &name, &branch).
+                        // If it is a SELF call (the value is owned by this VM)
+                        // carrying reference arguments, run the callee INLINE
+                        // so the refs keep pointing at the caller's slots -
+                        // the detached path flattens them to plain values and
+                        // the by-ref writes are lost (content was created at an
+                        // empty path/name).  Fall back to the detached call
+                        // when the callee is not resolvable in this VM.
+                        bool selfRef = (ov->owner != nullptr) && (ov->owner == &obj_);
+                        bool hasRefArg = false;
+                        if (selfRef) {
+                            for (int i = 0; i < argn && !stack_.empty(); ++i)
+                                if (stack_[stack_.size() - 1 - static_cast<size_t>(i)].isRef) { hasRefArg = true; break; }
+                        }
+                        if (selfRef && hasRefArg) resolveSelf();
+                        if (!(selfRef && hasRefArg && found)) {
+                            auto args = popArgs();
+                            if (funName.empty()) {
+                                result = runDetached([&] {
+                                    return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                                });
+                                found = true;
+                            } else {
+                                result = runDetached([&] {
+                                    return tryCallOtherObject(searchRoot_, path, funName, args);
+                                });
+                                found = true;
+                            }
                         }
                     }
                 }
@@ -5622,6 +5950,30 @@ private:
                                   << " idx=" << cl->funcIndex
                                   << " -> " << (fn ? fn->name : "?") << "\n";
                     if (fn) {
+                        // The closure's function may belong to a DIFFERENT
+                        // object's program than the one executing now (a global
+                        // closure captured by the master over filed.xg_get_name,
+                        // invoked from a zone-master clone's restore).  Its
+                        // obj-var/string/function reads must resolve in the
+                        // FUNCTION's own program (filed's srvQ global), never in
+                        // the current object's table - otherwise filed.do_operate
+                        // running on the clone read the clone's "menu" mapping
+                        // where filed's srvQ index lands and its queue send
+                        // failed, parking restore() forever.  When the function
+                        // is NOT part of this object's constitution, switch to
+                        // its home VM's tables for the inline frame.
+                        const OriginalVm* fnHome = nullptr;
+                        std::shared_ptr<std::vector<Value>> homeVars;
+                        const std::vector<std::string>* homeStrings = nullptr;
+                        const std::map<int, const OriginalFunction*>* homeFuncs = nullptr;
+                        if (!ownedFns_.count(fn)) {
+                            fnHome = originalHomeVmOf(fn);
+                            if (fnHome && fnHome != this) {
+                                homeVars = fnHome->objVarsShared();
+                                homeStrings = &fnHome->object().strings;
+                                homeFuncs = &fnHome->functionTable();
+                            }
+                        }
                         if (inPostInit) {
                             // post_init: run the init INLINE (synchronously) in
                             // the original driver's post_init loop order - the
@@ -5633,7 +5985,8 @@ private:
                             if (vmEnvTrace() || vmEnvEventTrace())
                                 std::cerr << "[postinit-sync] " << cl->functionName << " on " << obj_.sourceName << "\n";
                             bool ph = pushArgsForFunction(*fn, all);
-                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()));
+                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()),
+                                                                homeVars, homeStrings, homeFuncs);
                         } else {
                             if (vmEnvTrace() || vmEnvEventTrace()) {
                                 std::string adbg;
@@ -5647,9 +6000,14 @@ private:
                             // Same-owner / global closure: run INLINE on this
                             // VM's stack via the explicit stack machine (frame
                             // push + stream switch); the callee's return op
-                            // pushes the result itself.
+                            // pushes the result itself.  Cross-program closures
+                            // get the home tables switched in above.
+                            if (homeVars)
+                                std::cerr << "[cfhome] " << cl->functionName << " -> "
+                                          << fnHome->objName() << " from " << objName_ << "\n";
                             bool ph = pushArgsForFunction(*fn, all);
-                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()));
+                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()),
+                                                                homeVars, homeStrings, homeFuncs);
                         }
                         if ((vmEnvTrace() || vmEnvEventTrace()) &&
                             (cl->functionName == "init" || cl->functionName == "do_init"))
@@ -6179,6 +6537,36 @@ void Scheduler::spawnConstruction(std::shared_ptr<OriginalVm> vm, std::vector<Va
 void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& entry,
                              std::vector<Value> args, int64_t atMs,
                              std::shared_ptr<TimerEntry> timerEntry) {
+    // A timer callback must NOT run on the object's REGISTERED VM: that VM's
+    // execution state (frames_/stack_/ip_) is the parked context of whichever
+    // process last suspended on it (the master's post_init closure waiting on
+    // ev_filed0, another timer's get_catalog_ex, ...).  parkAndSuspend keeps
+    // frames in the VM, so a second process entering the same VM OVERWROTE
+    // that parked state - party_war's master stack came back interleaved with
+    // ldba_conn/forward_schedule_status frames and the boot stalled forever.
+    // The original driver gives every PCB its own frame stack with only the
+    // obj vars shared - mirror that with a dedicated VM sharing the
+    // registered VM's variable table.
+    {
+        auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        bool isRegistered = false;
+        for (auto& kv : reg.vms) {
+            if (kv.second.get() == vm.get()) { isRegistered = true; break; }
+        }
+        if (isRegistered) {
+            // MUST use the shared_ptr<const OriginalObject> ctor: obj_ is a
+            // REFERENCE member and the registry keeps the object alive - the
+            // plain-reference ctor with a local copy dangles.
+            std::shared_ptr<const OriginalObject> objKeep;
+            for (auto& kv : reg.objects)
+                if (kv.second.get() == &vm->object()) { objKeep = kv.second; break; }
+            if (!objKeep) objKeep = std::make_shared<OriginalObject>(vm->object());
+            auto dedicated = std::make_shared<OriginalVm>(objKeep, vm->searchRoot());
+            dedicated->shareObjVars(vm.get());
+            vm = std::move(dedicated);
+        }
+    }
     auto p = std::make_shared<Process>();
     p->vm = std::move(vm);
     p->homeVm = p->vm;
@@ -6206,6 +6594,10 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
                       << " key=" << (c.qkey.empty() ? c.ename : c.qkey)
                       << " evWoken=" << p->eventWoken << " timed=" << p->timedEvent << "\n";
         }
+        // De-dup: a second wake source (stale timer, watchdog, double raise)
+        // must not enqueue an already-queued or already-finished process.
+        if (p->inReady || p->done) return;
+        p->inReady = true;
         ready_.push_back(std::move(p));
     }
     cv_.notify_one();
@@ -6213,6 +6605,8 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
 void Scheduler::wakeFront(std::shared_ptr<Process> p) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
+        if (p->inReady || p->done) return;
+        p->inReady = true;
         ready_.push_front(std::move(p));
     }
     cv_.notify_one();
@@ -6221,6 +6615,8 @@ void Scheduler::wakeFront(std::shared_ptr<Process> p) {
 void Scheduler::requeue(std::shared_ptr<Process> p) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
+        if (p->inReady || p->done) return;
+        p->inReady = true;
         ready_.push_back(std::move(p));
     }
     cv_.notify_one();
@@ -6230,6 +6626,42 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     std::lock_guard<std::mutex> lk(mtx_);
     // The parked VM owns the ResumeCond (the VM that threw SuspendSignal).
     const ResumeCond& c = p->parkedVm->resumeCond();
+    // Snapshot the park condition onto the PROCESS (see Process::cond): the
+    // VM's cond_ is a single slot and can be overwritten by a later park on
+    // the same VM, which used to strand this waiter on mask mismatch.
+    p->cond = c;
+    if (std::getenv("LPCVM_STUCK_TRACE")) {
+        std::string pfn = "<global>";
+        size_t pdepth = 0;
+        int64_t pip = -1;
+        std::string chain;
+        if (p->parkedVm) {
+            pdepth = p->parkedVm->frames_.size();
+            pip = static_cast<int64_t>(p->parkedVm->ip());
+            if (!p->parkedVm->frames_.empty() && p->parkedVm->frames_.back().fn)
+                pfn = p->parkedVm->frames_.back().fn->name;
+            // Full chain with per-frame object names: a frame whose object
+            // does NOT match parkedVm's object means the VM's frame stack was
+            // cross-contaminated by another process (e.g. the filed ldba_conn
+            // daemon frame appearing inside the party_war VM's post_init
+            // stack of the __master__ process).
+            for (size_t fi = 0; fi < p->parkedVm->frames_.size() && fi < 8; ++fi) {
+                auto& fr = p->parkedVm->frames_[fi];
+                if (!chain.empty()) chain += "<-";
+                chain += (fr.fn ? fr.fn->name : "?");
+                if (fr.fn) { chain += "#"; chain += std::to_string(fr.fn->index); }
+                if (fr.savedObjVars) chain += "[x]";   // cross-object inline frame
+            }
+        }
+        std::cerr << "[park] proc=" << p.get() << " tid=" << p->tid
+                  << " entry=" << p->entry
+                  << " kind=" << c.kind
+                  << " key=" << (c.qkey.empty() ? c.ename : c.qkey)
+                  << " wakeAt=" << c.wakeAtMs
+                  << " vm=" << (p->parkedVm ? p->parkedVm->objName() : "?")
+                  << " fn=" << pfn << " depth=" << pdepth << " ip=" << pip
+                  << " chain=[" << chain << "]\n";
+    }
     // Fresh park: clear stale wake bookkeeping from any earlier park.
     p->eventWoken = false;
     p->timedEvent = false;
@@ -6292,18 +6724,42 @@ void Scheduler::wakeQueue(const std::string& qkey) {
     if (hit) {
         if (vmEnvTrace())
             std::cerr << "[wq] " << qkey << " wake1\n";
+        if (std::getenv("LPCVM_QUEUE_TRACE"))
+            std::cerr << "[q-wake] " << qkey << " entry=" << hit->entry
+                      << " tid=" << hit->tid << "\n";
         wake(std::move(hit));
+    } else if (std::getenv("LPCVM_QUEUE_TRACE")) {
+        std::cerr << "[q-wake] " << qkey << " NO WAITER\n";
     }
 }
 
-void Scheduler::wakeEvent(const std::string& ename) {
+void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
     std::deque<std::shared_ptr<Process>> hits;
+    std::deque<std::shared_ptr<Process>> keep;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = eventWaiters_.find(ename);
         if (it != eventWaiters_.end()) {
-            hits = std::move(it->second);
-            eventWaiters_.erase(it);
+            for (auto& w : it->second) {
+                // Match on the PROCESS's park snapshot (w->cond), not the VM's
+                // single cond_ slot: a later park on the same VM used to
+                // overwrite the mask and strand this waiter.
+                uint32_t wm = w->cond.mask;
+                // mask 0 (an event parked without a wait_event mask, e.g. a
+                // timed wake) counts as matching any raise so it cannot strand.
+                if ((wm & raisedMask) != 0 || wm == 0)
+                    hits.push_back(std::move(w));
+                else
+                    keep.push_back(std::move(w));
+            }
+            if (keep.empty()) eventWaiters_.erase(it);
+            else it->second = std::move(keep);
+        }
+        // A normal wake ends the park: drop the watchdog's first-sight state
+        // so the next park on this event starts a fresh 15s window.
+        if (!hits.empty()) {
+            wdogFirst_.erase(ename);
+            wdogWho_.erase(ename);
         }
     }
     for (auto& p : hits) {
@@ -6344,10 +6800,35 @@ bool Scheduler::isVmParked(const OriginalVm* vm) {
 // thread (stage F: network threads never touch VM state concurrently).
 Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::string& funName,
                             const std::vector<Value>& args) {
-    if (isSchedulerThread()) return vm->callFunctionByName(funName, args);
+    // Never run on a VM whose execution state belongs to a PARKED process
+    // (see spawnDelayed's note): the driver's reply handlers (msg_read_content
+    // etc.) used to execute on the master VM while the master process was
+    // parked mid-post_init on that same VM, overwriting its frames/stack.
+    std::shared_ptr<OriginalVm> runVm = vm;
+    {
+        bool conflict = isVmParked(vm.get());
+        bool isRegistered = false;
+        {
+            auto& reg = objectRegistry();
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms) {
+                if (kv.second.get() == vm.get()) { isRegistered = true; break; }
+            }
+        }
+        if (conflict || isRegistered) {
+            auto& reg2 = objectRegistry();
+            std::shared_ptr<const OriginalObject> objKeep;
+            for (auto& kv : reg2.objects)
+                if (kv.second.get() == &vm->object()) { objKeep = kv.second; break; }
+            if (!objKeep) objKeep = std::make_shared<OriginalObject>(vm->object());
+            runVm = std::make_shared<OriginalVm>(objKeep, vm->searchRoot());
+            runVm->shareObjVars(vm.get());
+        }
+    }
+    if (isSchedulerThread()) return runVm->callFunctionByName(funName, args);
     auto p = std::make_shared<Process>();
-    p->vm = vm;
-    p->homeVm = vm;
+    p->vm = runVm;
+    p->homeVm = runVm;
     p->entry = funName;
     p->args = args;
     p->resultPromise = std::make_shared<std::promise<Value>>();
@@ -6374,6 +6855,15 @@ void Scheduler::wakeEventFront(const std::string& ename) {
             hits = std::move(it->second);
             eventWaiters_.erase(it);
         }
+        if (!hits.empty()) {
+            wdogFirst_.erase(ename);
+            wdogWho_.erase(ename);
+        }
+        // These waiters may ALSO hold a timeout timer (timed wait_event).
+        // Mark them woken so the timer cannot re-enqueue them after the
+        // construction already completed (double-resume used to corrupt the
+        // master's boot state).
+        for (auto& p : hits) p->eventWoken = true;
     }
     for (auto& p : hits) wakeFront(std::move(p));
 }
@@ -6398,6 +6888,51 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
         }
     }
     for (auto& p : hits) wake(std::move(p));
+}
+
+void Scheduler::dumpWaiters() {
+    static const bool on = (std::getenv("LPCVM_STUCK_TRACE") != nullptr);
+    if (!on) return;
+    int64_t nd = nowMs();
+    if (nd - lastWaitDumpMs_ < 5000) return;
+    lastWaitDumpMs_ = nd;
+    std::lock_guard<std::mutex> lk(mtx_);
+    auto objOf = [](const std::shared_ptr<Process>& w) -> const std::string& {
+        static const std::string none = "<none>";
+        if (w->parkedVm) return w->parkedVm->objName_;
+        if (w->vm) return w->vm->objName_;
+        return none;
+    };
+    auto varsOf = [](const std::shared_ptr<Process>& w) -> const void* {
+        if (w->parkedVm) return w->parkedVm->objVars_.get();
+        if (w->vm) return w->vm->objVars_.get();
+        return nullptr;
+    };
+    for (auto& kv : eventWaiters_)
+        for (auto& w : kv.second)
+            std::cerr << "[wait-dump] event=" << kv.first << " entry=" << w->entry
+                      << " obj=" << objOf(w) << " tid=" << w->tid
+                      << " vars=" << varsOf(w) << "\n";
+    for (auto& kv : queueWaiters_)
+        for (auto& w : kv.second)
+            std::cerr << "[wait-dump] queue=" << kv.first << " entry=" << w->entry
+                      << " obj=" << objOf(w) << " tid=" << w->tid
+                      << " vars=" << varsOf(w) << "\n";
+    for (auto& kv : sockWaiters_)
+        for (auto& w : kv.second)
+            std::cerr << "[wait-dump] fd=" << kv.first << " entry=" << w->entry
+                      << " obj=" << objOf(w) << " tid=" << w->tid
+                      << " vars=" << varsOf(w) << "\n";
+    for (auto& w : parked_)
+        std::cerr << "[wait-dump] parked entry=" << w->entry
+                  << " obj=" << objOf(w) << " tid=" << w->tid
+                  << " vars=" << varsOf(w) << "\n";
+    for (auto& te : timers_)
+        if (te.second.p)
+            std::cerr << "[wait-dump] timer at=" << te.first
+                      << " entry=" << te.second.p->entry
+                      << " obj=" << objOf(te.second.p)
+                      << " proc=" << te.second.p.get() << "\n";
 }
 
 void Scheduler::run() {
@@ -6432,6 +6967,9 @@ void Scheduler::run() {
     });
     schedThreadId_ = std::this_thread::get_id();
     while (true) {
+        // Wall-clock waiter dump (LPCVM_STUCK_TRACE): runs even while the
+        // ready queue is busy, unlike the idle dump below.
+        dumpWaiters();
         // Poll parked sockets (kind-5 waits: connect/recv) REGARDLESS of
         // whether the ready queue is busy.  The original vm_mainLoop scans
         // sockets every iteration; if some daemon keeps the ready queue fed
@@ -6463,11 +7001,20 @@ void Scheduler::run() {
         {
             std::lock_guard<std::mutex> lk(mtx_);
             // Move due timers to ready.
+            static const bool timerTraceOn = (std::getenv("LPCVM_STUCK_TRACE") != nullptr);
             while (!timers_.empty() && timers_.begin()->first <= now) {
                 auto it = timers_.begin();
                 auto te = it->second;
+                int64_t fireAt = it->first;   // cache BEFORE erase (iterator dies)
                 timers_.erase(it);
                 auto tp = te.p;
+                if (timerTraceOn)
+                    std::cerr << "[timer-fire] at=" << fireAt << " now=" << now
+                              << " entry=" << (tp ? tp->entry : "?")
+                              << " proc=" << (tp ? (void*)tp.get() : (void*)nullptr)
+                              << " evWoken=" << (tp ? (int)tp->eventWoken : -1)
+                              << " cancelled=" << (te.cancelled ? (int)*te.cancelled : -1)
+                              << " done=" << (tp ? (int)tp->done : -1) << "\n";
                 // A re-park cancelled this wake timer (the process is now
                 // waiting on a DIFFERENT condition); drop it - it must not
                 // resume the new park.
@@ -6476,14 +7023,23 @@ void Scheduler::run() {
                 // stale timer; otherwise this IS the timeout -> resume with
                 // the timeout result (-501, matching the zero-timeout branch).
                 if (tp->eventWoken) continue;
+                // A finished process must never be re-enqueued by its stale
+                // timeout timer (the timer outlives the process when a later
+                // re-park could not cancel it): dropping the entry here also
+                // unblocks the timers_ queue - expired done-process timers
+                // used to pile up and kept the master's recovery loop stuck.
+                if (tp->done) continue;
+                if (tp->inReady) continue;
                 tp->eventWoken = true;
                 if (tp->timedEvent && tp->vm)
                     tp->vm->parkedResumeValue() = make_int(-501);
+                tp->inReady = true;
                 ready_.push_back(std::move(tp));
             }
             if (!ready_.empty()) {
                 p = std::move(ready_.front());
                 ready_.pop_front();
+                p->inReady = false;
             }
         }
         if (p) {
@@ -6546,6 +7102,68 @@ void Scheduler::run() {
                             if (te.second.p)
                                 std::cerr << "[idle-timer] at=" << te.first
                                           << " entry=" << te.second.p->entry << "\n";
+                    }
+                    // Construction watchdog.  An object-construction
+                    // (__init__) or the master's load_object park waits on an
+                    // event ("obj-init:<key>", filed "ev_filed*", ...) that can
+                    // never fire when a cross-service reply is lost (e.g. the
+                    // dba 0x4401 read_content answers that never reach gs),
+                    // which froze the whole boot after /gs/zone/hell.c.  The
+                    // original driver's operate path expires such requests
+                    // (~20s) and the caller recovers; mirror that at the
+                    // process level: if the FRONT waiter of an event is a
+                    // construction/master parked >15s, force-wake it so its
+                    // resume hook reports failure and loading continues.
+                    // (First-sight bookkeeping lives in Scheduler members so
+                    // normal wakeEvent/wakeEventFront clears it; stale entries
+                    // used to make the watchdog fire on freshly re-parked
+                    // waiters.)
+                    std::vector<std::shared_ptr<Process>> wdog;
+                    for (auto& kv : eventWaiters_) {
+                        if (kv.second.empty()) continue;
+                        const auto& w = kv.second.front();
+                        bool filedWait = kv.first.rfind("ev_filed", 0) == 0 ||
+                                         kv.first.rfind("obj-init:", 0) == 0;
+                        if (!filedWait) continue;
+                        if (w->done) continue;
+                        auto itF = wdogFirst_.find(kv.first);
+                        uintptr_t who = reinterpret_cast<uintptr_t>(w.get());
+                        if (itF == wdogFirst_.end() || wdogWho_[kv.first] != who) {
+                            wdogFirst_[kv.first] = nd;   // first sight: record, do not wake yet
+                            wdogWho_[kv.first] = who;
+                            continue;
+                        }
+                        // The original driver's operate path expires a request
+                        // after ~20s and the caller recovers with a failed
+                        // result; mirror that cadence.
+                        if (nd - itF->second < 15000) continue;
+                        std::cerr << "[construct-wdog] event=" << kv.first
+                                  << " entry=" << w->entry
+                                  << " stalled " << (nd - itF->second) / 1000
+                                  << "s; force-waking (failed result)\n";
+                        wdog.push_back(kv.second.front());
+                    }
+                    if (!wdog.empty()) {
+                        std::vector<std::string> keys;
+                        for (auto& kv : eventWaiters_) keys.push_back(kv.first);
+                        for (auto& kkey : keys) {
+                            auto it = eventWaiters_.find(kkey);
+                            if (it == eventWaiters_.end()) continue;
+                            auto& dq = it->second;
+                            bool removed = false;
+                            for (size_t k = 0; k < dq.size();) {
+                                bool isW = false;
+                                for (auto& w : wdog)
+                                    if (dq[k] == w) { isW = true; break; }
+                                if (isW) { dq.erase(dq.begin() + static_cast<long long>(k)); removed = true; }
+                                else ++k;
+                            }
+                            if (dq.empty()) { eventWaiters_.erase(it); wdogFirst_.erase(kkey); wdogWho_.erase(kkey); }
+                            else if (removed) { wdogFirst_[kkey] = nd; wdogWho_[kkey] = reinterpret_cast<uintptr_t>(dq.front().get()); }   // fresh window for the next waiter
+                        }
+                        lk.unlock();
+                        for (auto& w : wdog) wake(w);
+                        lk.lock();
                     }
                 }
             }
@@ -6772,10 +7390,17 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         } else {
             p->parkedVm = p->vm;
         }
-        if (vmEnvTrace())
+        if (vmEnvTrace() || constructDiagOn()) {
+            std::string extra;
+            if (constructDiagOn()) {
+                OriginalVm* dv = sig.vm ? sig.vm : (p->parkedVm ? p->parkedVm.get() : nullptr);
+                if (dv) extra = " " + dv->parkDiag(sig.cond);
+            }
             std::cerr << "[sched-park] " << p->entry << " kind=" << sig.cond.kind
                       << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
-                      << " vm=" << p->vm.get() << " parkedVm=" << p->parkedVm.get() << "\n";
+                      << " vm=" << p->vm.get() << " parkedVm=" << p->parkedVm.get()
+                      << extra << "\n";
+        }
         // Register the wakeup under the PARKED VM's cond (it owns cond_).
         parkCurrent(p);
     } catch (const std::exception& e) {
@@ -6809,6 +7434,32 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
 Scheduler& scheduler() {
     static Scheduler s;
     return s;
+}
+
+const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {
+    if (!fn) return nullptr;
+    // Small bounded cache: cross-object closure home lookups happen at every
+    // such call; the scan is only for the cache miss.  Guarded by its own
+    // mutex (registryMutex may be held by the caller's thread already; using
+    // the recursive registry mutex for the scan is fine too but the cache
+    // must not grow unboundedly - functions are a bounded static set).
+    static std::unordered_map<const OriginalFunction*, const OriginalVm*> cache;
+    static std::mutex mtx;
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        auto it = cache.find(fn);
+        if (it != cache.end()) return it->second;
+    }
+    const OriginalVm* hit = nullptr;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : objectRegistry().vms) {
+            if (kv.second && kv.second->ownsFunction(fn)) { hit = kv.second.get(); break; }
+        }
+    }
+    std::lock_guard<std::mutex> lk(mtx);
+    cache[fn] = hit;
+    return hit;
 }
 
 // ---- efun watchdog state definitions ----
@@ -7586,9 +8237,9 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // sets my_import_name from object_template() so a clone's
         // get_name()/query() fall through to its basic object's dbase.  Our
         // multi-create chain may skip it, leaving a place_char'd NPC clone
-        // (å®ˆæŠ¤å¤©ç¥ž etc.) with an empty my_import_name and get_name()
+        // (ÊØ»¤ÌìÉñ etc.) with an empty my_import_name and get_name()
         // undefined -> get_registered_name() undefined -> guardd can't find
-        // å®ˆæŠ¤å¤©ç¥ž@å¤©å¢‰åŸŽ.  Re-run the template's import on the clone (it is
+        // ÊØ»¤ÌìÉñ@ÌìÜ­³Ç.  Re-run the template's import on the clone (it is
         // idempotent: re-sets my_import_name, file_id and the npc.list
         // attributes including name).
         if (tmplVm && rel.find("npc/basic") != std::string::npos) {

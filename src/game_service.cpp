@@ -1306,7 +1306,7 @@ void handleMsgIntInt(GameClient& cl, const uint8_t* body, size_t len, const char
     // do_operate sees -1 instead of 4294967295.
     int32_t a = static_cast<int32_t>(rd32be(body));
     int32_t b = static_cast<int32_t>(rd32be(body + 4));
-    if (std::getenv("LPCVM_TRACE"))
+    if (std::getenv("LPCVM_SVC_TRACE"))
         std::cerr << "[game] " << fun << " client=" << cl.clientNo
                   << " a=" << a << " b=" << b << "\n";
     applyLpc(fun, {make_int(cl.clientNo), make_int(a), make_int(b)});
@@ -11787,10 +11787,14 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
-    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
+        std::string hex;
+        static const char* hx = "0123456789ABCDEF";
+        for (size_t i = 0; i < len && i < 24; ++i) { hex += hx[body[i] >> 4]; hex += hx[body[i] & 15]; }
         std::cerr << "[dispatch] cmd=0x" << std::hex << cmdNo << std::dec
                   << " client=" << cl.clientNo << " attrib=" << cl.attrib
-                  << " len=" << len << "\n";
+                  << " len=" << len << " body=" << hex << "\n";
+    }
     // Primary path: packet protocol analyser (comm_desc.txt interfaces).
     int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
     if (pa == 1) return;   // handled by the protocol interface
@@ -12923,8 +12927,16 @@ int startGameService(int port) {
                     auto root = lpc::masterSearchRoot();
                     Value agent = callMasterProgramFunction("find_agent_by_client",
                                                            {make_int(clientNo)}, root);
+                    std::string peer = "?";
+                    sockaddr_in sin{};
+                    int slen = static_cast<int>(sizeof(sin));
+                    if (getpeername(c, reinterpret_cast<sockaddr*>(&sin), &slen) == 0) {
+                        char pbuf[64];
+                        snprintf(pbuf, sizeof(pbuf), "%s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+                        peer = pbuf;
+                    }
                     std::cerr << "[accept] client=" << clientNo << " agent-type="
-                              << static_cast<int>(agent.index()) << "\n";
+                              << static_cast<int>(agent.index()) << " peer=" << peer << "\n";
                 }
                 char buf[4096];
                 for (;;) {
@@ -13027,6 +13039,26 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
     // to its global scanner; we spawn a dedicated recv thread per connection.
     int clientNo = nextGameClientNo().fetch_add(1);
     {
+        sockaddr_in sin{};
+        int slen = static_cast<int>(sizeof(sin));
+        std::string peer = "?";
+        std::string local = "?";
+        if (getpeername(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr*>(&sin), &slen) == 0) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+            peer = buf;
+        }
+        sockaddr_in ls{};
+        int llen = static_cast<int>(sizeof(ls));
+        if (getsockname(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr*>(&ls), &llen) == 0) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s:%d", inet_ntoa(ls.sin_addr), ntohs(ls.sin_port));
+            local = buf;
+        }
+        std::cerr << "[bind] fd=" << fd << " cno=" << clientNo << " type=" << clientType
+                  << " peer=" << peer << " local=" << local << "\n";
+    }
+    {
         GameClient cl;
         cl.fd = fd;
         cl.clientNo = clientNo;
@@ -13039,6 +13071,9 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
     }
     std::thread([fd, clientNo]() {
         char buf[4096];
+        int64_t thrRecvBytes = 0;
+        int64_t thrRecvReads = 0;
+        int64_t thrNoData = 0;
         for (;;) {
             int n = recv(static_cast<SOCKET>(fd), buf, sizeof(buf), 0);
             if (n == SOCKET_ERROR) {
@@ -13047,20 +13082,29 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
                 // in the virtual socket layer): no data yet is NOT an error -
                 // retry after a short sleep instead of killing the connection.
                 if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+                    if (++thrNoData <= 1 || (thrNoData % 5000) == 0)
+                        std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
+                                  << " no-data spins=" << thrNoData << "\n";
                     Sleep(1);
                     continue;
                 }
-                std::cerr << "[recv] fd=" << fd << " cno=" << clientNo << " err=" << err << "\n";
+                std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
+                          << " EXIT recv-err err=" << err
+                          << " reads=" << thrRecvReads << " bytes=" << thrRecvBytes << "\n";
                 break;
             }
-            {
-                std::string hex;
-                static const char* hx = "0123456789ABCDEF";
-                for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[recv] fd=" << fd << " cno=" << clientNo << " n=" << n << " " << hex << "\n";
+            if (n == 0) {
+                std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
+                          << " EXIT closed-by-peer"
+                          << " reads=" << thrRecvReads << " bytes=" << thrRecvBytes << "\n";
+                break;
             }
-            if (n <= 0) break;
+            ++thrRecvReads;
+            thrRecvBytes += n;
+            if (thrRecvReads <= 50 || (thrRecvReads % 200) == 0)
+                std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
+                          << " read n=" << n << " reads=" << thrRecvReads
+                          << " bytes=" << thrRecvBytes << "\n";
             GameClient* cur;
             {
                 std::lock_guard<std::mutex> lk(gameMutex());
