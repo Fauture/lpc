@@ -827,7 +827,9 @@ struct VmError : std::runtime_error {
 struct ResumeCond {
     // kind: 0 = not parked, 1 = timer (wakeAtMs), 2 = queue (qkey),
     //       3 = event (ename), 4 = forever (only woken externally),
-    //       5 = socket readable/writable (fd; polled by the scheduler)
+    //       5 = socket readable/writable (fd; polled by the scheduler),
+    //       6 = mutex (ename = mutex name; give_mutex transfers ownership
+    //           and wakes, the take's timeout timer resumes with -202)
     int kind = 0;
     int64_t wakeAtMs = 0;       // kind 1
     std::string qkey;           // kind 2
@@ -1140,6 +1142,144 @@ public:
         }
     }
 
+    // ---- process-level (PCB) named mutexes ----
+    // vm_f_take_mutex (0x80f16cc) / vm_f_give_mutex (0x80f1564) operate on
+    // Vm_Lib_Mutex_T { level, pOwnerPCB, pend list }: ownership is per-PROCESS,
+    // NOT per OS thread.  Every LPC process runs on ONE scheduler thread, so
+    // the old std::recursive_mutex implementation let ANY process re-enter a
+    // mutex held by a PARKED process (mutual exclusion was a no-op): configd's
+    // tid 2/10/17 all entered the try_to_connect_aaa critical section at once,
+    // raced aaa_client_no / concurrent connects and produced the dead-cno=1 +
+    // "CONFIG_D connect to AAA failed" boot stall.
+    struct MutexRec {
+        int level = 0;                     // 0 free; >0 held (recursive keeps owner)
+        std::shared_ptr<Process> owner;    // holder process (PCB)
+    };
+    // name -> mutex record (created by create_mutex; take on an UNKNOWN name
+    // returns -101 like the original's vm_getPendObject miss - configd's
+    // create() runs create_mutex("mconfig") before any read_etc).
+    std::unordered_map<std::string, MutexRec> procMutexes_;
+    // name -> processes parked in take_mutex (kind 6).
+    std::unordered_map<std::string, std::deque<std::shared_ptr<Process>>> mutexWaiters_;
+
+    MutexRec* procMutexFind(const std::string& name) {
+        auto it = procMutexes_.find(name);
+        return it == procMutexes_.end() ? nullptr : &it->second;
+    }
+    void procMutexCreate(const std::string& name) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        procMutexes_[name];   // ensure the record exists (fresh level 0)
+    }
+    void procMutexErase(const std::string& name) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        procMutexes_.erase(name);
+        mutexWaiters_.erase(name);
+    }
+    std::shared_ptr<Process> currentProcessShared() const { return currentProcess_; }
+
+    // vm_f_give_mutex + vm_releaseMutex (0x80f2850): only the owner releases;
+    // level-- and at 0 the ownership transfers DIRECTLY to the head pend
+    // waiter (level=1, owner=head) and it is resumed - exactly the original's
+    // pPendingPCB handoff.  Returns 0 on success, -101 unknown mutex, -201
+    // not the owner.
+    int procMutexGive(const std::string& name) {
+        std::shared_ptr<Process> head;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it = procMutexes_.find(name);
+            if (it == procMutexes_.end()) return -101;
+            MutexRec& rec = it->second;
+            auto cur = currentProcess_;
+            if (rec.level <= 0 || !cur || rec.owner != cur) return -201;
+            if (--rec.level > 0) return 0;
+            rec.owner.reset();
+            // Transfer to the head waiter (vm_releaseMutex), if any.
+            auto wit = mutexWaiters_.find(name);
+            if (wit != mutexWaiters_.end() && !wit->second.empty()) {
+                head = std::move(wit->second.front());
+                wit->second.pop_front();
+                if (wit->second.empty()) mutexWaiters_.erase(wit);
+                if (head && !head->done) {
+                    rec.level = 1;
+                    rec.owner = head;
+                }
+            }
+        }
+        if (head) {
+            // The waiter resumes inside take_mutex with result 0; it now owns
+            // the mutex.
+            wake(std::move(head));
+        }
+        return 0;
+    }
+
+    // A process finished (or died): the original's vm_holdObject machinery
+    // force-releases every mutex it still holds (vm_releaseMutex runs as the
+    // hold callback on PCB destruction), handing each to its head waiter.
+    void releaseMutexesHeldBy(const std::shared_ptr<Process>& p) {
+        std::vector<std::shared_ptr<Process>> heirs;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            for (auto& kv : procMutexes_) {
+                MutexRec& rec = kv.second;
+                if (rec.level <= 0 || rec.owner != p) continue;
+                rec.level = 0;
+                rec.owner.reset();
+                auto wit = mutexWaiters_.find(kv.first);
+                if (wit != mutexWaiters_.end() && !wit->second.empty()) {
+                    auto head = std::move(wit->second.front());
+                    wit->second.pop_front();
+                    if (wit->second.empty()) mutexWaiters_.erase(wit);
+                    if (head && !head->done) {
+                        rec.level = 1;
+                        rec.owner = head;
+                        heirs.push_back(std::move(head));
+                    }
+                }
+            }
+        }
+        for (auto& h : heirs) wake(std::move(h));
+    }
+
+    // Remove every stale wait entry of `p` from the waiter maps (call with
+    // mtx_ held).  A timed wait_event whose timeout timer fired used to leave
+    // its entry in eventWaiters_ (read_etc's 1s retry loop accumulated a dozen
+    // phantom ev_readetcd0 tid=2 entries); a process woken through another
+    // map left its socket entry behind (the eternal fd=14/fd=15 configd
+    // waiters).  The stale entries either accumulated forever or caused
+    // double-wakes (a raise/poll resumed an ALREADY-RUNNING process - pure
+    // scheduling corruption).
+    void purgeWaitersLocked(const std::shared_ptr<Process>& p) {
+        auto purgeDeque = [](std::deque<std::shared_ptr<Process>>& dq,
+                             const std::shared_ptr<Process>& target) {
+            size_t w = 0;
+            for (size_t r = 0; r < dq.size(); ++r)
+                if (dq[r] != target) dq[w++] = std::move(dq[r]);
+            dq.resize(w);
+        };
+        for (auto it = eventWaiters_.begin(); it != eventWaiters_.end();) {
+            purgeDeque(it->second, p);
+            if (it->second.empty()) it = eventWaiters_.erase(it);
+            else ++it;
+        }
+        for (auto it = queueWaiters_.begin(); it != queueWaiters_.end();) {
+            purgeDeque(it->second, p);
+            if (it->second.empty()) it = queueWaiters_.erase(it);
+            else ++it;
+        }
+        for (auto it = sockWaiters_.begin(); it != sockWaiters_.end();) {
+            purgeDeque(it->second, p);
+            if (it->second.empty()) it = sockWaiters_.erase(it);
+            else ++it;
+        }
+        for (auto it = mutexWaiters_.begin(); it != mutexWaiters_.end();) {
+            purgeDeque(it->second, p);
+            if (it->second.empty()) it = mutexWaiters_.erase(it);
+            else ++it;
+        }
+        parked_.erase(std::remove(parked_.begin(), parked_.end(), p), parked_.end());
+    }
+
     std::mutex mtx_;
     std::condition_variable cv_;
     std::deque<std::shared_ptr<Process>> ready_;
@@ -1406,6 +1546,17 @@ public:
     }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
+        if (name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+            std::string adbg;
+            for (auto& a : args) {
+                if (!adbg.empty()) adbg += " | ";
+                adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 90);
+            }
+            std::cerr << "[c2i-call:callByName] obj=" << objName_ << " thisObj=" << thisObjectName_
+                      << " prevObj=" << previousObjectName_ << " argsN=" << args.size()
+                      << " [" << adbg << "]\n";
+            std::cerr.flush();
+        }
         // Resolve through own + inherited functions (like vm_lookupIdentInProgram
         // on the global program used by vm_apply): a command function such as
         // msg_l_auth may live in an inherited program, not the master itself.
@@ -1576,6 +1727,32 @@ public:
     }
 
     Value callFunctionByIndex(int index) {
+        if (std::getenv("LPCVM_ERR_TRACE")) {
+            const OriginalFunction* f = nullptr;
+            auto it = funcsByIndex_.find(index);
+            if (it != funcsByIndex_.end()) f = it->second;
+            if (f && f->name == "convert_to_int") {
+                std::string chain;
+                for (const auto& fr : frames_) {
+                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                    if (!chain.empty()) chain += "<-";
+                    chain += fnm;
+                }
+                std::string adbg;
+                for (int i = 0; i < 8; ++i) {
+                    int si = static_cast<int>(stack_.size()) - 1 - i;
+                    if (si < 0) break;
+                    if (!adbg.empty()) adbg += " | ";
+                    adbg += std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" +
+                            to_string(stack_[static_cast<size_t>(si)].value, false).substr(0, 90);
+                }
+                std::cerr << "[c2i-call:byIndex] obj=" << objName_ << " thisObj=" << thisObjectName_
+                          << " prevObj=" << previousObjectName_ << " index=" << index
+                          << " frames=" << frames_.size() << " chain=[" << chain
+                          << "] sz=" << stack_.size() << " [" << adbg << "]\n";
+                std::cerr.flush();
+            }
+        }
         auto it = funcsByIndex_.find(index);
         if (it == funcsByIndex_.end()) return make_int(0);
         return executeFunctionOnStack(*it->second);
@@ -2275,13 +2452,21 @@ private:
                 StackItem& slot = stack_[static_cast<size_t>(target->slotIndex)];
                 if (slot.value.index() == 11) {
                     // The slot holds a CrossVmRef argument: the assignment
-                    // must land in the CALLER VM's object variable, and the
-                    // slot keeps the CrossVmRef so later `+=`/`=` writes keep
-                    // forwarding (importd.create_data's attrib_index).
+                    // must land in the CALLER VM's object variable / local
+                    // slot, and the slot keeps the CrossVmRef so later
+                    // `+=`/`=` writes keep forwarding
+                    // (importd.create_data's attrib_index).
                     auto r = std::get<std::shared_ptr<CrossVmRef>>(slot.value);
                     OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
-                    if (vm && r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->objVars().size())
-                        vm->objVars()[static_cast<size_t>(r->objIndex)] = v;
+                    if (vm) {
+                        if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
+                            StackItem& cslot = vm->stack_[static_cast<size_t>(r->slotIndex)];
+                            cslot.value = v;
+                        } else if (r->objIndex >= 0 &&
+                                   static_cast<size_t>(r->objIndex) < vm->objVars().size()) {
+                            vm->objVars()[static_cast<size_t>(r->objIndex)] = v;
+                        }
+                    }
                     // leave slot.value as the CrossVmRef
                 } else {
                     slot.value = v;
@@ -2309,13 +2494,23 @@ private:
     }
 
     // Resolve a CrossVmRef argument to the value in the CALLER VM's object
-    // variable (the callee reads the ref parameter through this).  Non-ref
-    // values pass through unchanged.
+    // variable / local stack slot (the callee reads the ref parameter through
+    // this).  Non-ref values pass through unchanged.
     Value resolveCrossVmRef(const Value& v) const {
         if (v.index() == 11) {
             auto r = std::get<std::shared_ptr<CrossVmRef>>(v);
             OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
-            if (vm && r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->objVars().size())
+            if (!vm) return make_int(0);
+            if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
+                const StackItem& it = vm->stack_[static_cast<size_t>(r->slotIndex)];
+                if (it.isRef) {
+                    // ref-to-ref: the caller's slot itself is a reference
+                    // (nested case-8 ref chain); follow it on the CALLER VM.
+                    return vm->deref(it);
+                }
+                return vm->resolveCrossVmRef(it.value);
+            }
+            if (r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->objVars().size())
                 return vm->objVars()[static_cast<size_t>(r->objIndex)];
             return make_int(0);
         }
@@ -2446,6 +2641,42 @@ private:
                     if (ai) msg += " ";
                     msg += to_string(args[ai], false);
                 }
+                if (std::getenv("LPCVM_ERR_TRACE")) {
+                    std::string chain;
+                    for (const auto& fr : frames_) {
+                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                        if (!chain.empty()) chain += "<-";
+                        chain += fnm;
+                    }
+                    std::string dbg;
+                    for (size_t ai = 0; ai < args.size(); ++ai) {
+                        if (ai) dbg += " ";
+                        dbg += to_string(args[ai], false);
+                    }
+                    std::cerr << "[lpc-error] obj=" << objName_
+                              << " ip=" << ip_ << " frames=" << frames_.size()
+                              << " chain=[" << chain << "] msg=[" << dbg << "]\n";
+                    if (!frames_.empty()) {
+                        const Frame& fr = frames_.back();
+                        std::string wnd;
+                        int bp = fr.bp;
+                        int lo = std::max(0, bp - 10);
+                        int hi = static_cast<int>(stack_.size());
+                        for (int i = lo; i < hi && i <= bp + 12; ++i) {
+                            if (!wnd.empty()) wnd += " | ";
+                            std::string vs;
+                            try { vs = to_string(stack_[static_cast<size_t>(i)].value, false); }
+                            catch (...) { vs = "<err>"; }
+                            if (vs.size() > 90) vs = vs.substr(0, 90);
+                            wnd += std::to_string(i) + ":" + std::to_string(stack_[static_cast<size_t>(i)].value.index()) + ":" + vs;
+                        }
+                        std::cerr << "[lpc-error-stack] fn=" << (fr.fn ? fr.fn->name : "?")
+                                  << " bp=" << bp << " argN=" << fr.argNum
+                                  << " locN=" << fr.localCount << " sz=" << stack_.size()
+                                  << " [" << wnd << "]\n";
+                    }
+                    std::cerr.flush();
+                }
                 throw VmError(msg);
             }
             if (nm == "object_template") {
@@ -2454,7 +2685,7 @@ private:
                 // template.  basic_object.c's create() uses it on clones to
                 // inherit my_import_name from the template, which is what lets
                 // a place_char'd NPC clone's get_name()/query() fall through to
-                // its basic object's dbase (name ÊØ»¤ÌìÉñ etc.).
+                // its basic object's dbase (name ï¿½Ø»ï¿½ï¿½ï¿½ï¿½ï¿½ etc.).
                 if (templateVm_) {
                     std::string tp = templateVm_->thisObjectName_;
                     if (tp == "<this>" || tp.empty()) tp = templateVm_->objName();
@@ -2517,6 +2748,22 @@ private:
                 }
                 const OriginalFunction* targetFn = nullptr;
                 if (targetVm) targetFn = targetVm->findFunctionAny(funName);
+                if (funName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+                    std::string chain;
+                    for (const auto& fr : frames_) {
+                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                        if (!chain.empty()) chain += "<-";
+                        chain += fnm;
+                    }
+                    std::string adbg;
+                    for (auto& a : callArgs) {
+                        if (!adbg.empty()) adbg += " | ";
+                        adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 80);
+                    }
+                    std::cerr << "[c2i-call:call_other] callerObj=" << objName_ << " chain=[" << chain
+                              << "] path=" << path << " fun=" << funName << " [" << adbg << "]\n";
+                    std::cerr.flush();
+                }
                 if (targetFn && targetFn->index >= 0) {
                     if (objName_.find('#') != std::string::npos) {
                         // Clone callers (NPC master-fire's save chain calling
@@ -2534,41 +2781,33 @@ private:
                     int declared = fn.argCount;
                     int pad = (declared > static_cast<int>(callArgs.size()))
                                   ? declared - static_cast<int>(callArgs.size()) : 0;
+                    size_t base = stack_.size();
                     for (int i = 0; i < pad; ++i) pushValue(Value{});
                     for (int i = static_cast<int>(callArgs.size()) - 1; i >= 0; --i)
                         pushValue(callArgs[static_cast<size_t>(i)]);
                     if (declared == 0 && callArgs.empty()) {
                         pushValue(Value{});
                         if (startInlineFunction(fn, true, 0, targetVm->objVarsShared(),
-                                                &targetVm->object().strings)) {
+                                                &targetVm->object().strings,
+                                                &targetVm->functionTable())) {
                             efunInlineStarted_ = true;
                             return make_int(0);   // callee's return op pushes the result
                         }
-                        // Inline failed (shallow stack): run synchronously, but
-                        // the callee is a CROSS-OBJECT function (e.g. filed.o's
-                        // do_operate) - its globals (srvQ) must resolve in ITS
-                        // object table.  startInlineFunction only switches the
-                        // table when it succeeds, so switch here; the frame's
-                        // savedObjVars restores the caller's table on pop
-                        // (park-safe: the parked image keeps the callee table).
-                        if (objVars_ != targetVm->objVarsShared() && !savedObjVarsForNextCall_) {
-                            savedObjVarsForNextCall_ = objVars_;
-                            objVars_ = targetVm->objVarsShared();
-                        }
-                        return executeFunctionOnStack(fn, true, 0);
+                        // Inline failed (shallow stack): run on the TARGET's
+                        // registry VM (correct obj vars AND function table).
+                        stack_.resize(base);
+                        return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                     }
                     bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
                                                      targetVm->objVarsShared(),
-                                                     &targetVm->object().strings);
+                                                     &targetVm->object().strings,
+                                                     &targetVm->functionTable());
                     if (inlOk) {
                         efunInlineStarted_ = true;
                         return make_int(0);
                     }
-                    if (objVars_ != targetVm->objVarsShared()) {
-                        savedObjVarsForNextCall_ = objVars_;
-                        objVars_ = targetVm->objVarsShared();
-                    }
-                    return executeFunctionOnStack(fn, false, static_cast<int>(callArgs.size()));
+                    stack_.resize(base);
+                    return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                 }
                 return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
             }
@@ -2632,34 +2871,33 @@ private:
                         int declared = fn.argCount;
                         int pad = (declared > static_cast<int>(callArgs.size()))
                                       ? declared - static_cast<int>(callArgs.size()) : 0;
+                        size_t base = stack_.size();
                         for (int i = 0; i < pad; ++i) pushValue(Value{});
                         for (int i = static_cast<int>(callArgs.size()) - 1; i >= 0; --i)
                             pushValue(callArgs[static_cast<size_t>(i)]);
                         if (declared == 0 && callArgs.empty()) {
                             pushValue(Value{});
                             if (startInlineFunction(fn, true, 0, targetVm->objVarsShared(),
-                                                    &targetVm->object().strings)) {
+                                                    &targetVm->object().strings,
+                                                    &targetVm->functionTable())) {
                                 efunInlineStarted_ = true;
                                 return make_int(0);   // callee's return op pushes the result
                             }
-                            if (objVars_ != targetVm->objVarsShared()) {
-                                savedObjVarsForNextCall_ = objVars_;
-                                objVars_ = targetVm->objVarsShared();
-                            }
-                            return executeFunctionOnStack(fn, true, 0);
+                            // Inline failed: run on the TARGET's registry VM
+                            // (correct obj vars AND function table).
+                            stack_.resize(base);
+                            return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                         }
                         bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
                                                          targetVm->objVarsShared(),
-                                                         &targetVm->object().strings);
+                                                         &targetVm->object().strings,
+                                                         &targetVm->functionTable());
                         if (inlOk) {
                             efunInlineStarted_ = true;
                             return make_int(0);
                         }
-                        if (objVars_ != targetVm->objVarsShared() && !savedObjVarsForNextCall_) {
-                            savedObjVarsForNextCall_ = objVars_;
-                            objVars_ = targetVm->objVarsShared();
-                        }
-                        return executeFunctionOnStack(fn, false, static_cast<int>(callArgs.size()));
+                        stack_.resize(base);
+                        return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                     }
                 }
                 return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
@@ -3169,6 +3407,24 @@ private:
                                 if (&kv.second->object() == cl->owner) { ownerVm = kv.second; break; }
                         }
                         if (ownerVm) {
+                            if ((cl->functionName == "convert_to_int" ||
+                                 (cl->func && cl->func->name == "convert_to_int")) &&
+                                std::getenv("LPCVM_ERR_TRACE")) {
+                                std::string chain;
+                                for (const auto& fr : frames_) {
+                                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                    if (!chain.empty()) chain += "<-";
+                                    chain += fnm;
+                                }
+                                std::string adbg;
+                                for (auto& a : all) {
+                                    if (!adbg.empty()) adbg += " | ";
+                                    adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 100);
+                                }
+                                std::cerr << "[c2i-call:sort] callerObj=" << objName_ << " chain=[" << chain
+                                          << "] target=" << ownerVm->objName() << " [" << adbg << "]\n";
+                                std::cerr.flush();
+                            }
                             if (cl->func) return ownerVm->callFunctionPointer(cl->func, all);
                             return ownerVm->callFunctionByName(cl->functionName, all);
                         }
@@ -3227,6 +3483,85 @@ private:
                 };
                 parkAndSuspend(cond, std::move(hook), make_int(-1));
                 return make_int(-1);   // unreachable (SuspendSignal thrown)
+            }
+            if (nm == "take_mutex") {
+                // vm_f_take_mutex (0x80f16cc): PROCESS-level (PCB) named mutex.
+                //   free or owned by THIS process -> level++ (recursive), 0
+                //   owned by ANOTHER process:
+                //       timeout omitted  -> park until give_mutex (wake with 0)
+                //       timeout > 0      -> park + wake timer; timeout -202
+                //       timeout <= 0     -> -202 immediately
+                //   unknown mutex name -> -101 (create_mutex registers it; the
+                //   original's vm_getPendObject miss)
+                if (args.empty()) return make_int(-101);
+                std::string mname = to_string(args[0], false);
+                // Timeout form (IDA 0x80f16cc): int -1 = wait forever, >0 =
+                // seconds, anything else (e.g. 0) = fail now; real > 0 =
+                // seconds, else fail now; ABSENT argument = wait forever.
+                int tform = -1;          // -1 forever, 0 fail-now, 1 timed
+                double tsecs = 0.0;
+                if (args.size() >= 2) {
+                    const Value& t = args[1];
+                    if (t.index() == 2) {
+                        int64_t n = std::get<int64_t>(t);
+                        if (n == -1) tform = -1;
+                        else if (n > 0) { tform = 1; tsecs = static_cast<double>(n); }
+                        else tform = 0;
+                    } else if (t.index() == 3) {
+                        double d = std::get<double>(t);
+                        if (d > 0.0) { tform = 1; tsecs = d; }
+                        else tform = 0;
+                    } else {
+                        return make_int(-101);   // original vm_error's on bad type
+                    }
+                }
+                Scheduler& sched = scheduler();
+                auto cur = sched.currentProcessShared();
+                auto* rec = sched.procMutexFind(mname);
+                if (!rec) return make_int(-101);
+                if (rec->level == 0 || (cur && rec->owner == cur)) {
+                    rec->level++;
+                    if (rec->level == 1) rec->owner = cur;
+                    return make_int(0);
+                }
+                if (tform == 0) return make_int(-202);
+                if (vmEnvTrace())
+                    std::cerr << "[take_mutex] " << mname << " held by tid="
+                              << (rec->owner ? rec->owner->tid : -1)
+                              << "; parking tid=" << (cur ? cur->tid : -1) << "\n";
+                // Pend on the mutex (vm_pendCurrentProcessOnObject): the
+                // process parks; give_mutex transfers ownership and wakes it
+                // with 0 (a timed take's expiry resumes with -202).
+                ResumeCond cond;
+                cond.kind = 6;
+                cond.ename = mname;
+                if (tform == 1 && tsecs > 0.0) {
+                    using namespace std::chrono;
+                    int64_t nowMs = duration_cast<milliseconds>(
+                        steady_clock::now().time_since_epoch()).count();
+                    cond.wakeAtMs = nowMs + static_cast<int64_t>(tsecs * 1000.0);
+                }
+                parkAndSuspend(cond, nullptr, make_int(0));
+                return make_int(0);   // unreachable (SuspendSignal thrown)
+            }
+            if (nm == "give_mutex") {
+                // vm_f_give_mutex (0x80f1564): only the owner releases; when
+                // the level-- reaches 0, ownership transfers to the head pend
+                // waiter (vm_releaseMutex 0x80f2850) and it is resumed.
+                if (args.empty()) return make_int(-101);
+                std::string mname = to_string(args[0], false);
+                return make_int(scheduler().procMutexGive(mname));
+            }
+            if (nm == "create_mutex") {
+                // vm_f_create_mutex (0x80eed58): register the named mutex.
+                if (args.empty()) return make_int(0);
+                scheduler().procMutexCreate(to_string(args[0], false));
+                return make_int(1);
+            }
+            if (nm == "delete_mutex") {
+                if (args.empty()) return make_int(0);
+                scheduler().procMutexErase(to_string(args[0], false));
+                return make_int(1);
             }
             if (nm == "connect") {
                 // vm_f_connect (0x80e83b4): connect(fd, host, port, timeout).
@@ -3494,6 +3829,23 @@ private:
                 std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
             std::vector<Value> args;
             for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
+            if (name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+                std::string chain;
+                for (const auto& fr : frames_) {
+                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                    if (!chain.empty()) chain += "<-";
+                    chain += fnm;
+                }
+                std::string adbg;
+                for (auto& a : args) {
+                    if (!adbg.empty()) adbg += " | ";
+                    adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 100);
+                }
+                std::cerr << "[c2i-call:fallback] callerObj=" << objName_ << " chain=[" << chain
+                          << "] targetObj=" << target->objName() << " name=" << name
+                          << " argc=" << argCount << " [" << adbg << "]\n";
+                std::cerr.flush();
+            }
             if (vmEnvTrace()) {
                 std::string dbg;
                 for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
@@ -3783,6 +4135,42 @@ private:
         if (static_cast<int>(stack_.size()) < need) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
+        if (fn.name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+            // Who enters convert_to_int from OUTSIDE with a single (or odd)
+            // frame?  Dump caller VM context + the argument slots.
+            std::string chain;
+            for (const auto& fr : frames_) {
+                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                if (!chain.empty()) chain += "<-";
+                chain += fnm;
+            }
+            std::string adbg;
+            int shown = fn.argCount > 0 ? fn.argCount : (passedArgs >= 0 ? passedArgs : 0);
+            for (int i = 0; i < shown; ++i) {
+                if (i) adbg += " | ";
+                int si = bp - i;
+                if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
+                    std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+                    if (vs.size() > 120) vs = vs.substr(0, 120);
+                    adbg += "a" + std::to_string(i) + ":" + std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+                } else {
+                    adbg += "a" + std::to_string(i) + ":<no-slot>";
+                }
+            }
+            std::string ef = "?";
+            if (lastEfunIndex_ >= 0) {
+                const auto& tbl = efunNameTable();
+                if (lastEfunIndex_ < static_cast<int>(tbl.size()) && !tbl[static_cast<size_t>(lastEfunIndex_)].empty())
+                    ef = tbl[static_cast<size_t>(lastEfunIndex_)];
+            }
+            std::cerr << "[c2i-enter] obj=" << objName_ << " thisObj=" << thisObjectName_
+                      << " prevObj=" << previousObjectName_
+                      << " efun=" << ef << "(" << lastEfunIndex_ << ")"
+                      << " argN=" << fn.argCount << " passed=" << passedArgs
+                      << " frames=" << frames_.size() << " chain=[" << chain << "] bp=" << bp
+                      << " [" << adbg << "]\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace() && (fn.name == "register_entry" || fn.name == "query_entry")) {
             std::string dbg;
             for (int i = 0; i < fn.argCount; ++i)
@@ -4431,8 +4819,14 @@ private:
                     if (slot.value.index() == 11) {
                         auto r = std::get<std::shared_ptr<CrossVmRef>>(slot.value);
                         OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
-                        if (vm && r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->objVars().size())
-                            vm->objVars()[static_cast<size_t>(r->objIndex)] = sv;
+                        if (vm) {
+                            if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
+                                vm->stack_[static_cast<size_t>(r->slotIndex)].value = sv;
+                            } else if (r->objIndex >= 0 &&
+                                       static_cast<size_t>(r->objIndex) < vm->objVars().size()) {
+                                vm->objVars()[static_cast<size_t>(r->objIndex)] = sv;
+                            }
+                        }
                     } else {
                         slot.value = sv;
                     }
@@ -5540,10 +5934,11 @@ private:
                             // attrib_index += (...)) land in THIS VM's object
                             // variable.  Passing the deref'd value would make a
                             // reassigned array invisible to the caller.
-                            if (it.objIndex >= 0) {
+                            if (it.objIndex >= 0 || (it.slotIndex >= 0 && std::getenv("LPCVM_SLOT_REF"))) {
                                 auto r = std::make_shared<CrossVmRef>();
                                 r->vm = this;
                                 r->objIndex = it.objIndex;
+                                r->slotIndex = it.slotIndex;
                                 out.push_back(make_crossvm_ref(std::move(r)));
                             } else {
                                 out.push_back(dv);
@@ -5776,6 +6171,30 @@ private:
                                     resolveSelf();
                                 } else if (funName.empty()) {
                                     auto args = popArgs();
+                                    if (std::getenv("LPCVM_ERR_TRACE")) {
+                                        std::string chain;
+                                        for (const auto& fr : frames_) {
+                                            std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                            if (!chain.empty()) chain += "<-";
+                                            chain += fnm;
+                                        }
+                                        std::string adbg;
+                                        for (auto& a : args) {
+                                            if (!adbg.empty()) adbg += " | ";
+                                            adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 80);
+                                        }
+                                        std::string onm;
+                                        {
+                                            const OriginalFunction* f = ownerVm->functionByIndex(funIndex);
+                                            onm = f ? f->name : "?";
+                                        }
+                                        std::cerr << "[c2i-call:objThisIdx] callerObj=" << objName_
+                                                  << " thisObj=" << thisObjectName_
+                                                  << " chain=[" << chain << "] target=" << ownerVm->objName()
+                                                  << " funIndex=" << funIndex << " fn=" << onm
+                                                  << " argsN=" << args.size() << " [" << adbg << "]\n";
+                                        std::cerr.flush();
+                                    }
                                     result = runDetached([&] { return ownerVm->callFunctionByIndex(funIndex); });
                                     found = true;
                                 } else {
@@ -5863,8 +6282,39 @@ private:
                 int mayNull = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int total = fromMeta ? m1 : in.b;
                 StackItem funItem = pop();
+                // Applying an efun-closure over call_other/call_other_arg with a
+                // REFERENCE argument (e.g. account_transactiond.do_account_transaction
+                // doing (*proc_func)(&m, info, fields) where proc_func =
+                // (: call_other, "â€¦cmd_l_precost_coin.c", "precost_coin", â€¦ :) and
+                // precost_coin declares `mixed &result` and assigns result=([â€¦])).
+                // The callee's write must land in the caller's stack slot m, so the
+                // &arg cannot be flattened to its (undefined) value here.  Keep
+                // slot/obj refs as a CrossVmRef (index-11) that survives the value
+                // vectors and is forwarded by writeThrough / set_local_var into the
+                // caller's slot once precost_coin executes inline on this VM.
+                bool refArgCoClosure = false;
+                if (funItem.value.index() == 8) {
+                    auto cl0 = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
+                    refArgCoClosure = (cl0->func == nullptr) &&
+                        (cl0->functionName == "call_other" || cl0->functionName == "call_other_arg");
+                }
                 std::vector<Value> args;
-                for (int i = 1; i < total && !stack_.empty(); ++i) args.push_back(pop().value);
+                for (int i = 1; i < total && !stack_.empty(); ++i) {
+                    StackItem ait = pop();
+                    if (refArgCoClosure && ait.isRef) {
+                        if (ait.objIndex >= 0 || ait.slotIndex >= 0) {
+                            auto r = std::make_shared<CrossVmRef>();
+                            r->vm = this;
+                            r->objIndex = ait.objIndex;
+                            r->slotIndex = ait.slotIndex;
+                            args.push_back(make_crossvm_ref(std::move(r)));
+                        } else {
+                            args.push_back(ait.value);
+                        }
+                    } else {
+                        args.push_back(ait.value);
+                    }
+                }
                 Value result = make_int(0);
                 // True when a same-owner/global closure was started INLINE
                 // (its return op will push the result; we must not).
@@ -6052,6 +6502,23 @@ private:
                                     std::cerr << "[postinit-sync] " << cl->functionName
                                               << " on " << ownerVm->object().sourceName << "\n";
                                 ownerVm->setPreviousObjectName(thisObjectName_);
+                                if (cl->functionName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+                                    std::string chain;
+                                    for (const auto& fr : frames_) {
+                                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                        if (!chain.empty()) chain += "<-";
+                                        chain += fnm;
+                                    }
+                                    std::string adbg;
+                                    for (auto& a : all) {
+                                        if (!adbg.empty()) adbg += " | ";
+                                        adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 100);
+                                    }
+                                    std::cerr << "[c2i-call:postinit] callerObj=" << objName_
+                                              << " chain=[" << chain << "] target=" << ownerVm->object().sourceName
+                                              << " clName=" << cl->functionName << " [" << adbg << "]\n";
+                                    std::cerr.flush();
+                                }
                                 try {
                                     if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
                                     else result = ownerVm->callFunctionByName(cl->functionName, all);
@@ -6076,9 +6543,26 @@ private:
                                 } catch (...) {
                                     result = make_int(0);
                                 }
-                            } else if (cl->func)
+                            } else if (cl->func) {
+                                if (cl->functionName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+                                    std::string chain;
+                                    for (const auto& fr : frames_) {
+                                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                        if (!chain.empty()) chain += "<-";
+                                        chain += fnm;
+                                    }
+                                    std::string adbg;
+                                    for (auto& a : all) {
+                                        if (!adbg.empty()) adbg += " | ";
+                                        adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 100);
+                                    }
+                                    std::cerr << "[c2i-call:ownerDetach] callerObj=" << objName_
+                                              << " chain=[" << chain << "] target=" << ownerVm->object().sourceName
+                                              << " clName=" << cl->functionName << " [" << adbg << "]\n";
+                                    std::cerr.flush();
+                                }
                                 result = runDetached([&] { return ownerVm->callFunctionPointer(cl->func, all); });
-                            else
+                            } else
                                 result = runDetached([&] { return ownerVm->callFunctionByName(cl->functionName, all); });
                             if ((vmEnvTrace() || vmEnvEventTrace()) &&
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
@@ -6665,6 +7149,10 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     // Fresh park: clear stale wake bookkeeping from any earlier park.
     p->eventWoken = false;
     p->timedEvent = false;
+    // Purge STALE wait entries from an earlier park of this process (see
+    // purgeWaitersLocked): without this, every re-park of a timed wait_event
+    // left its old entry behind and the wait maps grew forever.
+    purgeWaitersLocked(p);
     // A process can re-park on a new condition while the wake timer of a
     // PREVIOUS park is still pending in timers_.  Cancel that timer so it
     // cannot spuriously resume the new park (the oid:32 timed wait's timer
@@ -6673,7 +7161,7 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     if (p->parkTimerCancelled) *p->parkTimerCancelled = true;
     p->parkTimerCancelled.reset();
     std::shared_ptr<std::atomic<bool>> newToken;
-    if (c.kind == 1 || (c.kind == 3 && c.wakeAtMs > 0)) {
+    if (c.kind == 1 || ((c.kind == 3 || c.kind == 6) && c.wakeAtMs > 0)) {
         newToken = std::make_shared<std::atomic<bool>>(false);
         p->parkTimerCancelled = newToken;
     }
@@ -6696,6 +7184,14 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
         break;
     case 5:   // socket (connect/recv)
         sockWaiters_[c.fd].push_back(p);
+        break;
+    case 6:   // mutex (take_mutex pend): woken by give_mutex (ownership
+              // transfer) or by the take's timeout timer (-202).
+        mutexWaiters_[c.ename].push_back(p);
+        if (c.wakeAtMs > 0) {
+            p->timedEvent = true;
+            timers_.emplace(c.wakeAtMs, TimerEntry2{p, newToken});
+        }
         break;
     default:  // kind 0/4: no wakeup registered; park forever (external
               // explicit wake via wake() or process list)
@@ -6875,9 +7371,16 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
         auto it = sockWaiters_.find(fd);
         if (it != sockWaiters_.end()) {
             // Only wake waiters whose condition is satisfied; keep the rest.
+            // Match on the PROCESS's park snapshot (w->cond), NOT the VM's
+            // current resumeCond(): several configd processes (tid 2/10/17)
+            // park on the SAME registry VM, and the VM's single cond_ slot is
+            // overwritten by the LATEST park - reading it here matched the
+            // wrong park and STRANDED the earlier socket waiter forever (the
+            // eternal fd=15 connect waiter that held "mconfig" and froze every
+            // other read_etc in its 1s retry loop).
             std::deque<std::shared_ptr<Process>> keep;
             for (auto& p : it->second) {
-                const ResumeCond& c = p->parkedVm->resumeCond();
+                const ResumeCond& c = p->cond;
                 if ((c.wantRead && readable) || (c.wantWrite && writable))
                     hits.push_back(std::move(p));
                 else
@@ -7031,8 +7534,36 @@ void Scheduler::run() {
                 if (tp->done) continue;
                 if (tp->inReady) continue;
                 tp->eventWoken = true;
-                if (tp->timedEvent && tp->vm)
-                    tp->vm->parkedResumeValue() = make_int(-501);
+                if (tp->timedEvent && tp->vm) {
+                    // vm_f_take_mutex timeout (vm_timeout on a mutex pend)
+                    // resumes with -202; vm_f_wait_event timeout with -501.
+                    // Also drop the timed waiter from its wait map RIGHT HERE:
+                    // leaving it behind accumulated phantom entries (a dozen
+                    // stale ev_readetcd0 tid=2 waiters from read_etc's 1s
+                    // retry loop) that a later raise_event could "wake" while
+                    // the process was already running elsewhere.
+                    if (tp->cond.kind == 6) {
+                        auto mw = mutexWaiters_.find(tp->cond.ename);
+                        if (mw != mutexWaiters_.end()) {
+                            auto& dq = mw->second;
+                            for (auto it = dq.begin(); it != dq.end(); ++it) {
+                                if (*it == tp) { dq.erase(it); break; }
+                            }
+                            if (dq.empty()) mutexWaiters_.erase(mw);
+                        }
+                        tp->vm->parkedResumeValue() = make_int(-202);
+                    } else {
+                        auto ew = eventWaiters_.find(tp->cond.ename);
+                        if (ew != eventWaiters_.end()) {
+                            auto& dq = ew->second;
+                            for (auto it = dq.begin(); it != dq.end(); ++it) {
+                                if (*it == tp) { dq.erase(it); break; }
+                            }
+                            if (dq.empty()) eventWaiters_.erase(ew);
+                        }
+                        tp->vm->parkedResumeValue() = make_int(-501);
+                    }
+                }
                 tp->inReady = true;
                 ready_.push_back(std::move(tp));
             }
@@ -7057,6 +7588,12 @@ void Scheduler::run() {
                 // live processes share an id, so configd's read_etc waits get
                 // woken by replies meant for the other process and time out.
                 releaseTid(p->tid);
+                // The original's vm_holdObject machinery force-releases every
+                // mutex a dying PCB still holds (vm_releaseMutex as the hold
+                // callback); hand each to its head waiter so a process that
+                // died inside a critical section cannot deadlock the name
+                // forever.
+                releaseMutexesHeldBy(p);
             }
             if (vmEnvTrace() && !p->done)
                 std::cerr << "[sched-pop] " << p->entry << " NOT DONE after runProcess\n";
@@ -7634,6 +8171,17 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
         if (vm) {
             std::string name = vm->functionNameByIndex(funIndex);
             if (!name.empty()) {
+                if (name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+                    std::string adbg;
+                    for (auto& a : args) {
+                        if (!adbg.empty()) adbg += " | ";
+                        adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 80);
+                    }
+                    std::cerr << "[c2i-call:tryByIndex] callerThis=" << callerThisName
+                              << " targetKey=" << c << " funIndex=" << funIndex
+                              << " fn=" << name << " [" << adbg << "]\n";
+                    std::cerr.flush();
+                }
                 if (!callerThisName.empty()) vm->setPreviousObjectName(callerThisName);
                 return vm->callFunctionByName(name, args);
             }
@@ -7707,6 +8255,16 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
                 std::cerr << "[call_other] -> " << c << " (exact)\n";
             if (vmEnvTrace() && funName == "msg_read_content")
                 std::cerr << "[co-mrc] exact-hit " << c << "\n";
+            if (funName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
+                std::string adbg;
+                for (auto& a : args) {
+                    if (!adbg.empty()) adbg += " | ";
+                    adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 80);
+                }
+                std::cerr << "[c2i-call:tryOther] callerThis=" << callerThisName
+                          << " targetKey=" << c << " fun=" << funName << " [" << adbg << "]\n";
+                std::cerr.flush();
+            }
             // previous_object() in the callee sees the caller: the VM that
             // executed the call_other (the current VM's this_object identity).
             if (!callerThisName.empty()) existing->setPreviousObjectName(callerThisName);
@@ -8237,9 +8795,9 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // sets my_import_name from object_template() so a clone's
         // get_name()/query() fall through to its basic object's dbase.  Our
         // multi-create chain may skip it, leaving a place_char'd NPC clone
-        // (ÊØ»¤ÌìÉñ etc.) with an empty my_import_name and get_name()
+        // (ï¿½Ø»ï¿½ï¿½ï¿½ï¿½ï¿½ etc.) with an empty my_import_name and get_name()
         // undefined -> get_registered_name() undefined -> guardd can't find
-        // ÊØ»¤ÌìÉñ@ÌìÜ­³Ç.  Re-run the template's import on the clone (it is
+        // ï¿½Ø»ï¿½ï¿½ï¿½ï¿½ï¿½@ï¿½ï¿½Ü­ï¿½ï¿½.  Re-run the template's import on the clone (it is
         // idempotent: re-sets my_import_name, file_id and the npc.list
         // attributes including name).
         if (tmplVm && rel.find("npc/basic") != std::string::npos) {

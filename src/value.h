@@ -171,7 +171,8 @@ struct UndefinedTag {};
 // in the caller's variable).
 struct CrossVmRef {
     void* vm = nullptr;        // OriginalVm* of the caller (opaque to value.h)
-    int objIndex = -1;         // index into the caller's objVars
+    int objIndex = -1;         // index into the caller's objVars (or -1)
+    int slotIndex = -1;        // index into the caller's stack (local slot; or -1)
 };
 
 using Value = std::variant<

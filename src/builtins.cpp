@@ -146,18 +146,6 @@ int64_t sharedRand31() {
     return static_cast<int64_t>(v & 0x7FFFFFFFu);
 }
 
-// Named mutex table (vm_f_create_mutex/take/give/delete).  Keys are the LPC
-// mutex names ("mfiledconn" etc.); values are recursive mutexes so a process
-// that owns a mutex can take it again (the original's level/reentrancy).
-struct NamedMutexTable {
-    std::mutex mtx;
-    std::unordered_map<std::string, std::shared_ptr<std::recursive_mutex>> mutexes;
-};
-NamedMutexTable& mutexTable() {
-    static NamedMutexTable t;
-    return t;
-}
-
 // File handles for fopen/fread/fwrite/fclose/fgets/fseek/ftell (sorterrord
 // opens error-log files; the game rarely uses these).
 struct FileEntry {
@@ -2483,7 +2471,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // "tianyongcheng/shouhutianshen.c")) from place_char) must clone
             // THAT instance (whose dbase has name/file_id/my_import_name), not
             // the bare basic.c template - otherwise the new NPC has no name
-            // and guardd can't find ÊØ»¤ÌìÉñ@ÌìÜ­³Ç.
+            // and guardd can't find ï¿½Ø»ï¿½ï¿½ï¿½ï¿½ï¿½@ï¿½ï¿½Ü­ï¿½ï¿½.
             if (path.compare(0, 6, "clone:") == 0) {
                 size_t hash = path.find('#');
                 if (hash != std::string::npos) path = path.substr(6);  // keep #seq
@@ -3736,6 +3724,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() < 2) return make_array();
         int cno = static_cast<int>(as_int(args[0]));
         std::string sql = as_string(args[1]);
+        bool sqlTrace = std::getenv("LPCVM_SQL_TRACE") || std::getenv("LPCVM_TRACE") ||
+                        std::getenv("LPCVM_SVC_TRACE");
+        if (sqlTrace)
+            std::cerr << "[mysql_select] cno=" << cno << " sql=" << sql << "\n";
         std::string table;
         size_t p = sql.find("from ");
         if (p != std::string::npos) {
@@ -3758,8 +3750,23 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 }
                 arr->items.push_back(mp);
             }
+            if (sqlTrace) {
+                std::cerr << "[mysql_select] rows=" << arr->items.size();
+                if (!arr->items.empty()) {
+                    auto& mp0 = std::get<std::shared_ptr<MappingValue>>(arr->items[0]);
+                    std::string dbg;
+                    for (auto& kv : mp0->items()) {
+                        if (!dbg.empty()) dbg += ",";
+                        dbg += to_string(kv.first, false) + "=" + to_string(kv.second, false).substr(0, 30);
+                    }
+                    std::cerr << " first={" << dbg << "}";
+                }
+                std::cerr << "\n";
+            }
             return arr;
         }
+        if (sqlTrace)
+            std::cerr << "[mysql_select] ERR err=" << err << "\n";
         if (table.empty()) return make_array();
         return simpleDbSelect(table);
     }
@@ -4046,7 +4053,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (std::getenv("LPCVM_SQL_TRACE")) {
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
-                for (size_t i = 0; i < data.size() && i < 40; ++i) { hex += hx[(unsigned char)data[i] >> 4]; hex += hx[(unsigned char)data[i] & 15]; }
+                size_t cap = (msgNo == 0x6377 || msgNo == 0x6373) ? data.size() : 40;
+                for (size_t i = 0; i < data.size() && i < cap; ++i) { hex += hx[(unsigned char)data[i] >> 4]; hex += hx[(unsigned char)data[i] & 15]; }
                 std::cerr << "[send-pkt] cno=" << cno << " msgNo=0x" << std::hex << msgNo << std::dec
                           << " data(" << data.size() << ")=" << hex << "\n";
             }
@@ -5058,13 +5066,38 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(pos == std::string::npos ? -1 : static_cast<int64_t>(pos));
     }
     if (name == "atoi64") {
-        // vm_f_atoi64 (0x80e0854): parse a string to a 64-bit int.
-        std::string s = args.empty() ? "" : as_string(args[0]);
-        return make_int(static_cast<int64_t>(std::strtoll(s.c_str(), nullptr, 10)));
+        // vm_f_atoi64 (0x80e0854): convert to a 64-bit int and push it as an
+        // ARRAY of two 32-bit halves: ({ HIGH32, LOW32 }).  Accepts int/real
+        // (value) or string ("0x.." hex, else decimal).  The game splits its
+        // 64-bit gids this way and re-joins with "%08X%08X"/itoa64.
+        uint64_t real = 0;
+        if (!args.empty()) {
+            const Value& a = args[0];
+            if (a.index() == 2) real = static_cast<uint64_t>(std::get<int64_t>(a));
+            else if (a.index() == 3) real = static_cast<uint64_t>(static_cast<int64_t>(std::get<double>(a)));
+            else {
+                std::string s = as_string(a);
+                const char* p = s.c_str();
+                while (*p && std::isspace(static_cast<unsigned char>(*p))) ++p;
+                bool hex = (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'));
+                real = static_cast<uint64_t>(std::strtoll(hex ? p + 2 : p, nullptr, hex ? 16 : 10));
+            }
+        }
+        auto arr = std::make_shared<ArrayValue>();
+        arr->items.push_back(make_int(static_cast<int64_t>(static_cast<uint32_t>(real >> 32))));
+        arr->items.push_back(make_int(static_cast<int64_t>(static_cast<uint32_t>(real & 0xFFFFFFFFu))));
+        return arr;
     }
     if (name == "itoa64") {
-        // vm_f_itoa64 (0x80e09ac): format a 64-bit int to a string.
-        return make_string(std::to_string(args.empty() ? 0 : as_int(args[0])));
+        // vm_f_itoa64 (0x80e09ac): ({ HIGH32, LOW32 }) -> decimal string of the
+        // combined 64-bit value (negative when the high half is negative).
+        uint64_t v = 0;
+        if (!args.empty() && args[0].index() == 5) {
+            auto items = std::get<std::shared_ptr<ArrayValue>>(args[0])->items;
+            if (items.size() >= 1) v |= static_cast<uint64_t>(static_cast<uint32_t>(as_int(items[0]))) << 32;
+            if (items.size() >= 2) v |= static_cast<uint64_t>(static_cast<uint32_t>(as_int(items[1])));
+        }
+        return make_string(std::to_string(static_cast<int64_t>(v)));
     }
     if (name == "make8" || name == "make16" || name == "make32" ||
         name == "make16i" || name == "make32i") {
@@ -5147,69 +5180,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     // ---- named mutexes (vm_f_create_mutex 0x80eed58 / take 0x80f16cc /
     //      give 0x80f1564 / delete 0x80f1958) ----
-    // filed's "mfiledconn" guards its DB connection: take_mutex returns 0 on
-    // success (blocking until available), -1 on timeout; give_mutex releases.
+    // IMPLEMENTED IN original_vm.cpp's callEfunWithArgs (process-level / PCB
+    // semantics with cooperative parking): take_mutex on a mutex held by a
+    // PARKED process parks the caller, give_mutex transfers ownership to the
+    // head waiter and resumes it.  A std::recursive_mutex here was per-OS-
+    // THREAD and every LPC process shares the single scheduler thread, so
+    // mutual exclusion never actually excluded anything.
 
-    if (name == "create_mutex") {
-        std::string mname = args.empty() ? "" : as_string(args[0]);
-        std::lock_guard<std::mutex> lk(mutexTable().mtx);
-        mutexTable().mutexes[mname];   // ensure the entry exists
-        return make_int(1);
-    }
-    if (name == "delete_mutex") {
-        std::string mname = args.empty() ? "" : as_string(args[0]);
-        std::lock_guard<std::mutex> lk(mutexTable().mtx);
-        mutexTable().mutexes.erase(mname);
-        return make_int(1);
-    }
-
-    if (name == "take_mutex") {
-        std::string mname = args.empty() ? "" : as_string(args[0]);
-        std::shared_ptr<std::recursive_mutex> m;
-        {
-            std::lock_guard<std::mutex> lk(mutexTable().mtx);
-            // operator[] would insert a NULL shared_ptr for an unknown name,
-            // crashing m->lock() below.  Auto-create like the original: take_mutex
-            // on an unknown mutex blocks on a fresh one (filed always creates first).
-            auto& slot = mutexTable().mutexes[mname];
-            if (!slot) slot = std::make_shared<std::recursive_mutex>();
-            m = slot;
-        }
-        double secs = -1.0;
-        if (args.size() >= 2) {
-            const Value& t = args[1];
-            if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
-            else if (t.index() == 3) secs = std::get<double>(t);
-        }
-        // recursive_mutex has no timed try-lock portably; use try_lock in a
-        // loop for the timeout form (the game mostly uses blocking take).
-        if (secs < 0) {
-            m->lock();
-            return make_int(0);
-        }
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(secs);
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (m->try_lock()) return make_int(0);
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return make_int(-1);
-    }
-    if (name == "give_mutex") {
-        std::string mname = args.empty() ? "" : as_string(args[0]);
-        std::shared_ptr<std::recursive_mutex> m;
-        {
-            std::lock_guard<std::mutex> lk(mutexTable().mtx);
-            auto it = mutexTable().mutexes.find(mname);
-            if (it == mutexTable().mutexes.end()) return make_int(-1);
-            m = it->second;
-        }
-        try {
-            m->unlock();
-        } catch (...) {
-            return make_int(-1);
-        }
-        return make_int(1);
-    }
     if (name == "get_timer") {
         // get_timer(timer_id): 1 while a timer with this id is registered
         // (our set_timer has no cancellation; report "active").
@@ -5480,7 +5457,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "set_driver_caption") {
         // vm_f_set_driver_caption -> vm_setWindowCaption prints "Driver: %s\n"
         // (the gameshell window title / server line identity).  Not a stub:
-        // gs startup logs "Driver: Ò»Ïß" right before configd loads.
+        // gs startup logs "Driver: Ò»ï¿½ï¿½" right before configd loads.
         if (!args.empty())
             std::cerr << "Driver: " << as_string(args[0]) << "\n";
         return make_int(1);
