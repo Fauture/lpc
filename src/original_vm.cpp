@@ -6707,13 +6707,23 @@ private:
                                           << (it.slotIndex >= 0 ? "slot" : it.globalIndex >= 0 ? "global"
                                              : it.objIndex >= 0 ? "obj" : "member")
                                           << " idx=" << it.objIndex << " derefType=" << dv.index() << "\n";
-                            // Object-variable references must stay WRITABLE
-                            // across the VM boundary: pass a CrossVmRef so the
-                            // callee's assignments (e.g. importd.create_data's
-                            // attrib_index += (...)) land in THIS VM's object
-                            // variable.  Passing the deref'd value would make a
-                            // reassigned array invisible to the caller.
-                            if (it.objIndex >= 0 || (it.slotIndex >= 0 && std::getenv("LPCVM_SLOT_REF"))) {
+                            // Object-variable AND local-stack-slot references must
+                            // stay WRITABLE across the VM boundary: pass a
+                            // CrossVmRef so the callee's assignments AND whole-ref
+                            // reassignments (importd.create_data's attrib_index =
+                            // ({}); attrib_index += (...) run against a LOCAL of
+                            // the caller, e.g. basic_objectd.create_basic_object's
+                            // &_form_index) land back in the caller's variable.
+                            // Previously only obj refs were forwarded and slot refs
+                            // were flattened to their value, so a reassigned
+                            // attrib_index array stayed invisible to the caller:
+                            // every plain .list table (wedding_dress.list etc.)
+                            // yielded an EMPTY attrib_index and basic objects were
+                            // created with only key_name/name - gender/unit/value/
+                            // icon columns never reached the dbase (sisheng_zhenjun
+                            // gate looped forever).  Validated in R37
+                            // (LPCVM_SLOT_REF=1): full columns flow, +1 DB row.
+                            if (it.objIndex >= 0 || it.slotIndex >= 0) {
                                 auto r = std::make_shared<CrossVmRef>();
                                 r->vm = this;
                                 r->objIndex = it.objIndex;
@@ -7603,7 +7613,7 @@ private:
                             if (obKey.find("wedding_dress") != std::string::npos ||
                                 obKey.find("jbxd-") != std::string::npos) {
                                 try {
-                                    Value g, kname;
+                                    Value g, kname, dbase, bGender;
                                     {
                                         auto& reg2 = objectRegistry();
                                         std::shared_ptr<OriginalVm> ovm;
@@ -7615,17 +7625,58 @@ private:
                                         if (ovm && ovm.get() != this) {
                                             g = ovm->callFunctionByName("query", { make_string("gender") });
                                             kname = ovm->callFunctionByName("query", { make_string("key_name") });
+                                            dbase = ovm->callFunctionByName("query_entire_dbase", {});
+                                            Value bo = ovm->callFunctionByName("basic_object", {});
+                                            if (bo.index() == 7) {
+                                                std::string bk = std::get<std::shared_ptr<ObjectValue>>(bo)->programName;
+                                                std::shared_ptr<OriginalVm> bvm;
+                                                {
+                                                    std::lock_guard<std::recursive_mutex> rl2(registryMutex());
+                                                    auto it2 = reg2.vms.find(bk);
+                                                    if (it2 != reg2.vms.end()) bvm = it2->second;
+                                                }
+                                                if (bvm) bGender = bvm->callFunctionByName("query", { make_string("gender") });
+                                            }
                                         }
                                     }
+                                    std::string dbS = (dbase.index() == 6)
+                                        ? to_string(dbase, false).substr(0, 160) : ("t" + std::to_string(dbase.index()));
                                     std::cerr << "[wdg] " << obKey
                                               << " gender=" << (g.index() == 2 ? std::to_string(std::get<int64_t>(g))
                                                                                : ("t" + std::to_string(g.index())))
+                                              << " bGender=" << (bGender.index() == 2 ? std::to_string(std::get<int64_t>(bGender))
+                                                                                      : ("t" + std::to_string(bGender.index())))
                                               << " key=" << (kname.index() == 4 ? std::get<SharedString>(kname).str().substr(0, 24)
                                                                                : "t" + std::to_string(kname.index()))
-                                              << "\n";
+                                              << " db=" << dbS << "\n";
                                     std::cerr.flush();
                                 } catch (...) {
                                 }
+                            }
+                        }
+                    }
+                    // TEMP probe: dump the line_args mapping handed to
+                    // init_basic_object for the wedding_dress (and one control
+                    // armor) basics so we can see whether the .list columns
+                    // (gender/unit/value/...) ever reach the object dbase.
+                    if (f.fn && f.fn->name == "init_basic_object" && f.argNum >= 1) {
+                        bool wd = thisObjectName_.find("wedding_dress") != std::string::npos ||
+                                  objName_.find("wedding_dress") != std::string::npos;
+                        static int armorCtrl = 0;
+                        bool armor = !wd && armorCtrl < 3 &&
+                                     (thisObjectName_.find("/armor/basic") != std::string::npos ||
+                                      objName_.find("/armor/basic") != std::string::npos);
+                        if (wd || armor) {
+                            if (armor) ++armorCtrl;
+                            int k0 = f.bp - f.argNum + 1;
+                            if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
+                                stack_[static_cast<size_t>(k0)].value.index() == 6) {
+                                std::string mstr = to_string(stack_[static_cast<size_t>(k0)].value, false);
+                                if (mstr.size() > 1100) mstr.resize(1100);
+                                std::cerr << "[ibo] " << (wd ? "wd" : "armor")
+                                          << " this=" << thisObjectName_
+                                          << " m=" << mstr << "\n";
+                                std::cerr.flush();
                             }
                         }
                     }
