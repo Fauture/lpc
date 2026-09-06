@@ -4895,6 +4895,38 @@ private:
         onResume_ = std::move(hook);
         parked_ = true;
         resumeValue_ = std::move(resumeValue);
+        if (std::getenv("LPCVM_TAIL")) {
+            bool stRelevant = objName_.find("statued") != std::string::npos ||
+                              objName_.find("clone:gs/clone/npc/misc/statue.o") != std::string::npos ||
+                              cond.qkey == "q:26";
+            if (!stRelevant) {
+                for (const auto& fr : frames_) {
+                    if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
+                                  std::string(fr.fn->name) == "do_operate")) { stRelevant = true; break; }
+                }
+            }
+            static int anyParkN = 0;
+            if (stRelevant || anyParkN < 60) {
+                ++anyParkN;
+                if (anyParkN <= 200) {
+                    std::string chain;
+                    for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                        const Frame& fr = frames_[fi];
+                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                        if (!chain.empty()) chain += "<-";
+                        chain += fnm;
+                        if (chain.size() > 200) break;
+                    }
+                    std::cerr << (stRelevant ? "[stpark] " : "[anypark] ") << "vm=" << this
+                              << " obj=" << objName_
+                              << " kind=" << cond.kind
+                              << " key=" << (cond.qkey.empty() ? cond.ename : cond.qkey)
+                              << " ip=" << ip_ << " frames=" << frames_.size()
+                              << " chain=[" << chain << "]\n";
+                    std::cerr.flush();
+                }
+            }
+        }
         SuspendSignal sig;
         sig.vm = this;
         sig.cond = cond_;
@@ -7380,7 +7412,7 @@ private:
                                               << " on " << ownerVm->object().sourceName << "\n";
                                 ownerVm->setPreviousObjectName(thisObjectName_);
                                 if (constructDiagOn() ||
-                                    (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
+                                    (std::getenv("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded")))
                                     std::cerr << "[postinit-run] " << cl->functionName
                                               << " on " << ownerVm->object().sourceName
                                               << " vm=" << this << " ownerVm=" << ownerVm.get() << "\n";
@@ -7388,7 +7420,7 @@ private:
                                     if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
                                     else result = ownerVm->callFunctionByName(cl->functionName, all);
                                     if (vmEnvTrace() || vmEnvEventTrace() || constructDiagOn() ||
-                                        (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
+                                        (std::getenv("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded")))
                                         std::cerr << "[postinit-ok] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName
                                                   << " res=" << to_string(result, false).substr(0, 40) << "\n";
@@ -7399,25 +7431,25 @@ private:
                                     // template register that fails validation)
                                     // must not kill the master's post_init.
                                     if (vmEnvTrace() || constructDiagOn() ||
-                                        (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
+                                        (std::getenv("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded")))
                                         std::cerr << "[postinit-err] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName
                                                   << ": " << e.what() << "\n";
                                     result = make_int(0);
                                 } catch (const std::exception& e) {
                                     if (vmEnvTrace() || constructDiagOn() ||
-                                        (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
+                                        (std::getenv("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded")))
                                         std::cerr << "[postinit-err] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName
                                                   << ": " << e.what() << "\n";
                                     result = make_int(0);
                                 } catch (const SuspendSignal&) {
-                                    if (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init")
+                                    if (std::getenv("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded"))
                                         std::cerr << "[postinit-park] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName << "\n";
                                     throw;   // park: the scheduler resumes the callee
                                 } catch (const TimeSliceSignal&) {
-                                    if (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init")
+                                    if (std::getenv("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded"))
                                         std::cerr << "[postinit-slice] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName << "\n";
                                     throw;   // yield: the scheduler resumes the callee
@@ -7676,6 +7708,289 @@ private:
                                 std::cerr << "[ibo] " << (wd ? "wd" : "armor")
                                           << " this=" << thisObjectName_
                                           << " m=" << mstr << "\n";
+                                std::cerr.flush();
+                            }
+                        }
+                    }
+                    // TEMP R39 probes: for the three post_init gates that keep
+                    // re-registering (child_adventure_instruction,
+                    // jieban_chuangtianya, party/city_war) dump the state each
+                    // do_init waits on so we can see the missing piece.
+                    auto callVmFn = [&](const std::string& keySub, const std::string& fn,
+                                        const std::vector<Value>& args, Value& out) {
+                        auto& reg9 = objectRegistry();
+                        std::shared_ptr<OriginalVm> vm9;
+                        {
+                            std::lock_guard<std::recursive_mutex> rl9(registryMutex());
+                            for (auto& kv : reg9.vms) {
+                                if (kv.first.find(keySub) != std::string::npos) { vm9 = kv.second; break; }
+                            }
+                        }
+                        if (vm9) out = vm9->callFunctionByName(fn, args);
+                    };
+                    auto findVmBySub = [&](const std::string& keySub) -> std::shared_ptr<OriginalVm> {
+                        auto& regF = objectRegistry();
+                        std::lock_guard<std::recursive_mutex> rlF(registryMutex());
+                        for (auto& kv : regF.vms)
+                            if (kv.first.find(keySub) != std::string::npos) return kv.second;
+                        return nullptr;
+                    };
+                    auto arrOf = [&](const Value& v, size_t max, std::string& s) {
+                        if (v.index() == 5) {
+                            auto& its = std::get<std::shared_ptr<ArrayValue>>(v)->items;
+                            s += "arr(" + std::to_string(its.size()) + ")[";
+                            for (size_t z = 0; z < its.size() && z < max; ++z) {
+                                if (z) s += ",";
+                                if (its[z].index() == 4)
+                                    s += std::get<SharedString>(its[z]).str().substr(0, 18);
+                                else if (its[z].index() == 7)
+                                    s += std::get<std::shared_ptr<ObjectValue>>(its[z])->programName.substr(0, 34);
+                                else s += "t" + std::to_string(its[z].index());
+                            }
+                            s += "]";
+                        } else s += "t" + std::to_string(v.index());
+                    };
+                    auto mapOf = [&](const Value& v, std::string& s) {
+                        if (v.index() == 6) {
+                            size_t n = std::get<std::shared_ptr<MappingValue>>(v)->items().size();
+                            s += "map(" + std::to_string(n) + ")";
+                        } else s += "t" + std::to_string(v.index());
+                    };
+                    auto dumpStrArrays = [&](const char* tag) {
+                        // find object-variable string arrays (menu_npc_list /
+                        // tax_dealer etc.) and print small ones
+                        const auto& vars = ownObjVars();
+                        int shown = 0;
+                        for (size_t vi = 0; vi < vars.size() && shown < 4; ++vi) {
+                            if (vars[vi].index() != 5) continue;
+                            auto& its = std::get<std::shared_ptr<ArrayValue>>(vars[vi])->items;
+                            if (its.size() == 0 || its.size() > 40) continue;
+                            bool strArr = true;
+                            for (size_t z = 0; z < its.size(); ++z)
+                                if (its[z].index() != 4) { strArr = false; break; }
+                            if (!strArr) continue;
+                            std::string s = tag + std::string(" vars[") + std::to_string(vi)
+                                          + "] arr(" + std::to_string(its.size()) + ")[";
+                            for (size_t z = 0; z < its.size() && z < 12; ++z) {
+                                if (z) s += ",";
+                                s += std::get<SharedString>(its[z]).str().substr(0, 18);
+                            }
+                            s += "]";
+                            std::cerr << s << "\n";
+                            ++shown;
+                        }
+                    };
+                    if (f.fn && (f.fn->name == "do_init" ||
+                                 (f.fn->name == "do_init_after_loaded" &&
+                                  (thisObjectName_.find("statued") != std::string::npos ||
+                                   objName_.find("statued") != std::string::npos)))) {
+                        bool isChild = thisObjectName_.find("child_adventure_instruction") != std::string::npos ||
+                                       objName_.find("child_adventure_instruction") != std::string::npos;
+                        bool isJb = thisObjectName_.find("jieban_chuangtianya") != std::string::npos ||
+                                    objName_.find("jieban_chuangtianya") != std::string::npos;
+                        bool isCw = thisObjectName_.find("party/city_war") != std::string::npos ||
+                                    objName_.find("party/city_war") != std::string::npos;
+                        bool isSt = thisObjectName_.find("statued") != std::string::npos ||
+                                    objName_.find("statued") != std::string::npos;
+                        if (isChild || isJb || isCw || isSt) {
+                            static int childN = 0, jbN = 0, cwN = 0, stN = 0;
+                            if (isSt && stN < 8) {
+                                ++stN;
+                                // statued.do_init_after_loaded waits on
+                                // scand.query_objects(1, {"weapon"},
+                                //   (["req_level": ({1,100})])); replicate the
+                                // query to see whether it is empty by data.
+                                Value types = make_array();
+                                std::get<std::shared_ptr<ArrayValue>>(types)->items.push_back(make_string("weapon"));
+                                Value rng = make_array();
+                                std::get<std::shared_ptr<ArrayValue>>(rng)->items.push_back(make_int(1));
+                                std::get<std::shared_ptr<ArrayValue>>(rng)->items.push_back(make_int(100));
+                                Value terms = make_mapping();
+                                std::get<std::shared_ptr<MappingValue>>(terms)->insert(make_string("req_level"), rng);
+                                Value q;
+                                callVmFn("gs/daemons/scand.o", "query_objects", { make_int(1), types, terms }, q);
+                                std::string qs = "t" + std::to_string(q.index());
+                                if (q.index() == 5) qs = "arr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(q)->items.size()) + ")";
+                                std::cerr << "[gstatued] weapon1-100=" << qs << "\n";
+                                std::cerr.flush();
+                            }
+                            if (isChild && childN < 6) {
+                                ++childN;
+                                Value e;
+                                std::shared_ptr<OriginalVm> taskdVm;
+                                {
+                                    auto& regB = objectRegistry();
+                                    std::lock_guard<std::recursive_mutex> rlB(registryMutex());
+                                    for (auto& kv : regB.vms)
+                                        if (kv.first.find("gs/daemons/taskd.o") != std::string::npos) {
+                                            taskdVm = kv.second; break;
+                                        }
+                                }
+                                if (taskdVm)
+                                    e = taskdVm->callFunctionByName("query_entry",
+                                            { make_string(std::string("\xCD\xDE\xCD\xDE\xC3\xB0\xCF\xD5\xC8\xCE\xCE\xF1", 12)) });
+                                std::string es = "t" + std::to_string(e.index());
+                                if (e.index() == 7) {
+                                    std::string pn = std::get<std::shared_ptr<ObjectValue>>(e)->programName;
+                                    es = pn;
+                                    Value st, et;
+                                    std::shared_ptr<OriginalVm> tvm;
+                                    {
+                                        auto& regA = objectRegistry();
+                                        std::lock_guard<std::recursive_mutex> rlA(registryMutex());
+                                        auto itA = regA.vms.find(pn);
+                                        if (itA != regA.vms.end()) tvm = itA->second;
+                                    }
+                                    if (tvm) {
+                                        st = tvm->callFunctionByName("query_task_start_time", {});
+                                        et = tvm->callFunctionByName("query_task_end_time", {});
+                                    }
+                                    es += " start=" + std::to_string(st.index()) +
+                                          (st.index() == 2 ? (":" + std::to_string(std::get<int64_t>(st))) : "") +
+                                          " end=" + std::to_string(et.index()) +
+                                          (et.index() == 2 ? (":" + std::to_string(std::get<int64_t>(et))) : "");
+                                }
+                                std::string where;
+                                Value allE;
+                                std::string instList;
+                                {
+                                    auto& regI = objectRegistry();
+                                    std::lock_guard<std::recursive_mutex> rlI(registryMutex());
+                                    for (auto& kv : regI.vms)
+                                        if (kv.first.find("gs/daemons/taskd.o") != std::string::npos)
+                                            instList += kv.first + " | ";
+                                }
+                                std::string taskdDbg;
+                                if (taskdVm) {
+                                    allE = taskdVm->callFunctionByName("query_all_entries", {});
+                                    const auto& tv = taskdVm->ownObjVars();
+                                    for (size_t vi = 0; vi < tv.size(); ++vi) {
+                                        if (tv[vi].index() != 6) continue;
+                                        auto mp = std::get<std::shared_ptr<MappingValue>>(tv[vi]);
+                                        if (mp->find(make_string(std::string("\xCD\xDE\xCD\xDE\xC3\xB0\xCF\xD5\xC8\xCE\xCE\xF1", 12)))) {
+                                            where += "var" + std::to_string(vi) + "(size" +
+                                                     std::to_string(mp->size()) + ") ";
+                                        }
+                                        if (allE.index() == 6 &&
+                                            mp.get() == std::get<std::shared_ptr<MappingValue>>(allE).get())
+                                            taskdDbg += "allEntriesVar=var" + std::to_string(vi) + "(size" +
+                                                        std::to_string(mp->size()) + ") ";
+                                    }
+                                }
+                                std::string ae;
+                                if (allE.index() == 6) {
+                                    auto mp = std::get<std::shared_ptr<MappingValue>>(allE);
+                                    ae = "allEntries(size" + std::to_string(mp->size()) + ")";
+                                    const Value* vp = mp->find(make_string(std::string("\xCD\xDE\xCD\xDE\xC3\xB0\xCF\xD5\xC8\xCE\xCE\xF1", 12)));
+                                    if (vp) {
+                                        ae += " HASKEY val=t" + std::to_string(vp->index());
+                                        if (vp->index() == 7) {
+                                            std::string pn = std::get<std::shared_ptr<ObjectValue>>(*vp)->programName;
+                                            ae += " prog=" + pn;
+                                            auto& regK = objectRegistry();
+                                            bool foundK = false;
+                                            {
+                                                std::lock_guard<std::recursive_mutex> rlK(registryMutex());
+                                                for (auto& kv : regK.vms)
+                                                    if (kv.first == pn || kv.first == ("pak:" + pn)) { foundK = true; break; }
+                                            }
+                                            ae += foundK ? " inRegistry=Y" : " inRegistry=N";
+                                        }
+                                    } else ae += " NOKEY";
+                                } else ae = "t" + std::to_string(allE.index());
+                                std::cerr << "[gchild] entry=" << es << " " << ae << " " << taskdDbg
+                                          << " inTaskdVars=" << (where.empty() ? "NONE" : where)
+                                          << " taskdVMs=" << instList << "\n";
+                                std::cerr.flush();
+                            }
+                            if (isJb && jbN < 6) {
+                                ++jbN;
+                                Value stt;
+                                callVmFn("gs/daemons/statued.o", "get_map_statue",
+                                         { make_string(std::string("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3", 10)) }, stt);
+                                std::string ss;
+                                mapOf(stt, ss);
+                                Value jb2;
+                                callVmFn("gs/daemons/familyd.o", "get_all_junior_boss", {}, jb2);
+                                std::string jss;
+                                arrOf(jb2, 6, jss);
+                                std::cerr << "[gjieban] statue=" << ss << " junior=" << jss << "\n";
+                                std::cerr.flush();
+                                dumpStrArrays("[gjieban-var]");
+                            }
+                            if (isCw && cwN < 6) {
+                                ++cwN;
+                                dumpStrArrays("[gcity-var]");
+                                // Resolve each tax_dealer "name@room" against the
+                                // named daemon: which piece is missing?
+                                const auto& cwv = ownObjVars();
+                                for (size_t vi = 0; vi < cwv.size(); ++vi) {
+                                    if (cwv[vi].index() != 5) continue;
+                                    auto& its = std::get<std::shared_ptr<ArrayValue>>(cwv[vi])->items;
+                                    if (its.size() < 5 || its.size() > 40) continue;
+                                    bool strArr = true;
+                                    for (auto& v : its)
+                                        if (v.index() != 4) { strArr = false; break; }
+                                    if (!strArr) continue;
+                                    std::string out;
+                                    for (auto& v : its) {
+                                        std::string nm = std::get<SharedString>(v).str();
+                                        std::string name = nm, loc;
+                                        size_t at = nm.find('@');
+                                        if (at != std::string::npos) { name = nm.substr(0, at); loc = nm.substr(at + 1); }
+                                        Value f;
+                                        if (!name.empty())
+                                            callVmFn("gs/daemons/named.o", "find_npc_ob", { make_string(name) }, f);
+                                        std::string fs = "npc" + std::to_string(f.index());
+                                        if (f.index() == 5) fs = "npcArr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(f)->items.size()) + ")";
+                                        else if (f.index() == 7) fs = "npcObj";
+                                        Value r;
+                                        if (!loc.empty())
+                                            callVmFn("gs/daemons/named.o", "find_room_ob", { make_string(loc) }, r);
+                                        std::string rs = "room" + std::to_string(r.index());
+                                        if (r.index() == 7) rs = "roomObj";
+                                        out += "[" + nm.substr(0, 10) + "@" + loc.substr(0, 8) + " " + fs + " " + rs + "] ";
+                                    }
+                                    std::cerr << "[gcity] " << out << "\n";
+                                    std::cerr.flush();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // TEMP probe: which object registers the taskd template/entry
+                    // named "娃娃冒险任务", and with what key bytes?
+                    if (f.fn && (f.fn->name == "register_entry" ||
+                                 f.fn->name == "register_task_template") && f.argNum >= 1) {
+                        int k0 = f.bp - f.argNum + 1;
+                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
+                            stack_[static_cast<size_t>(k0)].value.index() == 4) {
+                            const std::string& a0 = std::get<SharedString>(
+                                stack_[static_cast<size_t>(k0)].value).str();
+                            static int regN = 0;
+                            bool want = regN < 30 &&
+                                (thisObjectName_.find("child_adventure") != std::string::npos ||
+                                 objName_.find("child_adventure") != std::string::npos ||
+                                 a0.size() == 12 ||
+                                 thisObjectName_.find("taskd") != std::string::npos);
+                            if (want) {
+                                ++regN;
+                                std::string hexb;
+                                for (size_t z = 0; z < a0.size() && z < 14; ++z) {
+                                    char bf[4]; snprintf(bf, sizeof(bf), "%02X", (unsigned char)a0[z]);
+                                    hexb += bf;
+                                }
+                                std::string chain;
+                                for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                                    const Frame& fr = frames_[fi];
+                                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                                    if (!chain.empty()) chain += "<-";
+                                    chain += fnm;
+                                    if (chain.size() > 160) break;
+                                }
+                                std::cerr << "[reg] fn=" << f.fn->name << " this=" << thisObjectName_
+                                          << " obj=" << objName_ << " a0hex=" << hexb
+                                          << " chain=[" << chain << "]\n";
                                 std::cerr.flush();
                             }
                         }
