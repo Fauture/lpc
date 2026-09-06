@@ -1614,6 +1614,34 @@ public:
             std::cerr << "[reg] callFunctionByName vm=" << this << " obj=" << objName_
                       << " fn=" << name << " args=" << args.size() << " a0=["
                       << (args.empty() ? "" : to_string(args[0], false).substr(0, 50)) << "]\n";
+        if (std::getenv("LPCVM_TAIL") &&
+            (name == "register_entry" || name == "register_task_template") && !args.empty() &&
+            args[0].index() == 4) {
+            const std::string& a0 = std::get<SharedString>(args[0]).str();
+            if (a0.size() == 12 || thisObjectName_.find("child_adventure") != std::string::npos ||
+                objName_.find("child_adventure") != std::string::npos) {
+                static int regcN = 0;
+                if (regcN < 40) {
+                    ++regcN;
+                    std::string hexb;
+                    for (size_t z = 0; z < a0.size() && z < 14; ++z) {
+                        char bf[4]; snprintf(bf, sizeof(bf), "%02X", (unsigned char)a0[z]);
+                        hexb += bf;
+                    }
+                    std::string chain;
+                    for (const auto& fr : frames_) {
+                        if (!chain.empty()) chain += "<-";
+                        chain += fr.fn ? fr.fn->name : "<ctx>";
+                        if (chain.size() > 200) break;
+                    }
+                    std::cerr << "[regc] fn=" << name << " this=" << thisObjectName_
+                              << " obj=" << objName_ << " a0hex=" << hexb
+                              << " parked=" << parked_ << " frames=" << frames_.size()
+                              << " chain=[" << chain << "]\n";
+                    std::cerr.flush();
+                }
+            }
+        }
         if (const OriginalFunction* fn = findFunctionAny(name)) {
             if (vmEnvTrace() && name == "lite_query_temp")
                 std::cerr << "[lqt] found idx=" << fn->index << " code=" << fn->code.size()
