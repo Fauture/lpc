@@ -1,5 +1,6 @@
 #include "value.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -167,6 +168,35 @@ bool fmtSelfCheckOnce() {
 
 uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive);
 
+namespace {
+// Live container census: incremented by ArrayValue/MappingValue ctors and
+// decremented by their dtors (they are always used via shared_ptr, so a dtor
+// runs exactly once when the last owner drops).
+struct HeapStats {
+    std::atomic<long> arrLive{0};
+    std::atomic<long> mapLive{0};
+    std::atomic<long> arrCum{0};
+    std::atomic<long> mapCum{0};
+};
+HeapStats& heapStats() { static HeapStats s; return s; }
+} // namespace
+
+ArrayValue::ArrayValue() { heapStats().arrLive++; heapStats().arrCum++; }
+ArrayValue::~ArrayValue() { heapStats().arrLive--; }
+MappingValue::~MappingValue() { heapStats().mapLive--; }
+
+void liveHeapSnapshot(long& arrLive, long& mapLive, long& arrCum, long& mapCum) {
+    arrLive = heapStats().arrLive.load();
+    mapLive = heapStats().mapLive.load();
+    arrCum = heapStats().arrCum.load();
+    mapCum = heapStats().mapCum.load();
+}
+
+MappingValue::MappingValue() {
+    table.assign(8, -1);
+    heapStats().mapLive++;
+    heapStats().mapCum++;
+}
 MappingValue::MappingValue(uint32_t sizeHint) {
     // vm_safeAllocateMapping: size <= 8 -> 8 buckets; otherwise round the
     // size up to a power of two and use that many buckets.
@@ -181,6 +211,8 @@ MappingValue::MappingValue(uint32_t sizeHint) {
         table.assign(8, -1);
     }
     unfilled = static_cast<int32_t>(80 * (tableSize + 1) / 100);
+    heapStats().mapLive++;
+    heapStats().mapCum++;
 }
 
 // Hash of a key exactly like vm_safeFindForInsert:

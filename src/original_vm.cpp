@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <iostream>
@@ -25,6 +26,7 @@
 
 #include "builtins.h"
 #include "efun_table.h"
+#include "map_module.h"
 #include "o_loader.h"
 #include "pak_loader.h"
 #include "value.h"
@@ -699,6 +701,18 @@ struct Frame {
     // zero-arg placeholder slot (one extra slot pushed so bp >= 0); the
     // return cleanup must drop that slot with the frame.
     bool zeroArgPlaceholder = false;
+    // Number of zero-pad slots inserted BELOW the passed args at frame
+    // allocation for omitted DECLARED parameters (the original zero-inits the
+    // whole declared param area).  Frame argNum counts only the REAL passed
+    // args, so the return cleanup must additionally drop these pad slots or
+    // every such call leaves pad zeros behind on the caller's stack (they
+    // shifted sprintf's 3-arg pop in hero.o get_save_path -> branch "title_0"
+    // instead of "title_男"/"title_女").
+    // Only subtracted when the callee did NOT resort its frame (a check_args_num
+    // default block folds the pads into argNum via resort_stack; subtracting
+    // again then would over-trim).
+    int padArgs = 0;
+    int passedArgs = -1;
     // Cross-object inline calls (call_other to another object) run the callee
     // on THIS VM's stack with objVars_ temporarily switched to the target
     // object's variable table.  savedObjVars restores the caller's table when
@@ -1453,6 +1467,9 @@ public:
     Value callEfunPublic(int efunIndex, const std::vector<Value>& args) {
         return callEfunWithArgs(efunIndex, args);
     }
+    // Whether this VM currently has an active LPC frame chain (used by the
+    // scheduler to decide if a resumed process still has work on another VM).
+    bool hasActiveFrames() const { return !frames_.empty(); }
     const OriginalFunction* functionByIndex(int index) const {
         auto it = funcsByIndex_.find(index);
         return it == funcsByIndex_.end() ? nullptr : it->second;
@@ -1501,6 +1518,14 @@ public:
     // their "clone:<rel>#<seq>" registry key so cross-object calls and
     // set_client_agent store the REAL object, not the "<this>" placeholder).
     void setThisObjectName(const std::string& n) { thisObjectName_ = n; }
+    // CrossVmRef target table: the VM's OWN object variables (the table its
+    // object was constructed with), NOT the currently switched one.  During an
+    // inline cross-object call (filed/importd/taskd service calls) objVars_
+    // temporarily points at the CALLEE's table, so resolving a ref captured
+    // against the caller (r->objIndex) via objVars() reads the wrong slots
+    // (OOB -> int 0), silently dropping every attach_form_file/.list write.
+    const std::vector<Value>& ownObjVars() const { return *ownObjVars_; }
+    std::vector<Value>& ownObjVars() { return *ownObjVars_; }
     // Record the VM this clone was created from (object_template()).
     void setTemplateVm(const std::shared_ptr<OriginalVm>& t) { templateVm_ = t; }
     std::shared_ptr<OriginalVm> templateVm() const { return templateVm_; }
@@ -1546,6 +1571,19 @@ public:
     }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
+        if (name == "create_data" && constructDiagOn()) {
+            std::string a0;
+            if (!args.empty()) {
+                const Value& av = args[0];
+                a0 = (av.index() == 4) ? std::get<SharedString>(av).str().substr(0, 60)
+                                       : to_string(av, false).substr(0, 60);
+            }
+            std::cerr << "[hprobe] cfn-enter create_data vm=" << this
+                      << " obj=" << objName_ << " this=" << thisObjectName_
+                      << " parked=" << parked_ << " frames=" << frames_.size()
+                      << " args=" << args.size() << " a0=[" << a0 << "]\n";
+            std::cerr.flush();
+        }
         if (name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
             std::string adbg;
             for (auto& a : args) {
@@ -1620,6 +1658,12 @@ public:
             Value r = executeFunctionFromOutside(*fn, args);
             if (savedVars && !parked_)
                 objVars_ = savedVars;
+            if (name == "create_data" && constructDiagOn()) {
+                std::cerr << "[hprobe] cfn-exit create_data vm=" << this
+                          << " obj=" << objName_ << " ret="
+                          << to_string(r, false).substr(0, 40) << "\n";
+                std::cerr.flush();
+            }
             if (vmEnvTrace() && name == "mysql_select") {
                 std::string msg = "[xret] mysql_select result=" + to_string(r, false) + "\n";
                 std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
@@ -1631,6 +1675,11 @@ public:
         }
         if (vmEnvTrace() && name == "account_login")
             std::cerr << "[cfv-miss] account_login NOT FOUND on obj=" << objName_ << "\n";
+        if (name == "create_data" && constructDiagOn()) {
+            std::cerr << "[hprobe] cfn-miss create_data vm=" << this
+                      << " obj=" << objName_ << " (function not found)\n";
+            std::cerr.flush();
+        }
         return make_int(0);
     }
 
@@ -1714,6 +1763,93 @@ public:
                 ok = (it2 != reg2.initialized.end() && it2->second);
             }
             resumeValue_ = ok ? make_object(vpath) : make_int(0);
+        };
+        parkAndSuspend(cond, std::move(hook), make_int(0));
+        return make_int(0);   // unreachable (SuspendSignal thrown)
+    }
+
+    // Clone a loaded template and construct the clone COOPERATIVELY (scheduler
+    // construction process + park), mirroring loadObjectCooperative.  The
+    // generic clone path (cloneObjectInRegistry) runs runInit() synchronously;
+    // when the clone's create() hits a blocking filed DB round-trip the
+    // construction must be able to park and resume or the create is truncated
+    // right at the read (master NPC rows are never written).
+    Value cloneObjectCooperative(const std::string& virtualPath, const std::vector<Value>& createArgs) {
+        if (virtualPath.empty()) return make_int(0);
+        std::string rel = virtualPath;
+        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+        if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+        auto& reg = objectRegistry();
+        std::shared_ptr<OriginalVm> tmplVm;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms) {
+                std::string key = kv.first;
+                size_t hash = key.find('#');
+                if (hash != std::string::npos) key.resize(hash);
+                if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+            }
+        }
+        if (!tmplVm) {
+            if (!loadObjectIntoRegistry(virtualPath, searchRoot_)) return make_int(0);
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms) {
+                std::string key = kv.first;
+                size_t hash = key.find('#');
+                if (hash != std::string::npos) key.resize(hash);
+                if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+            }
+        }
+        if (!tmplVm) return make_int(0);
+        static std::atomic<int64_t> cloneSeq{0};
+        int64_t seq = cloneSeq.fetch_add(1, std::memory_order_relaxed);
+        std::string relBase = rel;
+        size_t hashPos = relBase.find('#');
+        if (hashPos != std::string::npos) relBase.resize(hashPos);
+        std::string cloneKey = "clone:" + relBase + "#" + std::to_string(seq);
+        std::shared_ptr<const OriginalObject> objPtr;
+        std::shared_ptr<OriginalVm> vmPtr;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            std::shared_ptr<OriginalObject> tmplObj;
+            std::string relProg = rel;
+            size_t rp = relProg.find('#');
+            if (rp != std::string::npos) relProg.resize(rp);
+            for (auto& kv : reg.objects) {
+                std::string key = kv.first;
+                size_t hash = key.find('#');
+                if (hash != std::string::npos) key.resize(hash);
+                if (hasSuffix(key, relProg)) { tmplObj = kv.second; break; }
+            }
+            if (tmplObj) {
+                objPtr = tmplObj;
+                vmPtr = std::make_shared<OriginalVm>(objPtr, tmplVm.get());
+                vmPtr->setThisObjectName(cloneKey);
+                vmPtr->setTemplateVm(tmplVm);
+                reg.objects[cloneKey] = tmplObj;
+                reg.vms[cloneKey] = vmPtr;
+            } else {
+                objPtr = tmplVm->sharedObject();
+                vmPtr = std::make_shared<OriginalVm>(objPtr, tmplVm.get());
+                vmPtr->setThisObjectName(cloneKey);
+                vmPtr->setTemplateVm(tmplVm);
+                reg.vms[cloneKey] = vmPtr;
+            }
+            reg.constructing.insert(cloneKey);
+        }
+        scheduler().spawnConstruction(vmPtr, createArgs, "obj-init:" + cloneKey);
+        ResumeCond cond;
+        cond.kind = 3;
+        cond.ename = "obj-init:" + cloneKey;
+        auto hook = [this, cloneKey]() {
+            bool ok = false;
+            {
+                auto& reg2 = objectRegistry();
+                std::lock_guard<std::recursive_mutex> rl2(registryMutex());
+                auto it2 = reg2.initialized.find(cloneKey);
+                ok = (it2 != reg2.initialized.end() && it2->second);
+            }
+            resumeValue_ = ok ? make_object(cloneKey) : make_int(0);
         };
         parkAndSuspend(cond, std::move(hook), make_int(0));
         return make_int(0);   // unreachable (SuspendSignal thrown)
@@ -2035,56 +2171,76 @@ public:
         // without it importd.import() fails the type dispatch and the NPC's
         // npc.list attributes (including file_id) are never applied, so
         // find_basic_object_by_import_name("tianyongcheng/shouhutianshen.c")
-        // misses and place_char can't clone the guard NPC.  Collect ALL
-        // non-empty creates from the merged table, run them in inherit order
-        // (ascending key = parent constitutions first, the object's own create
-        // last), skipping duplicates of the same program.
-        std::vector<const OriginalFunction*> creates;
-        std::set<int> seenKeys;
-        for (const auto& fn : obj_.functions) {
-            if (fn.name == "create" && fn.index >= 0 && !fn.code.empty() && seenKeys.insert(fn.index).second)
-                creates.push_back(&fn);
-        }
-        for (const auto& kv : funcsByIndex_) {
-            if (kv.second->name == "create" && kv.second->index >= 0 &&
-                !kv.second->code.empty() && seenKeys.insert(kv.first).second)
-                creates.push_back(kv.second);
-        }
-        if (creates.empty()) return;
-        std::sort(creates.begin(), creates.end(), [](const OriginalFunction* a, const OriginalFunction* b) {
-            return a->index < b->index;
-        });
-        if (vmEnvTrace() && objName_.find("npc/basic") != std::string::npos) {
-            std::string dbg;
-            for (auto* c : creates) { if (!dbg.empty()) dbg += ","; dbg += std::to_string(c->index); }
-            std::cerr << "[create-multi] obj=" << objName_ << " n=" << creates.size() << " idx=[" << dbg << "]\n";
-        }
-        if (vmEnvTrace() && std::getenv("LPCVM_TRACE_CREATE") && objName_.find("npc/basic") != std::string::npos) {
-            for (auto* c : creates) {
-                std::string src = c->strings && !c->strings->empty() ? "[strtable]" : "?";
-                std::cerr << "[create-src] idx=" << c->index << " args=" << c->argCount
-                          << " code=" << c->code.size() << " varOff=" << c->varOffset
-                          << " funOff=" << c->funOffset << "\n";
+        // misses and place_char can't clone the guard NPC.
+        // Collect the create() to run per PROGRAM along the inherit chain and
+        // execute each by its MERGED function-table key.  A previous bug here
+        // collected inherited creates and then looked them up with their OWN
+        // program index (funcsByIndex_.find(fn.index)); for any parent whose
+        // baseFunOffset is non-zero the merged key differs (funOffset + index),
+        // so an unrelated function of the inheriting object ran instead (e.g.
+        // task_time_ex.c's create looked up as fn#16 ran fishingd's own
+        // 'add_temp', silently never calling restore(), so
+        // /gs/daemons/fishingd.c / arenas/free_arena.c etc. never wrote their
+        // time_info_list rows to the DB).  vm_f_construct_object2 walks the
+        // object's constitution list and runs each program's own create
+        // (private included) in inherit order.
+        struct CreateItem { int key; const OriginalFunction* fn; };
+        std::vector<CreateItem> creates;
+        auto addCreateOf = [&](const OriginalFunction& fn, int childKey) {
+            if (fn.name == "create" && fn.index >= 0 && !fn.code.empty()) {
+                auto it = funcsByIndex_.find(childKey);
+                if (it != funcsByIndex_.end() && it->second->name == "create" &&
+                    !it->second->code.empty())
+                    creates.push_back({childKey, it->second});
             }
-        }
-        for (const OriginalFunction* createFn : creates) {
-            if (vmEnvTrace())
-                std::cerr << "[create] object=" << obj_.magic << " fn=" << createFn->name
-                          << " index=" << createFn->index << " args=" << createFn->argCount
-                          << " extArgs=" << createArgs.size() << "\n";
-            auto it = funcsByIndex_.find(createFn->index);
-            if (it != funcsByIndex_.end()) {
+        };
+        // Walk the inherit tree like runInheritedInitsOf: for each program
+        // reached along the chain run ITS OWN create at the accumulated child
+        // index, dedup by program path (deepest parents first), then the
+        // object's own create last.
+        auto loadInh = [this](const std::string& vpath) -> std::shared_ptr<const OriginalObject> {
+            std::string rel = vpath;
+            if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+            if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+            if (auto p = loadOriginalObjectByRelPath(rel)) return p;
+            std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+            return std::make_shared<const OriginalObject>(loadOriginalObject(cand));
+        };
+        std::set<std::string> seenPrograms;
+        std::function<void(const OriginalObject&, int, int)> walk;
+        walk = [&](const OriginalObject& parent, int accFun, int accVar) {
+            for (const auto& inh : parent.inherits) {
+                std::shared_ptr<const OriginalObject> parentObj;
+                try {
+                    parentObj = loadInh(inh.path);
+                } catch (...) {
+                    continue;
+                }
+                int funOff = accFun + inh.baseFunOffset;
+                if (seenPrograms.insert(inh.path).second) {
+                    for (const auto& fn : parentObj->functions)
+                        addCreateOf(fn, funOff + fn.index);
+                }
+                walk(*parentObj, funOff, accVar + inh.baseVarOffset);
+            }
+        };
+        walk(obj_, 0, 0);
+        for (const auto& fn : obj_.functions) addCreateOf(fn, fn.index);
+        if (creates.empty()) return;
+        for (auto& ci : creates) {
+            const OriginalFunction* createFn = ci.fn;
+            {
                 std::vector<Value> args;
                 // External (load_object) arguments are the object-creation
                 // context; only pass them to creates that declare parameters
                 // (handler.c's create(arg) reads arg["module"]).  A zero-arg
                 // create ignores them, so keep its stack clean.
-                if (!createArgs.empty() && it->second->argCount >= 1) {
+                if (!createArgs.empty() && createFn->argCount >= 1) {
                     for (size_t i = 0; i < createArgs.size(); ++i) args.push_back(createArgs[i]);
                 }
-                for (int i = static_cast<int>(args.size()); i < it->second->argCount; ++i)
+                for (int i = static_cast<int>(args.size()); i < createFn->argCount; ++i)
                     args.push_back(Value{});   // missing create arg -> undefined (type 0)
-                executeFunctionFromOutside(*it->second, args);
+                executeFunctionFromOutside(*createFn, args);
             }
         }
     }
@@ -2394,6 +2550,29 @@ private:
         if (ref.slotIndex >= 0) {
             if (static_cast<size_t>(ref.slotIndex) >= stack_.size()) return make_int(0);
             const StackItem& it = stack_[ref.slotIndex];
+            if (constructDiagOn() && !frames_.empty() && frames_.back().fn &&
+                frames_.back().fn->name == "create_data_from2") {
+                std::string is = "plain";
+                if (it.isRef) is = "ref";
+                else if (it.value.index() == 11) {
+                    auto r = std::get<std::shared_ptr<CrossVmRef>>(it.value);
+                    is = "crossref(vm=" + std::to_string(reinterpret_cast<uintptr_t>(r ? r->vm : nullptr));
+                    if (r) {
+                        OriginalVm* rvm = static_cast<OriginalVm*>(r->vm);
+                        is += " obj=" + std::to_string(r->objIndex);
+                        if (rvm && r->objIndex >= 0 &&
+                            static_cast<size_t>(r->objIndex) < rvm->ownObjVars().size())
+                            is += " ->t" +
+                                  std::to_string(rvm->ownObjVars()[static_cast<size_t>(r->objIndex)].index());
+                        else is += " OOB vars=" +
+                                   std::to_string(rvm ? rvm->ownObjVars().size() : size_t(0));
+                    }
+                    is += ")";
+                } else is = "t" + std::to_string(it.value.index());
+                std::cerr << "[hprobe] deref-slot " << ref.slotIndex << " item=" << is
+                          << " vm=" << this << " obj=" << objName_ << "\n";
+                std::cerr.flush();
+            }
             if (it.isRef) return deref(it);
             return resolveCrossVmRef(it.value);
         }
@@ -2463,8 +2642,8 @@ private:
                             StackItem& cslot = vm->stack_[static_cast<size_t>(r->slotIndex)];
                             cslot.value = v;
                         } else if (r->objIndex >= 0 &&
-                                   static_cast<size_t>(r->objIndex) < vm->objVars().size()) {
-                            vm->objVars()[static_cast<size_t>(r->objIndex)] = v;
+                                   static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
+                            vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = v;
                         }
                     }
                     // leave slot.value as the CrossVmRef
@@ -2510,8 +2689,8 @@ private:
                 }
                 return vm->resolveCrossVmRef(it.value);
             }
-            if (r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->objVars().size())
-                return vm->objVars()[static_cast<size_t>(r->objIndex)];
+            if (r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->ownObjVars().size())
+                return vm->ownObjVars()[static_cast<size_t>(r->objIndex)];
             return make_int(0);
         }
         return v;
@@ -2676,6 +2855,90 @@ private:
                                   << " [" << wnd << "]\n";
                     }
                     std::cerr.flush();
+                } else if (std::getenv("LPCVM_TAIL") &&
+                           (objName_.find("change_lookd") != std::string::npos ||
+                            objName_.find("vendued") != std::string::npos)) {
+                    std::string chain;
+                    for (const auto& fr : frames_) {
+                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                        if (!chain.empty()) chain += "<-";
+                        chain += fnm;
+                        if (chain.size() > 220) break;
+                    }
+                    std::string dbb;
+                    for (size_t ai = 0; ai < args.size() && ai < 6; ++ai) {
+                        if (ai) dbb += " ";
+                        dbb += to_string(args[ai], false);
+                    }
+                    std::cerr << "[d-raise] obj=" << objName_ << " chain=[" << chain
+                              << "] msg=[" << dbb << "]\n";
+                    std::cerr.flush();
+                } else if (constructDiagOn() && !frames_.empty()) {
+                    // Compact one-line raise log (no ERR_TRACE volume): name the
+                    // daemon/closure that raises a caught LPC error during the
+                    // post_init do_init cluster (onlinemalld/custom_packd/herod/
+                    // longgong_xianyi...) so a deadlocking wait becomes
+                    // attributable without the heavy trace that crashes gs.
+                    std::string chain;
+                    for (const auto& fr : frames_) {
+                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                        if (!chain.empty()) chain += "<-";
+                        chain += fnm;
+                        if (chain.size() > 200) break;
+                    }
+                    std::cerr << "[lpc-raise] obj=" << objName_
+                              << " fn=" << (frames_.back().fn ? frames_.back().fn->name : "?")
+                              << " chain=[" << chain << "] msg=[" << msg << "]\n";
+                    if (msg.rfind("coupon", 0) == 0 && !frames_.empty()) {
+                        const Frame& fr = frames_.back();
+                        int bp = fr.bp;
+                        for (int i = std::max(0, bp - 12); i <= bp + 10 && static_cast<size_t>(i) < stack_.size(); ++i) {
+                            const Value& v = stack_[static_cast<size_t>(i)].value;
+                            if (v.index() == 4) {
+                                const std::string& st = std::get<SharedString>(v).str();
+                                // match GBK bytes of "充值送" (B3 E4 D6 B5 CB CD); keep source ASCII
+                                static const unsigned char gb[] = {0xB3, 0xE4, 0xD6, 0xB5, 0xCB, 0xCD};
+                                bool hit = st.size() >= 24;
+                                for (size_t k = 0; !hit && k + 6 <= st.size(); ++k) {
+                                    hit = true;
+                                    for (int b = 0; b < 6; ++b) {
+                                        if (static_cast<unsigned char>(st[k + static_cast<size_t>(b)]) != gb[b]) { hit = false; break; }
+                                    }
+                                }
+                                if (hit) {
+                                    std::cerr << "[coupon-name] slot=" << i << " len=" << st.size()
+                                              << " head=" << st.substr(0, 8) << " tail=";
+                                    size_t t0 = st.size() > 4 ? st.size() - 4 : 0;
+                                    std::cerr << st.substr(t0) << "\n";
+                                    for (size_t z = 0; z < st.size() && z < 40; ++z)
+                                        std::cerr << std::hex << (static_cast<unsigned char>(st[z])) << " ";
+                                    std::cerr << std::dec << "\n";
+                                    std::cerr.flush();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (msg.rfind("coupon", 0) == 0 && !frames_.empty()) {
+                        const Frame& fr = frames_.back();
+                        int bp = fr.bp;
+                        std::cerr << "[coupon-diag] now=" << std::time(nullptr) << "\n";
+                        std::cerr.flush();
+                        std::string wnd;
+                        for (int i = 0; i < static_cast<int>(stack_.size()); ++i) {
+                            if (!wnd.empty()) wnd += " | ";
+                            std::string vs;
+                            try { vs = to_string(stack_[static_cast<size_t>(i)].value, false); }
+                            catch (...) { vs = "<err>"; }
+                            if (vs.size() > 90) vs = vs.substr(0, 90);
+                            wnd += std::to_string(i) + ":" +
+                                   std::to_string(stack_[static_cast<size_t>(i)].value.index()) + ":" + vs;
+                        }
+                        std::cerr << "[lpc-raise-stack] fn=" << (fr.fn ? fr.fn->name : "?")
+                                  << " bp=" << bp << " sz=" << stack_.size()
+                                  << " [" << wnd << "]\n";
+                        std::cerr.flush();
+                    }
                 }
                 throw VmError(msg);
             }
@@ -2782,7 +3045,12 @@ private:
                     int pad = (declared > static_cast<int>(callArgs.size()))
                                   ? declared - static_cast<int>(callArgs.size()) : 0;
                     size_t base = stack_.size();
-                    for (int i = 0; i < pad; ++i) pushValue(Value{});
+                    // The original VM zero-initializes every declared param
+                    // slot at frame allocation, so an omitted declared arg is
+                    // int 0 - never "undefined" (is_int(undefined) fails in
+                    // update_child.c's formula 79 when childd's
+                    // create_phy_child calls update_child(child) with one arg).
+                    for (int i = 0; i < pad; ++i) pushValue(make_int(0));
                     for (int i = static_cast<int>(callArgs.size()) - 1; i >= 0; --i)
                         pushValue(callArgs[static_cast<size_t>(i)]);
                     if (declared == 0 && callArgs.empty()) {
@@ -2801,7 +3069,8 @@ private:
                     bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
                                                      targetVm->objVarsShared(),
                                                      &targetVm->object().strings,
-                                                     &targetVm->functionTable());
+                                                     &targetVm->functionTable(),
+                                                     pad);
                     if (inlOk) {
                         efunInlineStarted_ = true;
                         return make_int(0);
@@ -2872,7 +3141,9 @@ private:
                         int pad = (declared > static_cast<int>(callArgs.size()))
                                       ? declared - static_cast<int>(callArgs.size()) : 0;
                         size_t base = stack_.size();
-                        for (int i = 0; i < pad; ++i) pushValue(Value{});
+                        // Omitted declared args are int 0 (frame-area zero
+                        // init in the original driver), see call_other above.
+                        for (int i = 0; i < pad; ++i) pushValue(make_int(0));
                         for (int i = static_cast<int>(callArgs.size()) - 1; i >= 0; --i)
                             pushValue(callArgs[static_cast<size_t>(i)]);
                         if (declared == 0 && callArgs.empty()) {
@@ -2891,7 +3162,8 @@ private:
                         bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
                                                          targetVm->objVarsShared(),
                                                          &targetVm->object().strings,
-                                                         &targetVm->functionTable());
+                                                         &targetVm->functionTable(),
+                                                         pad);
                         if (inlOk) {
                             efunInlineStarted_ = true;
                             return make_int(0);
@@ -3221,6 +3493,19 @@ private:
                 // Not intercepted (see callUserFunction): the master's LPC
                 // post_init() runs registered closures inline from its global
                 // code; the scheduler parks the master on blocking closures.
+                if (std::getenv("LPCVM_TAIL") &&
+                    (objName_.find("vendued") != std::string::npos ||
+                     objName_.find("change_lookd") != std::string::npos)) {
+                    std::string cname = "?";
+                    if (!args.empty() && args[0].index() == 8) {
+                        auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
+                        cname = cl->functionName + (cl->owner ? ("@" + cl->owner->sourceName) : "");
+                    }
+                    std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                    std::cerr << "[rpi-efun] obj=" << objName_ << " this=" << thisObjectName_
+                              << " fn=" << cur << " [" << cname << "] vm=" << this << "\n";
+                    std::cerr.flush();
+                }
                 return make_int(1);
             }
             if (nm == "set_timer" && args.size() >= 3) {
@@ -3596,6 +3881,28 @@ private:
                 }
                 return make_int(-1);
             }
+            if (nm == "clone_object" && !args.empty()) {
+                // Master NPC clones (/gs/clone/npc/master/*.c) run a create()
+                // whose restore()/save() DB round-trips must park; construct
+                // them cooperatively so their create runs to completion (see
+                // cloneObjectCooperative).  All other clones keep the generic
+                // synchronous path.
+                std::string path;
+                if (args[0].index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+                    path = ov->programName;
+                    if (path.compare(0, 6, "clone:") == 0) path = path.substr(6);
+                    else if (path.compare(0, 4, "pak:") == 0) path = path.substr(4);
+                    if (!path.empty() && path.front() != '/') path = "/" + path;
+                } else {
+                    path = to_string(args[0], false);
+                }
+                if (path.find("/clone/npc/master/") != std::string::npos) {
+                    std::vector<Value> createArgs;
+                    if (args.size() >= 2) createArgs.push_back(args[1]);
+                    return cloneObjectCooperative(path, createArgs);
+                }
+            }
             if (nm == "load_object") {
                 // vm_f_load_object (0x80f8cbc): load + construct the object.
                 // The original runs the construction (global init code +
@@ -3667,6 +3974,88 @@ private:
                               << " frames=" << frames_.size() << " stack=" << stack_.size() << "\n";
                     std::cerr.flush();
                 }
+                if (std::getenv("LPCVM_TAIL") && gfn->name == "register_post_init" &&
+                    (objName_.find("vendued") != std::string::npos ||
+                     objName_.find("change_lookd") != std::string::npos)) {
+                    std::string chain;
+                    for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 200; ++it) {
+                        if (!chain.empty()) chain += "<-";
+                        chain += it->fn ? it->fn->name : "<ctx>";
+                    }
+                    std::string adbg;
+                    int ac = flags & 0x3F;
+                    for (int k = 0; k < ac && k < 3; ++k) {
+                        size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                        if (!adbg.empty()) adbg += " | ";
+                        if (si < stack_.size()) {
+                            const Value& av = stack_[si].value;
+                            if (av.index() == 8) {
+                                auto cl = std::get<std::shared_ptr<ClosureValue>>(av);
+                                adbg += "cl:" + cl->functionName + (cl->owner ? ("@" + cl->owner->sourceName) : "");
+                            } else adbg += to_string(av, false).substr(0, 30);
+                        } else adbg += "?";
+                    }
+                    std::cerr << "[rpi] obj=" << objName_ << " this=" << thisObjectName_
+                              << " chain=[" << chain << "] argc=" << ac
+                              << " [" << adbg << "] vm=" << this << "\n";
+                    std::cerr.flush();
+                }
+                if (std::getenv("LPCVM_TAIL") && gfn->name == "register_basic_object") {
+                    // basic_objectd creates generic npc basics from the *_npc.list
+                    // tables; log every registration so missing NPC names (逍遥仙
+                    // etc.) can be traced to the row data actually applied.  Args
+                    // sit on TOP of the stack (pushed by the caller before the
+                    // call opcode); arg0 = import_name string, arg1 = the basic
+                    // object (whose programName carries the clone #seq).
+                    int ac = flags & 0x3F;
+                    std::string adbg;
+                    for (int k = 0; k < ac && k < 3; ++k) {
+                        size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                        if (!adbg.empty()) adbg += " | ";
+                        if (si < stack_.size()) {
+                            const Value& av = stack_[si].value;
+                            if (av.index() == 4) adbg += std::get<SharedString>(av).str().substr(0, 30);
+                            else if (av.index() == 7)
+                                adbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 60);
+                            else adbg += "t" + std::to_string(av.index());
+                        } else adbg += "?";
+                    }
+                    if (adbg.find("npc/basic") != std::string::npos ||
+                        adbg.find("xiaoyaoxian") != std::string::npos ||
+                        adbg.find("taisha") != std::string::npos ||
+                        adbg.find("\xC1\xA6\xD2\xA3\xCF\xC9") != std::string::npos ||   // 逍遥仙 GBK
+                        adbg.find("\xCC\xA9\xC9\xB1") != std::string::npos)            // 泰煞守卫 GBK
+                        std::cerr << "[rbo2] " << adbg << " obj=" << objName_ << "\n";
+                    std::cerr.flush();
+                }
+                if (constructDiagOn()) {
+                    static const char* probeFns[] = {
+                        "create_data_from2", "create_data_from3", "add_to_section",
+                        "_find_room", "find_room_ob", "get_alias_room",
+                        "attach_form_file", "create_data", "query_form_value",
+                        "do_init_data", "do_place_npc"};
+                    bool hit = false;
+                    for (auto* pf : probeFns)
+                        if (gfn->name == pf) { hit = true; break; }
+                    if (hit) {
+                        int ac = flags & 0x3F;
+                        std::string adbg;
+                        for (int k = 0; k < ac && k < 3; ++k) {
+                            size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                            if (!adbg.empty()) adbg += " | ";
+                            if (si < stack_.size()) {
+                                const Value& av = stack_[si].value;
+                                if (av.index() == 4) adbg += "str(" + std::to_string(std::get<SharedString>(av).size()) + ")["
+                                                          + std::get<SharedString>(av).str().substr(0, 24) + "]";
+                                else adbg += to_string(av, false).substr(0, 60);
+                            } else adbg += "?";
+                        }
+                        std::cerr << "[hprobe] call global fn=" << gfn->name
+                                  << " obj=" << objName_ << " argc=" << ac
+                                  << " args=[" << adbg << "]\n";
+                        std::cerr.flush();
+                    }
+                }
                 if (startInlineFunction(*gfn, false, flags & 0x3F)) return true;
                 if (gfn->name == "mysql_select" || gfn->name == "mixed_mysql_select")
                     std::cerr << "[gfn] " << gfn->name << " START FAILED (stack too shallow)\n";
@@ -3718,6 +4107,23 @@ private:
                            impl->name == "fetch_config_list" || impl->name == "assure_connection" ||
                            impl->name == "mysql_select" || impl->name == "update_config" ||
                            impl->name == "choose_one_url" || impl->name == "do_init";
+            if (impl->name == "register_basic_object" && std::getenv("LPCVM_TAIL")) {
+                int ac = flags & 0x3F;
+                std::string adbg;
+                for (int k = 0; k < ac && k < 3; ++k) {
+                    size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                    if (!adbg.empty()) adbg += " | ";
+                    if (si < stack_.size()) {
+                        const Value& av = stack_[si].value;
+                        if (av.index() == 4) adbg += std::get<SharedString>(av).str().substr(0, 30);
+                        else if (av.index() == 7)
+                            adbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 45);
+                        else adbg += "t" + std::to_string(av.index());
+                    } else adbg += "?";
+                }
+                std::cerr << "[rbo-local] " << adbg << "\n";
+                std::cerr.flush();
+            }
             bool authTrace = impl->name == "register_auth" || impl->name == "register_ban" ||
                              impl->name == "do_when_new_connection" || impl->name == "auth_connection" ||
                              impl->name == "register_disconnect" || impl->name == "auth_in_config_list" ||
@@ -3734,8 +4140,9 @@ private:
                 std::cerr << "[auth] " << impl->name << " obj=" << objName_
                           << " argc=" << ac << " args=[" << adbg << "]\n";
             }
-            // Pad missing DECLARED arguments with undefined so the callee's
-            // param slots never alias stale caller stack data.  case 7 pops
+            // Pad missing DECLARED arguments with int 0 (the original's frame
+            // allocation zero-initializes every declared param slot) so the
+            // callee's param slots never alias stale caller stack data.  case 7 pops
             // nothing for the callee - the bytecode pushed only the args it
             // had (fill_pic_pool calls generate_hanzi_info() with 0 args while
             // it declares char_arr); without padding, bp = stack.size()-1
@@ -3751,11 +4158,17 @@ private:
                     // LOW slots below the passed ones, exactly like
                     // pushArgsForFunction.  The bytecode already pushed the
                     // real args (param0 on top): pull them off, push the pad
-                    // undefineds, then push the real args back so param0 ends
-                    // on top and bp = stack.size()-1 lands on it.
+                    // zeros, then push the real args back so param0 ends
+                    // on top and bp = stack.size()-1 lands on it.  The
+                    // original driver zero-initializes the frame's param
+                    // area, so an omitted declared arg must read as int 0,
+                    // NOT "undefined" (childd.update_child(child) omits the
+                    // defaulted is_level_up and its formula-79 arg check
+                    // is_int() used to fail on the undefined pad, aborting
+                    // the master NPC clone's create()).
                     std::vector<StackItem> args2;
                     for (int i = 0; i < ac && !stack_.empty(); ++i) args2.push_back(pop());
-                    for (int i = 0; i < pad; ++i) pushValue(Value{});
+                    for (int i = 0; i < pad; ++i) pushValue(make_int(0));
                     for (auto it = args2.rbegin(); it != args2.rend(); ++it) stack_.push_back(*it);
                 }
                 // The callee inherits the CURRENT frame's string table (a
@@ -3788,7 +4201,30 @@ private:
                         }
                     }
                 }
-                if (startInlineFunction(*impl, false, ac + pad, nullptr, curTbl)) return true;
+                if (constructDiagOn() && impl->name == "init_npc" &&
+                    (objName_.find("douchong_dahui") != std::string::npos ||
+                     objName_.find("longgong_xianyi") != std::string::npos ||
+                     objName_.find("herod") != std::string::npos)) {
+                    std::string dbg;
+                    int ac2 = flags & 0x3F;
+                    for (int k = 0; k < ac2 && k < 4; ++k) {
+                        size_t si = stack_.size() - static_cast<size_t>(ac2) + static_cast<size_t>(k);
+                        if (!dbg.empty()) dbg += ", ";
+                        dbg += (si < stack_.size())
+                                   ? to_string(stack_[si].value, false).substr(0, 60) : "?";
+                    }
+                    std::cerr << "[initnpc-call] obj=" << objName_ << " ac=" << ac2
+                              << " args=[" << dbg << "] declared=" << impl->argCount << "\n";
+                }
+                // Frame argNum must reflect the REAL number of passed args (ac),
+                // NOT ac + pad: check_args_num in a callee that declares default
+                // values (init_npc(object, int saved=1)) falls through to its
+                // inline default block only when passed < declared.  Reporting
+                // ac+pad made it think every arg was supplied, skipping the
+                // default (saved stayed the 0 pad and the lgxy NPC's save was
+                // skipped -> no 'lgxy' rows).  The zero pads fill the declared
+                // slots for callees WITHOUT a default block.
+                if (startInlineFunction(*impl, false, ac, nullptr, curTbl, nullptr, pad)) return true;
             }
             if (authTrace)
                 std::cerr << "[auth] " << impl->name << " START FAILED (stack too shallow)\n";
@@ -4013,7 +4449,13 @@ private:
         }
         int pushCount = (passed > n) ? passed : n;
         for (int i = pushCount - 1; i >= 0; --i) {
-            Value a = (i < static_cast<int>(args.size())) ? args[i] : Value{};
+            // The original zero-initializes every declared local/param slot on
+            // frame allocation, so a trailing parameter the caller omitted is
+            // int 0, NOT "undefined".  Filling it with undefined made
+            // is_int(is_level_up) fail inside update_child.c's formula 79
+            // ("It is not a integer!") when childd calls update_child(child)
+            // with one argument, aborting the master NPC clone's create().
+            Value a = (i < static_cast<int>(args.size())) ? args[i] : make_int(0);
             pushValue(a);
         }
         return placeholder;
@@ -4046,7 +4488,8 @@ private:
     bool startInlineFunction(const OriginalFunction& fn, bool zeroArgPlaceholder, int passedArgs,
                              std::shared_ptr<std::vector<Value>> switchObjVars = nullptr,
                              const std::vector<std::string>* targetStrings = nullptr,
-                             const std::map<int, const OriginalFunction*>* switchFuncs = nullptr) {
+                             const std::map<int, const OriginalFunction*>* switchFuncs = nullptr,
+                             int padArgs = 0) {
         // Only the REAL arguments must be on the stack.  Missing declared
         // parameters are filled by the callee's check_args_num default-value
         // block (inline defaults + resort_stack), so requiring fn.argCount
@@ -4111,6 +4554,8 @@ private:
         frame.retCode = code_;
         frame.retMeta = meta_;
         frame.retIp = ip_;   // ip_ already points at the instruction AFTER the call
+        frame.padArgs = padArgs;
+        frame.passedArgs = passedArgs;
         frames_.push_back(frame);
         code_ = &fn.code;
         meta_ = &fn.metaData;
@@ -4129,6 +4574,14 @@ private:
     Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
                                  int passedArgs = -1) {
         ExecGuard lock(execMutex_, execDepth_, "onStack " + objName_ + "/" + fn.name);
+        bool probeCd = (fn.name == "create_data") && constructDiagOn();
+        if (probeCd)
+            std::cerr << "[hprobe] onStack create_data obj=" << objName_
+                      << " this=" << thisObjectName_
+                      << " parked=" << parked_ << " schParked="
+                      << lpc::scheduler().isVmParked(this)
+                      << " frames=" << frames_.size()
+                      << " stack=" << stack_.size() << " code0=" << fn.code.size() << "\n";
         // Only the REAL arguments must be present; declared-but-defaulted
         // params are filled by the callee's check_args_num default block.
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
@@ -4266,6 +4719,9 @@ private:
             // code_/meta_/ip_) so the scheduler can resume from ip_ later.
             throw;
         } catch (...) {
+            if (probeCd)
+                std::cerr << "[hprobe] onStack create_data THREW obj=" << objName_
+                          << " frames=" << frames_.size() << "\n";
             code_ = savedCode;
             meta_ = savedMeta;
             ip_ = savedIp;
@@ -4288,7 +4744,9 @@ private:
             // parameters) and updates argNum to passed + defaults.
             int liveBp = frames_.back().bp;
             int usedArgs = frames_.back().argNum;
-            int newSize = liveBp - usedArgs + 1 - (frames_.back().zeroArgPlaceholder ? 1 : 0);
+            int padEff = (usedArgs == frames_.back().passedArgs) ? frames_.back().padArgs : 0;
+            int newSize = liveBp - usedArgs + 1 - (frames_.back().zeroArgPlaceholder ? 1 : 0)
+                          - padEff;
             if (newSize < 0) newSize = 0;
             stack_.resize(static_cast<size_t>(newSize));
             if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
@@ -4300,6 +4758,12 @@ private:
         ip_ = savedIp;
         returnValue_ = savedReturn;
         returned_ = savedReturned;
+        if (probeCd)
+            std::cerr << "[hprobe] onStack create_data RESULT obj=" << objName_
+                      << " retIdx=" << result.index() << " ret="
+                      << to_string(result, false).substr(0, 40)
+                      << " ip=" << ip_ << " frames=" << frames_.size()
+                      << " stack=" << stack_.size() << "\n";
         return result;
     }
 
@@ -4334,6 +4798,20 @@ private:
     // resumeValue must be a fresh value; the caller owns any stack effects.
     void resumeProcess(Value /*resumeValue ignored*/) {
         ExecGuard lock(execMutex_, execDepth_, "resume " + objName_);
+        if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
+            objName_.find("/clone/npc/master") != std::string::npos) {
+            std::string cf = frames_.empty() || !frames_.back().fn ? "<none>" : frames_.back().fn->name;
+            std::string chain;
+            for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                const Frame& fr = frames_[static_cast<size_t>(fi)];
+                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                if (!chain.empty()) chain += "<-";
+                chain += fnm;
+                if (chain.size() > 220) break;
+            }
+            std::cerr << "[resume-m] vm=" << this << " obj=" << objName_
+                      << " top=" << cf << " ip=" << ip_ << " chain=[" << chain << "]\n";
+        }
         parked_ = false;
         ResumeCond c = cond_;
         cond_ = ResumeCond{};
@@ -4344,6 +4822,10 @@ private:
         }
         pushValue(std::move(resumeValue_));
         runLoop();
+        if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
+            objName_.find("/clone/npc/master") != std::string::npos)
+            std::cerr << "[resume-end] vm=" << this << " obj=" << objName_ << " ip=" << ip_
+                      << " frames=" << frames_.size() << "\n";
         // runLoop returned normally: the whole call chain finished and the
         // top-level frame was popped by case 72/73 (retCode == nullptr).
         // All state is already clean; nothing to restore.
@@ -4393,6 +4875,22 @@ private:
     // records what to wait for; hook runs on resume before the efun result
     // is pushed; resumeValue is pushed on resume.
     void parkAndSuspend(const ResumeCond& cond, std::function<void()> hook, Value resumeValue) {
+        if (std::getenv("LPCVM_TRACE_CREATE") &&
+            cond.kind == 3 && cond.ename.rfind("ev_filed", 0) == 0 &&
+            objName_.find("/clone/npc/master") != std::string::npos) {
+            std::string chain;
+            for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                const Frame& fr = frames_[static_cast<size_t>(fi)];
+                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                if (!chain.empty()) chain += "<-";
+                chain += fnm;
+                if (chain.size() > 220) break;
+            }
+            std::cerr << "[fw-wait] vm=" << this << " tid=" << scheduler().currentProcessTid()
+                      << " ev=" << cond.ename << " mask=0x" << std::hex << cond.mask << std::dec
+                      << " obj=" << objName_ << " ip=" << ip_
+                      << " chain=[" << chain << "]\n";
+        }
         cond_ = cond;
         onResume_ = std::move(hook);
         parked_ = true;
@@ -4635,13 +5133,70 @@ private:
                 // not a real call frame: the return op must NOT pop that
                 // context frame (runInheritedInits pops it itself) and must not
                 // resume a caller stream - it just ends the init segment.
-                if (frames_.empty()) { returned_ = true; return; }
+                if (frames_.empty()) { returned_ = true; catches_.clear(); return; }
                 const Frame& f = frames_.back();
+                static const bool tailDiagHere = (std::getenv("LPCVM_TAIL") != nullptr);
+                bool diInit = f.fn && (f.fn->name == "do_init" || f.fn->name == "do_init_data" ||
+                                       f.fn->name == "init_data");
+                bool diTarget = f.fn && f.fn->name == "do_init" &&
+                                (objName_.find("vendued") != std::string::npos ||
+                                 objName_.find("change_lookd") != std::string::npos ||
+                                 objName_.find("scand") != std::string::npos);
+                if (diInit && (constructDiagOn() || (tailDiagHere && diTarget))) {
+                    const OriginalVm* home = originalHomeVmOf(f.fn);
+                    std::cerr << (diTarget ? "[doinit-ret] " : "[doinit-return] ")
+                              << "fn=" << f.fn->name
+                              << " on " << (home ? home->object().sourceName : obj_.sourceName)
+                              << " vm=" << this
+                              << " top=" << (stack_.empty() ? std::string("empty")
+                                        : to_string(stack_.back().value, false).substr(0, 40))
+                              << " frames=" << frames_.size() << "\n";
+                    std::cerr.flush();
+                }
                 if (vmEnvTrace() && vmEnvTraceFn() &&
                     f.fn && f.fn->name == vmEnvTraceFn())
                     std::cerr << "[ret-enter] " << f.fn->name << " bp=" << f.bp
                               << " argNum=" << f.argNum << " stack=" << stack_.size()
                               << " frames=" << frames_.size() << " op=" << in.op << "\n";
+                // Diagnostic return probe: scand query_objects results for the
+                // change_lookd monster gate, hero get_save_path shape, and
+                // (LPCVM_TAIL) vendue/change_lookd/scand entry functions.
+                static const bool tailDiag = (std::getenv("LPCVM_TAIL") != nullptr);
+                bool gRet = false;
+                std::string gRetCallee;
+                if ((constructDiagOn() || tailDiag) && f.fn && frames_.size() >= 2) {
+                    const Frame& caller = frames_[frames_.size() - 2];
+                    bool heroSave = caller.fn && caller.fn->name == "get_save_path" &&
+                                    objName_.find("hero.o") != std::string::npos;
+                    bool qoCall = f.fn->name == "query_objects";
+                    bool tailCall = tailDiag &&
+                                    (objName_.find("vendued") != std::string::npos ||
+                                     objName_.find("change_lookd") != std::string::npos) &&
+                                    (f.fn->name == "load_vendue_slots" ||
+                                     f.fn->name == "set_owner_gid" ||
+                                     f.fn->name == "save_slots_by_type" ||
+                                     f.fn->name == "load_vendue_slots_by_type" ||
+                                     f.fn->name == "do_init");
+                    if (qoCall) {
+                        for (size_t fi = 1; fi < frames_.size(); ++fi) {
+                            if (frames_[fi].fn && frames_[fi].fn->name == "do_init" &&
+                                (objName_.find("change_lookd") != std::string::npos ||
+                                 objName_.find("scand") != std::string::npos)) {
+                                gRet = true;
+                                gRetCallee = f.fn->name;
+                                std::cerr << "[qo] " << objName_ << " caller="
+                                          << (frames_[1].fn ? frames_[1].fn->name : "?")
+                                          << " sz=" << stack_.size()
+                                          << " top=" << (stack_.empty() ? std::string("empty")
+                                                    : to_string(stack_.back().value, false)) << "\n";
+                                break;
+                            }
+                        }
+                    } else if (heroSave || tailCall) {
+                        gRet = true;
+                        gRetCallee = f.fn->name;
+                    }
+                }
                 if (in.op == 72) {
                     if (!stack_.empty()) returnValue_ = pop().value;
                     else returnValue_ = make_int(0);
@@ -4664,10 +5219,75 @@ private:
                 if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
                     std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 returned_ = true;
+                if (constructDiagOn() && f.fn) {
+                    static const char* probeFns[] = {
+                        "create_data_from2", "create_data_from3", "add_to_section",
+                        "_find_room", "find_room_ob", "get_alias_room",
+                        "attach_form_file", "create_data", "query_form_value",
+                        "do_init_data", "do_place_npc", "convert_to_value"};
+                    bool hit = false;
+                    for (auto* pf : probeFns)
+                        if (f.fn->name == pf) { hit = true; break; }
+                    if (hit && f.fn->name == std::string("convert_to_value")) {
+                        // Only noisy-print quoted strings (coupon .list values)
+                        // so the many plain conversions do not flood the log.
+                        if (returnValue_.index() == 4 &&
+                            std::get<SharedString>(returnValue_).str().find('"') == std::string::npos)
+                            hit = false;
+                    }
+                    if (hit) {
+                        std::string rdbg;
+                        const Value& rv = returnValue_;
+                        switch (rv.index()) {
+                        case 2: rdbg = "int " + std::to_string(std::get<int64_t>(rv)); break;
+                        case 4: rdbg = "str(" + std::to_string(std::get<SharedString>(rv).size()) + ")["
+                                       + std::get<SharedString>(rv).str().substr(0, 24) + "]"; break;
+                        case 6: rdbg = "map(" +
+                                       std::to_string(std::get<std::shared_ptr<MappingValue>>(rv)->items().size()) +
+                                       ")"; break;
+                        case 5: rdbg = "arr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(rv)->items.size()) +
+                                       ")"; break;
+                        case 7: rdbg = "obj " +
+                                       std::get<std::shared_ptr<ObjectValue>>(rv)->programName; break;
+                        default: rdbg = "t" + std::to_string(rv.index()) + " " +
+                                        to_string(rv, false).substr(0, 40); break;
+                        }
+                        const OriginalVm* home = originalHomeVmOf(f.fn);
+                        std::string extra;
+                        if (f.fn->name == "attach_form_file" || f.fn->name == "query_form_value" ||
+                            f.fn->name == "query_form_index")
+                            extra = " varOff=" + std::to_string(f.varOffset)
+                                  + " vars=" + std::to_string(objVars_->size())
+                                  + " fnVarOff=" + std::to_string(f.fn->varOffset);
+                        std::cerr << "[hprobe] ret fn=" << f.fn->name
+                                  << " home=" << (home ? home->object().sourceName : obj_.sourceName)
+                                  << " this=" << thisObjectName_
+                                  << " ret=" << rdbg << extra << "\n";
+                        std::cerr.flush();
+                    }
+                }
+                if (constructDiagOn() && f.fn &&
+                    (f.fn->name == "restore" || f.fn->name == "save") &&
+                    thisObjectName_.find('#') != std::string::npos &&
+                    (objName_.find("longgong_xianyi") != std::string::npos ||
+                     objName_.find("douchong_dahui") != std::string::npos ||
+                     objName_.find("master") != std::string::npos))
+                    std::cerr << "[clone-restore-ret] " << thisObjectName_ << " fn=" << f.fn->name
+                              << " ret=" << to_string(returnValue_, false) << "\n";
                 // Context frame (fn == nullptr): this is a global init code
                 // segment run by runInheritedInits.  Do NOT pop it (the caller
                 // pops it) and do NOT resume a caller stream - end the loop.
-                if (f.fn == nullptr) return;
+                if (f.fn == nullptr) {
+                    // Drop catch regions this context opened (kept LIFO).
+                    while (!catches_.empty() && catches_.back().frameCount >= frames_.size())
+                        catches_.pop_back();
+                    return;
+                }
+                // Returning leaves the frame: any catch region opened in it
+                // (a `return` inside try, before its end_thread_catch) must be
+                // closed, exactly like vm_returnFromFun's vm_endThreadCatch.
+                while (!catches_.empty() && catches_.back().frameCount >= frames_.size())
+                    catches_.pop_back();
                 // ---- explicit stack machine: return to the caller ----
                 // Clean the callee's argument/local slots off the stack
                 // (mirrors the cleanup executeFunctionOnStack used to do
@@ -4676,7 +5296,8 @@ private:
                 // moves the frame base and updates argNum.
                 int liveBp = f.bp;
                 int usedArgs = f.argNum;
-                int newSize = liveBp - usedArgs + 1 - (f.zeroArgPlaceholder ? 1 : 0);
+                int padEff = (usedArgs == f.passedArgs) ? f.padArgs : 0;
+                int newSize = liveBp - usedArgs + 1 - (f.zeroArgPlaceholder ? 1 : 0) - padEff;
                 if (newSize < 0) newSize = 0;
                 // Grab the caller context before popping the frame.
                 const std::vector<OriginalInsn>* retCode = f.retCode;
@@ -4705,6 +5326,20 @@ private:
                               << " retIp=" << retIp << " newStack=" << newSize
                               << " framesAfter=" << frames_.size() << "\n";
                 pushValue(returnValue_);   // caller sees the return value on top
+                if (gRet) {
+                    std::string rdbg;
+                    if (returnValue_.index() == 5)
+                        rdbg = "arr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(returnValue_)->items.size()) + ")";
+                    else if (returnValue_.index() == 6)
+                        rdbg = "map(" + std::to_string(std::get<std::shared_ptr<MappingValue>>(returnValue_)->size()) + ")";
+                    else if (returnValue_.index() == 2)
+                        rdbg = "int " + std::to_string(std::get<int64_t>(returnValue_));
+                    else
+                        rdbg = "t" + std::to_string(returnValue_.index());
+                    std::cerr << "[" << (gRetCallee == "query_objects" ? "qo-ret" : "gret")
+                              << "] <- " << gRetCallee << " ret=" << rdbg << "\n";
+                    std::cerr.flush();
+                }
                 break;
             }
             case 59: // push_number(S)
@@ -4790,6 +5425,10 @@ private:
             case 3: { // assign_value: pop ref, keep value on stack
                 StackItem ref = pop();
                 if (!stack_.empty()) writeThrough(ref, stack_.back().value);
+                if (constructDiagOn() && !frames_.empty() && frames_.back().fn &&
+                    frames_.back().fn->name == "create_data_from2" && ref.map)
+                    std::cerr << "[hprobe] m68-assign cdf2 mapSize="
+                              << ref.map->items().size() << " vm=" << this << " obj=" << objName_ << "\n";
                 break;
             }
             case 4: { // assign_value_reverse: pop value, keep ref
@@ -4823,8 +5462,8 @@ private:
                             if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
                                 vm->stack_[static_cast<size_t>(r->slotIndex)].value = sv;
                             } else if (r->objIndex >= 0 &&
-                                       static_cast<size_t>(r->objIndex) < vm->objVars().size()) {
-                                vm->objVars()[static_cast<size_t>(r->objIndex)] = sv;
+                                       static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
+                                vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = sv;
                             }
                         }
                     } else {
@@ -5202,6 +5841,71 @@ private:
                 Value key = pop().value;
                 StackItem c = pop();
                 Value container = c.isRef ? deref(c) : c.value;
+                // A CrossVmRef parameter (create_data's &attrib_index /
+                // &attrib_list flowing in from an inline call_other) must be
+                // resolved to the LIVE container BEFORE makeMemberRef captures
+                // the map/array shared_ptr - otherwise `m[k] = v` builds a
+                // member ref with no .map/.arr and writeThrough drops the
+                // write, leaving the caller's object variable empty
+                // (attach_form_file -> importd.create_data -> _form_value
+                // stayed ([ ]) so herod/onlinemall forms never loaded).
+                container = resolveCrossVmRef(container);
+                if (constructDiagOn() && !frames_.empty() && frames_.back().fn &&
+                    frames_.back().fn->name == "create_data_from2") {
+                    std::string ks = to_string(key, false).substr(0, 40);
+                    std::string ci = (container.index() == 6)
+                        ? ("map(" + std::to_string(std::get<std::shared_ptr<MappingValue>>(container)->items().size()) + ")")
+                        : (container.index() == 11 ? "CROSSVMREF" : ("t" + std::to_string(container.index())));
+                    std::string rdbg;
+                    if (c.value.index() == 11) {
+                        auto r = std::get<std::shared_ptr<CrossVmRef>>(c.value);
+                        if (r) {
+                            rdbg = "xref vm=" + std::to_string(reinterpret_cast<uintptr_t>(r->vm))
+                                 + " obj=" + std::to_string(r->objIndex)
+                                 + " slot=" + std::to_string(r->slotIndex);
+                            OriginalVm* rvm = static_cast<OriginalVm*>(r->vm);
+                            if (rvm && r->objIndex >= 0 &&
+                                static_cast<size_t>(r->objIndex) < rvm->objVars().size()) {
+                                int ti = static_cast<int>(rvm->objVars()[static_cast<size_t>(r->objIndex)].index());
+                                rdbg += " targetValIdx=" + std::to_string(ti)
+                                      + " vars=" + std::to_string(rvm->objVars().size());
+                            } else {
+                                rdbg += " targetOOB vars=" +
+                                        (rvm ? std::to_string(rvm->objVars().size()) : std::string("?"));
+                            }
+                        }
+                    } else if (c.isRef && c.objIndex >= 0) {
+                        rdbg = "objref idx=" + std::to_string(c.objIndex)
+                             + " vars=" + std::to_string(objVars_->size())
+                             + " valIdx=" + (static_cast<size_t>(c.objIndex) < objVars_->size()
+                                     ? std::to_string((*objVars_)[static_cast<size_t>(c.objIndex)].index()) : "OOB");
+                    } else if (c.isRef && c.slotIndex >= 0) {
+                        rdbg = "slotref idx=" + std::to_string(c.slotIndex);
+                        if (c.slotIndex >= 0 &&
+                            static_cast<size_t>(c.slotIndex) < stack_.size()) {
+                            const StackItem& sit = stack_[static_cast<size_t>(c.slotIndex)];
+                            std::string is = sit.isRef ? "ref" : ("t" + std::to_string(sit.value.index()));
+                            if (!sit.isRef && sit.value.index() == 11) {
+                                auto r = std::get<std::shared_ptr<CrossVmRef>>(sit.value);
+                                if (r) {
+                                    is = "crossref(vm=" + std::to_string(reinterpret_cast<uintptr_t>(r->vm));
+                                    OriginalVm* rvm = static_cast<OriginalVm*>(r->vm);
+                                    if (rvm && r->objIndex >= 0 &&
+                                        static_cast<size_t>(r->objIndex) < rvm->ownObjVars().size())
+                                        is += " obj=" + std::to_string(r->objIndex) + " ->t" +
+                                              std::to_string(rvm->ownObjVars()[static_cast<size_t>(r->objIndex)].index());
+                                    else is += " obj=" + std::to_string(r->objIndex) + " OOB";
+                                    is += ")";
+                                }
+                            }
+                            rdbg += " stackItem=" + is;
+                        }
+                    }
+                    std::cerr << "[hprobe] m68 cdf2 key=[" << ks << "] container=" << ci
+                              << " cRef=" << c.isRef << " cValIdx=" << c.value.index()
+                              << " vm=" << this << " obj=" << objName_ << " " << rdbg << "\n";
+                    std::cerr.flush();
+                }
                 if (mflag & 1) {
                     size_t len = 0;
                     if (container.index() == 4) len = std::get<SharedString>(container).size();
@@ -5238,6 +5942,60 @@ private:
                               << " meta=" << (meta_ ? meta_->size() : 0)
                               << " t=" << std::this_thread::get_id() << "\n";
                 const auto& names = efunNameTable();
+                if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                    names[efun] == "find_reachable_ex") {
+                    // vm_f_find_reachable_ex (0x807b828): find_reachable_ex(map,
+                    // &x, &y [, r, flags]) searches outward from (x,y) for a
+                    // walkable plot (obstacle bits & 0x21 clear) and writes it
+                    // back through the x/y references, returning 1; returns 0
+                    // when nothing walkable is found within radius r (default
+                    // 50).  monsterrefreshd / chaodu_wanghun / gather_itemd /
+                    // newbie_welfare call it in post_init do_init loops; left
+                    // unimplemented it returned 0 forever and those "find N
+                    // spots" loops spun (22000+ stub calls) so post_init never
+                    // drained and port 8160 never opened.
+                    std::vector<StackItem> refs;
+                    for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                    int ok = 0, nx = 0, ny = 0;
+                    if (refs.size() >= 3) {
+                        Value mv = refs[0].isRef ? deref(refs[0]) : refs[0].value;
+                        int x = static_cast<int>(toInt(refs[1].isRef ? deref(refs[1]) : refs[1].value));
+                        int y = static_cast<int>(toInt(refs[2].isRef ? deref(refs[2]) : refs[2].value));
+                        int r = 50;
+                        if (refs.size() >= 4)
+                            r = static_cast<int>(toInt(refs[3].isRef ? deref(refs[3]) : refs[3].value));
+                        if (r < 1) r = 1;
+                        lpc::MapModule::MapInfo* mapInfo = lpc::mapModule().findMap(mv);
+                        auto walkable = [&](int px, int py) {
+                            if (!mapInfo) return true;   // no map data: accept
+                            if (px < 0 || py < 0 || px >= mapInfo->width || py >= mapInfo->height)
+                                return false;
+                            if (mapInfo->bits.empty()) return true;
+                            return (mapInfo->bits[static_cast<size_t>(px * mapInfo->height + py)] & 0x21) == 0;
+                        };
+                        if (mapInfo) {
+                            if (walkable(x, y)) { ok = 1; nx = x; ny = y; }
+                            else {
+                                for (int ir = 1; ir <= r && !ok; ++ir) {
+                                    for (int dy = -ir; dy <= ir && !ok; ++dy) {
+                                        for (int dx = -ir; dx <= ir && !ok; ++dx) {
+                                            if (std::abs(dx) != ir && std::abs(dy) != ir) continue;
+                                            if (walkable(x + dx, y + dy)) { ok = 1; nx = x + dx; ny = y + dy; }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            ok = 1; nx = x; ny = y;   // keep caller coords, no hot loop
+                        }
+                        if (ok) {
+                            if (refs[1].isRef) writeThrough(refs[1], make_int(nx));
+                            if (refs[2].isRef) writeThrough(refs[2], make_int(ny));
+                        }
+                    }
+                    pushValue(make_int(ok));
+                    break;
+                }
                 if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
                     names[efun] == "write_buffer") {
                     // vm_f_write_buffer (0x80dd90c): write_buffer(&buf, off,
@@ -5307,6 +6065,27 @@ private:
                         if (vmEnvTrace())
                             std::cerr << "[sscanf] input=[" << input.substr(0, 30) << "] fmt=[" << fmtStr
                                       << "] n=" << n << " outs=" << outs.size() << "\n";
+                        if (constructDiagOn()) {
+                            // GBK bytes of "充值送": B3 E4 D6 B5 CB CD
+                            static const unsigned char cb[] = {0xB3, 0xE4, 0xD6, 0xB5, 0xCB, 0xCD};
+                            bool cHit = false;
+                            for (size_t k = 0; k + 6 <= fmtStr.size() && !cHit; ++k) {
+                                cHit = true;
+                                for (int q = 0; q < 6; ++q)
+                                    if (static_cast<unsigned char>(fmtStr[k + static_cast<size_t>(q)]) != cb[q]) { cHit = false; break; }
+                            }
+                            if (cHit) {
+                                std::cerr << "[sscanf-coupon] n=" << n << " outs=" << outs.size()
+                                          << " maxOut=" << maxOutputs << " in_hex:";
+                                for (size_t z = 0; z < input.size() && z < 64; ++z)
+                                    std::cerr << std::hex << (static_cast<unsigned char>(input[z])) << " ";
+                                std::cerr << std::dec << "(inlen=" << input.size() << ") fmt_hex:";
+                                for (size_t z = 0; z < fmtStr.size(); ++z)
+                                    std::cerr << std::hex << (static_cast<unsigned char>(fmtStr[z])) << " ";
+                                std::cerr << std::dec << "\n";
+                                std::cerr.flush();
+                            }
+                        }
                         for (size_t i = 0; i + 2 < refs.size() && i < outs.size(); ++i)
                             writeThrough(refs[i + 2], outs[i]);
                         pushValue(make_int(n));
@@ -5968,12 +6747,14 @@ private:
                             // back so param0 ends on top - startInlineFunction
                             // expects [paramN-1 ... param0(top)] exactly like
                             // executeFunctionFromOutsideLocked builds it.
+                            // Omitted declared args are int 0 (zero-init frame
+                            // area in the original driver), never undefined.
                             std::vector<StackItem> real;
                             for (int i = 0; i < argn && !stack_.empty(); ++i) real.push_back(pop());
                             // real[0] = param0 (popped from top first).
                             int declared = fn.argCount;
                             int pad = (declared > argn) ? declared - argn : 0;
-                            for (int i = 0; i < pad; ++i) pushValue(Value{});
+                            for (int i = 0; i < pad; ++i) pushValue(make_int(0));
                             for (int i = static_cast<int>(real.size()) - 1; i >= 0; --i)
                                 push(real[static_cast<size_t>(i)]);
                             if (declared == 0 && argn == 0) {
@@ -5981,9 +6762,9 @@ private:
                                 // placeholder slot for 0-arg calls so bp >= 0;
                                 // mirror that here.
                                 pushValue(Value{});
-                                inlineStarted = startInlineFunction(fn, true, 0);
+                                inlineStarted = startInlineFunction(fn, true, 0, nullptr, nullptr, nullptr, pad);
                             } else {
-                                inlineStarted = startInlineFunction(fn, false, argn);
+                                inlineStarted = startInlineFunction(fn, false, argn, nullptr, nullptr, nullptr, pad);
                             }
                             found = true;
                             argsConsumed = true;   // frame args popped with the frame
@@ -6040,6 +6821,17 @@ private:
                             if (funName.empty()) targetFn = targetVm->functionByIndex(funIndex);
                             else targetFn = targetVm->findFunctionAny(funName);
                         }
+                        if (constructDiagOn() && funName == "create_data") {
+                            std::string cur = frames_.empty() || !frames_.back().fn
+                                                  ? "<global>" : frames_.back().fn->name;
+                            std::cerr << "[hprobe] case8->create_data cur=" << cur
+                                      << " obj=" << objName_ << " path='" << path << "'"
+                                      << " targetVm=" << (targetVm ? targetVm->objName() : "NULL")
+                                      << " targetFn=" << (targetFn ? targetFn->name : "NULL")
+                                      << " code=" << (targetFn ? targetFn->code.size() : -1)
+                                      << " argn=" << argn << " thisObj=" << thisObjectName_ << "\n";
+                            std::cerr.flush();
+                        }
                         if (std::getenv("LPCVM_STUCK_TRACE") && targetVm &&
                             targetVm->objName().find("filed.o") != std::string::npos) {
                             std::cerr << "[c8f] from=" << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
@@ -6058,29 +6850,90 @@ private:
                                       << " fnCode=" << (targetFn ? targetFn->code.size() : -1)
                                       << " busy=" << (targetVm ? lpc::scheduler().isVmParked(targetVm.get()) : -1)
                                       << "\n";
+                        // Narrow roomd inline: ONLY when a room's NPC/room setup
+                        // chain (setup_npc -> place_char -> clone) is on the
+                        // stack.  There a blocking NPC-clone construction parks
+                        // mid-place_char; running it serviced on the shared
+                        // roomd registry VM re-enters the parked image at a
+                        // stale ip on wake and REPLAYS the current npc row
+                        // (master/掌门) instead of advancing to the next entry
+                        // (misc/qinglong etc.), so the elemental gods never get
+                        // placed.  Inline keeps the whole setup loop in one VM
+                        // image.  Blanket roomd inline is NOT safe (it deadlocks
+                        // zone constructions early in load), hence the context
+                        // gate.
+                        bool roomdSetupCtx = targetVm &&
+                            targetVm->objName().find("roomd.o") != std::string::npos &&
+                            objName_.find('#') == std::string::npos;
+                        if (roomdSetupCtx) {
+                            roomdSetupCtx = false;
+                            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                                if (it->fn && (it->fn->name == "setup_npc" ||
+                                               it->fn->name == "setup_room_basic_info" ||
+                                               it->fn->name == "place_char")) {
+                                    roomdSetupCtx = true;
+                                    break;
+                                }
+                            }
+                        }
                         if (targetFn && targetFn->index >= 0 && !targetFn->code.empty() &&
-                            targetVm->objName().find("filed.o") != std::string::npos &&
+                            ((targetVm->objName().find("filed.o") != std::string::npos ||
+                              targetVm->objName().find("importd.o") != std::string::npos ||
+                              targetVm->objName().find("taskd.o") != std::string::npos) ||
+                             roomdSetupCtx) &&
                             objName_.find('#') == std::string::npos) {
-                            // Cross-object inline for filed.o service calls (a
-                            // blocking efun parks the whole caller process).  The
-                            // serviced registry-VM path is single-flight: two
-                            // callers parking inside the SAME busy object (e.g.
-                            // filed.o read_content from a threadd job and from
-                            // master's winter_vacationd create) collide on one
-                            // parked process - one waiter's ev_filed park/key
-                            // overwrites the other's, its operate_done never
-                            // fires, and the construct hangs master's load_all
-                            // forever.  When the target is IDLE the serviced
-                            // path is kept: it resolves the callee in the
-                            // TARGET's table by name, which index-based call
-                            // sites depend on (gs's load_dist_start_time
+                            // Cross-object inline for filed.o/importd.o service
+                            // calls (a blocking efun parks the whole caller
+                            // process).  The serviced registry-VM path is
+                            // single-flight: two callers parking inside the SAME
+                            // busy object (e.g. filed.o read_content from a
+                            // threadd job and from master's winter_vacationd
+                            // create) collide on one parked process - one
+                            // waiter's ev_filed park/key overwrites the other's,
+                            // its operate_done never fires, and the construct
+                            // hangs master's load_all forever.  importd.o needs
+                            // the same inline treatment for a different reason:
+                            // by post_init time the importd VM can carry stale
+                            // leftover process frames, so a serviced
+                            // create_data() call pushed on top of them returns
+                            // int 0 WITHOUT running its body - the caller's
+                            // attach_form_file/query_form_value then sees an
+                            // empty mapping (herod/onlinemall/floats_cruise
+                            // .list data never loads).  When the target is IDLE
+                            // the serviced path is kept: it resolves the callee
+                            // in the TARGET's table by name, which index-based
+                            // call sites depend on (gs's load_dist_start_time
                             // filed.read_content compiled to a local index that
                             // must NOT be re-resolved against the master's
                             // merged table).
                             const OriginalFunction& fn = *targetFn;
                             int declared = fn.argCount;
                             int pad = (declared > static_cast<int>(args.size())) ? declared - static_cast<int>(args.size()) : 0;
-                            for (int i = 0; i < pad; ++i) pushValue(Value{});
+                            if (constructDiagOn() && fn.name == "create_data") {
+                                std::string adbg;
+                                for (size_t k = 0; k < args.size(); ++k) {
+                                    const Value& av = args[k];
+                                    std::string v = "t" + std::to_string(av.index());
+                                    if (av.index() == 11) {
+                                        auto r = std::get<std::shared_ptr<CrossVmRef>>(av);
+                                        if (r) v += "(vm=" +
+                                                 std::to_string(reinterpret_cast<uintptr_t>(r->vm)) +
+                                                 " obj=" + std::to_string(r->objIndex) +
+                                                 " slot=" + std::to_string(r->slotIndex) + ")";
+                                    } else if (av.index() == 4) {
+                                        v += "[" + std::get<SharedString>(av).str().substr(0, 30) + "]";
+                                    }
+                                    if (!adbg.empty()) adbg += " | ";
+                                    adbg += "a" + std::to_string(k) + ":" + v;
+                                }
+                                std::cerr << "[hprobe] cd-inline caller=" << objName_ << " cur="
+                                          << (frames_.empty() || !frames_.back().fn ? "<top>"
+                                                                                    : frames_.back().fn->name)
+                                          << " argc=" << args.size() << " " << adbg << "\n";
+                                std::cerr.flush();
+                            }
+                            // Omitted declared args are int 0 (see resolveSelf).
+                            for (int i = 0; i < pad; ++i) pushValue(make_int(0));
                             for (int i = static_cast<int>(args.size()) - 1; i >= 0; --i)
                                 pushValue(args[static_cast<size_t>(i)]);
                             if (declared == 0 && args.empty()) {
@@ -6090,14 +6943,16 @@ private:
                                                                     &targetVm->object().strings,
                                                                     std::getenv("LPCVM_NO_CONST")
                                                                         ? nullptr
-                                                                        : &targetVm->functionTable());
+                                                                        : &targetVm->functionTable(),
+                                                                    pad);
                             } else {
                                 inlineStarted = startInlineFunction(fn, false, static_cast<int>(args.size()),
                                                                     targetVm->objVarsShared(),
                                                                     &targetVm->object().strings,
                                                                     std::getenv("LPCVM_NO_CONST")
                                                                         ? nullptr
-                                                                        : &targetVm->functionTable());
+                                                                        : &targetVm->functionTable(),
+                                                                    pad);
                             }
                             if (!inlineStarted) {
                                 // Stack too shallow: pop the pushed args back and
@@ -6434,9 +7289,21 @@ private:
                             // never spawns a second OS thread.
                             if (vmEnvTrace() || vmEnvEventTrace())
                                 std::cerr << "[postinit-sync] " << cl->functionName << " on " << obj_.sourceName << "\n";
-                            bool ph = pushArgsForFunction(*fn, all);
-                            inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()),
-                                                                homeVars, homeStrings, homeFuncs);
+                            if (constructDiagOn())
+                                std::cerr << "[postinit-sync-run] " << cl->functionName
+                                          << " on " << obj_.sourceName << " vm=" << this << "\n";
+                            // Run the init INLINE on THIS VM (the master) with
+                            // the function's home tables: the frames then sit
+                            // under post_init()'s LPC try/catch records, so an
+                            // error from one daemon init (raised at any point,
+                            // including after a blocking round-trip resumed the
+                            // master) is swallowed by that catch and the loop
+                            // continues - never unwinding the master to death.
+                            {
+                                bool ph = pushArgsForFunction(*fn, all);
+                                inlineStarted = startInlineFunction(*fn, ph, static_cast<int>(all.size()),
+                                                                    homeVars, homeStrings, homeFuncs);
+                            }
                         } else {
                             if (vmEnvTrace() || vmEnvEventTrace()) {
                                 std::string adbg;
@@ -6502,43 +7369,47 @@ private:
                                     std::cerr << "[postinit-sync] " << cl->functionName
                                               << " on " << ownerVm->object().sourceName << "\n";
                                 ownerVm->setPreviousObjectName(thisObjectName_);
-                                if (cl->functionName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
-                                    std::string chain;
-                                    for (const auto& fr : frames_) {
-                                        std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
-                                        if (!chain.empty()) chain += "<-";
-                                        chain += fnm;
-                                    }
-                                    std::string adbg;
-                                    for (auto& a : all) {
-                                        if (!adbg.empty()) adbg += " | ";
-                                        adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 100);
-                                    }
-                                    std::cerr << "[c2i-call:postinit] callerObj=" << objName_
-                                              << " chain=[" << chain << "] target=" << ownerVm->object().sourceName
-                                              << " clName=" << cl->functionName << " [" << adbg << "]\n";
-                                    std::cerr.flush();
-                                }
+                                if (constructDiagOn() ||
+                                    (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
+                                    std::cerr << "[postinit-run] " << cl->functionName
+                                              << " on " << ownerVm->object().sourceName
+                                              << " vm=" << this << " ownerVm=" << ownerVm.get() << "\n";
                                 try {
                                     if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
                                     else result = ownerVm->callFunctionByName(cl->functionName, all);
-                                    if (vmEnvTrace() || vmEnvEventTrace())
+                                    if (vmEnvTrace() || vmEnvEventTrace() || constructDiagOn() ||
+                                        (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
                                         std::cerr << "[postinit-ok] " << cl->functionName
-                                                  << " on " << ownerVm->object().sourceName << "\n";
+                                                  << " on " << ownerVm->object().sourceName
+                                                  << " res=" << to_string(result, false).substr(0, 40) << "\n";
                                 } catch (const VmError& e) {
                                     // The LPC post_init loop wraps each
                                     // (*f)() in try/catch and continues; an
                                     // error from one daemon init (e.g. a task
                                     // template register that fails validation)
                                     // must not kill the master's post_init.
-                                    if (vmEnvTrace())
+                                    if (vmEnvTrace() || constructDiagOn() ||
+                                        (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
+                                        std::cerr << "[postinit-err] " << cl->functionName
+                                                  << " on " << ownerVm->object().sourceName
+                                                  << ": " << e.what() << "\n";
+                                    result = make_int(0);
+                                } catch (const std::exception& e) {
+                                    if (vmEnvTrace() || constructDiagOn() ||
+                                        (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init"))
                                         std::cerr << "[postinit-err] " << cl->functionName
                                                   << " on " << ownerVm->object().sourceName
                                                   << ": " << e.what() << "\n";
                                     result = make_int(0);
                                 } catch (const SuspendSignal&) {
+                                    if (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init")
+                                        std::cerr << "[postinit-park] " << cl->functionName
+                                                  << " on " << ownerVm->object().sourceName << "\n";
                                     throw;   // park: the scheduler resumes the callee
                                 } catch (const TimeSliceSignal&) {
+                                    if (std::getenv("LPCVM_TAIL") && cl->functionName == "do_init")
+                                        std::cerr << "[postinit-slice] " << cl->functionName
+                                                  << " on " << ownerVm->object().sourceName << "\n";
                                     throw;   // yield: the scheduler resumes the callee
                                 } catch (...) {
                                     result = make_int(0);
@@ -6621,6 +7492,144 @@ private:
                 const Frame& f = frames_.back();
                 bool traceEnter = vmEnvTrace() && f.fn &&
                     (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc");
+                if (std::getenv("LPCVM_TAIL") && f.fn) {
+                    bool tailObj =
+                        objName_.find("vendued") != std::string::npos ||
+                        objName_.find("change_lookd") != std::string::npos ||
+                        objName_.find("scand") != std::string::npos ||
+                        objName_.find("/gs/daemons/named.o") != std::string::npos ||
+                        objName_.find("/gs/daemons/roomd.o") != std::string::npos;
+                    bool tailFn =
+                        f.fn->name == "load_vendue_slots" ||
+                        f.fn->name == "load_vendue_slots_by_type" ||
+                        f.fn->name == "set_owner_gid" ||
+                        f.fn->name == "save_slots_by_type" ||
+                        f.fn->name == "do_init" ||
+                        f.fn->name == "query_objects" ||
+                        f.fn->name == "add_object_list" ||
+                        f.fn->name == "add_object_attrib" ||
+                        f.fn->name == "create_table" ||
+                        f.fn->name == "register_npc_ob" ||
+                        f.fn->name == "register_room_ob" ||
+                        f.fn->name == "find_npc_ob" ||
+                        f.fn->name == "place_char" ||
+                        f.fn->name == "setup_npc" ||
+                        f.fn->name == "setup_room_basic_info";
+                    if (tailObj && tailFn) {
+                        std::string argsDbg;
+                        for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
+                            if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                            if (!argsDbg.empty()) argsDbg += " | ";
+                            const Value& av = stack_[static_cast<size_t>(k)].value;
+                            argsDbg += "a" + std::to_string(f.argNum - (f.bp - k)) + ":t" +
+                                       std::to_string(av.index()) + ":";
+                            if (av.index() == 4) argsDbg += std::get<SharedString>(av).str().substr(0, 24);
+                            else if (av.index() == 7)
+                                argsDbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 40);
+                            else argsDbg += to_string(av, false).substr(0, 20);
+                        }
+                        std::cerr << "[tail] enter " << objName_ << "::" << f.fn->name
+                                  << " argNum=" << f.argNum << " args=[" << argsDbg << "]\n";
+                    }
+                    // TEMP probe: dump the npc array of the five elemental-master
+                    // hub rooms when setup_npc runs, to see whether rows after
+                    // the master row (misc/qinglong etc.) are in the imported
+                    // array at all.
+                    if (f.fn->name == "setup_npc" && f.argNum >= 1) {
+                        int k0 = f.bp - f.argNum + 1;
+                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
+                            stack_[static_cast<size_t>(k0)].value.index() == 7) {
+                            std::string roomKey = std::get<std::shared_ptr<ObjectValue>>(
+                                stack_[static_cast<size_t>(k0)].value)->programName;
+                            const char* hubs[] = {"wulongshan", "qianyuanshan", "kuloushan",
+                                                  "fenghuangshan", "zhongnanshan"};
+                            bool hub = false;
+                            for (const char* h : hubs)
+                                if (roomKey.find(h) != std::string::npos) { hub = true; break; }
+                            if (hub && thisObjectName_ != roomKey) {
+                                try {
+                                    Value npc;
+                                    {
+                                        auto& reg2 = objectRegistry();
+                                        std::shared_ptr<OriginalVm> rvm;
+                                        {
+                                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                                            auto it = reg2.vms.find(roomKey);
+                                            if (it != reg2.vms.end()) rvm = it->second;
+                                        }
+                                        if (rvm)
+                                            npc = rvm->callFunctionByName("query", { make_string("npc") });
+                                    }
+                                    std::string dbg;
+                                    if (npc.index() == 5) {
+                                        auto& items = std::get<std::shared_ptr<ArrayValue>>(npc)->items;
+                                        dbg = "arr(" + std::to_string(items.size()) + ")";
+                                        for (size_t z = 0; z < items.size() && z < 10; ++z) {
+                                            dbg += " [";
+                                            if (items[z].index() == 5) {
+                                                auto& e = std::get<std::shared_ptr<ArrayValue>>(items[z])->items;
+                                                for (size_t q = 0; q < e.size() && q < 3; ++q) {
+                                                    if (q) dbg += ",";
+                                                    if (e[q].index() == 4)
+                                                        dbg += std::get<SharedString>(e[q]).str().substr(0, 22);
+                                                    else if (e[q].index() == 2)
+                                                        dbg += std::to_string(std::get<int64_t>(e[q]));
+                                                }
+                                            } else if (items[z].index() == 4)
+                                                dbg += std::get<SharedString>(items[z]).str().substr(0, 18);
+                                            else dbg += "t" + std::to_string(items[z].index());
+                                            dbg += "]";
+                                        }
+                                    } else if (npc.index() == 0) dbg = "undef";
+                                    else dbg = "t" + std::to_string(npc.index());
+                                    std::cerr << "[hubnpc] " << roomKey << " npc=" << dbg << "\n";
+                                    std::cerr.flush();
+                                } catch (const std::exception& e) {
+                                    std::cerr << "[hubnpc-err] " << roomKey << " " << e.what() << "\n";
+                                } catch (...) {
+                                }
+                            }
+                        }
+                    }
+                    // TEMP probe: for scand indexing of wedding dresses print the
+                    // object's gender so we can see where the dress gender is lost.
+                    if (f.fn && (f.fn->name == "add_object_list" || f.fn->name == "add_object_attrib") &&
+                        objName_.find("scand") != std::string::npos && f.argNum >= 1) {
+                        int k0 = f.bp - f.argNum + 1;
+                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
+                            stack_[static_cast<size_t>(k0)].value.index() == 7) {
+                            std::string obKey = std::get<std::shared_ptr<ObjectValue>>(
+                                stack_[static_cast<size_t>(k0)].value)->programName;
+                            if (obKey.find("wedding_dress") != std::string::npos ||
+                                obKey.find("jbxd-") != std::string::npos) {
+                                try {
+                                    Value g, kname;
+                                    {
+                                        auto& reg2 = objectRegistry();
+                                        std::shared_ptr<OriginalVm> ovm;
+                                        {
+                                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                                            auto it = reg2.vms.find(obKey);
+                                            if (it != reg2.vms.end()) ovm = it->second;
+                                        }
+                                        if (ovm && ovm.get() != this) {
+                                            g = ovm->callFunctionByName("query", { make_string("gender") });
+                                            kname = ovm->callFunctionByName("query", { make_string("key_name") });
+                                        }
+                                    }
+                                    std::cerr << "[wdg] " << obKey
+                                              << " gender=" << (g.index() == 2 ? std::to_string(std::get<int64_t>(g))
+                                                                               : ("t" + std::to_string(g.index())))
+                                              << " key=" << (kname.index() == 4 ? std::get<SharedString>(kname).str().substr(0, 24)
+                                                                               : "t" + std::to_string(kname.index()))
+                                              << "\n";
+                                    std::cerr.flush();
+                                } catch (...) {
+                                }
+                            }
+                        }
+                    }
+                }
                 if (traceEnter)
                     std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
                               << " stackBefore=" << stack_.size() << "\n";
@@ -6745,13 +7754,29 @@ private:
             case 83: // to_unreserve_stack_value
                 if (!stack_.empty()) pop();
                 break;
-            case 14: // caught_error
-                // (catch support disabled; errors propagate to the caller)
+            case 14: // caught_error: entry point of a catch handler.  On an
+                // error the runLoop's VmError handler has already popped the
+                // record, restored the stack and pushed the caught error
+                // string, so execution simply continues here (the handler
+                // code pops / uses the string as compiled).  Nothing to do.
                 break;
-            case 26: // end_thread_catch
+            case 26: // end_thread_catch: the guarded region completed without
+                // an error - drop the record vm_newThreadCatch pushed.
+                if (!catches_.empty()) catches_.pop_back();
                 break;
-            case 44: // new_thread_catch
+            case 44: { // new_thread_catch (vm_newThreadCatch 0x80aaf84): enter
+                // an LPC catch region.  par16 is a PC-relative offset from the
+                // instruction AFTER this one to the catch handler; on an error
+                // the VM restores sp, unwinds the fun frames and resumes at
+                // the handler with the error string on the stack.
+                int64_t off = static_cast<int16_t>(in.a);
+                CatchRecord rec;
+                rec.ipTarget = ip_ + static_cast<size_t>(off);
+                rec.stackSize = stack_.size();
+                rec.frameCount = frames_.size();
+                catches_.push_back(rec);
                 break;
+            }
             case 16: // check_is_ref_type
             case 17: // check_is_ref_type_i
             case 19: // convert_to_ptr
@@ -6816,9 +7841,29 @@ private:
                 // Unwind to the innermost new_thread_catch, if any.
                 if (catches_.empty()) throw;
                 CatchRecord rec = catches_.back();
-                // The catch must belong to the current frame; otherwise let the
-                // error propagate up to the frame that owns the catch.
-                if (rec.frameCount != frames_.size()) throw;
+                if (rec.frameCount > frames_.size()) throw;
+                // An LPC error propagates out of any frames called INSIDE the
+                // guarded region (the original's vm_errorQuit -> vm_traceError
+                // pops fun contexts down to the catch's funCp).  Pop each such
+                // frame exactly like a return (restore caller stream/obj vars,
+                // drop its argument/local slots), removing catch records opened
+                // by the frames being unwound.
+                while (frames_.size() > rec.frameCount) {
+                    if (!catches_.empty() && catches_.back().frameCount >= frames_.size())
+                        catches_.pop_back();
+                    const Frame& fr = frames_.back();
+                    if (fr.savedObjVars) objVars_ = fr.savedObjVars;
+                    if (fr.funcLookupSwitched) funcLookup_ = fr.savedFuncLookup;
+                    code_ = fr.retCode;
+                    meta_ = fr.retMeta;
+                    int usedArgs = fr.argNum;
+                    int newSize = fr.bp - usedArgs + 1 - (fr.zeroArgPlaceholder ? 1 : 0);
+                    if (newSize < 0) newSize = 0;
+                    frames_.pop_back();
+                    stack_.resize(static_cast<size_t>(newSize));
+                }
+                // rec is the innermost catch of the surviving frame.
+                if (catches_.empty() || catches_.back().frameCount != frames_.size()) throw;
                 catches_.pop_back();
                 stack_.resize(rec.stackSize);
                 pushValue(make_string(std::string(e.what())));
@@ -6828,7 +7873,22 @@ private:
             } catch (const std::exception& e) {
                 if (!catches_.empty()) {
                     CatchRecord rec = catches_.back();
-                    if (rec.frameCount != frames_.size()) throw;
+                    if (rec.frameCount > frames_.size()) throw;
+                    while (frames_.size() > rec.frameCount) {
+                        if (!catches_.empty() && catches_.back().frameCount >= frames_.size())
+                            catches_.pop_back();
+                        const Frame& fr = frames_.back();
+                        if (fr.savedObjVars) objVars_ = fr.savedObjVars;
+                        if (fr.funcLookupSwitched) funcLookup_ = fr.savedFuncLookup;
+                        code_ = fr.retCode;
+                        meta_ = fr.retMeta;
+                        int usedArgs = fr.argNum;
+                        int newSize = fr.bp - usedArgs + 1 - (fr.zeroArgPlaceholder ? 1 : 0);
+                        if (newSize < 0) newSize = 0;
+                        frames_.pop_back();
+                        stack_.resize(static_cast<size_t>(newSize));
+                    }
+                    if (catches_.empty() || catches_.back().frameCount != frames_.size()) throw;
                     catches_.pop_back();
                     stack_.resize(rec.stackSize);
                     pushValue(make_string(std::string(e.what())));
@@ -7263,6 +8323,13 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
         // woke it, drop this stale event wakeup.
         if (p->eventWoken) continue;
         p->eventWoken = true;
+        if (std::getenv("LPCVM_CONSTRUCT_TRACE") && ename.rfind("ev_filed", 0) == 0) {
+            std::string wobj = p->parkedVm ? p->parkedVm->objName() : "?";
+            std::cerr << "[wakeEv] " << ename << " mask=0x" << std::hex << raisedMask
+                      << std::dec << " entry=" << p->entry
+                      << " obj=" << wobj << " vm=" << (p->parkedVm ? p->parkedVm.get() : nullptr)
+                      << " tid=" << p->tid << "\n";
+        }
         wake(std::move(p));
     }
 }
@@ -7790,18 +8857,47 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 std::cerr << "[sched-xvm-resume] " << p->entry << " vm=" << rvm.get() << "\n";
             rvm->resumeRunLoop();
             callResult = rvm->lastReturnValue();
+            // Drain any NESTED runDetached caller layers the same way the
+            // SuspendSignal resume branch below does: each layer restored its
+            // own VM's frames into callers_ (innermost first).  Skipping them
+            // left intermediate registry-VM chains (roomd/room during NPC
+            // placement) parked forever and re-entered the process at a stale
+            // ip, replaying setup_npc's current row instead of advancing.
+            Value res = rvm->lastReturnValue();
+            for (auto it = p->callers_.rbegin(); it != p->callers_.rend(); ++it) {
+                auto cv = *it;
+                if (cv == rvm) continue;
+                if (vmEnvTrace())
+                    std::cerr << "[sched-caller-chain] " << p->entry
+                              << " resume " << cv->objName() << "\n";
+                cv->resumeCaller(res);
+                res = cv->lastReturnValue();
+            }
+            p->callers_.clear();
             if (p->callerVm && p->callerVm != rvm) {
                 if (vmEnvTrace())
                     std::cerr << "[sched-caller] " << p->entry << " resume caller vm="
                               << p->callerVm.get() << " with callee result\n";
-                p->callerVm->resumeCaller(rvm->lastReturnValue());
+                p->callerVm->resumeCaller(res);
                 p->callerVm.reset();
             }
-            if (p->entry == "__init__")
-                p->homeVm->runConstruction(p->args, p->doneEvent);
-            else if (p->entry == "__master__" && !p->homeVm->masterInitDone_)
-                p->homeVm->runAsMaster();
-            p->done = true;
+            // Only advance the __init__/__master__ phase machine once the whole
+            // nested chain has returned to the process's own VM - resuming the
+            // construction while a serviced registry-VM chain still holds the
+            // call re-entered runConstruction and deadlocked (obj-init never
+            // raised).  When the top frame is still on another VM, requeue.
+            if (rvm.get() == p->vm.get() || !p->vm->hasActiveFrames()) {
+                if (p->entry == "__init__")
+                    p->homeVm->runConstruction(p->args, p->doneEvent);
+                else if (p->entry == "__master__" && !p->homeVm->masterInitDone_)
+                    p->homeVm->runAsMaster();
+                p->done = true;
+            } else {
+                if (vmEnvTrace())
+                    std::cerr << "[sched-xvm-requeue] " << p->entry
+                              << " chain not drained (rvm != home), requeue\n";
+                requeue(p);
+            }
         } else if (p->sliceResume) {
             // Time-slice yield resume: continue the master's startup phases
             // (or the construction's phases for "__init__" processes).
@@ -7849,8 +8945,14 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // The parked call finished; a construction process must advance
             // its phase machine (raise the done event), and the master must
             // continue its startup phases after load_all finished.
-            if (p->entry == "__init__")
+            if (p->entry == "__init__") {
+                if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
+                    p->homeVm && p->homeVm->objName().find("/clone/npc/master") != std::string::npos)
+                    std::cerr << "[phase3] vm=" << p->homeVm.get()
+                              << " calling runConstruction to finish (args="
+                              << p->args.size() << " done=" << p->doneEvent << ")\n";
                 p->homeVm->runConstruction(p->args, p->doneEvent);
+            }
             else if (p->entry == "__master__" && !p->homeVm->masterInitDone_)
                 p->homeVm->runAsMaster();
             p->done = true;
@@ -7941,24 +9043,65 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         // Register the wakeup under the PARKED VM's cond (it owns cond_).
         parkCurrent(p);
     } catch (const std::exception& e) {
-        if (vmEnvTrace())
-            std::cerr << "[sched] process " << p->entry << " error: " << e.what() << "\n";
+        if (vmEnvTrace() || (constructDiagOn() &&
+                             (p->entry == "__init__" || p->entry == "__master__"))) {
+            OriginalVm* evm = p->parkedVm ? p->parkedVm.get() : p->vm.get();
+            std::string chain;
+            if (evm) {
+                for (const auto& fr : evm->frames_) {
+                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                    if (!chain.empty()) chain += "<-";
+                    chain += fnm;
+                    if (chain.size() > 220) break;
+                }
+            }
+            std::cerr << "[sched-err] proc=" << p.get() << " entry=" << p->entry
+                      << " tid=" << p->tid << " doneEv=" << p->doneEvent
+                      << " vm=" << (p->vm ? p->vm->objName() : "?")
+                      << " chain=[" << chain << "]"
+                      << " what=[" << e.what() << "]\n";
+            if (evm && !evm->frames_.empty()) {
+                // Stack window of the top frame so the failing locals (e.g.
+                // the empty refresh_arr in super_bossd.get_next_refresh_time)
+                // are visible without a separate ERR_TRACE run.
+                const Frame& fr = evm->frames_.back();
+                int bp = fr.bp;
+                std::string wnd;
+                int lo = std::max(0, bp - 14);
+                int hi = static_cast<int>(evm->stack_.size());
+                for (int i = lo; i < hi && i <= bp + 16; ++i) {
+                    if (!wnd.empty()) wnd += " | ";
+                    std::string vs;
+                    try { vs = to_string(evm->stack_[static_cast<size_t>(i)].value, false); }
+                    catch (...) { vs = "<err>"; }
+                    if (vs.size() > 110) vs = vs.substr(0, 110);
+                    wnd += std::to_string(i) + ":" + std::to_string(evm->stack_[static_cast<size_t>(i)].value.index()) + ":" + vs;
+                }
+                std::cerr << "[sched-err-stack] fn=" << (fr.fn ? fr.fn->name : "?")
+                          << " bp=" << bp << " sz=" << evm->stack_.size()
+                          << " [" << wnd << "]\n";
+            }
+        }
         // A construction process that failed must still wake its parked
         // load_object caller (its resume hook reads the registry and yields
         // make_int(0) when the object never got initialized).
         if (p->entry == "__init__" && !p->doneEvent.empty()) {
-            if (vmEnvTrace())
-                std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
+            if (vmEnvTrace() || constructDiagOn())
+                std::cerr << "[sched-err] __init__ failed, waking " << p->doneEvent << "\n";
             scheduler().wakeEventFront(p->doneEvent);
         }
         if (p->resultPromise) p->resultPromise->set_value(make_int(0));
         p->done = true;
     } catch (...) {
-        if (vmEnvTrace())
-            std::cerr << "[sched] process " << p->entry << " error: unknown\n";
+        if (vmEnvTrace() || (constructDiagOn() &&
+                             (p->entry == "__init__" || p->entry == "__master__")))
+            std::cerr << "[sched-err] proc=" << p.get() << " entry=" << p->entry
+                      << " tid=" << p->tid << " doneEv=" << p->doneEvent
+                      << " vm=" << (p->vm ? p->vm->objName() : "?")
+                      << " what=<unknown>\n";
         if (p->entry == "__init__" && !p->doneEvent.empty()) {
-            if (vmEnvTrace())
-                std::cerr << "[sched] __init__ failed, waking " << p->doneEvent << "\n";
+            if (vmEnvTrace() || constructDiagOn())
+                std::cerr << "[sched-err] __init__ failed, waking " << p->doneEvent << "\n";
             scheduler().wakeEventFront(p->doneEvent);
         }
         if (p->resultPromise) p->resultPromise->set_value(make_int(0));
@@ -8107,6 +9250,17 @@ Value handleBroadcastEfun(const std::string& searchRoot, const std::vector<Value
         for (auto& rel : files) {
             std::string virt = "/" + rel;
             if (hasSuffix(virt, ".o")) virt = virt.substr(0, virt.size() - 2) + ".c";
+            static bool mem2 = (std::getenv("LPCVM_MEM2") != nullptr);
+            if (mem2) {
+                static long lArr = -1, lMap = -1;
+                long aL, mL, aC, mC;
+                lpc::liveHeapSnapshot(aL, mL, aC, mC);
+                if (lArr >= 0)
+                    std::cerr << "[heap] obj=" << virt << " arrLive=" << aL << " mapLive=" << mL
+                              << " (+" << (aL - lArr) << " arr, +" << (mL - lMap) << " map) cum="
+                              << aC << "/" << mC << "\n";
+                lArr = aL; lMap = mL;
+            }
             std::cout << "Load: " << virt << "... OK\n";
             std::string full = searchRoot + "/" + rel;
             {
@@ -8204,6 +9358,15 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
     return make_int(0);
 }
 
+
+// Serviced cross-object calls (tryCallOtherObject -> registry VM's
+// callFunctionByName) must never push frames on top of a VM whose execution
+// state belongs to a PARKED process (the parked image - e.g. roomd's
+// [setup_npc..place_char..clone-obj-init-park] - would be re-entered at the
+// wrong ip on wake, replaying the current setup row instead of advancing to
+// the next npc).  Mirror execOnMain/spawnDelayed: when the target registry VM
+// is parked or still has active frames, run the callee on a fresh dedicated
+// VM that SHARES the object's instance variables.
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args,
                          const std::string& callerThisName) {
@@ -8267,6 +9430,7 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             }
             // previous_object() in the callee sees the caller: the VM that
             // executed the call_other (the current VM's this_object identity).
+            
             if (!callerThisName.empty()) existing->setPreviousObjectName(callerThisName);
             return existing->callFunctionByName(funName, args);
         }
@@ -8371,6 +9535,19 @@ void runPostInitFunctions(const std::string& searchRoot) {
         if (vmEnvTrace() || vmEnvEventTrace())
             std::cerr << "[orig] post_init -> " << fn.obj->sourceName << "::" << fn.fun
                       << " args=" << fn.args.size() << "\n";
+        if (constructDiagOn()) {
+            std::string src = fn.obj->sourceName;
+            if (src.find("herod") != std::string::npos ||
+                src.find("longgong_xianyi") != std::string::npos ||
+                src.find("douchong_dahui") != std::string::npos ||
+                src.find("onlinemall") != std::string::npos ||
+                src.find("custom_packd") != std::string::npos ||
+                src.find("leave_promptd") != std::string::npos ||
+                src.find("super_bossd") != std::string::npos ||
+                src.find("shopd") != std::string::npos)
+                std::cerr << "[postinit-cpp-run] " << src << "::" << fn.fun
+                          << " args=" << fn.args.size() << "\n";
+        }
         // Share the registered VM's initialized instance variables (the
         // original post_init runs each init in the object's OWN context).
         std::shared_ptr<OriginalVm> ownerVm;
@@ -8708,7 +9885,15 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                 std::string key = kv.first;
                 size_t hash = key.find('#');
                 if (hash != std::string::npos) key.resize(hash);  // strip #seq
-                if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+                if (key == rel) { tmplVm = kv.second; break; }    // exact instance
+            }
+            if (!tmplVm) {
+                for (auto& kv : reg.vms) {
+                    std::string key = kv.first;
+                    size_t hash = key.find('#');
+                    if (hash != std::string::npos) key.resize(hash);  // strip #seq
+                    if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+                }
             }
             if (!tmplVm) {
                 // exact clone-key match (shouldn't normally be needed)
@@ -8716,9 +9901,14 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                     if (hasSuffix(kv.first, rel)) { tmplVm = kv.second; break; }
             }
         } else {
+            // Cloning a bare program (basic_objectd clones the npc/basic.c
+            // template for each row): the template must be the REAL registered
+            // object, never a previous "clone:" instance - matching one of
+            // those re-imports the PREVIOUS row's identity onto every new
+            // basic (逍遥仙 basics ended up registered as 泰煞守卫, etc.).
             for (auto& kv : reg.vms) {
                 std::string key = kv.first;
-                // template keys are real paths or "pak:<rel>"; strip "#" clones.
+                if (key.compare(0, 6, "clone:") == 0) continue;   // skip instances
                 size_t hash = key.find('#');
                 if (hash != std::string::npos) key.resize(hash);
                 if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
@@ -8732,6 +9922,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
         for (auto& kv : reg.vms) {
             std::string key = kv.first;
+            if (key.compare(0, 6, "clone:") == 0) continue;
             size_t hash = key.find('#');
             if (hash != std::string::npos) key.resize(hash);
             if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
@@ -8808,6 +9999,15 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
             if (tmplImp.index() == 4 && !std::get<SharedString>(tmplImp).empty()) {
                 vmPtr->setPreviousObjectName(tmplVm->objName());
                 vmPtr->callFunctionByName("import", {tmplImp});
+                if (std::getenv("LPCVM_TAIL")) {
+                    Value fid = vmPtr->callFunctionByName("query", {make_string("file_id")});
+                    Value nm = vmPtr->callFunctionByName("query", {make_string("name")});
+                    std::cerr << "[clone-imp2] " << cloneKey << " tmpl=" << tmplVm->objName()
+                              << " import=[" << to_string(tmplImp, false).substr(0, 24) << "]"
+                              << " file_id=[" << to_string(fid, false).substr(0, 30)
+                              << "] name=[" << to_string(nm, false).substr(0, 24) << "]\n";
+                    std::cerr.flush();
+                }
             }
             // The clone's create chain may not include id.c's create()
             // (_id = allocate_id(this_object())) when the inherited id.c
@@ -8866,6 +10066,7 @@ Value callOriginalObjectFunction(const std::string& oPath, const std::string& fu
                                  const std::vector<Value>& args, const std::string& searchRoot) {
     return tryCallOtherObject(searchRoot, oPath, funName, args);
 }
+
 
 std::string masterSearchRoot() {
     auto& reg = objectRegistry();

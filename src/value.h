@@ -191,6 +191,8 @@ using Value = std::variant<
 
 struct ArrayValue {
     std::vector<Value> items;
+    ArrayValue();
+    ~ArrayValue();
 };
 
 // Faithful port of the original driver's vm_mapping.c (gameshell):
@@ -214,8 +216,9 @@ struct MappingValue {
     uint32_t cnt = 0;
     bool caseSensitive = true;      // attrib & 1
 
-    MappingValue() { table.assign(8, -1); }
+    MappingValue();
     explicit MappingValue(uint32_t sizeHint);
+    ~MappingValue();
 
     size_t size() const { return cnt; }
     bool empty() const { return cnt == 0; }
@@ -312,5 +315,10 @@ void append_text(std::string& out, const Value& v);
 bool is_truthy(const Value& v);
 bool value_equal(const Value& a, const Value& b);
 bool value_less(const Value& a, const Value& b);
+
+// Live container census (ArrayValue/MappingValue alive + cumulative creates).
+// Updated from their ctors/dtors; cheap atomics, used by the LPCVM_MEM2 heap
+// diagnostics to attribute memory growth during boot plateaus.
+void liveHeapSnapshot(long& arrLive, long& mapLive, long& arrCum, long& mapCum);
 
 } // namespace lpc

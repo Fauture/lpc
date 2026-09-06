@@ -481,6 +481,74 @@ int main(int argc, char** argv) {
             if (args.size() < 3) { usage(); return 1; }
             return disasmFunction(path, args[2]);
         }
+        if (cmd == "sscantest") {
+            // Quick unit check of lpcSscanf quote handling (coupon .list):
+            //   sscanf("\"ABC123\"", "\"%s\"")  should unquote to ABC123.
+            std::string in = "\"ABC123\"";
+            std::string fmt = "\"%s\"";
+            std::vector<lpc::Value> out;
+            int m = lpc::lpcSscanf(in, fmt, out, 1);
+            std::cout << "case1 match=" << m << " out=" << out.size();
+            if (!out.empty() && out[0].index() == 4)
+                std::cout << " str(" << std::get<lpc::SharedString>(out[0]).size() << ")"
+                          << " [" << std::get<lpc::SharedString>(out[0]).str() << "]";
+            std::cout << "\n";
+            std::string in2 = "2016-02-free_gift";
+            std::string fmt2 = "%d-%d-%s";
+            std::vector<lpc::Value> out2;
+            int m2 = lpc::lpcSscanf(in2, fmt2, out2, 3);
+            std::cout << "case2 match=" << m2 << "\n";
+            // case3: GBK bytes quoted (coupon name, 24 bytes inside quotes)
+            // 2016年02月份充值送奖励活动 in GBK
+            std::string gbk;
+            gbk += "\x32\x30\x31\x36\xc4\xea\x30\x32\xd4\xc2\xb7\xdd"; // 2016年02月份
+            gbk += "\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // 充值送奖励活动
+            std::string in3 = "\"" + gbk + "\"";
+            std::vector<lpc::Value> out3;
+            int m3 = lpc::lpcSscanf(in3, fmt, out3, 1);
+            std::cout << "case3 match=" << m3 << " out=" << out3.size();
+            if (!out3.empty() && out3[0].index() == 4)
+                std::cout << " str(" << std::get<lpc::SharedString>(out3[0]).size() << ")";
+            std::cout << "\n";
+            // case4: same but ASCII inner of identical 24 length
+            std::string in4 = "\"" + std::string(24, 'A') + "\"";
+            std::vector<lpc::Value> out4;
+            int m4 = lpc::lpcSscanf(in4, fmt, out4, 1);
+            std::cout << "case4 match=" << m4 << " out=" << out4.size();
+            if (!out4.empty() && out4[0].index() == 4)
+                std::cout << " str(" << std::get<lpc::SharedString>(out4[0]).size() << ")";
+            std::cout << "\n";
+            // case5: coupon-name format on the real name
+            std::string gbk2;
+            gbk2 += "\x32\x30\x31\x36\xc4\xea\x30\x32\xd4\xc2\xb7\xdd";      // 2016年02月份
+            gbk2 += "\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // 充值送奖励活动
+            std::string fmt5;
+            fmt5 += "%d\xc4\xea";                        // %d年
+            fmt5 += "%d\xd4\xc2\xb7\xdd";                // %d月份
+            fmt5 += "%s\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // %s充值送奖励活动
+            std::vector<lpc::Value> out5;
+            int m5 = lpc::lpcSscanf(gbk2, fmt5, out5, 3);
+            std::cout << "case5 match=" << m5 << " out=" << out5.size();
+            if (!out5.empty() && out5[0].index() == 2)
+                std::cout << " y=" << std::get<int64_t>(out5[0]);
+            if (out5.size() > 1 && out5[1].index() == 2)
+                std::cout << " m=" << std::get<int64_t>(out5[1]);
+            if (out5.size() > 2 && out5[2].index() == 4)
+                std::cout << " s=str";
+            std::cout << "\n";
+            // case6: the 09-month coupon name, and case7 with trailing CR
+            std::string gbk6;
+            gbk6 += "\x32\x30\x31\x36\xc4\xea\x30\x39\xd4\xc2\xb7\xdd"; // 2016年09月份
+            gbk6 += "\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // 充值送奖励活动
+            std::vector<lpc::Value> out6;
+            int m6 = lpc::lpcSscanf(gbk6, fmt5, out6, 3);
+            std::cout << "case6 match=" << m6 << "\n";
+            std::string gbk7 = gbk6 + "\r";
+            std::vector<lpc::Value> out7;
+            int m7 = lpc::lpcSscanf(gbk7, fmt5, out7, 3);
+            std::cout << "case7(CR) match=" << m7 << "\n";
+            return 0;
+        }
         if (cmd == "server") {
             int port = 4000;
             if (args.size() >= 3) port = std::atoi(args[2].c_str());

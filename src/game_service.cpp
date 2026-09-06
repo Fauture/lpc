@@ -10906,6 +10906,8 @@ void handle_vm_msgCfgEtcPageData(GameClient& cl, const uint8_t* body, size_t len
     if (off + 4 > len) return;
     uint32_t dataLen = rd32be(body, off); off += 4;
     if (dataLen > len - off) return;
+    if (std::getenv("LPCVM_TAIL"))
+        std::cerr << "[cfg-pg] cookie=" << pageNo << " rawlen=" << (len - off) << "\n";
     applyLpc("msg_cfg_etc_page_data", {make_int(cl.clientNo), make_int(pageNo), make_buffer(body + off, len - off)});
 }
 
@@ -10930,6 +10932,8 @@ void handle_vm_msgCfgReadEtc(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 8 > len) return;
     uint32_t cookie = rd32be(body, off); off += 4;
     uint32_t result = rd32be(body, off); off += 4;
+    if (std::getenv("LPCVM_TAIL"))
+        std::cerr << "[cfg-res] cookie=" << cookie << " result=" << result << "\n";
     applyLpc("msg_cfg_read_etc", {make_int(cl.clientNo), make_int(cookie), make_int(result)});
 }
 
@@ -11805,7 +11809,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     // Fallback: cmdList/cmdIndex dispatch.
     const CmdEntry* e = findCmd(cmdNo);
     if (!e) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (std::getenv("LPCVM_TRACE") || (std::getenv("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
             std::cerr << "[game] bad command 0x" << std::hex << cmdNo << std::dec
                       << " from client " << cl.clientNo << " (len=" << len << ")\n";
         ++cl.recvBadPkts;
@@ -11813,12 +11817,17 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     }
     // attrib permission check: (attrib & type & 7) != 0
     if ((cl.attrib & e->type & 7) == 0) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (std::getenv("LPCVM_TRACE") || (std::getenv("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
             std::cerr << "[game] denied cmd 0x" << std::hex << cmdNo << std::dec
-                      << " attrib=" << cl.attrib << "\n";
+                      << " client=" << cl.clientNo << " attrib=" << cl.attrib
+                      << " type=" << e->type << "\n";
         ++cl.recvBadPkts;
         return;
     }
+    if (std::getenv("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473))
+        std::cerr << "[game] dispatch cmd=0x" << std::hex << cmdNo << std::dec
+                  << " client=" << cl.clientNo << " attrib=" << cl.attrib
+                  << " type=" << e->type << " OK\n";
     switch (cmdNo) {
     case 0x5351: handleMsgLAuth(cl, body, len); break;
     case 0x20D2: handleCmdEcho(cl, body, len); break;
