@@ -4897,6 +4897,8 @@ private:
         resumeValue_ = std::move(resumeValue);
         if (std::getenv("LPCVM_TAIL")) {
             bool stRelevant = objName_.find("statued") != std::string::npos ||
+                              thisObjectName_.find("statued") != std::string::npos ||
+                              thisObjectName_.find("statue.o") != std::string::npos ||
                               objName_.find("clone:gs/clone/npc/misc/statue.o") != std::string::npos ||
                               cond.qkey == "q:26";
             if (!stRelevant) {
@@ -8597,6 +8599,31 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
         break;
     case 2:   // queue
         queueWaiters_[c.qkey].push_back(p);
+        // LOST-WAKE GUARD: a sender may have pushed its message (and called
+        // wakeQueue) in the window between this waiter's empty queueReceive
+        // check and its registration here, so wakeQueue found no waiter and
+        // the message sits PENDING.  statued's statue placement stalled at
+        // the LAST such wait of each 235-send burst for exactly this reason
+        // (every earlier wait was accidentally re-woken by the NEXT message's
+        // wake; the tail message woke nobody).  Re-check the underlying queue:
+        // when it already holds items, cancel this park and rerun now - the
+        // resume hook re-receives and dequeues the pending message.
+        if (c.qkey.size() > 2 && c.qkey[0] == 'q' && c.qkey[1] == ':') {
+            int64_t qid = 0;
+            for (size_t qi = 2; qi < c.qkey.size(); ++qi) {
+                if (c.qkey[qi] < '0' || c.qkey[qi] > '9') { qid = -1; break; }
+                qid = qid * 10 + (c.qkey[qi] - '0');
+            }
+            if (qid >= 0 && queuePendingItems(qid) > 0) {
+                auto it2 = queueWaiters_.find(c.qkey);
+                if (it2 != queueWaiters_.end()) {
+                    it2->second.pop_back();       // remove self (we are the tail)
+                    if (it2->second.empty()) queueWaiters_.erase(it2);
+                }
+                p->cond.kind = 0;
+                ready_.push_front(p);
+            }
+        }
         break;
     case 3:   // event
         eventWaiters_[c.ename].push_back(p);

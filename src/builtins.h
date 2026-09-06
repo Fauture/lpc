@@ -90,6 +90,11 @@ void queueDelete(int64_t qid);
 int64_t queueResolveId(const Value& v);
 // Diagnostic: "name=qid" for every registered queue (empty when none).
 std::string queueNameDump();
+// Number of elements currently queued on qid (0 when the queue is missing /
+// destroyed).  Used by the cooperative scheduler's lost-wake guard: a receiver
+// that registered its park AFTER the sender pushed (and woke nobody) re-checks
+// this and reruns instead of sleeping forever on a non-empty queue.
+size_t queuePendingItems(int64_t qid);
 // Block until an element is available or timeoutMs elapses (timeoutMs < 0 =
 // forever).  Returns the element; `ok` is false on timeout / missing queue.
 Value queueReceive(int64_t qid, int timeoutMs, bool& ok);

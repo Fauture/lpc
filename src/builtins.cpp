@@ -460,6 +460,14 @@ void queueDelete(int64_t qid) {
     reg.cv.notify_all();
 }
 
+size_t queuePendingItems(int64_t qid) {
+    auto& reg = queueRegistry();
+    std::lock_guard<std::mutex> lk(reg.mtx);
+    auto it = reg.queues.find(qid);
+    if (it == reg.queues.end() || it->second->destroyed) return 0;
+    return it->second->items.size();
+}
+
 Value queueReceive(int64_t qid, int timeoutMs, bool& ok) {
     auto& reg = queueRegistry();
     ok = false;
