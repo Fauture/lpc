@@ -8524,6 +8524,33 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
 void Scheduler::wake(std::shared_ptr<Process> p) {
     {
         std::lock_guard<std::mutex> lk(mtx_);
+        if (std::getenv("LPCVM_TAIL") && p->parkedVm) {
+            bool st = false;
+            for (const auto& fr : p->parkedVm->frames_) {
+                if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
+                              std::string(fr.fn->name) == "do_operate")) { st = true; break; }
+            }
+            if (!st && (p->parkedVm->objName().find("statued") != std::string::npos ||
+                        p->parkedVm->objName().find("statue.o") != std::string::npos)) st = true;
+            static int stWakeN = 0;
+            if (st && stWakeN < 120) {
+                ++stWakeN;
+                ResumeCond cc = p->parkedVm->resumeCond();
+                std::string chain;
+                for (const auto& fr2 : p->parkedVm->frames_) {
+                    if (!chain.empty()) chain += "<-";
+                    chain += fr2.fn ? fr2.fn->name : "<ctx>";
+                    if (chain.size() > 200) break;
+                }
+                std::cerr << "[st-wake] entry=" << p->entry
+                          << " kind=" << cc.kind
+                          << " key=" << (cc.qkey.empty() ? cc.ename : cc.qkey)
+                          << " pvm=" << p->parkedVm.get()
+                          << " obj=" << p->parkedVm->objName()
+                          << " inReady=" << p->inReady << " chain=[" << chain << "]\n";
+                std::cerr.flush();
+            }
+        }
         // The resume hook (run inside resumeProcess BEFORE the value is
         // pushed) may update parkedResumeValue (e.g. connect's result check);
         // re-read it there rather than snapshotting here.
