@@ -4938,7 +4938,7 @@ private:
             static int anyParkN = 0;
             if (stRelevant || anyParkN < 60) {
                 ++anyParkN;
-                if (anyParkN <= 200) {
+                if (anyParkN <= 200 || stRelevant) {
                     std::string chain;
                     for (size_t fi = 0; fi < frames_.size(); ++fi) {
                         const Frame& fr = frames_[fi];
@@ -9231,6 +9231,25 @@ int64_t Scheduler::nowMs() {
 void Scheduler::runProcess(std::shared_ptr<Process> p) {
     Value callResult = make_int(0);
     currentProcess_ = p;   // get_thread_id() returns this process's tid
+    if (std::getenv("LPCVM_TAIL") && p->parkedVm && !p->parkedVm->frames_.empty()) {
+        for (const auto& fr : p->parkedVm->frames_) {
+            if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
+                          std::string(fr.fn->name) == "do_operate")) {
+                std::string chain;
+                for (const auto& fr2 : p->parkedVm->frames_) {
+                    if (!chain.empty()) chain += "<-";
+                    chain += fr2.fn ? fr2.fn->name : "<ctx>";
+                    if (chain.size() > 200) break;
+                }
+                std::cerr << "[stres] run entry=" << p->entry
+                          << " parkedVm=" << p->parkedVm.get()
+                          << " obj=" << p->parkedVm->objName()
+                          << " chain=[" << chain << "]\n";
+                std::cerr.flush();
+                break;
+            }
+        }
+    }
     try {
         if (p->timerEntry && p->timerEntry->cancelled && *p->timerEntry->cancelled) {
             // delete_timer() cancelled this callback before it fired.
