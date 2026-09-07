@@ -2009,8 +2009,10 @@ public:
         }
         if (masterPhase_ == 2) {
             masterNoYield_ = true;
-            masterCreateStarted_ = true;
-            callCreate();          // resumable: a parking create continues here
+            if (!masterCreateStarted_) {
+                masterCreateStarted_ = true;
+                callCreate();        // ONE-SHOT (stable baseline)
+            }
             masterNoYield_ = false;
             code_ = nullptr;
             masterPhase_ = 3;
@@ -2056,11 +2058,18 @@ public:
                 initPhase_ = 2;
             }
             if (initPhase_ == 2) {
-                initCreateStarted_ = true;
-                masterNoYield_ = true;
-                callCreate(initCreateArgs_);   // resumable: parks continue here
-                masterNoYield_ = false;
-                // All creates (parents + this object's own) ran to completion.
+                // ONE-SHOT gate (healthy baseline R65/R66): callCreate runs the
+                // whole create list on first entry.  A create that parks
+                // mid-way unwinds the C++ loop; remaining creates are NOT
+                // re-entered (re-entry made filed.c's create loop ~3855x with a
+                // use_ldba cfg storm).  Stable starting point for the real
+                // construct-continuation investigation.
+                if (!initCreateStarted_) {
+                    initCreateStarted_ = true;
+                    masterNoYield_ = true;
+                    callCreate(initCreateArgs_);
+                    masterNoYield_ = false;
+                }
                 code_ = nullptr;
                 initPhase_ = 3;
             }
