@@ -7269,6 +7269,18 @@ private:
                         }
                         if (selfRef && hasRefArg) resolveSelf();
                         if (!(selfRef && hasRefArg && found)) {
+                            if (std::getenv("LPCVM_TAIL") && objName_.find("questiond") != std::string::npos) {
+                                static int qdC = 0;
+                                if (qdC < 80) {
+                                    ++qdC;
+                                    std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                    std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal).str() : "?";
+                                    std::string fv = funName.empty() ? ("idx" + std::to_string(funIndex)) : funName;
+                                    std::cerr << "[qd-call] fn=" << fv << " path=" << pv
+                                              << " cur=" << cur << " obj=" << objName_ << "\n";
+                                    std::cerr.flush();
+                                }
+                            }
                             auto args = popArgs();
                             if (funName.empty()) {
                                 result = runDetached([&] {
@@ -7310,6 +7322,19 @@ private:
                               << " idx=" << result.index() << " stack=" << stack_.size()
                               << " cur=" << (frames_.empty() || !frames_.back().fn
                                                  ? "<top>" : frames_.back().fn->name) << "\n";
+                if (std::getenv("LPCVM_TAIL") && objName_.find("questiond") != std::string::npos &&
+                    !inlineStarted) {
+                    static int qdR = 0;
+                    if (qdR < 80) {
+                        ++qdR;
+                        std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                        std::string fv = (funVal.index() == 4) ? std::get<SharedString>(funVal).str()
+                                                : funName.empty() ? ("idx" + std::to_string(funIndex)) : funName;
+                        std::cerr << "[qd-ret] fn=" << fv << " res=t" << result.index()
+                                  << " cur=" << cur << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 break;
             }
             case 5: { // call_fun_ptr
@@ -7929,8 +7954,32 @@ private:
                                     objName_.find("party/city_war") != std::string::npos;
                         bool isSt = thisObjectName_.find("statued") != std::string::npos ||
                                     objName_.find("statued") != std::string::npos;
-                        if (isChild || isJb || isCw || isSt) {
-                            static int childN = 0, jbN = 0, cwN = 0, stN = 0;
+                        bool isQd = thisObjectName_.find("questiond") != std::string::npos ||
+                                    objName_.find("questiond") != std::string::npos;
+                        if (isChild || isJb || isCw || isSt || isQd) {
+                            static int childN = 0, jbN = 0, cwN = 0, stN = 0, qdN = 0;
+                            if (isQd && qdN < 8) {
+                                ++qdN;
+                                // questiond.do_init gates on _find_npc("文曲星").
+                                // Replicate find_npc_ob and inspect registration.
+                                Value f;
+                                callVmFn("gs/daemons/named.o", "find_npc_ob",
+                                         { make_string(std::string("\xCE\xC4\xC7\xFA\xD0\xC7", 6)) }, f);
+                                std::string fs = "t" + std::to_string(f.index());
+                                if (f.index() == 7) {
+                                    fs = "OBJ " + std::get<std::shared_ptr<ObjectValue>>(f)->programName;
+                                } else if (f.index() == 5) {
+                                    auto& items = std::get<std::shared_ptr<ArrayValue>>(f)->items;
+                                    fs = "arr(" + std::to_string(items.size()) + ")";
+                                    for (auto& x : items)
+                                        if (x.index() == 7) {
+                                            fs += " " + std::get<std::shared_ptr<ObjectValue>>(x)->programName;
+                                            break;
+                                        }
+                                }
+                                std::cerr << "[qd] find_npc_ob(文曲星)=" << fs << "\n";
+                                std::cerr.flush();
+                            }
                             if (isSt && stN < 8) {
                                 ++stN;
                                 // statued.do_init_after_loaded waits on
@@ -8055,11 +8104,33 @@ private:
                                 std::cerr.flush();
                                 dumpStrArrays("[gjieban-var]");
                             }
-                            if (isCw && cwN < 6) {
+                            if (isCw && cwN < 4) {
                                 ++cwN;
                                 dumpStrArrays("[gcity-var]");
-                                // Resolve each tax_dealer "name@room" against the
-                                // named daemon: which piece is missing?
+                                std::function<void(const Value&, std::vector<int64_t>&, int)> collectInts;
+                                collectInts = [&](const Value& v, std::vector<int64_t>& acc, int depth) {
+                                    if (depth > 12) return;
+                                    if (v.index() == 2) acc.push_back(std::get<int64_t>(v));
+                                    else if (v.index() == 5) {
+                                        for (auto& it : std::get<std::shared_ptr<ArrayValue>>(v)->items)
+                                            collectInts(it, acc, depth + 1);
+                                    } else if (v.index() == 6) {
+                                        for (auto& kv : std::get<std::shared_ptr<MappingValue>>(v)->items())
+                                            collectInts(kv.second, acc, depth + 1);
+                                    }
+                                };
+                                auto findVmByProg = [&](const std::string& prog) -> std::shared_ptr<OriginalVm> {
+                                    auto& regG = objectRegistry();
+                                    std::lock_guard<std::recursive_mutex> rlG(registryMutex());
+                                    for (auto& kv : regG.vms)
+                                        if (kv.first == prog || kv.first == ("pak:" + prog) ||
+                                            kv.first == ("clone:" + prog))
+                                            return kv.second;
+                                    for (auto& kv : regG.vms)
+                                        if (prog.find(kv.first) == 0 || kv.first.find(prog) == 0)
+                                            return kv.second;
+                                    return nullptr;
+                                };
                                 const auto& cwv = ownObjVars();
                                 for (size_t vi = 0; vi < cwv.size(); ++vi) {
                                     if (cwv[vi].index() != 5) continue;
@@ -8078,15 +8149,41 @@ private:
                                         Value f;
                                         if (!name.empty())
                                             callVmFn("gs/daemons/named.o", "find_npc_ob", { make_string(name) }, f);
-                                        std::string fs = "npc" + std::to_string(f.index());
-                                        if (f.index() == 5) fs = "npcArr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(f)->items.size()) + ")";
-                                        else if (f.index() == 7) fs = "npcObj";
+                                        std::string npcProg;
+                                        int64_t npcId = -1;
+                                        if (f.index() == 7) npcProg = std::get<std::shared_ptr<ObjectValue>>(f)->programName;
+                                        else if (f.index() == 5) {
+                                            auto& items = std::get<std::shared_ptr<ArrayValue>>(f)->items;
+                                            for (auto& x : items)
+                                                if (x.index() == 7) { npcProg = std::get<std::shared_ptr<ObjectValue>>(x)->programName; break; }
+                                        }
+                                        {
+                                            size_t h = npcProg.find_last_of('#');
+                                            if (h != std::string::npos && h + 1 < npcProg.size())
+                                                npcId = atoll(npcProg.c_str() + h + 1);
+                                        }
+                                        std::string inRoom = "?";
                                         Value r;
                                         if (!loc.empty())
                                             callVmFn("gs/daemons/named.o", "find_room_ob", { make_string(loc) }, r);
-                                        std::string rs = "room" + std::to_string(r.index());
-                                        if (r.index() == 7) rs = "roomObj";
-                                        out += "[" + nm.substr(0, 10) + "@" + loc.substr(0, 8) + " " + fs + " " + rs + "] ";
+                                        if (r.index() == 7) {
+                                            std::string rp = std::get<std::shared_ptr<ObjectValue>>(r)->programName;
+                                            auto rvm = findVmByProg(rp);
+                                            if (rvm) {
+                                                Value mi = rvm->callFunctionByName("lite_query",
+                                                                                 { make_string("map_index") });
+                                                std::vector<int64_t> ids;
+                                                collectInts(mi, ids, 0);
+                                                bool has = false;
+                                                if (npcId >= 0)
+                                                    for (auto x : ids)
+                                                        if (x == npcId) { has = true; break; }
+                                                inRoom = has ? "INROOM" : "NOT_IN_ROOM";
+                                            } else inRoom = "noVm";
+                                        }
+                                        out += "[" + nm.substr(0, 9) + "@" + loc.substr(0, 7) +
+                                               " npc#" + (npcId >= 0 ? std::to_string(npcId) : "?") +
+                                               " " + inRoom + "] ";
                                     }
                                     std::cerr << "[gcity] " << out << "\n";
                                     std::cerr.flush();
@@ -8095,7 +8192,164 @@ private:
                             }
                         }
                     }
+                    // TEMP R76: ground-truth for the final two gates: city_war's
+                    // tax-dealer _find_npc (correct id space: map module ids, not
+                    // clone sequence) and statued's per-map statue registration.
+                    if (f.fn && (f.fn->name == "do_init" || f.fn->name == "do_init_after_loaded")) {
+                        bool gtCw = thisObjectName_.find("party/city_war") != std::string::npos ||
+                                    objName_.find("party/city_war") != std::string::npos;
+                        bool gtJb = thisObjectName_.find("jieban_chuangtianya") != std::string::npos ||
+                                    objName_.find("jieban_chuangtianya") != std::string::npos;
+                        bool gtSt = thisObjectName_.find("statued") != std::string::npos ||
+                                    objName_.find("statued") != std::string::npos;
+                        if ((gtCw || gtJb || gtSt) && std::getenv("LPCVM_TAIL")) {
+                            static int gtN = 0;
+                            if (gtN < 20) { ++gtN;
+                            try {
+                                if (gtCw) {
+                                    const auto& cwv = ownObjVars();
+                                    for (size_t vi = 0; vi < cwv.size(); ++vi) {
+                                        if (cwv[vi].index() != 5) continue;
+                                        auto& its = std::get<std::shared_ptr<ArrayValue>>(cwv[vi])->items;
+                                        if (its.size() < 5 || its.size() > 40) continue;
+                                        bool allStr = true, hasAt2 = false;
+                                        for (auto& v : its)
+                                            if (v.index() != 4) { allStr = false; break; }
+                                        if (!allStr) continue;
+                                        std::vector<std::string> nmds;
+                                        for (auto& v : its) {
+                                            std::string s = std::get<SharedString>(v).str();
+                                            if (s.find('@') == std::string::npos) { hasAt2 = false; break; }
+                                            hasAt2 = true; nmds.push_back(s);
+                                        }
+                                        if (!hasAt2) continue;
+                                        int shown2 = 0;
+                                        for (auto& nmd : nmds) {
+                                            if (++shown2 > 5) break;
+                                            size_t ap2 = nmd.find('@');
+                                            std::string dname = nmd.substr(0, ap2);
+                                            std::string dloc = nmd.substr(ap2 + 1);
+                                            std::string line2 = "[gtcw] " + nmd;
+                                            Value ro2;
+                                            callVmFn("gs/daemons/named.o", "find_room_ob", { make_string(dloc) }, ro2);
+                                            std::vector<int64_t> mapIds2;
+                                            if (ro2.index() == 7) {
+                                                std::string rp2 = std::get<std::shared_ptr<ObjectValue>>(ro2)->programName;
+                                                auto rvm2 = findVmBySub(rp2);
+                                                line2 += " room=" + rp2;
+                                                if (rvm2) {
+                                                    try {
+                                                        Value mi2 = rvm2->callFunctionByName("lite_query", { make_string("map_index") });
+                                                        line2 += " mi=t" + std::to_string(mi2.index());
+                                                        if (mi2.index() == 2) {
+                                                            Value gm2 = lpc::mapModule().getFromMap({ mi2 });
+                                                            if (gm2.index() == 5) {
+                                                                for (auto& e2 : std::get<std::shared_ptr<ArrayValue>>(gm2)->items) {
+                                                                    if (e2.index() == 2) mapIds2.push_back(std::get<int64_t>(e2));
+                                                                    else if (e2.index() == 5) {
+                                                                        auto& t2 = std::get<std::shared_ptr<ArrayValue>>(e2)->items;
+                                                                        if (!t2.empty() && t2[0].index() == 2) mapIds2.push_back(std::get<int64_t>(t2[0]));
+                                                                    }
+                                                                }
+                                                                line2 += " mapsz=" + std::to_string(mapIds2.size());
+                                                                for (size_t z2 = 0; z2 < mapIds2.size() && z2 < 5; ++z2)
+                                                                    line2 += (z2 ? "," : " [") + std::to_string(mapIds2[z2]);
+                                                                if (mapIds2.size() > 5) line2 += "...";
+                                                                else if (!mapIds2.empty()) line2 += "]";
+                                                            } else line2 += " gm=t" + std::to_string(gm2.index());
+                                                        }
+                                                    } catch (...) { line2 += " mapQerr"; }
+                                                } else line2 += " noRoomVm";
+                                            } else if (ro2.index() == 5)
+                                                line2 += " roomArr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(ro2)->items.size()) + ")";
+                                            else line2 += " noRoom(t" + std::to_string(ro2.index()) + ")";
+                                            Value no2;
+                                            callVmFn("gs/daemons/named.o", "find_npc_ob", { make_string(dname) }, no2);
+                                            std::vector<std::shared_ptr<ObjectValue>> cands2;
+                                            if (no2.index() == 7) cands2.push_back(std::get<std::shared_ptr<ObjectValue>>(no2));
+                                            else if (no2.index() == 5)
+                                                for (auto& x2 : std::get<std::shared_ptr<ArrayValue>>(no2)->items)
+                                                    if (x2.index() == 7) cands2.push_back(std::get<std::shared_ptr<ObjectValue>>(x2));
+                                            bool hit2 = false;
+                                            int ci2 = 0;
+                                            for (auto& o2 : cands2) {
+                                                if (++ci2 > 4) break;
+                                                std::string prog2 = o2 ? o2->programName : "?";
+                                                int64_t gid2 = -1;
+                                                auto cv2 = findVmBySub(prog2);
+                                                if (cv2) {
+                                                    try { Value gv2 = cv2->callFunctionByName("get_id", {}); if (gv2.index() == 2) gid2 = std::get<int64_t>(gv2); } catch (...) {}
+                                                }
+                                                std::string shortProg = prog2;
+                                                size_t hs2 = prog2.find_last_of('/');
+                                                if (hs2 != std::string::npos) shortProg = prog2.substr(hs2 + 1);
+                                                line2 += " c" + std::to_string(ci2) + "=" + shortProg + "(id" + std::to_string(gid2) + ")";
+                                                if (gid2 > 0 && std::find(mapIds2.begin(), mapIds2.end(), gid2) != mapIds2.end()) hit2 = true;
+                                            }
+                                            line2 += (hit2 ? " HIT" : " MISS");
+                                            std::cerr << line2 << "\n";
+                                            std::cerr.flush();
+                                        }
+                                        break;
+                                    }
+                                } else if (gtSt || gtJb) {
+                                    // statued state: statue counts on the FIRST, MIDDLE(17th: 五龙窟一层) and LAST statue maps
+                                    const char* maps[][2] = {
+                                        { "\xC0\xC0\xCF\xC8\xD5\xF2\xCD\xE2", "lanxianzhenwai" },
+                                        { "\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3", "wulongku1" },
+                                        { "\xD3\xF1\xC7\xE5\xC9\xBD\xB5\xCE", "yuqingshandian" },
+                                    };
+                                    (void)maps;
+                                    std::string stOut = "[gtst] ";
+                                    auto probeStatueMap = [&](const std::string& mapName) {
+                                        Value sv2;
+                                        callVmFn("gs/daemons/statued.o", "get_map_statue", { make_string(mapName) }, sv2);
+                                        std::string ss2;
+                                        if (sv2.index() == 6) {
+                                            auto mp6 = std::get<std::shared_ptr<MappingValue>>(sv2);
+                                            ss2 = "map(" + std::to_string(mp6->size()) + ")";
+                                        } else ss2 = "t" + std::to_string(sv2.index());
+                                        return ss2;
+                                    };
+                                    stOut += "揽仙镇外=" + probeStatueMap("\xC0\xBF\xCF\xC9\xD5\xF2\xCD\xE2");
+                                    stOut += " 五龙窟一层=" + probeStatueMap("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3");
+                                    stOut += " 玉清山巅=" + probeStatueMap("\xD3\xF1\xC7\xE5\xC9\xBD\xE1\xDB");
+                                    // statued obj vars: all_map_info count + load_ok
+                                    std::shared_ptr<OriginalVm> stVm2 = findVmBySub("gs/daemons/statued.o");
+                                    if (stVm2) {
+                                        const auto& svars = stVm2->ownObjVars();
+                                        stOut += " vars=" + std::to_string(svars.size());
+                                        for (size_t z3 = 0; z3 < svars.size(); ++z3) {
+                                            if (svars[z3].index() == 5) {
+                                                auto& its3 = std::get<std::shared_ptr<ArrayValue>>(svars[z3])->items;
+                                                size_t strc = 0;
+                                                for (auto& v3 : its3) if (v3.index() == 4) ++strc;
+                                                if (its3.size() >= 40 && strc == its3.size()) {
+                                                    stOut += " mapArr(var" + std::to_string(z3) + ":" + std::to_string(its3.size()) + ")";
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (gtJb) {
+                                        Value fnd2;
+                                        std::string s2 = " [" + std::to_string(f.bp) + "]";
+                                        (void)s2;
+                                        callVmFn("gs/daemons/named.o", "find_npc_ob",
+                                                 { make_string("\xCA\xA6\xB8\xB8@\xCC\xEC\xDC\xAD\xB3\xC7") }, fnd2);
+                                        std::string fb2;
+                                        arrOf(fnd2, 3, fb2);
+                                        stOut += " 师fu@tyc=" + fb2;
+                                    }
+                                    std::cerr << stOut << "\n";
+                                    std::cerr.flush();
+                                }
+                            } catch (...) { std::cerr << "[gt] err\n"; std::cerr.flush(); }
+                            }
+                        }
+                    }
                     // TEMP probe: which object registers the taskd template/entry
+
                     // named "娃娃冒险任务", and with what key bytes?
                     if (f.fn && (f.fn->name == "register_entry" ||
                                  f.fn->name == "register_task_template") && f.argNum >= 1) {
@@ -9539,6 +9793,14 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // post_init loop) via resumeCaller().
             p->resumeRunLoop = false;
             auto rvm = p->parkedVm ? p->parkedVm : p->vm;
+            // Consumed: the process is RUNNING now, so parkedVm is stale until
+            // the next park.  Leaving it set made noteParkedCaller skip a
+            // caller VM whose address matched the previous park (a do_init
+            // resumed from its filed read, then calling configd read_etc
+            // cross-VM: shopd.do_init's continuation was never chained, so
+            // after the cfg reply resumed configd the rest of do_init -
+            // load_open_server_conf tail, "正常启动" - never ran).
+            p->parkedVm.reset();
             if (vmEnvTrace())
                 std::cerr << "[sched-xvm-resume] " << p->entry << " vm=" << rvm.get() << "\n";
             rvm->resumeRunLoop();
@@ -9601,6 +9863,12 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // Resume the VM whose execution state was parked (usually p->vm,
             // but cross-object blocking runs on the target's registry VM).
             auto rvm = p->parkedVm ? p->parkedVm : p->vm;
+            // Consumed: see the resumeRunLoop branch above - a stale parkedVm
+            // here made noteParkedCaller drop the caller VM (shopd do_init
+            // resumed from its catalog filed read then called configd
+            // read_etc; with parkedVm still == shopd's VM the caller was never
+            // chained and its do_init tail never resumed after the reply).
+            p->parkedVm.reset();
             rvm->resumeProcess(std::move(p->resumeValue));
             callResult = rvm->lastReturnValue();
             // Cross-object blocking call finished on the target's registry VM:
