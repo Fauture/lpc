@@ -2410,6 +2410,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string out = formatLpc(as_string(args[0]), rest);
             if (std::getenv("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
                 std::cerr << "[printf-badline] out=[" << out.substr(0, 80) << "]\n";
+            if (std::getenv("LPCVM_TAIL") && out.find("to be scanned, interval") != std::string::npos) {
+                std::cerr << "[banner-src] obj=" << stubCallCtx().obj << " fn=" << stubCallCtx().fn
+                          << " tel=" << threadTelnetClient() << "\n";
+                std::cerr.flush();
+            }
             // The original driver writes the formatted string exactly as-is
             // (no auto newline; the LPC format strings carry their own \n).
             int cno = threadTelnetClient();
@@ -5754,7 +5759,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "get_function_owner") return make_int(0);
-    if (name == "move_object") return make_int(1);
+    if (name == "move_object") {
+        if (std::getenv("LPCVM_TAIL")) {
+            static int bmvN = 0;
+            if (bmvN++ < 60) {
+                std::string dk;
+                if (!args.empty()) {
+                    if (args[0].index() == 7) dk = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                    else if (args[0].index() == 4) dk = std::get<SharedString>(args[0]).str();
+                }
+                std::cerr << "[bmv] builtins move_object self=" << stubCallCtx().obj << " dest=" << dk << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(1);
+    }
     if (name == "replace_owner") return make_int(0);
     if (name == "child_objects") {
         // vm_f_child_objects: array of live clones of a template object.  We
@@ -5775,7 +5794,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "size_object" || name == "size_value") return make_int(0);
     if (name == "get_all_global_vars") return make_array();
     if (name == "get_obj_function") return make_int(0);
-    if (name == "env_object") return make_int(0);
+    if (name == "env_object") {
+        if (std::getenv("LPCVM_TAIL")) {
+            static int bevN = 0;
+            if (bevN++ < 80) {
+                std::string qk;
+                if (!args.empty()) {
+                    if (args[0].index() == 7) qk = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                    else if (args[0].index() == 4) qk = std::get<SharedString>(args[0]).str();
+                }
+                std::cerr << "[bev] builtins env_object q=" << qk << " self=" << stubCallCtx().obj << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(0);
+    }
     if (name == "lodger_object") return make_int(0);
     if (name == "set_valid_chinese") return make_int(1);
     if (name == "get_message_stat") return make_int(0);

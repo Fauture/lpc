@@ -50,7 +50,28 @@ static const char* vmEnvTraceFn() { static const char* v = std::getenv("LPCVM_TR
 static bool constructDiagOn() { static const bool v = (std::getenv("LPCVM_CONSTRUCT_TRACE") != nullptr); return v; }
 
 namespace {
-// Env-gated profiler for objectRegistry lookup cost (LPCVM_REG_PROF=1):
+// Object-environment store (registry key -> registry key of the container).
+// move_object(dest) records the caller's container; env_object(ob) returns it.
+std::mutex g_envMx;
+std::unordered_map<std::string, std::string> g_envObj;
+}  // namespace
+
+void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
+    std::lock_guard<std::mutex> lk(g_envMx);
+    if (destKey.empty()) g_envObj.erase(selfKey);
+    else g_envObj[selfKey] = destKey;
+}
+std::string envLookupObjKey(const std::string& obKey) {
+    std::lock_guard<std::mutex> lk(g_envMx);
+    auto it = g_envObj.find(obKey);
+    return (it != g_envObj.end()) ? it->second : std::string();
+}
+size_t envCountObjKeys() {
+    std::lock_guard<std::mutex> lk(g_envMx);
+    return g_envObj.size();
+}
+
+namespace {
 // aggregates wall time of the whole lookup helpers to size the linear suffix
 // scans against the rest of the boot.  Off = one static-bool test per helper.
 bool regProfOn() {
@@ -2854,6 +2875,72 @@ private:
         }
         if (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size() && !names[efunIndex].empty()) {
             const std::string& nm = names[efunIndex];
+            // ---- object-environment model (mirrors the original driver) ----
+            // set_zone(zone) == move_object(zone) (gs/inherit/room/room.c), and
+            // roomd.setup_room_basic_info's register_zone branch does
+            // env_object(room_ob)->register_entry(...) so a zone's children are
+            // exposed through zone->query_entry.  move_object/env_object were
+            // no-op stubs, so every zone child stayed unregistered (混合区域 /
+            // misc.o all_entries empty) and party/stage.o::clone_room re-armed
+            // register_post_init forever -> post_init() never returned -> 8160
+            // never opened.  Track env as registry-key -> registry-key.
+            if (nm == "move_object") {
+                std::string destKey;
+                if (!args.empty()) {
+                    if (args[0].index() == 7)
+                        destKey = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                    else if (args[0].index() == 4)
+                        destKey = std::get<SharedString>(args[0]).str();
+                }
+                std::string myKey;
+                {
+                    auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    for (auto& kv : reg.vms)
+                        if (kv.second.get() == this) { myKey = kv.first; break; }
+                }
+                if (!myKey.empty()) {
+                    envStoreObjKey(myKey, destKey);
+                }
+                if (std::getenv("LPCVM_TAIL") &&
+                    (myKey.find("misc") != std::string::npos || destKey.find("misc") != std::string::npos ||
+                     myKey.find("bangpai") != std::string::npos || destKey.find("bangpai") != std::string::npos)) {
+                    static int mvN = 0;
+                    if (mvN++ < 60)
+                        std::cerr << "[env-mv] self=" << myKey << " dest=" << destKey << "\n";
+                    std::cerr.flush();
+                }
+                return make_int(1);
+            }
+            if (nm == "env_object") {
+                std::string obKey;
+                if (args.empty()) {
+                    auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    for (auto& kv : reg.vms)
+                        if (kv.second.get() == this) { obKey = kv.first; break; }
+                } else if (args[0].index() == 7) {
+                    obKey = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                } else if (args[0].index() == 4) {
+                    obKey = std::get<SharedString>(args[0]).str();
+                }
+                if (!obKey.empty()) {
+                    std::string env = envLookupObjKey(obKey);
+                    if (std::getenv("LPCVM_TAIL")) {
+                        static int evN = 0;
+                        if (evN++ < 80) {
+                            std::string fnC = frames_.empty() || !frames_.back().fn ? "<g>" : frames_.back().fn->name;
+                            std::cerr << "[env-ob] q=" << obKey << " hit="
+                                      << (env.empty() ? "NO" : ("YES->" + env))
+                                      << " fn=" << fnC << " mapsz=" << envCountObjKeys() << "\n";
+                            std::cerr.flush();
+                        }
+                    }
+                    if (!env.empty())
+                        return make_object(env);
+                }
+                return make_int(0);
+            }
             if (nm == "previous_object" || nm == "previous_objects") {
                 // vm_f_previous_object (0x80f6b28): returns the object that
                 // called into the current function (the caller's thisObject).
@@ -3986,6 +4073,56 @@ private:
             stubCallCtx().obj = objName_;
             stubCallCtx().fn = frames_.empty() || !frames_.back().fn
                                    ? "<global>" : frames_.back().fn->name;
+            if (std::getenv("LPCVM_TAIL") && nm == "printf" && !args.empty() &&
+                args[0].index() == 4 &&
+                std::get<SharedString>(args[0]).str().find("to be scanned, interval") != std::string::npos) {
+                std::string chain;
+                // Match each frame's fn against registered objects' functions.
+                std::string ownerDbg;
+                {
+                    auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    for (auto& kv : reg.objects) {
+                        if (kv.first.find("roomd") == std::string::npos &&
+                            kv.first.find("yunxiaogong") == std::string::npos) continue;
+                        for (auto& pf : kv.second->functions) {
+                            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                                if (it->fn && !it->fn->code.empty() && !pf.code.empty() &&
+                                    it->fn->code.data() == pf.code.data() && it->fn->code.size() == pf.code.size()) {
+                                    ownerDbg += " " + pf.name + "#" + std::to_string(pf.index) + "@" + kv.first;
+                                }
+                            }
+                        }
+                    }
+                }
+                for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 400; ++it) {
+                    if (!chain.empty()) chain += "<-";
+                    chain += it->fn ? it->fn->name : "<ctx>";
+                    chain += "#";
+                    chain += it->fn ? std::to_string(it->fn->index) : "?";
+                    if (it->fn && it->fn->code.size() < 40) chain += "[s" + std::to_string(it->fn->code.size()) + "]";
+                }
+                std::string procE = "?";
+                {
+                    auto cp = lpc::scheduler().currentProcessShared();
+                    if (cp) procE = cp->entry;
+                }
+                std::string fwd;
+                for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                    const Frame& fr = frames_[fi];
+                    if (!fwd.empty()) fwd += " | ";
+                    fwd += std::to_string(fi) + ":" + (fr.fn ? fr.fn->name : "<ctx>") + "#" +
+                           (fr.fn ? std::to_string(fr.fn->index) : "?") + "@bp" +
+                           std::to_string(fr.bp) + "arg" + std::to_string(fr.argNum);
+                }
+                std::cerr << "[banner-vm] vm=" << this << " obj=" << objName_
+                          << " objSrc=" << obj_.sourceName
+                          << " this=" << thisObjectName_ << " parked=" << parked_
+                          << " ip=" << ip_ << " frames=" << frames_.size()
+                          << " fwd=[" << fwd << "] owners=[" << ownerDbg
+                          << "] procEntry=" << procE << "\n";
+                std::cerr.flush();
+            }
             return call_builtin(nullptr, nm, args);
         }
         return make_int(0);
@@ -4032,7 +4169,8 @@ private:
                 }
                 if (std::getenv("LPCVM_TAIL") && gfn->name == "register_post_init" &&
                     (objName_.find("vendued") != std::string::npos ||
-                     objName_.find("change_lookd") != std::string::npos)) {
+                     objName_.find("change_lookd") != std::string::npos ||
+                     std::getenv("LPCVM_STUCK_TRACE"))) {
                     std::string chain;
                     for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 200; ++it) {
                         if (!chain.empty()) chain += "<-";
@@ -6483,6 +6621,26 @@ private:
                     if (secs <= 0.0) {
                         pushValue(make_int(1));
                     } else {
+                        // TEMP R99: roomd daemon pacing - log each sleep's
+                        // secs/now so the banner-cadence anomaly (one pass per
+                        // ~14s in R98) is attributable to sleeps or to
+                        // function re-entry.
+                        if (std::getenv("LPCVM_TAIL") &&
+                            objName_.find("/gs/daemons/roomd.o") != std::string::npos) {
+                            static int rdsN = 0;
+                            if (rdsN < 200) {
+                                ++rdsN;
+                                std::string curFn = frames_.empty() || !frames_.back().fn
+                                                        ? "<global>" : frames_.back().fn->name;
+                                auto tt = std::chrono::steady_clock::now();
+                                int64_t tnow = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    tt.time_since_epoch()).count();
+                                std::cerr << "[rdsleep] t=" << tnow << " secs=" << secs << " fn=" << curFn
+                                          << " vm=" << this << " frames=" << frames_.size()
+                                          << " parked=" << parked_ << "\n";
+                                std::cerr.flush();
+                            }
+                        }
                         // Park on a timer for `secs` seconds.
                         ResumeCond cond;
                         cond.kind = 1;
@@ -7054,6 +7212,34 @@ private:
                         bool serveTaskd = targetVm &&
                             std::getenv("LPCVM_SERVE_TASKD") &&
                             targetVm->objName().find("taskd.o") != std::string::npos;
+                        // TEMP R117: zone_ob->register_entry dispatch audit -
+                        // when a roomd setup_* chain call resolves to a target,
+                        // show target/targetFn and whether we inline or detach.
+                        if (std::getenv("LPCVM_TAIL") &&
+                            (funName == "register_entry" || funName == "daemon") &&
+                            (objName_.find("/gs/zone/") != std::string::npos ||
+                             (targetVm && targetVm->objName().find("/gs/zone/") != std::string::npos))) {
+                            static int c8zN = 0;
+                            if (c8zN < 60) {
+                                ++c8zN;
+                                std::string cur8 = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                std::string chain8;
+                                for (auto it = frames_.rbegin(); it != frames_.rend() && chain8.size() < 200; ++it) {
+                                    if (!chain8.empty()) chain8 += "<-";
+                                    chain8 += it->fn ? it->fn->name : "<ctx>";
+                                }
+                                std::string proc8 = "?";
+                                auto cp8 = lpc::scheduler().currentProcessShared();
+                                if (cp8) proc8 = cp8->entry;
+                                std::cerr << "[c8z] fn=" << funName << " callerVmObj=" << objName_
+                                          << " cur=" << cur8 << " targetVm="
+                                          << (targetVm ? targetVm->objName() : "NULL")
+                                          << " targetFn=" << (targetFn ? targetFn->name : "NULL")
+                                          << " idx=" << funIndex << " inline=" << roomdSetupCtx
+                                          << " proc=" << proc8 << " chain=[" << chain8 << "]\n";
+                                std::cerr.flush();
+                            }
+                        }
                         if (targetFn && targetFn->index >= 0 && !targetFn->code.empty() &&
                             ((targetVm->objName().find("filed.o") != std::string::npos ||
                               targetVm->objName().find("importd.o") != std::string::npos ||
@@ -8531,6 +8717,196 @@ private:
                             std::cerr.flush();
                         }
                     }
+                    // TEMP R87: questiond do_init tail - log every fn enter on
+                    // the questiond VM to catch the exact frozen call.
+                    if (f.fn && (thisObjectName_.find("questiond") != std::string::npos ||
+                                 objName_.find("questiond") != std::string::npos)) {
+                        static int q2N = 0;
+                        if (q2N < 300) {
+                            ++q2N;
+                            std::string chainQ;
+                            for (size_t fi = 0; fi < frames_.size() && chainQ.size() < 120; ++fi) {
+                                if (!chainQ.empty()) chainQ += "<-";
+                                chainQ += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                            }
+                            std::cerr << "[q2] enter " << f.fn->name << " obj=" << objName_
+                                      << " ip=" << (ip_ - 1) << " chain=[" << chainQ << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
+                    // TEMP R99: roomd daemon()/do_scan re-entry audit - is the
+                    // tscanroom daemon() function being entered repeatedly
+                    // (banner every ~14s in R98 vs ~600s/pass in reference) or
+                    // does one entry loop correctly?
+                    if (f.fn && objName_.find("/gs/zone/") != std::string::npos &&
+                        f.fn->name == "daemon") {
+                        static int zdN = 0;
+                        if (zdN < 40) {
+                            ++zdN;
+                            std::string chainZ;
+                            for (size_t fi = 0; fi < frames_.size() && chainZ.size() < 220; ++fi) {
+                                if (!chainZ.empty()) chainZ += "<-";
+                                chainZ += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainZ += "#";
+                                chainZ += frames_[fi].fn ? std::to_string(frames_[fi].fn->index) : "?";
+                            }
+                            std::string procZ = "?";
+                            auto cpZ = lpc::scheduler().currentProcessShared();
+                            if (cpZ) procZ = cpZ->entry;
+                            // object program identity: own fn count, merged table
+                            // size, what index-18 resolves to, code_ source.
+                            std::string ftDbg = "ownFns=" + std::to_string(obj_.functions.size()) +
+                                                " merged=" + std::to_string(funcsByIndex_.size());
+                            auto it18 = funcsByIndex_.find(18);
+                            if (it18 != funcsByIndex_.end())
+                                ftDbg += " i18=" + it18->second->name + "#" + std::to_string(it18->second->index);
+                            else ftDbg += " i18=?";
+                            std::cerr << "[zdaemon] enter daemon vm=" << this
+                                      << " obj=" << objName_ << " objSrc=" << obj_.sourceName
+                                      << " parked=" << parked_ << " ip=" << (ip_ - 1)
+                                      << " proc=" << procZ << " " << ftDbg
+                                      << " chain=[" << chainZ << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
+                    if (f.fn && objName_.find("/gs/daemons/roomd.o") != std::string::npos &&
+                        (f.fn->name == "daemon" || f.fn->name == "do_scan" ||
+                         f.fn->name == "create" || f.fn->name == "set_as_daemon")) {
+                        static int rdN = 0;
+                        if (rdN < 400) {
+                            ++rdN;
+                            std::string chainR;
+                            for (size_t fi = 0; fi < frames_.size() && chainR.size() < 140; ++fi) {
+                                if (!chainR.empty()) chainR += "<-";
+                                chainR += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                            }
+                            std::string a0r;
+                            if (f.argNum >= 1 && f.bp - f.argNum + 1 >= 0 &&
+                                static_cast<size_t>(f.bp - f.argNum + 1) < stack_.size()) {
+                                const Value& av = stack_[static_cast<size_t>(f.bp - f.argNum + 1)].value;
+                                if (av.index() == 4)
+                                    a0r = std::get<SharedString>(av).str().substr(0, 60);
+                                else if (av.index() == 7)
+                                    a0r = std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 60);
+                                else a0r = "t" + std::to_string(av.index());
+                            } else a0r = "-";
+                            std::cerr << "[rd] enter " << f.fn->name << " vm=" << this
+                                      << " parked=" << parked_ << " ip=" << (ip_ - 1)
+                                      << " a0=[" << a0r << "] chain=[" << chainR << "]\n";
+                            if (f.fn->name == "do_scan") {
+                                // Scan the ENTIRE stack for LoopCtrl entries.
+                                std::string lcDbg;
+                                for (size_t si = 0; si < stack_.size(); ++si) {
+                                    const Value& sv = stack_[si].value;
+                                    if (sv.index() == 9) {
+                                        auto c = std::get<std::shared_ptr<LoopCtrl>>(sv);
+                                        if (!c) continue;
+                                        if (c->type == 901)
+                                            lcDbg += " s" + std::to_string(si) + ":it" +
+                                                     std::to_string(c->iter) + "/" +
+                                                     std::to_string(c->arr ? c->arr->items.size() : 0) + " ";
+                                        else if (c->type == 1 || c->type == -1)
+                                            lcDbg += " s" + std::to_string(si) + ":c" +
+                                                     std::to_string(c->current) + "/" +
+                                                     std::to_string(c->to) + " ";
+                                    }
+                                }
+                                std::cerr << "[rdlc] vm=" << this << " stackSize=" << stack_.size()
+                                          << " loops=" << lcDbg << "\n";
+                                std::cerr.flush();
+                            }
+                            std::cerr.flush();
+                        }
+                    }
+                    if (f.fn && f.fn->name == "register_entry") {
+                        static int renN = 0;
+                        if (renN < 120 && objName_.find("/gs/zone/") != std::string::npos) {
+                            ++renN;
+                            std::string chainR2;
+                            for (size_t fi = 0; fi < frames_.size() && chainR2.size() < 300; ++fi) {
+                                if (!chainR2.empty()) chainR2 += "<-";
+                                chainR2 += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainR2 += "#" + std::to_string(frames_[fi].fn ? frames_[fi].fn->index : -1);
+                            }
+                            std::string owner2;
+                            {
+                                auto& reg2b = objectRegistry();
+                                std::lock_guard<std::recursive_mutex> rl2b(registryMutex());
+                                for (auto& kv : reg2b.objects) {
+                                    for (auto& pf : kv.second->functions) {
+                                        if (!f.fn || f.fn->code.empty() || pf.code.empty()) continue;
+                                        if (f.fn->code.data() == pf.code.data() && f.fn->code.size() == pf.code.size()) {
+                                            owner2 += " " + pf.name + "@" + kv.first;
+                                        }
+                                    }
+                                }
+                            }
+                            std::string procR = "?";
+                            auto cpR = lpc::scheduler().currentProcessShared();
+                            if (cpR) procR = cpR->entry;
+                            std::cerr << "[ren] enter register_entry vm=" << this << " obj=" << objName_
+                                      << " code=" << (f.fn ? f.fn->code.size() : -1)
+                                      << " owner=[" << owner2 << "] proc=" << procR
+                                      << " chain=[" << chainR2 << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
+                    // TEMP R92: why did zone masters' load_rooms skip children
+                    // (misc/混合区域 rooms empty vs wumingxiaozhen working).
+                    if (f.fn && f.fn->name == "load_rooms") {
+                        std::string d0 = "?";
+                        int k0 = f.bp - f.argNum + 1;
+                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
+                            stack_[static_cast<size_t>(k0)].value.index() == 4)
+                            d0 = std::get<SharedString>(stack_[static_cast<size_t>(k0)].value).str();
+                        std::cerr << "[lr] zone=" << objName_ << " dir=" << d0
+                                  << " vm=" << this << "\n";
+                        std::cerr.flush();
+                    }
+                    if (f.fn && f.fn->name == "setup_room" &&
+                        (objName_.find("zone/misc/") != std::string::npos ||
+                         objName_.find("zone/wumingxiaozhen/") != std::string::npos)) {
+                        std::string chainL;
+                        for (size_t fi = 0; fi < frames_.size() && chainL.size() < 140; ++fi) {
+                            if (!chainL.empty()) chainL += "<-";
+                            chainL += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                        }
+                        std::cerr << "[lr2] room=" << objName_ << " chain=[" << chainL
+                                  << "] ip=" << (ip_ - 1) << "\n";
+                        std::cerr.flush();
+                    }
+                    // TEMP R91: stage.clone_room gate - evaluate zoned
+                    // query_entry(混合区域) -> query_entry(帮派名人堂).
+                    if (f.fn && f.fn->name == "clone_room" &&
+                        (thisObjectName_.find("party/stage") != std::string::npos ||
+                         objName_.find("party/stage") != std::string::npos)) {
+                        static int crN = 0;
+                        if (crN < 5) {
+                            ++crN;
+                            std::string dbg = "[cr] #" + std::to_string(crN) + " ";
+                            Value zr;
+                            callVmFn("gs/daemons/zoned.o", "query_entry",
+                                     { make_string("\xBB\xEC\xBA\xCF\xC7\xF8\xD3\xF2") }, zr);
+                            dbg += "zone=t" + std::to_string(zr.index());
+                            if (zr.index() == 7) {
+                                std::string zp = std::get<std::shared_ptr<ObjectValue>>(zr)->programName;
+                                dbg += " " + zp;
+                                auto zv = findVmBySub(zp);
+                                if (zv) {
+                                    Value rr;
+                                    try {
+                                        rr = zv->callFunctionByName("query_entry",
+                                             { make_string("\xB0\xEF\xC5\xC9\xC3\xFB\xC8\xCB\xCC\xC3") });
+                                    } catch (...) {}
+                                    dbg += " room=t" + std::to_string(rr.index());
+                                    if (rr.index() == 7)
+                                        dbg += " " + std::get<std::shared_ptr<ObjectValue>>(rr)->programName;
+                                } else dbg += " noZoneVm";
+                            }
+                            std::cerr << dbg << "\n";
+                            std::cerr.flush();
+                        }
+                    }
                     // TEMP R77: trace named's register_class_ob - pre-mutation
                     // state of the npc_ob/room_ob mapping + the object being
                     // added, to find where the donghai 杂货店老板 npc_ob entry
@@ -9267,6 +9643,37 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
                   << " vm=" << (p->parkedVm ? p->parkedVm->objName() : "?")
                   << " fn=" << pfn << " depth=" << pdepth << " ip=" << pip
                   << " chain=[" << chain << "]\n";
+        // R88: master parked in post_init's sleep(1) - dump _post_init_funcs
+        // contents so the silently-re-registering closure is identifiable.
+        if (p->entry == "__master__" && p->parkedVm && pfn == "post_init") {
+            OriginalVm* mv = p->parkedVm.get();
+            const auto& mvars = mv->ownObjVars();
+            for (size_t zz = 0; zz < mvars.size(); ++zz) {
+                if (mvars[zz].index() != 5) continue;
+                auto& itsF = std::get<std::shared_ptr<ArrayValue>>(mvars[zz])->items;
+                if (itsF.empty()) continue;
+                size_t fnc = 0;
+                for (auto& vv : itsF) if (vv.index() == 8) ++fnc;
+                if (fnc == 0 || fnc < itsF.size()) continue;
+                std::cerr << "[pf] post_init parked, var" << zz << " _post_init_funcs("
+                          << itsF.size() << "):";
+                for (size_t kk = 0; kk < itsF.size() && kk < 6; ++kk) {
+                    const Value& vv = itsF[kk];
+                    std::string nm = "?";
+                    if (vv.index() == 8) {
+                        auto cl = std::get<std::shared_ptr<ClosureValue>>(vv);
+                        if (cl) {
+                            if (!cl->functionName.empty()) nm = cl->functionName;
+                            else if (cl->func) nm = "(fnptr)";
+                        }
+                    }
+                    std::cerr << " [" << nm << "]";
+                }
+                std::cerr << "\n";
+                std::cerr.flush();
+                break;
+            }
+        }
     }
     // Fresh park: clear stale wake bookkeeping from any earlier park.
     p->eventWoken = false;
