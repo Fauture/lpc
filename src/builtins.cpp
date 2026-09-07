@@ -5600,7 +5600,32 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(1);
     }
     if (name == "build_map") {
-        return lpc::mapModule().buildMap(args);
+        Value bmR = lpc::mapModule().buildMap(args);
+        // R83: why did 云霄宫 (50000) never build? log every build_map whose
+        // name mentions yunxiaogong / maze / xiyugucheng + result + failure
+        // diagnostics for zero results generally (first 60 zero-returns).
+        if (!args.empty() && args[0].index() == 4) {
+            std::string bmN = std::get<SharedString>(args[0]).str();
+            static int bmN0 = 0;
+            bool rel = bmN.find("yunxiaogong") != std::string::npos ||
+                       bmN.find("xiyugucheng") != std::string::npos ||
+                       bmN.find("migong") != std::string::npos ||
+                       bmN.find("zahuodian") != std::string::npos;
+            bool isZero = (bmR.index() == 2 && std::get<int64_t>(bmR) == 0);
+            if (rel || (isZero && bmN0 < 60)) {
+                if (isZero) ++bmN0;
+                std::string d;
+                for (size_t bi = 1; bi < args.size() && bi < 5; ++bi) {
+                    d += " a" + std::to_string(bi) + "=t" + std::to_string(args[bi].index());
+                    if (args[bi].index() == 2) d += ":" + std::to_string(std::get<int64_t>(args[bi]));
+                }
+                std::cerr << "[bm] name=" << bmN << d << " res="
+                          << (bmR.index() == 2 ? std::to_string(std::get<int64_t>(bmR)) : "t" + std::to_string(bmR.index()))
+                          << "\n";
+                std::cerr.flush();
+            }
+        }
+        return bmR;
     }
     if (name == "destruct_map") {
         return lpc::mapModule().destructMap(args.empty() ? Value{} : args[0]);

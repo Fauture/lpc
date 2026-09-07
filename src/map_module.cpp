@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 #include <mutex>
 
 namespace lpc {
@@ -146,7 +147,11 @@ Value MapModule::getObjectById(const Value& idVal) {
 
 Value MapModule::buildMap(const std::vector<Value>& args) {
     // build_map(mapName, mapId, width, height, obstacleBuffer)
-    if (args.size() < 4) return make_int(0);
+    if (args.size() < 4) {
+        static int zN = 0;
+        if (zN++ < 40) std::cerr << "[bm0] ZERO-ARGS size=" << args.size() << "\n";
+        return make_int(0);
+    }
     std::string name = valToStr(args[0]);
     int mapId = static_cast<int>(valToInt(args[1]));
     int width = static_cast<int>(valToInt(args[2]));
@@ -154,8 +159,19 @@ Value MapModule::buildMap(const std::vector<Value>& args) {
     std::string buf = (args.size() >= 5) ? valToStr(args[4]) : std::string();
     std::lock_guard<std::mutex> lk(g_mapMutex);
     auto it = mapByName_.find(name);
-    if (it != mapByName_.end()) return make_int(0);   // already exists
-    if (width <= 0 || height <= 0) return make_int(0);
+    if (it != mapByName_.end()) {
+        static int zN = 0;
+        if (zN++ < 40 || name.find("yunxiaogong") != std::string::npos)
+            std::cerr << "[bm0] name-exists name=" << name << " idx=" << it->second
+                      << " (args[0] t" << args[0].index() << ")\n";
+        return make_int(0);   // already exists
+    }
+    if (width <= 0 || height <= 0) {
+        static int zN = 0;
+        if (zN++ < 40 || name.find("yunxiaogong") != std::string::npos)
+            std::cerr << "[bm0] bad-dims name=" << name << " " << width << "x" << height << "\n";
+        return make_int(0);
+    }
     auto* m = new MapInfo();
     m->name = name;
     m->mapId = mapId;
@@ -184,6 +200,14 @@ Value MapModule::buildMap(const std::vector<Value>& args) {
         }
     }
     // find a free mapIndex (like the original: scan from 1)
+    // Index 0 is RESERVED/invalid (findMapIndex requires idx>0): when the
+    // module is still empty the scan below finds nothing and idx would fall
+    // back to size()==0 - the FIRST built map (云霄宫 50000, the alphabetically
+    // first zone) got index 0, its zone stored map_index=0 and every placed
+    // npc's is_blocked(0,x,y) returned -1 so enter_room bailed and the map
+    // stayed empty (city_war's 通灵药王@云霄宫 was never findable).  Keep a
+    // dummy at slot 0 so the first real map takes index 1.
+    if (allMap_.empty()) allMap_.push_back(nullptr);
     int idx = 0;
     for (int i = 1; i < (int)allMap_.size(); ++i) {
         if (!allMap_[i]) { idx = i; break; }
