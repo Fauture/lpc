@@ -130,6 +130,18 @@ int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs);
 // waiter's poll and its parkCurrent registration, leaving bits raised that no
 // registered waiter will consume).
 uint32_t eventPeekRaised(const std::string& name);
+// Clear (consume) raised bits of an event (by NAME).  The scheduler uses this
+// when it wakes a waiter for a raise, mirroring the original driver's
+// vm_f_raise_event (0x80f07b8): raise ORs the mask into the event, then walks
+// the pend list and for the FIRST intersecting waiter clears that waiter's
+// consumed bits (events &= ~v5) and resumes it.  Bits are cleared only when a
+// waiter actually consumes them, so a raise with no waiter leaves the bits set
+// and a later wait_event's immediate probe still succeeds.
+void eventClearBits(const std::string& name, uint32_t mask);
+// TEMP cfg-round-trip ledger arm: set when the gs sends a 17520 (read_etc)
+// config request; scheduler event ledger then prints ev_readetcd raises.
+void cfgLedgerArm();
+bool cfgLedgerArmed();
 // Current LPC thread's unique, stable id (the original's PCB->tid).  Used to
 // build per-thread event names ("ev_filed" + tid/32) and bits (1 << tid%32).
 int64_t lpcThreadId();

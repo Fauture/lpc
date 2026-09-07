@@ -379,6 +379,23 @@ uint32_t eventPeekRaised(const std::string& name) {
     return ev->raised;
 }
 
+void eventClearBits(const std::string& name, uint32_t mask) {
+    auto& reg = eventRegistry();
+    std::shared_ptr<DriverEvent> ev;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.events.find(name);
+        if (it == reg.events.end()) return;
+        ev = it->second;
+    }
+    std::lock_guard<std::mutex> lk(ev->mtx);
+    ev->raised &= ~mask;
+}
+
+static bool g_cfgLedger = false;
+void cfgLedgerArm() { g_cfgLedger = true; }
+bool cfgLedgerArmed() { return g_cfgLedger; }
+
 // ---------------------------------------------------------------------------
 // Per-project path profile (vfsRoot/dataRoot/etcRoot/pak mount prefix).
 // Selected once in runPakOriginal() from the pak path (aaa vs dba).
@@ -4167,6 +4184,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                               << " key=" << sv(args[4])
                               << " version=" << sv(args[5])
                               << " cookie=" << sv(args[6]) << "\n";
+                    cfgLedgerArm();
                 }
                 data.push_back(static_cast<char>((msgNo >> 8) & 0xFF));
                 data.push_back(static_cast<char>(msgNo & 0xFF));

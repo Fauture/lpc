@@ -2009,10 +2009,8 @@ public:
         }
         if (masterPhase_ == 2) {
             masterNoYield_ = true;
-            if (!masterCreateStarted_) {
-                masterCreateStarted_ = true;
-                callCreate();
-            }
+            masterCreateStarted_ = true;
+            callCreate();          // resumable: a parking create continues here
             masterNoYield_ = false;
             code_ = nullptr;
             masterPhase_ = 3;
@@ -2058,14 +2056,11 @@ public:
                 initPhase_ = 2;
             }
             if (initPhase_ == 2) {
-                if (!initCreateStarted_) {
-                    initCreateStarted_ = true;
-                    masterNoYield_ = true;
-                    callCreate(initCreateArgs_);
-                    masterNoYield_ = false;
-                }
-                // create() finished (synchronously, or after a park-resume which
-                // ran the rest of the create via resumeProcess).
+                initCreateStarted_ = true;
+                masterNoYield_ = true;
+                callCreate(initCreateArgs_);   // resumable: parks continue here
+                masterNoYield_ = false;
+                // All creates (parents + this object's own) ran to completion.
                 code_ = nullptr;
                 initPhase_ = 3;
             }
@@ -2212,64 +2207,70 @@ public:
         // time_info_list rows to the DB).  vm_f_construct_object2 walks the
         // object's constitution list and runs each program's own create
         // (private included) in inherit order.
-        struct CreateItem { int key; const OriginalFunction* fn; };
-        std::vector<CreateItem> creates;
-        auto addCreateOf = [&](const OriginalFunction& fn, int childKey) {
-            if (fn.name == "create" && fn.index >= 0 && !fn.code.empty()) {
-                auto it = funcsByIndex_.find(childKey);
-                if (it != funcsByIndex_.end() && it->second->name == "create" &&
-                    !it->second->code.empty())
-                    creates.push_back({childKey, it->second});
-            }
-        };
-        // Walk the inherit tree like runInheritedInitsOf: for each program
-        // reached along the chain run ITS OWN create at the accumulated child
-        // index, dedup by program path (deepest parents first), then the
-        // object's own create last.
-        auto loadInh = [this](const std::string& vpath) -> std::shared_ptr<const OriginalObject> {
-            std::string rel = vpath;
-            if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
-            if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-            if (auto p = loadOriginalObjectByRelPath(rel)) return p;
-            std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
-            return std::make_shared<const OriginalObject>(loadOriginalObject(cand));
-        };
-        std::set<std::string> seenPrograms;
-        std::function<void(const OriginalObject&, int, int)> walk;
-        walk = [&](const OriginalObject& parent, int accFun, int accVar) {
-            for (const auto& inh : parent.inherits) {
-                std::shared_ptr<const OriginalObject> parentObj;
-                try {
-                    parentObj = loadInh(inh.path);
-                } catch (...) {
-                    continue;
+        // Execution is RESUMABLE: the list is built once and initCreateNext_
+        // remembers how far we got, so a parent create that parks (SuspendSignal
+        // mid-restore) continues with the REMAINING creates (including this
+        // object's own create) on the park-resume instead of being skipped.
+        if (!initCreateListBuilt_) {
+            initCreates_.clear();
+            auto addCreateOf = [&](const OriginalFunction& fn, int childKey) {
+                if (fn.name == "create" && fn.index >= 0 && !fn.code.empty()) {
+                    auto it = funcsByIndex_.find(childKey);
+                    if (it != funcsByIndex_.end() && it->second->name == "create" &&
+                        !it->second->code.empty())
+                        initCreates_.push_back({childKey, it->second});
                 }
-                int funOff = accFun + inh.baseFunOffset;
-                if (seenPrograms.insert(inh.path).second) {
-                    for (const auto& fn : parentObj->functions)
-                        addCreateOf(fn, funOff + fn.index);
+            };
+            auto loadInh = [this](const std::string& vpath) -> std::shared_ptr<const OriginalObject> {
+                std::string rel = vpath;
+                if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+                if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+                if (auto p = loadOriginalObjectByRelPath(rel)) return p;
+                std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+                return std::make_shared<const OriginalObject>(loadOriginalObject(cand));
+            };
+            std::set<std::string> seenPrograms;
+            std::function<void(const OriginalObject&, int, int)> walk;
+            walk = [&](const OriginalObject& parent, int accFun, int accVar) {
+                for (const auto& inh : parent.inherits) {
+                    std::shared_ptr<const OriginalObject> parentObj;
+                    try {
+                        parentObj = loadInh(inh.path);
+                    } catch (...) {
+                        continue;
+                    }
+                    int funOff = accFun + inh.baseFunOffset;
+                    if (seenPrograms.insert(inh.path).second) {
+                        for (const auto& fn : parentObj->functions)
+                            addCreateOf(fn, funOff + fn.index);
+                    }
+                    walk(*parentObj, funOff, accVar + inh.baseVarOffset);
                 }
-                walk(*parentObj, funOff, accVar + inh.baseVarOffset);
+            };
+            walk(obj_, 0, 0);
+            for (const auto& fn : obj_.functions) addCreateOf(fn, fn.index);
+            initCreateNext_ = 0;
+            initCreateListBuilt_ = true;
+        }
+        if (initCreates_.empty()) return;
+        // Run the remaining creates (parents first).  A create that parks
+        // throws SuspendSignal out WITHOUT advancing initCreateNext_; the
+        // park-resume re-enters runConstruction -> callCreate and continues at
+        // the same index.
+        for (; initCreateNext_ < initCreates_.size();) {
+            const OriginalFunction* createFn = initCreates_[initCreateNext_].fn;
+            std::vector<Value> args;
+            // External (load_object) arguments are the object-creation
+            // context; only pass them to creates that declare parameters
+            // (handler.c's create(arg) reads arg["module"]).  A zero-arg
+            // create ignores them, so keep its stack clean.
+            if (!createArgs.empty() && createFn->argCount >= 1) {
+                for (size_t i = 0; i < createArgs.size(); ++i) args.push_back(createArgs[i]);
             }
-        };
-        walk(obj_, 0, 0);
-        for (const auto& fn : obj_.functions) addCreateOf(fn, fn.index);
-        if (creates.empty()) return;
-        for (auto& ci : creates) {
-            const OriginalFunction* createFn = ci.fn;
-            {
-                std::vector<Value> args;
-                // External (load_object) arguments are the object-creation
-                // context; only pass them to creates that declare parameters
-                // (handler.c's create(arg) reads arg["module"]).  A zero-arg
-                // create ignores them, so keep its stack clean.
-                if (!createArgs.empty() && createFn->argCount >= 1) {
-                    for (size_t i = 0; i < createArgs.size(); ++i) args.push_back(createArgs[i]);
-                }
-                for (int i = static_cast<int>(args.size()); i < createFn->argCount; ++i)
-                    args.push_back(Value{});   // missing create arg -> undefined (type 0)
-                executeFunctionFromOutside(*createFn, args);
-            }
+            for (int i = static_cast<int>(args.size()); i < createFn->argCount; ++i)
+                args.push_back(Value{});   // missing create arg -> undefined (type 0)
+            executeFunctionFromOutside(*createFn, args);
+            ++initCreateNext_;   // completed without parking: advance
         }
     }
 
@@ -2390,6 +2391,20 @@ private:
     bool initCreateStarted_ = false;   // create() began (park-resume must not re-run it)
     std::string initDoneEvent_;     // "obj-init:<key>" raised when construction finished
     std::vector<Value> initCreateArgs_;
+    // Resumable create-list execution.  callCreate() runs EVERY program's
+    // create() along the inherit chain (parents first, the object's own
+    // last).  A parent create that PARKS mid-way (e.g. a daemon framework
+    // create doing restore() -> filed DB round-trip) throws SuspendSignal out
+    // of the whole loop; on resume runConstruction used to see
+    // initCreateStarted_ and jump to "done", so the object's OWN create()
+    // (set_name / register_task_template / register_entry ...) NEVER ran -
+    // code that simply did not execute.  Keep the create list and the index of
+    // the next item to run so a park-resume continues with the remaining
+    // creates instead of skipping them.
+    struct InitCreateItem { int key; const OriginalFunction* fn; };
+    bool initCreateListBuilt_ = false;
+    size_t initCreateNext_ = 0;
+    std::vector<InitCreateItem> initCreates_;
     Value returnValue_ = make_int(0);
     bool returned_ = false;
     int catchDepth_ = 0;
@@ -8094,6 +8109,26 @@ private:
                             }
                         }
                     }
+                    // TEMP probe: walk child_adventure_task's own create body -
+                    // which functions execute (or fail to) after the restore.
+                    if (std::getenv("LPCVM_TAIL") && f.fn &&
+                        (thisObjectName_.find("child_adventure_task") != std::string::npos ||
+                         objName_.find("child_adventure_task") != std::string::npos)) {
+                        static int caN = 0;
+                        if (caN < 160) {
+                            ++caN;
+                            std::string chain;
+                            for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 200; ++it) {
+                                if (!chain.empty()) chain += "<-";
+                                chain += it->fn ? it->fn->name : "<ctx>";
+                            }
+                            std::cerr << "[cat2] enter " << f.fn->name
+                                      << " obj=" << objName_ << " this=" << thisObjectName_
+                                      << " frames=" << frames_.size()
+                                      << " chain=[" << chain << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
                 }
                 if (traceEnter)
                     std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
@@ -8828,9 +8863,49 @@ void Scheduler::wakeQueue(const std::string& qkey) {
 void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
     std::deque<std::shared_ptr<Process>> hits;
     std::deque<std::shared_ptr<Process>> keep;
+    uint32_t consumed = 0;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = eventWaiters_.find(ename);
+        static int evDumpN = 0;
+        bool cfgArmed = lpc::cfgLedgerArmed();
+        bool wantDump = std::getenv("LPCVM_TAIL") &&
+                        (ename.rfind("ev_filed", 0) == 0 ||
+                         (ename.rfind("ev_readetcd", 0) == 0 && cfgArmed) ||
+                         (cfgArmed && (ename == "ev_config" || ename.find("cfg") != std::string::npos)));
+        if (wantDump) {
+            bool rel = true;
+            if (ename.rfind("ev_filed", 0) == 0 && !cfgArmed) {
+                rel = false;
+                if (it != eventWaiters_.end()) {
+                    for (auto& w : it->second) {
+                        std::string wobj = w->parkedVm ? w->parkedVm->objName() : "";
+                        if (wobj.find("statue.o") != std::string::npos ||
+                            wobj.find("child_adventure_task") != std::string::npos) { rel = true; break; }
+                    }
+                }
+            }
+            wantDump = rel;
+        }
+        if (wantDump && evDumpN < 2000) {
+            ++evDumpN;
+            std::string waiters;
+            if (it != eventWaiters_.end()) {
+                for (auto& w : it->second) {
+                    std::string wobj = w->parkedVm ? w->parkedVm->objName() : "?";
+                    if (!waiters.empty()) waiters += " | ";
+                    waiters += w->entry + "@" + wobj + " tid=" + std::to_string(w->tid) +
+                               " m=0x" + [&]() {
+                                   char bf[16]; snprintf(bf, sizeof(bf), "%X", w->cond.mask);
+                                   return std::string(bf);
+                               }();
+                }
+            }
+            std::cerr << "[evlist] " << ename << " raise=0x" << std::hex << raisedMask
+                      << std::dec << " nWaiter=" << (it == eventWaiters_.end() ? 0 : it->second.size())
+                      << " [" << waiters << "]\n";
+            std::cerr.flush();
+        }
         if (it != eventWaiters_.end()) {
             for (auto& w : it->second) {
                 // Match on the PROCESS's park snapshot (w->cond), not the VM's
@@ -8839,10 +8914,13 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
                 uint32_t wm = w->cond.mask;
                 // mask 0 (an event parked without a wait_event mask, e.g. a
                 // timed wake) counts as matching any raise so it cannot strand.
-                if ((wm & raisedMask) != 0 || wm == 0)
+                uint32_t m = (wm & raisedMask);
+                if (m != 0 || wm == 0) {
                     hits.push_back(std::move(w));
-                else
+                    consumed |= m ? m : raisedMask;   // original vm_f_raise_event clears the consumed bits per woken waiter
+                } else {
                     keep.push_back(std::move(w));
+                }
             }
             if (keep.empty()) eventWaiters_.erase(it);
             else it->second = std::move(keep);
@@ -8854,6 +8932,11 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
             wdogWho_.erase(ename);
         }
     }
+    // Mirror the original: the raised bits a waiter consumed are cleared at
+    // raise time (events &= ~v5 in vm_f_raise_event BEFORE vm_resumeFromObject),
+    // so a LATER wait_event's immediate probe can never steal stale bits that
+    // were already delivered to these waiters.
+    if (consumed) lpc::eventClearBits(ename, consumed);
     for (auto& p : hits) {
         // A timed wait_event parks in BOTH maps; if the timeout timer already
         // woke it, drop this stale event wakeup.
@@ -9346,6 +9429,31 @@ int64_t Scheduler::nowMs() {
 void Scheduler::runProcess(std::shared_ptr<Process> p) {
     Value callResult = make_int(0);
     currentProcess_ = p;   // get_thread_id() returns this process's tid
+    if (std::getenv("LPCVM_TAIL") && p->entry == "__master__" && !p->firstRun) {
+        OriginalVm* pv = p->parkedVm ? p->parkedVm.get() : nullptr;
+        bool interesting = p->callers_.size() > 0 || p->resumeRunLoop || p->sliceResume ||
+                           (pv && pv->objName() != "<obj>");
+        static int mRunN = 0;
+        if (interesting && mRunN < 20000) {
+            ++mRunN;
+            std::string chain;
+            if (pv)
+                for (const auto& fr : pv->frames_) {
+                    if (!chain.empty()) chain += "<-";
+                    chain += fr.fn ? fr.fn->name : "<ctx>";
+                    if (chain.size() > 220) break;
+                }
+            ResumeCond cc = pv ? pv->resumeCond() : ResumeCond();
+            std::cerr << "[m-run] rrl=" << p->resumeRunLoop << " sl=" << p->sliceResume
+                      << " pvm=" << (pv ? pv->objName() : "?")
+                      << " kind=" << cc.kind
+                      << " key=" << (cc.qkey.empty() ? cc.ename : cc.qkey)
+                      << " ip=" << (pv ? pv->ip() : -1)
+                      << " callers=" << p->callers_.size()
+                      << " chain=[" << chain << "]\n";
+            std::cerr.flush();
+        }
+    }
     if (std::getenv("LPCVM_TAIL") && p->parkedVm && !p->parkedVm->frames_.empty()) {
         for (const auto& fr : p->parkedVm->frames_) {
             if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
@@ -9596,6 +9704,30 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                       << extra << "\n";
         }
         // Register the wakeup under the PARKED VM's cond (it owns cond_).
+        if (std::getenv("LPCVM_TAIL") && p->entry == "__master__") {
+            OriginalVm* pv = p->parkedVm ? p->parkedVm.get() : nullptr;
+            bool interesting = p->callers_.size() > 0 || p->resumeRunLoop || p->sliceResume ||
+                               (pv && pv->objName() != "<obj>");
+            static int mParkN = 0;
+            if (interesting && mParkN < 20000) {
+                ++mParkN;
+                std::string chain;
+                if (pv)
+                    for (const auto& fr : pv->frames_) {
+                        if (!chain.empty()) chain += "<-";
+                        chain += fr.fn ? fr.fn->name : "<ctx>";
+                        if (chain.size() > 220) break;
+                    }
+                std::cerr << "[m-park] kind=" << sig.cond.kind
+                          << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
+                          << " mask=0x" << std::hex << sig.cond.mask << std::dec
+                          << " pvm=" << (pv ? pv->objName() : "?")
+                          << " ip=" << (pv ? pv->ip() : -1)
+                          << " callers=" << p->callers_.size()
+                          << " chain=[" << chain << "]\n";
+                std::cerr.flush();
+            }
+        }
         parkCurrent(p);
     } catch (const std::exception& e) {
         if (vmEnvTrace() || (constructDiagOn() &&
