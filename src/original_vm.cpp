@@ -6948,12 +6948,81 @@ private:
                                 }
                             }
                         }
+                        // TEMP probe: taskd register_* decisions - does the
+                        // child file's register call reach this case-8 site and
+                        // with what key bytes / all_entries state?
+                        if (std::getenv("LPCVM_TAIL") && targetVm &&
+                            objName_.find("child_adventure_task") != std::string::npos) {
+                            static int catN = 0;
+                            if (catN < 60) {
+                                ++catN;
+                                std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                std::string a0;
+                                if (!args.empty() && args[0].index() == 4) {
+                                    const std::string& s0 = std::get<SharedString>(args[0]).str();
+                                    for (size_t z = 0; z < s0.size() && z < 16; ++z) {
+                                        char bf[4]; snprintf(bf, sizeof(bf), "%02X", (unsigned char)s0[z]);
+                                        a0 += bf;
+                                    }
+                                    a0 += "(" + std::to_string(s0.size()) + ")";
+                                } else a0 = args.empty() ? "-" : ("t" + std::to_string(args[0].index()));
+                                std::cerr << "[cat] fn=" << funName << " cur=" << cur
+                                          << " target=" << targetVm->objName()
+                                          << " a0=" << a0 << " parked=" << parked_
+                                          << " frames=" << frames_.size() << "\n";
+                                std::cerr.flush();
+                            }
+                        }
+                        if (std::getenv("LPCVM_TAIL") &&
+                            (funName == "register_entry" || funName == "register_task_template")) {
+                            static int tdN = 0;
+                            bool taskdTarget = targetVm &&
+                                               targetVm->objName().find("taskd.o") != std::string::npos;
+                            if (!taskdTarget) {
+                                // empty body keeps structure
+                            } else {
+                                bool childRel = thisObjectName_.find("child_adventure") != std::string::npos ||
+                                                objName_.find("child_adventure") != std::string::npos;
+                                std::string a0full;
+                                if (!args.empty() && args[0].index() == 4)
+                                    a0full = std::get<SharedString>(args[0]).str();
+                                bool wwPrefix = a0full.size() >= 4 &&
+                                                a0full.compare(0, 4, std::string("\xCD\xDE\xCD\xDE", 4)) == 0;
+                                if ((childRel || wwPrefix) && tdN < 60) {
+                                    ++tdN;
+                                    std::string a0;
+                                    for (size_t z = 0; z < a0full.size() && z < 16; ++z) {
+                                        char bf[4]; snprintf(bf, sizeof(bf), "%02X", (unsigned char)a0full[z]);
+                                        a0 += bf;
+                                    }
+                                    a0 += "(" + std::to_string(a0full.size()) + ")";
+                                    std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                    size_t aeSize = 0;
+                                    if (targetVm) {
+                                        auto& tv = targetVm->ownObjVars();
+                                        if (tv.size() > 0 && tv[0].index() == 6)
+                                            aeSize = std::get<std::shared_ptr<MappingValue>>(tv[0])->size();
+                                    }
+                                    std::cerr << "[tdreg] fn=" << funName << " caller=" << objName_
+                                              << " this=" << thisObjectName_ << " cur=" << cur
+                                              << " a0=" << a0 << " allEntries=" << aeSize
+                                              << " target=" << (targetVm ? targetVm->objName() : "NULL")
+                                              << " busy=" << (targetVm ? lpc::scheduler().isVmParked(targetVm.get()) : -1)
+                                              << "\n";
+                                    std::cerr.flush();
+                                }
+                            }
+                        }
+                        bool serveTaskd = targetVm &&
+                            std::getenv("LPCVM_SERVE_TASKD") &&
+                            targetVm->objName().find("taskd.o") != std::string::npos;
                         if (targetFn && targetFn->index >= 0 && !targetFn->code.empty() &&
                             ((targetVm->objName().find("filed.o") != std::string::npos ||
                               targetVm->objName().find("importd.o") != std::string::npos ||
                               targetVm->objName().find("taskd.o") != std::string::npos) ||
                              roomdSetupCtx) &&
-                            objName_.find('#') == std::string::npos) {
+                            objName_.find('#') == std::string::npos &&
+                            !serveTaskd) {
                             // Cross-object inline for filed.o/importd.o service
                             // calls (a blocking efun parks the whole caller
                             // process).  The serviced registry-VM path is
