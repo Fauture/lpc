@@ -95,6 +95,11 @@ std::string queueNameDump();
 // that registered its park AFTER the sender pushed (and woke nobody) re-checks
 // this and reruns instead of sleeping forever on a non-empty queue.
 size_t queuePendingItems(int64_t qid);
+// Number of elements currently queued on qid (0 when the queue is missing /
+// destroyed).  Used by the cooperative scheduler's lost-wake guard: a receiver
+// that registered its park AFTER the sender pushed (and woke nobody) re-checks
+// this and reruns instead of sleeping forever on a non-empty queue.
+size_t queuePendingItems(int64_t qid);
 // Block until an element is available or timeoutMs elapses (timeoutMs < 0 =
 // forever).  Returns the element; `ok` is false on timeout / missing queue.
 Value queueReceive(int64_t qid, int timeoutMs, bool& ok);
@@ -120,6 +125,11 @@ int64_t eventRaise(const Value& ref, uint32_t mask);
 // success, -501 on timeout, -101 if the event is unknown.  ref: string name or
 // int oid.
 int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs);
+// Non-consuming peek of an event's currently-raised bits (by NAME; used by the
+// cooperative scheduler's lost-wake guard: raise_event may arrive between a
+// waiter's poll and its parkCurrent registration, leaving bits raised that no
+// registered waiter will consume).
+uint32_t eventPeekRaised(const std::string& name);
 // Current LPC thread's unique, stable id (the original's PCB->tid).  Used to
 // build per-thread event names ("ev_filed" + tid/32) and bits (1 << tid%32).
 int64_t lpcThreadId();

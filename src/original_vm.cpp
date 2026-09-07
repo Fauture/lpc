@@ -8689,6 +8689,25 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
             p->timedEvent = true;
             timers_.emplace(c.wakeAtMs, TimerEntry2{p, newToken});
         }
+        // LOST-WAKE GUARD (mirrors the kind-2 queue guard above): raise_event
+        // may OR its bits into the event between this waiter's poll
+        // (eventWait timeout 0) and its registration here - wakeEvent popped no
+        // waiter for it, and an unrelated probe can later consume the bits, so
+        // the raise would be lost (statued's statue placement stalls at the
+        // LAST filed reply of each burst for exactly this reason).  Re-check
+        // the event's raised bits; if they already match this wait, cancel the
+        // park and rerun now - the resume hook's eventWait consumes them.
+        if ((lpc::eventPeekRaised(c.ename) & c.mask) != 0) {
+            auto it3 = eventWaiters_.find(c.ename);
+            if (it3 != eventWaiters_.end()) {
+                it3->second.pop_back();          // remove self (we are the tail)
+                if (it3->second.empty()) eventWaiters_.erase(it3);
+            }
+            if (newToken) *newToken = true;      // cancel the fallback timer
+            p->timedEvent = false;
+            p->cond.kind = 0;
+            ready_.push_front(p);
+        }
         break;
     case 5:   // socket (connect/recv)
         sockWaiters_[c.fd].push_back(p);

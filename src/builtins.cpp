@@ -366,6 +366,19 @@ int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs) {
     return 0;
 }
 
+uint32_t eventPeekRaised(const std::string& name) {
+    auto& reg = eventRegistry();
+    std::shared_ptr<DriverEvent> ev;
+    {
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.events.find(name);
+        if (it == reg.events.end()) return 0;
+        ev = it->second;
+    }
+    std::lock_guard<std::mutex> lk(ev->mtx);
+    return ev->raised;
+}
+
 // ---------------------------------------------------------------------------
 // Per-project path profile (vfsRoot/dataRoot/etcRoot/pak mount prefix).
 // Selected once in runPakOriginal() from the pak path (aaa vs dba).
