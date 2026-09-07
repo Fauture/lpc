@@ -5479,13 +5479,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         //   var_raw_type(uninit mixed)=0, var_type(1.5)="float".
         if (args.empty()) return make_string("mixed");
         const Value& v = args[0];
-        static const char* typeName[] = {
-            "undefined", "void", "integer", "float", "string", "buffer",
-            "array", "mapping", "object", "function", "buffer"};
+        // The driver's value-space code (vm_valueType / vm_f_var_type) is the
+        // LPC raw-type code, NOT our Value variant index.  Variant indexes
+        // (5 array, 6 mapping, 7 object, 8 function, 10 buffer) differ from
+        // the raw codes (6 array, 7 mapping, 10 object, 9 function, 5 buffer),
+        // so indexing the name table by v.index() returned WRONG strings for
+        // every non-atomic value: an object reported "mapping", an array
+        // "buffer", a mapping "array".  register_class_ob's
+        // `switch (var_type(m[name]))` then missed its "object" -> array
+        // promotion for a second same-name registrant and silently
+        // OVERWROTE the first npc (donghai 杂货店老板 was dropped when
+        // 天墉城's 杂货店老板 registered) -> city_war's _find_npc
+        // ("杂货店老板@杂货店") found no room npc and re-registered forever.
         static const int idxToRaw[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
+        // raw -> vm_valueType string (probed live: real=3 "float" string name).
+        static const char* nameByRaw[] = {
+            "undefined", "void", "integer", "float", "string", "buffer",
+            "array", "mapping", "mixed", "function", "object"};
+        int raw = (v.index() < 11) ? idxToRaw[v.index()] : -1;
         if (name == "var_raw_type")
-            return make_int(v.index() < 11 ? idxToRaw[v.index()] : 255);
-        return make_string(v.index() < 11 ? typeName[v.index()] : "mixed");
+            return make_int(raw);
+        return make_string((raw >= 0 && raw <= 10) ? nameByRaw[raw] : "mixed");
     }
     if (name == "get_thread_info") {
         // vm_f_get_thread_info: get_thread_info(name_or_tid) -> 1 while the

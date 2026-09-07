@@ -8204,7 +8204,7 @@ private:
                                     objName_.find("statued") != std::string::npos;
                         if ((gtCw || gtJb || gtSt) && std::getenv("LPCVM_TAIL")) {
                             static int gtN = 0;
-                            if (gtN < 20) { ++gtN;
+                            if (gtN < 200) { ++gtN;
                             try {
                                 if (gtCw) {
                                     const auto& cwv = ownObjVars();
@@ -8330,6 +8330,47 @@ private:
                                                 }
                                             }
                                         }
+                                        // Which mappings hold the 五龙窟一层 key?
+                                        std::string wl1 = std::string("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3", 10);
+                                        int mi3 = 0;
+                                        for (size_t z4 = 0; z4 < svars.size(); ++z4) {
+                                            if (svars[z4].index() != 6) continue;
+                                            auto m4 = std::get<std::shared_ptr<MappingValue>>(svars[z4]);
+                                            bool hasKey = m4->find(make_string(wl1)) != nullptr;
+                                            if (!hasKey && m4->size() < 40) continue;
+                                            stOut += " v" + std::to_string(z4) + "(map" +
+                                                     std::to_string(m4->size()) + (hasKey ? ",HASWL1" : "") + ")";
+                                            if (++mi3 > 6) break;
+                                        }
+                                        // Room liveness for statue maps: named.find_room_ob
+                                        // and zoned.get_alias_room for a few problem maps.
+                                        auto roomDesc = [&](const Value& vv) -> std::string {
+                                            if (vv.index() == 7) {
+                                                std::string p = std::get<std::shared_ptr<ObjectValue>>(vv)->programName;
+                                                auto rvv = findVmBySub(p);
+                                                return "OBJ " + p + (rvv ? "" : " (noVM!)");
+                                            }
+                                            if (vv.index() == 5)
+                                                return "arr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(vv)->items.size()) + ")";
+                                            if (vv.index() == 0) return "t0";
+                                            return "t" + std::to_string(vv.index());
+                                        };
+                                        const char* probeRooms[] = {
+                                            "\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3",   // 五龙窟一层
+                                            "\xCE\xE5\xC1\xFA\xC9\xBD",                    // 五龙山
+                                            "\xCE\xD4\xC1\xFA\xC6\xC2",                    // 卧龙坡
+                                            "\xD0\xF9\xD4\xAF\xB7\xD8\xD2\xBB\xB2\xE3",   // 轩辕坟一层
+                                        };
+                                        (void)probeRooms;
+                                        auto roomProbe = [&](const char* nm, const char* label) {
+                                            Value r1;
+                                            callVmFn("gs/daemons/named.o", "find_room_ob", { make_string(nm) }, r1);
+                                            stOut += " " + std::string(label) + ":" + roomDesc(r1);
+                                        };
+                                        roomProbe("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3", "WLC1");
+                                        roomProbe("\xCE\xE5\xC1\xFA\xC9\xBD", "WLS");
+                                        roomProbe("\xCE\xD4\xC1\xFA\xC6\xC2", "WLP");
+                                        roomProbe("\xD0\xF9\xD4\xAF\xB7\xD8\xD2\xBB\xB2\xE3", "XYF1");
                                     }
                                     if (gtJb) {
                                         Value fnd2;
@@ -8346,6 +8387,170 @@ private:
                                 }
                             } catch (...) { std::cerr << "[gt] err\n"; std::cerr.flush(); }
                             }
+                        }
+                    }
+                    // TEMP R79: npc_ob identity + raw array for the colliding
+                    // 杂货店老板 name, and the map-cell occupant resolution.
+                    if (f.fn && f.fn->name == "do_init" &&
+                        (thisObjectName_.find("party/city_war") != std::string::npos ||
+                         objName_.find("party/city_war") != std::string::npos)) {
+                        static int cw2N = 0;
+                        if (cw2N < 8) {
+                            ++cw2N;
+                            try {
+                                std::string w2 = "[cw2] #" + std::to_string(cw2N) + " ";
+                                const std::string zhdKey = std::string("\xD4\xD3\xBB\xF5\xB5\xEA\xC0\xCF\xB0\xE5", 10); // 杂货店老板
+                                std::shared_ptr<OriginalVm> nmVm;
+                                std::string nmKey;
+                                {
+                                    auto& regN2 = objectRegistry();
+                                    std::lock_guard<std::recursive_mutex> rlN2(registryMutex());
+                                    for (auto& kv : regN2.vms)
+                                        if (kv.first.find("gs/daemons/named.o") != std::string::npos) {
+                                            nmVm = kv.second; nmKey = kv.first; break;
+                                        }
+                                }
+                                w2 += "namedKey=" + nmKey + " ";
+                                if (nmVm) {
+                                    const auto& nv = nmVm->ownObjVars();
+                                    bool foundMap = false;
+                                    for (size_t zz = 0; zz < nv.size(); ++zz) {
+                                        if (nv[zz].index() != 6) continue;
+                                        auto mpN = std::get<std::shared_ptr<MappingValue>>(nv[zz]);
+                                        const Value* hit = mpN->find(make_string(zhdKey));
+                                        if (!hit) continue;
+                                        foundMap = true;
+                                        w2 += "npc_ob@0x" + std::to_string(reinterpret_cast<uintptr_t>(mpN.get())) +
+                                              "(v" + std::to_string(zz) + ",sz" + std::to_string(mpN->size()) + ")[" +
+                                              zhdKey + "]=";
+                                        if (hit->index() == 0) w2 += "undef";
+                                        else if (hit->index() == 7) {
+                                            std::string p7 = std::get<std::shared_ptr<ObjectValue>>(*hit)->programName;
+                                            w2 += p7 + (findVmBySub(p7) ? "" : " (noVM!)");
+                                        } else if (hit->index() == 5) {
+                                            auto& itsA = std::get<std::shared_ptr<ArrayValue>>(*hit)->items;
+                                            w2 += "arr(" + std::to_string(itsA.size()) + "){";
+                                            for (size_t aa = 0; aa < itsA.size() && aa < 5; ++aa) {
+                                                if (aa) w2 += ",";
+                                                if (itsA[aa].index() == 7) {
+                                                    std::string p8 = std::get<std::shared_ptr<ObjectValue>>(itsA[aa])->programName;
+                                                    w2 += p8 + (findVmBySub(p8) ? "" : "(noVM!)");
+                                                } else if (itsA[aa].index() == 0) w2 += "0";
+                                                else w2 += "t" + std::to_string(itsA[aa].index());
+                                            }
+                                            w2 += "}";
+                                        } else w2 += "t" + std::to_string(hit->index());
+                                        break;
+                                    }
+                                    if (!foundMap) w2 += "no-npc_ob-map";
+                                }
+                                // map-cell occupant of room 杂货店
+                                Value rmm;
+                                callVmFn("gs/daemons/named.o", "find_room_ob", { make_string("\xD4\xD3\xBB\xF5\xB5\xEA") }, rmm);
+                                if (rmm.index() == 7) {
+                                    std::string rpM = std::get<std::shared_ptr<ObjectValue>>(rmm)->programName;
+                                    auto rvmM = findVmBySub(rpM);
+                                    if (rvmM) {
+                                        Value miM = rvmM->callFunctionByName("lite_query", { make_string("map_index") });
+                                        if (miM.index() == 2) {
+                                            Value gmM = lpc::mapModule().getFromMap({ miM });
+                                            if (gmM.index() == 5) {
+                                                for (auto& eM : std::get<std::shared_ptr<ArrayValue>>(gmM)->items) {
+                                                    int64_t idM = -1;
+                                                    if (eM.index() == 2) idM = std::get<int64_t>(eM);
+                                                    else if (eM.index() == 5) {
+                                                        auto& tM = std::get<std::shared_ptr<ArrayValue>>(eM)->items;
+                                                        if (!tM.empty() && tM[0].index() == 2) idM = std::get<int64_t>(tM[0]);
+                                                    }
+                                                    Value obM = lpc::mapModule().getObjectById({ make_int(idM) });
+                                                    std::string obP = "?";
+                                                    if (obM.index() == 7)
+                                                        obP = std::get<std::shared_ptr<ObjectValue>>(obM)->programName;
+                                                    w2 += " cell" + std::to_string(idM) + "->" + obP +
+                                                          (findVmBySub(obP) ? "" : "(noVM!)");
+                                                }
+                                            } else w2 += " gmBadt" + std::to_string(gmM.index());
+                                        }
+                                    }
+                                } else w2 += " roomBadt" + std::to_string(rmm.index());
+                                std::cerr << w2 << "\n";
+                                std::cerr.flush();
+                            } catch (...) { std::cerr << "[cw2] err\n"; std::cerr.flush(); }
+                        }
+                    }
+                    // TEMP R77: trace named's register_class_ob - pre-mutation
+                    // state of the npc_ob/room_ob mapping + the object being
+                    // added, to find where the donghai 杂货店老板 npc_ob entry
+                    // (registered at boot) disappears before post_init phase-2.
+                    if (f.fn && f.fn->name == "register_class_ob" &&
+                        objName_.find("named.o") != std::string::npos) {
+                        static int rcN = 0;
+                        // Only the colliding display names matter (杂货店老板 /
+                        // 杂货店 / 药店老板 / 药店).
+                        static const char* rcKeys[] = {
+                            "\xD4\xD3\xBB\xF5\xB5\xEA\xC0\xCF\xB0\xE5",  // 杂货店老板
+                            "\xD4\xD3\xBB\xF5\xB5\xEA",                   // 杂货店
+                            "\xD2\xA9\xB5\xEA\xC0\xCF\xB0\xE5",          // 药店老板
+                            "\xD2\xA9\xB5\xEA",                            // 药店
+                        };
+                        std::vector<std::string> rcStrs;
+                        for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
+                            if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                            const Value& av = stack_[static_cast<size_t>(k)].value;
+                            if (av.index() == 4) rcStrs.push_back(std::get<SharedString>(av).str());
+                        }
+                        bool rcHit = false;
+                        for (auto& s0 : rcStrs)
+                            for (const char* kk : rcKeys)
+                                if (s0.size() == strlen(kk) && memcmp(s0.data(), kk, s0.size()) == 0) { rcHit = true; break; }
+                        if (rcHit && rcN < 40) {
+                            ++rcN;
+                            std::string dbg;
+                            // isolate the mapping arg + name arg (if any)
+                            std::string mapKeyName;
+                            std::shared_ptr<MappingValue> mapArg;
+                            for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
+                                if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                                const Value& av = stack_[static_cast<size_t>(k)].value;
+                                if (av.index() == 4 && mapKeyName.empty())
+                                    mapKeyName = std::get<SharedString>(av).str();
+                                else if (av.index() == 6 && !mapArg)
+                                    mapArg = std::get<std::shared_ptr<MappingValue>>(av);
+                            }
+                            if (mapArg && !mapKeyName.empty()) {
+                                const Value* cur = mapArg->find(make_string(mapKeyName));
+                                dbg += "m@" + std::to_string(reinterpret_cast<uintptr_t>(mapArg.get())) +
+                                       " map(" + std::to_string(mapArg->size()) + ")";
+                                dbg += " [" + mapKeyName + "]=";
+                                if (!cur) dbg += "ABSENT";
+                                else if (cur->index() == 0) dbg += "undef";
+                                else if (cur->index() == 7)
+                                    dbg += std::get<std::shared_ptr<ObjectValue>>(*cur)->programName;
+                                else if (cur->index() == 5) {
+                                    auto& itsc = std::get<std::shared_ptr<ArrayValue>>(*cur)->items;
+                                    dbg += "arr(" + std::to_string(itsc.size()) + "){";
+                                    for (size_t cc = 0; cc < itsc.size() && cc < 3; ++cc) {
+                                        if (cc) dbg += ",";
+                                        if (itsc[cc].index() == 7)
+                                            dbg += std::get<std::shared_ptr<ObjectValue>>(itsc[cc])->programName;
+                                        else if (itsc[cc].index() == 0) dbg += "0";
+                                        else dbg += "t" + std::to_string(itsc[cc].index());
+                                    }
+                                    dbg += "}";
+                                } else dbg += "t" + std::to_string(cur->index());
+                            }
+                            for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
+                                if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                                const Value& av = stack_[static_cast<size_t>(k)].value;
+                                if (av.index() == 7) { dbg += " add=" + std::get<std::shared_ptr<ObjectValue>>(av)->programName; break; }
+                            }
+                            std::string chainR;
+                            for (size_t fi = 0; fi < frames_.size() && chainR.size() < 120; ++fi) {
+                                if (!chainR.empty()) chainR += "<-";
+                                chainR += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                            }
+                            std::cerr << "[rco] " << dbg << " via [" << chainR << "]\n";
+                            std::cerr.flush();
                         }
                     }
                     // TEMP probe: which object registers the taskd template/entry
