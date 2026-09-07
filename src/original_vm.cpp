@@ -2058,18 +2058,18 @@ public:
                 initPhase_ = 2;
             }
             if (initPhase_ == 2) {
-                // ONE-SHOT gate (healthy baseline R65/R66): callCreate runs the
-                // whole create list on first entry.  A create that parks
-                // mid-way unwinds the C++ loop; remaining creates are NOT
-                // re-entered (re-entry made filed.c's create loop ~3855x with a
-                // use_ldba cfg storm).  Stable starting point for the real
-                // construct-continuation investigation.
-                if (!initCreateStarted_) {
-                    initCreateStarted_ = true;
-                    masterNoYield_ = true;
-                    callCreate(initCreateArgs_);
-                    masterNoYield_ = false;
-                }
+                // Mirrors the original driver's construct continuation
+                // (vm_f_construct_object2 + vm_f_construct_object_ok2): each
+                // program's create runs; when one parks, the process suspends
+                // INSIDE it and the resume finishes THAT create, then the
+                // scheduler advances initCreateNext_ (noteResumedCreateDone)
+                // and re-enters phase 2 to run the NEXT create.  Every create
+                // runs exactly once - never re-runs the current one.
+                initCreateStarted_ = true;
+                masterNoYield_ = true;
+                callCreate(initCreateArgs_);   // parks unwind; resume continues here
+                masterNoYield_ = false;
+                // Only reached when ALL creates completed (no park).
                 code_ = nullptr;
                 initPhase_ = 3;
             }
@@ -2085,6 +2085,9 @@ public:
         } catch (const SuspendSignal& sig) {
             // Parked (yielded) inside the construction: resumeProcess re-enters
             // runConstruction when the condition fires.  Nothing to raise yet.
+            // Remember whether the park escaped from inside a create() so the
+            // scheduler can advance initCreateNext_ when that create completes.
+            initParkedInCreate_ = (initPhase_ == 2);
             if (constructDiagOn()) {
                 std::string cf = "<global>";
                 if (!frames_.empty() && frames_.back().fn) cf = frames_.back().fn->name;
@@ -2398,6 +2401,7 @@ private:
     // parked load_object caller.
     int initPhase_ = 0;             // 0=globalCode,1=inherited,2=create,3=done
     bool initCreateStarted_ = false;   // create() began (park-resume must not re-run it)
+    bool initParkedInCreate_ = false;  // SuspendSignal escaped from inside a create()
     std::string initDoneEvent_;     // "obj-init:<key>" raised when construction finished
     std::vector<Value> initCreateArgs_;
     // Resumable create-list execution.  callCreate() runs EVERY program's
@@ -4918,6 +4922,16 @@ private:
 
     // True while this VM is parked (a blocking efun suspended it).
     bool isParked() const { return parked_; }
+    // A create() that had parked has now fully completed (its resumed
+    // execution returned).  Advance the create index so the NEXT program's
+    // create runs - mirrors vm_f_construct_object_ok2.  Each create runs
+    // exactly once; never re-runs the current one.
+    void noteResumedCreateDone() {
+        if (initParkedInCreate_) {
+            initParkedInCreate_ = false;
+            if (initCreateNext_ < initCreates_.size()) ++initCreateNext_;
+        }
+    }
     // The condition the parked VM is waiting for (owned by the scheduler).
     ResumeCond& resumeCond() { return cond_; }
     // Resume hook run just before resumeValue is pushed (write-backs etc.).
@@ -9559,8 +9573,10 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // call re-entered runConstruction and deadlocked (obj-init never
             // raised).  When the top frame is still on another VM, requeue.
             if (rvm.get() == p->vm.get() || !p->vm->hasActiveFrames()) {
-                if (p->entry == "__init__")
+                if (p->entry == "__init__") {
+                    if (p->homeVm) p->homeVm->noteResumedCreateDone();
                     p->homeVm->runConstruction(p->args, p->doneEvent);
+                }
                 else if (p->entry == "__master__" && !p->homeVm->masterInitDone_)
                     p->homeVm->runAsMaster();
                 p->done = true;
@@ -9618,6 +9634,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // its phase machine (raise the done event), and the master must
             // continue its startup phases after load_all finished.
             if (p->entry == "__init__") {
+                if (p->homeVm) p->homeVm->noteResumedCreateDone();   // the parked create completed
                 if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
                     p->homeVm && p->homeVm->objName().find("/clone/npc/master") != std::string::npos)
                     std::cerr << "[phase3] vm=" << p->homeVm.get()
