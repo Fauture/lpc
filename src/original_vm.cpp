@@ -49,27 +49,14 @@ static bool vmEnvDbgObjVar() { static const bool v = (std::getenv("LPCVM_DBG_OBJ
 static const char* vmEnvTraceFn() { static const char* v = std::getenv("LPCVM_TRACE_FN"); return v ? v : ""; }
 static bool constructDiagOn() { static const bool v = (std::getenv("LPCVM_CONSTRUCT_TRACE") != nullptr); return v; }
 
-namespace {
-// Object-environment store (registry key -> registry key of the container).
-// move_object(dest) records the caller's container; env_object(ob) returns it.
-std::mutex g_envMx;
-std::unordered_map<std::string, std::string> g_envObj;
-}  // namespace
-
-void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
-    std::lock_guard<std::mutex> lk(g_envMx);
-    if (destKey.empty()) g_envObj.erase(selfKey);
-    else g_envObj[selfKey] = destKey;
-}
-std::string envLookupObjKey(const std::string& obKey) {
-    std::lock_guard<std::mutex> lk(g_envMx);
-    auto it = g_envObj.find(obKey);
-    return (it != g_envObj.end()) ? it->second : std::string();
-}
-size_t envCountObjKeys() {
-    std::lock_guard<std::mutex> lk(g_envMx);
-    return g_envObj.size();
-}
+// Object-environment store.  The original driver keeps the environment as a
+// per-OBJECT field (Vm_Object::pEnvObject): move_object(dest) sets the moved
+// object's env pointer, env_object(ob) reads ob's env pointer.  Mirror that
+// with a per-registry-object field on the registered VM instead of a detached
+// global map.  Declared here; defined after ObjectRegistry/OriginalVm.
+void envStoreObjKey(const std::string& selfKey, const std::string& destKey);
+std::string envLookupObjKey(const std::string& obKey);
+size_t envCountObjKeys();
 
 namespace {
 // aggregates wall time of the whole lookup helpers to size the linear suffix
@@ -2326,6 +2313,11 @@ public:
         }
     }
 
+    // Public env accessors (mirror Vm_Object::pEnvObject).  Free helpers
+    // envStoreObjKey/envLookupObjKey route through these.
+    void vmSetEnv(const std::string& k) { envContainerKey_ = k; }
+    const std::string& vmEnv() const { return envContainerKey_; }
+
 private:
     // The cooperative scheduler resumes parked VMs (stage B); it must reach
     // resumeProcess/resumeCond/parkedResumeValue/parkAndSuspend.
@@ -2366,6 +2358,12 @@ private:
     // current entry was not a cross-object call (previous_object() then
     // returns 0, matching the original driver for a top-level call).
     std::string previousObjectName_;
+    // Object-environment: registry key of this object's container, mirroring
+    // the original driver's Vm_Object::pEnvObject (move_object updates it,
+    // env_object returns the container object).  Stored per-VM (per object
+    // instance) instead of a global key->key map so clones keep their own
+    // environment and env queries never depend on process/scheduler state.
+    std::string envContainerKey_;
     std::vector<StackItem> stack_;
     std::shared_ptr<std::vector<Value>> objVars_;  // per-object instance variables (shared across threads of the same object)
     // This VM's OWN object-variable table (never switched by cross-object
@@ -4538,6 +4536,15 @@ private:
         std::vector<Frame> f = std::move(frames_);
         Value rv = returnValue_;
         bool rd = returned_;
+        // funcLookup_ is part of the paused caller state too: while the
+        // detached call runs (possibly a cross-object inline that switches
+        // funcLookup_ to its own program's table), the caller's table must be
+        // restored together with its frames.  During the window this VM looks
+        // like a fresh empty VM, so funcLookup_ starts at nullptr (own table)
+        // and the boundary frame remembers the caller's value to restore when
+        // the callee chain returns into the caller's stream.
+        const std::map<int, const OriginalFunction*>* savedLookup = funcLookup_;
+        funcLookup_ = nullptr;
         returnValue_ = make_int(0);
         returned_ = false;
         execDepth_ = 0;
@@ -4571,12 +4578,21 @@ private:
                     f[calleeStart].retCode = savedCode;
                     f[calleeStart].retMeta = savedMeta;
                     f[calleeStart].retIp = savedIp;
+                    // The outermost callee frame returns into the CALLER's
+                    // stream; make it restore the caller's funcLookup_ (the
+                    // value at detach time) rather than whatever the callee
+                    // window left.  Without this, a caller that detached while
+                    // inside its own cross-object inline (funcLookup_ =
+                    // foreign table) would resume on the caller's own table.
+                    f[calleeStart].savedFuncLookup = savedLookup;
+                    f[calleeStart].funcLookupSwitched = true;
                 }
                 stack_ = std::move(s);
                 frames_ = std::move(f);
             } else {
                 stack_ = std::move(s);
                 frames_ = std::move(f);
+                funcLookup_ = savedLookup;
                 // CROSS-VM blocking park: this VM's caller frames (e.g. a
                 // daemon's do_init running on ITS owner VM, called from the
                 // master's post_init loop) were detached and are now restored
@@ -4595,6 +4611,7 @@ private:
             execDepth_ = d;
             stack_ = std::move(s);
             frames_ = std::move(f);
+            funcLookup_ = savedLookup;
             returnValue_ = rv;
             returned_ = rd;
             throw;
@@ -4603,6 +4620,7 @@ private:
         execDepth_ = d;
         stack_ = std::move(s);
         frames_ = std::move(f);
+        funcLookup_ = savedLookup;
         returnValue_ = rv;
         returned_ = rd;
         return r;
@@ -4738,10 +4756,31 @@ private:
         }
         // ... and the function-index table (the callee's constitution): its
         // internal local-index calls (private do_operate etc.) must resolve in
-        // ITS program, not the caller's merged table.
-        if (switchFuncs || autoFuncs) {
+        // ITS program, not the caller's merged table.  Anchor funcLookup_ to
+        // the frame being entered, BOTH ways:
+        //  - cross-object callee (switchFuncs/autoFuncs set): switch to the
+        //    callee program's table (existing behavior);
+        //  - own/inherited callee (fn in this VM's merged table) while a
+        //    foreign table is still active (an enclosing cross-object inline
+        //    frame, or a stale table left over from an earlier inline on this
+        //    shared VM): switch BACK to nullptr (use funcsByIndex_) so the
+        //    callee's own local-index calls resolve in ITS table.  Previously
+        //    only cross-object frames switched, so a zone-room construction
+        //    VM that had run roomd.setup_* inline kept funcLookup_=roomd's
+        //    table and its own get_display_name's index-18 call (get_name in
+        //    the room table) resolved to roomd's index-18 = daemon, executing
+        //    the roomd daemon loop inside the room's __init__ (R120-R122).
+        // When the desired table equals the current one nothing is saved and
+        // funcLookupSwitched stays false (the hot same-table path).  Master
+        // global functions (neither owned nor cross-object) leave funcLookup_
+        // untouched, exactly as before.
+        const std::map<int, const OriginalFunction*>* wantLookup =
+            switchFuncs ? switchFuncs : autoFuncs;
+        if (wantLookup == nullptr && ownedFns_.count(&fn))
+            wantLookup = nullptr;   // own/inherited: run on funcsByIndex_
+        if ((wantLookup || ownedFns_.count(&fn)) && wantLookup != funcLookup_) {
             frame.savedFuncLookup = funcLookup_;
-            funcLookup_ = switchFuncs ? switchFuncs : autoFuncs;
+            funcLookup_ = wantLookup;
             frame.funcLookupSwitched = true;
         }
         // Save the caller's stream so return_from_fun can resume it.
@@ -4884,6 +4923,24 @@ private:
         // Top-level frame: retCode stays nullptr.  When case 72/73 pops this
         // frame it sees retCode == nullptr and exits runLoop with the result
         // in returnValue_ (no caller to resume).
+        // funcLookup_ anchoring for external entries: this VM hosts many
+        // scheduler processes / efun-embedded applies, and funcLookup_ is a
+        // member that a previous process may have left pointing at a FOREIGN
+        // table (e.g. a zone-room construction VM that ran roomd.setup_*
+        // inline earlier).  A top-level call into a function of THIS VM's own
+        // constitution must run with funcLookup_ = nullptr (its local-index
+        // calls resolve in funcsByIndex_), never inherit the stale foreign
+        // table (R120-R122: room get_display_name's index-18 call hit
+        // roomd's daemon).  If the entry fn is NOT part of this VM's merged
+        // table (cross-object apply running on its OWN VM) leave funcLookup_
+        // alone; master global functions too (they run on every VM).
+        if (ownedFns_.count(&fn)) {
+            if (funcLookup_ != nullptr) {
+                frame.savedFuncLookup = funcLookup_;
+                frame.funcLookupSwitched = true;
+                funcLookup_ = nullptr;
+            }
+        }
         frames_.push_back(frame);
         Value savedReturn = returnValue_;
         bool savedReturned = returned_;
@@ -4975,6 +5032,12 @@ private:
             std::cerr << "[exec] obj=" << objName_ << " codeSize=" << code.size()
                       << " metaSize=" << meta.size() << " ip0=" << (code.empty() ? -1 : code[0].op)
                       << " t=" << std::this_thread::get_id() << "\n";
+        // execute() only ever runs this VM's OWN program code (its global
+        // init segment / an inherited program's init segment), never
+        // cross-object inline code - so a funcLookup_ left pointing at a
+        // foreign table by an earlier process/inline on this shared VM must
+        // not hijack the local-index calls this segment makes (R120-R122).
+        funcLookup_ = nullptr;
         code_ = &code;
         meta_ = &meta;
         ip_ = 0;
@@ -8761,11 +8824,78 @@ private:
                             if (it18 != funcsByIndex_.end())
                                 ftDbg += " i18=" + it18->second->name + "#" + std::to_string(it18->second->index);
                             else ftDbg += " i18=?";
+                            ftDbg += " lookup=" + std::to_string(funcLookup_ ? funcLookup_->size() : 0);
+                            // caller frame (get_display_name) state
+                            if (frames_.size() >= 1 && frames_[0].fn) {
+                                ftDbg += " fr0=" + frames_[0].fn->name + "#" +
+                                         std::to_string(frames_[0].fn->index);
+                                ftDbg += " fr0tbl=";
+                                auto& fr0 = frames_[0];
+                                auto t0 = fr0.strings ? std::string("<str>") : std::string("?");
+                                ftDbg += t0;
+                            }
                             std::cerr << "[zdaemon] enter daemon vm=" << this
                                       << " obj=" << objName_ << " objSrc=" << obj_.sourceName
                                       << " parked=" << parked_ << " ip=" << (ip_ - 1)
                                       << " proc=" << procZ << " " << ftDbg
                                       << " chain=[" << chainZ << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
+                    // TEMP R120: zone room get_display_name entry - is funcLookup_
+                    // already the roomd table when the room's own fn runs?
+                    if (f.fn && objName_.find("/gs/zone/") != std::string::npos &&
+                        f.fn->name == "get_display_name") {
+                        static int gdnN = 0;
+                        if (gdnN < 60) {
+                            ++gdnN;
+                            std::string chainG;
+                            for (size_t fi = 0; fi < frames_.size() && chainG.size() < 260; ++fi) {
+                                if (!chainG.empty()) chainG += "<-";
+                                chainG += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainG += "#" + std::to_string(frames_[fi].fn ? frames_[fi].fn->index : -1);
+                            }
+                            std::string procG = "?";
+                            auto cpG = lpc::scheduler().currentProcessShared();
+                            if (cpG) procG = cpG->entry;
+                            std::cerr << "[gdn] enter get_display_name vm=" << this
+                                      << " obj=" << objName_ << " proc=" << procG
+                                      << " fnCode=" << (f.fn ? f.fn->code.size() : -1)
+                                      << " funcsByIndex=" << funcsByIndex_.size()
+                                      << " lookup=" << (funcLookup_ ? funcLookup_->size() : 0)
+                                      << " ip=" << (ip_ - 1)
+                                      << " chain=[" << chainG << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
+                    // TEMP R121: first time a zone-room VM's funcLookup_ points
+                    // at a non-own table while executing own/roomd code.
+                    if (funcLookup_ && objName_.find("/gs/zone/") != std::string::npos &&
+                        objName_.find("#") == std::string::npos && f.fn &&
+                        (f.fn->name == "setup_room_basic_info" || f.fn->name == "setup_npc" ||
+                         f.fn->name == "place_char" || f.fn->name == "do_scan" ||
+                         f.fn->name == "register_entry" || f.fn->name == "set_zone" ||
+                         f.fn->name == "load_rooms")) {
+                        static int flN = 0;
+                        if (flN < 80) {
+                            ++flN;
+                            std::string chainL2;
+                            for (size_t fi = 0; fi < frames_.size() && chainL2.size() < 240; ++fi) {
+                                if (!chainL2.empty()) chainL2 += "<-";
+                                chainL2 += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainL2 += "#" + std::to_string(frames_[fi].fn ? frames_[fi].fn->index : -1);
+                            }
+                            std::string procL = "?";
+                            auto cpL = lpc::scheduler().currentProcessShared();
+                            if (cpL) procL = cpL->entry;
+                            std::string thisL = thisObjectName_;
+                            std::cerr << "[fl] zone vm=" << this << " obj=" << objName_
+                                      << " this=" << thisL << " proc=" << procL
+                                      << " fn=" << f.fn->name
+                                      << " lookup=" << funcLookup_->size()
+                                      << " own=" << funcsByIndex_.size()
+                                      << " ip=" << (ip_ - 1)
+                                      << " chain=[" << chainL2 << "]\n";
                             std::cerr.flush();
                         }
                     }
@@ -11858,6 +11988,76 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
         });
     }
     for (auto& w : workers) w.detach();
+}
+
+
+// ---- object-environment helpers (per-registry-VM field) ----
+
+namespace {
+std::shared_ptr<OriginalVm> envVmForKey(const std::string& key) {
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    auto it = reg.vms.find(key);
+    if (it != reg.vms.end()) return it->second;
+    std::string b = key;
+    size_t hb = b.find('#');
+    if (hb != std::string::npos) b.resize(hb);
+    std::string stripB = (b.rfind('pak:', 0) == 0) ? b.substr(4) : b;
+    for (auto& kv : reg.vms) {
+        std::string a = kv.first;
+        size_t ha = a.find('#');
+        if (ha != std::string::npos) a.resize(ha);
+        std::string stripA = (a.rfind('pak:', 0) == 0) ? a.substr(4) : a;
+        if (a == b || stripA == b || a == stripB || stripA == stripB) return kv.second;
+    }
+    return nullptr;
+}
+std::mutex& envPendMutex() { static std::mutex m; return m; }
+std::unordered_map<std::string, std::string>& envPending() {
+    static std::unordered_map<std::string, std::string> m;
+    return m;
+}
+}  // namespace
+
+void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
+    if (auto vm = envVmForKey(selfKey)) {
+        vm->vmSetEnv(destKey);
+        std::lock_guard<std::mutex> lk(envPendMutex());
+        envPending().erase(selfKey);
+        return;
+    }
+    std::lock_guard<std::mutex> lk(envPendMutex());
+    if (destKey.empty()) envPending().erase(selfKey);
+    else envPending()[selfKey] = destKey;
+}
+std::string envLookupObjKey(const std::string& obKey) {
+    if (auto vm = envVmForKey(obKey)) {
+        const std::string& e = vm->vmEnv();
+        if (!e.empty()) return e;
+    }
+    std::lock_guard<std::mutex> lk(envPendMutex());
+    auto it = envPending().find(obKey);
+    if (it != envPending().end()) return it->second;
+    std::string b = obKey;
+    size_t hb = b.find('#');
+    if (hb != std::string::npos) b.resize(hb);
+    for (auto& kv : envPending()) {
+        std::string a = kv.first;
+        size_t ha = a.find('#');
+        if (ha != std::string::npos) a.resize(ha);
+        if (a == b) return kv.second;
+    }
+    return std::string();
+}
+size_t envCountObjKeys() {
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    size_t n = 0;
+    for (auto& kv : reg.vms)
+        if (!kv.second->vmEnv().empty()) ++n;
+    std::lock_guard<std::mutex> lk(envPendMutex());
+    n += envPending().size();
+    return n;
 }
 
 } // namespace lpc
