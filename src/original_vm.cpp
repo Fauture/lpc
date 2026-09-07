@@ -7977,7 +7977,7 @@ private:
                                             break;
                                         }
                                 }
-                                std::cerr << "[qd] find_npc_ob(文曲星)=" << fs << "\n";
+                                std::cerr << "[qd] find_npc_ob(\xCE\xC4\xC7\xFA\xD0\xC7)=" << fs << "\n";
                                 std::cerr.flush();
                             }
                             if (isSt && stN < 8) {
@@ -8225,7 +8225,7 @@ private:
                                         if (!hasAt2) continue;
                                         int shown2 = 0;
                                         for (auto& nmd : nmds) {
-                                            if (++shown2 > 5) break;
+                                            if (++shown2 > 11) break;
                                             size_t ap2 = nmd.find('@');
                                             std::string dname = nmd.substr(0, ap2);
                                             std::string dloc = nmd.substr(ap2 + 1);
@@ -8256,6 +8256,34 @@ private:
                                                                     line2 += (z2 ? "," : " [") + std::to_string(mapIds2[z2]);
                                                                 if (mapIds2.size() > 5) line2 += "...";
                                                                 else if (!mapIds2.empty()) line2 += "]";
+                                                                // R82: map identity for empty maps (云霄宫 has 0 objects) -
+                                                                // print the map index value + registered map name/dims + the
+                                                                // room's own stored map_id/source_id/map_index.
+                                                                if (mi2.index() == 2) {
+                                                                    int64_t miV = std::get<int64_t>(mi2);
+                                                                    line2 += " miV=" + std::to_string(miV);
+                                                                    Value ginfo = lpc::mapModule().getMapInfo({ mi2 });
+                                                                    if (ginfo.index() == 6) {
+                                                                        auto gm6 = std::get<std::shared_ptr<MappingValue>>(ginfo);
+                                                                        const Value* n6 = gm6->find(make_string("map_name"));
+                                                                        const Value* d6 = gm6->find(make_string("map_id"));
+                                                                        const Value* w6 = gm6->find(make_string("width"));
+                                                                        const Value* h6 = gm6->find(make_string("height"));
+                                                                        auto iv = [](const Value* v) -> std::string {
+                                                                            if (v && v->index() == 2) return std::to_string(std::get<int64_t>(*v));
+                                                                            return "?";
+                                                                        };
+                                                                        line2 += " gmi[name=" + iv(n6) + " id=" + iv(d6) +
+                                                                                 " " + iv(w6) + "x" + iv(h6) + "]";
+                                                                    } else line2 += " gmi=t" + std::to_string(ginfo.index());
+                                                                    try {
+                                                                        Value mmq = rvm2->callFunctionByName("query", { make_string("map_id") });
+                                                                        Value msq = rvm2->callFunctionByName("query", { make_string("source_id") });
+                                                                        Value miq = rvm2->callFunctionByName("query", { make_string("map_index") });
+                                                                        auto is2 = [](const Value& v) { return v.index() == 2 ? std::to_string(std::get<int64_t>(v)) : std::string("t") + std::to_string(v.index()); };
+                                                                        line2 += " room[map_id=" + is2(mmq) + " src=" + is2(msq) + " map_index=" + is2(miq) + "]";
+                                                                    } catch (...) {}
+                                                                }
                                                             } else line2 += " gm=t" + std::to_string(gm2.index());
                                                         }
                                                     } catch (...) { line2 += " mapQerr"; }
@@ -8476,6 +8504,31 @@ private:
                                 std::cerr << w2 << "\n";
                                 std::cerr.flush();
                             } catch (...) { std::cerr << "[cw2] err\n"; std::cerr.flush(); }
+                        }
+                    }
+                    // TEMP R81: which dealer/room does city_war (and jieban)
+                    // actually pass to _find_npc during the re-register spin.
+                    if (f.fn && f.fn->name == "_find_npc" && f.argNum >= 1 &&
+                        (thisObjectName_.find("city_war") != std::string::npos ||
+                         objName_.find("city_war") != std::string::npos ||
+                         thisObjectName_.find("jieban_chuangtianya") != std::string::npos ||
+                         objName_.find("jieban_chuangtianya") != std::string::npos)) {
+                        static int dfnN = 0;
+                        if (dfnN < 60) {
+                            ++dfnN;
+                            std::string a0 = "?";
+                            int k0 = f.bp - f.argNum + 1;
+                            if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
+                                stack_[static_cast<size_t>(k0)].value.index() == 4)
+                                a0 = std::get<SharedString>(stack_[static_cast<size_t>(k0)].value).str();
+                            std::string chainD;
+                            for (size_t fi = 0; fi < frames_.size() && chainD.size() < 160; ++fi) {
+                                if (!chainD.empty()) chainD += "<-";
+                                chainD += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                            }
+                            std::cerr << "[dfn] obj=" << objName_ << " _find_npc(" << a0
+                                      << ") chain=[" << chainD << "]\n";
+                            std::cerr.flush();
                         }
                     }
                     // TEMP R77: trace named's register_class_ob - pre-mutation

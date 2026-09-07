@@ -5201,7 +5201,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // Value variant index -> LPC type code: 0 nil, 1 undefined/void,
         // 2 int, 3 real, 4 string, 5 array, 6 mapping, 7 object,
         // 8 function, 10 buffer.
-        static const int idxToType[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+        // Value variant index -> LPC raw type code: 5 array->6, 6 mapping->7,
+        // 7 object->10, 8 function->9, 10 buffer->5 (see var_type).
+        static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
         StubCallCtx& ctx = stubCallCtx();
         bool couponCall = ctx.fn == "do_init" &&
                           ctx.obj.find("random_coupond") != std::string::npos;
@@ -5409,7 +5411,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty() || args[0].index() != 6) return make_int(1);
         auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
         int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+        // Value VARIANT index -> LPC raw type code (same table as var_type):
+        // variant 5 array -> 6, 6 mapping -> 7, 7 object -> 10, 8 function ->
+        // 9, 10 buffer -> 5.  The old table indexed raw codes by variant and
+        // reported an object as 7, so clean_mapping_by_value(npcs, 10) (keep
+        // objects) in statued.get_map_statue deleted every statue entry and
+        // every statue map read back empty -> jieban_chuangtianya re-registered
+        // forever waiting on statues that existed but were wiped here.
+        static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
         std::vector<Value> dead;
         for (size_t i = 0; i < mp->nodes.size(); ++i) {
             const Value& v = mp->nodes[i].value;
@@ -5425,7 +5434,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty() || args[0].index() != 6) return make_int(1);
         auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
         int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        static const int idxToType[] = {0, 255, 2, 3, 4, 5, 6, 7, 8, -1, 10};
+        static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
         std::vector<Value> dead;
         for (size_t i = 0; i < mp->nodes.size(); ++i) {
             const Value& k = mp->nodes[i].key;
