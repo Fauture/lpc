@@ -2837,6 +2837,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // close_client) relies on this to actually sever the TCP connection.
         if (!args.empty()) {
             int clientNo = static_cast<int>(as_int(args[0]));
+            if (std::getenv("LPCVM_TAIL"))
+                std::cerr << "[close_client] cno=" << clientNo << "\n";
             gameServiceDisconnect(clientNo);
         }
         return make_int(1);
@@ -5436,15 +5438,35 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_buffer(out);
     }
     if (name == "make_iid") {
-        // vm_f_make_iid: build an item-instance id (string) - the game uses a
-        // time+seq hash; a unique hex string keeps ids distinct.
-        static std::atomic<int64_t> seq{0};
-        int64_t t = static_cast<int64_t>(std::time(nullptr));
-        int64_t s = seq.fetch_add(1);
-        char buf[48];
-        snprintf(buf, sizeof(buf), "%llX%04llX", static_cast<unsigned long long>(t),
-                 static_cast<unsigned long long>(s & 0xFFFF));
-        return make_string(buf);
+        // vm_f_make_iid (0x804dfd4, verified in IDA): returns a 10-byte
+        // BUFFER whose hex form is  BE32(time)  BE16(dist_id)  BE32(seq):
+        //   ++iidSeqNo; v6=time; *(u32*)buf = bswap32(v6);
+        //   *(u16*)(buf+4) = bswap16(dist_id);
+        //   *(u32*)(buf+6) = bswap32(iidSeqNo);
+        // (the rotate-by-8/16/16 sequence in the original is a byte swap).
+        // REF data confirms the layout: 6A9C51CC 0001 01ADF851 =
+        // time 0x6A9C51CC, dist 0x0001, seq 0x01ADF851 - all big-endian.
+        // Item/monster iid dbase fields must hold this BUFFER so
+        // save_string() serialises it as ":HEX:" (monster attrib key 33),
+        // not a quoted string like "6A9F9BAA152A".
+        static std::atomic<uint32_t> iidSeq{0};
+        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        int64_t dist = args.size() >= 2 ? as_int(args[1]) : 0;
+        uint32_t t = static_cast<uint32_t>(now);
+        uint32_t seq = iidSeq.fetch_add(1) + 1;
+        std::string out;
+        out.reserve(10);
+        out += static_cast<char>((t >> 24) & 0xFF);
+        out += static_cast<char>((t >> 16) & 0xFF);
+        out += static_cast<char>((t >> 8) & 0xFF);
+        out += static_cast<char>(t & 0xFF);
+        out += static_cast<char>((dist >> 8) & 0xFF);
+        out += static_cast<char>(dist & 0xFF);
+        out += static_cast<char>((seq >> 24) & 0xFF);
+        out += static_cast<char>((seq >> 16) & 0xFF);
+        out += static_cast<char>((seq >> 8) & 0xFF);
+        out += static_cast<char>(seq & 0xFF);
+        return make_buffer(out);
     }
     if (name == "isupper") {
         if (args.empty() || args[0].index() != 4) return make_int(0);

@@ -3732,9 +3732,25 @@ private:
                     {
                         auto& reg = objectRegistry();
                         std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                        // The closure's owner is the OBJECT (OriginalObject
+                        // pointer), but a clone shares its template's object
+                        // (reg.objects[cloneKey] = tmplObj), so the template VM
+                        // and EVERY clone VM report object() == owner.  Picking
+                        // an arbitrary one could bind the timer to the TEMPLATE
+                        // VM or another clone, whose instance vars never carry
+                        // this object's values - aaa unauthed_agent's
+                        // to_be_disconnect(60) fired disconnect on the template
+                        // VM and called close_client(-1), so the game
+                        // connection was never timed out.  When several
+                        // registered VMs share the owner object, prefer THIS VM
+                        // (the one that actually called set_timer).
+                        std::shared_ptr<OriginalVm> firstMatch;
                         for (auto& kv : reg.vms) {
-                            if (&kv.second->object() == owner) { ownerVm = kv.second; break; }
+                            if (&kv.second->object() != owner) continue;
+                            if (!firstMatch) firstMatch = kv.second;
+                            if (kv.second.get() == this) { firstMatch = kv.second; break; }
                         }
+                        ownerVm = firstMatch;
                     }
                     std::shared_ptr<OriginalVm> timerVm = ownerVm;
                     if (!timerVm) {
@@ -10590,6 +10606,11 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 // object's global init code + create() (see runConstruction).
                 p->vm->runConstruction(p->args, p->doneEvent);
             } else {
+                // timer callbacks and other plain entries
+                if (std::getenv("LPCVM_TAIL") &&
+                    (p->entry == "disconnect" || p->entry == "do_disconnect_client"))
+                    std::cerr << "[timer-cb] entry=" << p->entry
+                              << " vm=" << p->vm.get() << " obj=" << p->vm->objName() << "\n";
                 callResult = p->vm->callFunctionByName(p->entry, p->args);
             }
             if (vmEnvTrace())

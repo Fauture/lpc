@@ -360,7 +360,13 @@ struct SaveParser {
             if (hi < 0 || lo < 0) return false;
             bytes += static_cast<char>((hi << 4) | lo);
         }
-        out = make_string(bytes);
+        // The save form ":HEX:" denotes a BUFFER (vm_saveValueAscii writes
+        // buffers as ":HEX:", strings as quoted text).  Parsing it back as a
+        // plain string silently degraded buffer values (monster iid key 33)
+        // into raw-byte strings that re-serialised as garbage like
+        // 33:"j煥..." instead of 33::6A9FA8B800010000152C:.  Restore the
+        // distinct BufferValue so round-tripped saves keep the buffer type.
+        out = make_buffer(bytes);
         return true;
     }
     bool parseAggregate(Value& out) {
