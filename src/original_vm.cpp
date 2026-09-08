@@ -10061,6 +10061,29 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
     // VM's cond_ is a single slot and can be overwritten by a later park on
     // the same VM, which used to strand this waiter on mask mismatch.
     p->cond = c;
+    if (std::getenv("LPCVM_TAIL")) {
+        auto relO = [](const std::string& o) {
+            return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+        };
+        std::string pvo = p->parkedVm ? p->parkedVm->objName() : "?";
+        std::string pch;
+        if (p->parkedVm)
+            for (const auto& fr : p->parkedVm->frames_) {
+                if (!pch.empty()) pch += "<-";
+                pch += fr.fn ? fr.fn->name : "<ctx>";
+                if (pch.size() > 200) break;
+            }
+        if (relO(pvo) || relO(p->vm ? p->vm->objName() : "") ||
+            relO(p->homeVm ? p->homeVm->objName() : ""))
+            std::cerr << "[pk] park tid=" << p->tid << " entry=" << p->entry
+                      << " kind=" << c.kind
+                      << " key=" << (c.qkey.empty() ? c.ename : c.qkey)
+                      << " mask=0x" << std::hex << c.mask << std::dec
+                      << " pvm=" << pvo
+                      << " callers=" << p->callers_.size()
+                      << " chain=[" << pch << "]\n";
+        std::cerr.flush();
+    }
     if (std::getenv("LPCVM_STUCK_TRACE")) {
         std::string pfn = "<global>";
         size_t pdepth = 0;
@@ -10678,7 +10701,7 @@ void Scheduler::run() {
                                o.find("logind.o") != std::string::npos;
                     };
                     std::string ov = p->vm ? p->vm->objName() : "?";
-                    if (relO(ov) && p->entry != "daemon") {
+                    if (relO(ov)) {
                         OriginalVm* dv = p->vm.get();
                         size_t frN = 0;
                         std::string top;
@@ -11216,6 +11239,28 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         }
         parkCurrent(p);
     } catch (const std::exception& e) {
+        if (std::getenv("LPCVM_TAIL")) {
+            auto relO = [](const std::string& o) {
+                return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+            };
+            OriginalVm* evm = p->parkedVm ? p->parkedVm.get() : p->vm.get();
+            std::string eo = evm ? evm->objName() : "?";
+            if (relO(eo) || relO(p->vm ? p->vm->objName() : "")) {
+                std::string ch;
+                if (evm)
+                    for (const auto& fr : evm->frames_) {
+                        if (!ch.empty()) ch += "<-";
+                        ch += fr.fn ? fr.fn->name : "<ctx>";
+                        if (ch.size() > 200) break;
+                    }
+                std::cerr << "[err-done] entry=" << p->entry << " tid=" << p->tid
+                          << " vm=" << (p->vm ? p->vm->objName() : "?")
+                          << " evm=" << eo
+                          << " what=[" << e.what() << "]"
+                          << " chain=[" << ch << "]\n";
+                std::cerr.flush();
+            }
+        }
         if (vmEnvTrace() || (constructDiagOn() &&
                              (p->entry == "__init__" || p->entry == "__master__"))) {
             OriginalVm* evm = p->parkedVm ? p->parkedVm.get() : p->vm.get();
