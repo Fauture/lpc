@@ -1611,6 +1611,27 @@ public:
         // owner-resolve paths where the caller's identity is known; record it
         // here (the caller sets previousObjectName_ on this VM before
         // invoking, see tryCallOtherObject and the case-8 owner branch).
+        if (std::getenv("LPCVM_TAIL") &&
+            (objName_.find("login") != std::string::npos || objName_.find("logind") != std::string::npos) &&
+            (name == "process_command" || name == "_process_command" ||
+             name == "thread_process_command" || name == "do_login" || name == "do_operate" ||
+             name == "restore_ex" || name == "select_char" || name == "show_char_list" ||
+             name == "save_account_runtime_info" || name == "get_service_no" ||
+             name == "new_user" || name == "set_client")) {
+            std::string a0s;
+            for (size_t ai = 0; ai < args.size() && ai < 4; ++ai)
+                a0s += (ai ? " | " : "") + to_string(args[ai], false).substr(0, 60);
+            std::string chain;
+            for (const auto& fr : frames_) {
+                if (!chain.empty()) chain += "<-";
+                chain += fr.fn ? fr.fn->name : "<ctx>";
+                if (chain.size() > 200) break;
+            }
+            std::cerr << "[lg] fn=" << name << " obj=" << objName_ << " this=" << thisObjectName_
+                      << " vm=" << this << " argc=" << args.size()
+                      << " args=[" << a0s << "] chain=[" << chain << "]\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace() &&
             (name == "lite_query_temp" || name == "lite_set_temp" || name == "set_temp" ||
              name == "query_temp" || name == "set"))
@@ -1723,6 +1744,27 @@ public:
             }
             if (vmEnvTrace() && name == "account_login")
                 std::cerr << "[cfv-exit] account_login done\n";
+            // [cmdreg] probe: command objects self-register into commandd
+            // (register_entry) during their create(); logind.do_login later
+            // looks ask_fields up via query_entry.  This line shows both the
+            // registration (obj=/gs/daemons/commandd.o) and the lookup result
+            // (ret = object vs 0) so a missing command is attributable.
+            if (std::getenv("LPCVM_TAIL") &&
+                (name == "register_entry" || name == "query_entry")) {
+                std::string a0s = args.empty() ? "-" : to_string(args[0], false).substr(0, 48);
+                std::string chainX;
+                for (const auto& frX : frames_) {
+                    if (!chainX.empty()) chainX += "<-";
+                    chainX += frX.fn ? frX.fn->name : "<ctx>";
+                    if (chainX.size() > 120) break;
+                }
+                std::string rs = to_string(r, false);
+                if (rs.size() > 64) rs = rs.substr(0, 64) + "...";
+                std::cerr << "[cmdreg] fn=" << name << " obj=" << objName_
+                          << " this=" << thisObjectName_ << " vm=" << this
+                          << " a0=[" << a0s << "] ret=[" << rs << "] chain=[" << chainX << "]\n";
+                std::cerr.flush();
+            }
             return r;
         }
         if (vmEnvTrace() && name == "account_login")
@@ -3115,18 +3157,34 @@ private:
             }
             if (nm == "object_name" && args.empty()) {
                 // vm_f_object_name with no argument returns the CURRENT
-                // object's path (vm_currentContext->thisObject).  handler.c's
-                // create() calls object_name() then explode("/") and takes
-                // segment[1]; for that to yield the command name the name must
-                // be "/<basename>", so return "/" + the file's basename.
+                // object's full virtual path (".c" extension).  Callers rely
+                // on the FULL path, not a bare basename:
+                //   - /gs/inherit/misc/cmd.c create() does
+                //     sscanf(object_name(), "/gs/cmds/%s/%s.c", &str, &cmd)
+                //     then registers into commandd; a "/<basename>" answer
+                //     fails the sscanf so NO command object ever registered.
+                //     logind.do_login's query_entry("ask_fields")->main then
+                //     runs on 0 and the 0x211B ask_fields reply is never
+                //     sent (login stuck at "connecting").
+                //   - handler.c / httpd_handler.c derive their name via
+                //     explode(object_name(), "/")[<1][0..<3] - the LAST path
+                //     segment - which also requires the full path.
+                // The earlier "/" + basename form came from a wrong reading of
+                // handler.c; the original driver returns the virtual path.
                 std::string n = thisObjectName_;
                 if (n == "<this>" || n.empty()) n = objName_;
-                size_t slash = n.find_last_of('/');
-                std::string base = slash == std::string::npos ? n : n.substr(slash + 1);
-                std::string res = "/" + base;
+                if (n.compare(0, 4, "pak:") == 0) n = n.substr(4);
+                else if (n.compare(0, 6, "clone:") == 0) {
+                    n = n.substr(6);
+                    // Keep the "#<seq>" instance suffix: object_name() of a
+                    // clone carries it in the original driver too.
+                }
+                if (!n.empty() && n.front() != '/') n = "/" + n;
+                if (hasSuffix(n, ".o")) n.replace(n.size() - 2, 2, ".c");
                 if (vmEnvTrace())
-                    std::cerr << "[obj-name] this=" << thisObjectName_ << " -> " << res << "\n";
-                return make_string(res);
+                    std::cerr << "[obj-name] this=" << thisObjectName_ << " obj=" << objName_
+                              << " -> " << n << "\n";
+                return make_string(n);
             }
             if (nm == "call_other" && args.size() >= 2) {
                 // vm_f_call_other (0x80f5aa0): call_other(ob, fun, a1..aN) -
@@ -3367,6 +3425,7 @@ private:
                         cl->funcIndex = src->funcIndex;
                         cl->func = src->func;
                         cl->owner = src->owner;
+                        cl->ownerKey = src->ownerKey;
                         cl->boundArgs = src->boundArgs;
                         for (const auto& b : bind) cl->boundArgs.push_back(b);
                         return cl;
@@ -3380,6 +3439,7 @@ private:
                             cl->funcIndex = fn->index;
                             cl->func = fn;
                             cl->owner = &obj_;
+                            cl->ownerKey = thisObjectName_;
                             return makeBound(cl);
                         }
                         std::shared_ptr<OriginalVm> master;
@@ -3418,6 +3478,7 @@ private:
                     cl->funcIndex = src->funcIndex;
                     cl->func = src->func;
                     cl->owner = src->owner;
+                    cl->ownerKey = src->ownerKey;
                     cl->boundArgs = src->boundArgs;
                     for (size_t i = 1; i < args.size(); ++i)
                         cl->boundArgs.push_back(args[i]);
@@ -3436,6 +3497,7 @@ private:
                             cl->funcIndex = fn->index;
                             cl->func = fn;
                             cl->owner = &obj_;
+                            cl->ownerKey = thisObjectName_;
                             return bindClosure(cl);
                         }
                         std::shared_ptr<OriginalVm> master;
@@ -5932,6 +5994,9 @@ private:
                     cl->func = fn;          // exact function: invoke directly
                     cl->boundArgs = bound;
                     cl->owner = fnOwner ? fnOwner : &obj_;
+                    // Pin cross-object invocation to THIS instance (clone key),
+                    // not just the shared template object - see ClosureValue.
+                    cl->ownerKey = thisObjectName_;
                     pushValue(cl);
                 } else {
                     pushValue(make_int(0));
@@ -7823,13 +7888,31 @@ private:
                         std::shared_ptr<OriginalVm> ownerVm;
                         {
                             std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                            for (auto& kv : reg.vms) {
-                                if (&kv.second->object() == cl->owner) {
-                                    if (vmEnvTrace())
-                                        std::cerr << "[cfv] owner-resolve " << cl->functionName
-                                                  << " in " << kv.first << "\n";
-                                    ownerVm = kv.second;
-                                    break;
+                            // A clone shares its template's OriginalObject, so
+                            // many registered VMs report object()==owner.
+                            // Prefer the EXACT creating instance (ownerKey =
+                            // the registry key captured at closure creation);
+                            // fall back to the first object()-match.
+                            if (!cl->ownerKey.empty()) {
+                                for (auto& kv : reg.vms) {
+                                    if (kv.first == cl->ownerKey) {
+                                        if (vmEnvTrace())
+                                            std::cerr << "[cfv] owner-resolve " << cl->functionName
+                                                      << " in " << kv.first << " (exact)\n";
+                                        ownerVm = kv.second;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!ownerVm) {
+                                for (auto& kv : reg.vms) {
+                                    if (&kv.second->object() == cl->owner) {
+                                        if (vmEnvTrace())
+                                            std::cerr << "[cfv] owner-resolve " << cl->functionName
+                                                      << " in " << kv.first << "\n";
+                                        ownerVm = kv.second;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -11168,6 +11251,29 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
             return hit->callFunctionByName(name, args);
         }
     }
+    // [cmdreg] bootstrap: a command object's create() registers into commandd
+    // BEFORE commandd itself is loaded (see tryCallOtherObject); load the
+    // target so the index-based registration lands too.
+    if (rel.find("commandd") != std::string::npos) {
+        if (std::getenv("LPCVM_TAIL"))
+            std::cerr << "[cmdreg] auto-load " << objectPath << " (byIndex "
+                      << funIndex << ") caller="
+                      << (callerThisName.empty() ? "?" : callerThisName) << "\n";
+        loadObjectIntoRegistry(objectPath, searchRoot);
+        std::shared_ptr<OriginalVm> hit2;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms)
+                if (hasSuffix(kv.first, rel)) { hit2 = kv.second; break; }
+        }
+        if (hit2) {
+            std::string name2 = hit2->functionNameByIndex(funIndex);
+            if (!name2.empty()) {
+                if (!callerThisName.empty()) hit2->setPreviousObjectName(callerThisName);
+                return hit2->callFunctionByName(name2, args);
+            }
+        }
+    }
     return make_int(0);
 }
 
@@ -11276,6 +11382,34 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     // unloaded target raises "Object is not found (when call in function)."
     // (vm_callInOtherFun).  Only objects loaded by load_object/safe_load_object
     // are callable.
+    // EXCEPTION: command objects (inheriting /gs/inherit/misc/cmd.c)
+    // self-register into /gs/daemons/commandd.c from their create()
+    // (register_entry(cmd, this_object(), 1)).  In the original the boot
+    // script loads /gs/daemons before /gs/cmds, so commandd already exists by
+    // the time any command object runs its create(); our master startup can
+    // reach a /gs/cmds/*.c create before commandd is loaded (observed: all
+    // command .o files load+create at boot lines ~3169-4566 while commandd.c
+    // itself only loads at ~4943).  The registration then silently no-ops and
+    // commandd's all_entries stays empty - logind.do_login's
+    // query_entry("ask_fields") returns 0, the `->main` target is invalid and
+    // the 0x211B ask_fields reply that enters the character/login screen is
+    // never sent.  Bootstrap the target so the command really registers.
+    if (funName == "register_entry" && rel.find("commandd") != std::string::npos) {
+        if (std::getenv("LPCVM_TAIL"))
+            std::cerr << "[cmdreg] auto-load " << objectPath << " for register_entry"
+                      << " caller=" << (callerThisName.empty() ? "?" : callerThisName) << "\n";
+        loadObjectIntoRegistry(objectPath, searchRoot);
+        std::shared_ptr<OriginalVm> hit2;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            for (auto& kv : reg.vms)
+                if (hasSuffix(kv.first, rel)) { hit2 = kv.second; break; }
+        }
+        if (hit2) {
+            if (!callerThisName.empty()) hit2->setPreviousObjectName(callerThisName);
+            return hit2->callFunctionByName(funName, args);
+        }
+    }
     return make_int(0);
 }
 
@@ -11923,13 +12057,26 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
     if (cl->owner) {
         {
             std::lock_guard<std::recursive_mutex> rl(registryMutex());
-            for (auto& kv : reg.vms) {
-                if (&kv.second->object() == cl->owner) {
-                    if (vmEnvTrace())
-                        std::cerr << "[applyClosure] owner-resolve " << cl->functionName
-                                  << " in " << kv.first << "\n";
-                    ownerVm = kv.second;
-                    break;
+            // A clone shares its template's OriginalObject, so several VMs
+            // report object()==owner; prefer the exact creating instance via
+            // ownerKey (see ClosureValue) before falling back.
+            if (!cl->ownerKey.empty()) {
+                for (auto& kv : reg.vms) {
+                    if (kv.first == cl->ownerKey) {
+                        ownerVm = kv.second;
+                        break;
+                    }
+                }
+            }
+            if (!ownerVm) {
+                for (auto& kv : reg.vms) {
+                    if (&kv.second->object() == cl->owner) {
+                        if (vmEnvTrace())
+                            std::cerr << "[applyClosure] owner-resolve " << cl->functionName
+                                      << " in " << kv.first << "\n";
+                        ownerVm = kv.second;
+                        break;
+                    }
                 }
             }
         }

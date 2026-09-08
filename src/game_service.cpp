@@ -4110,6 +4110,9 @@ void handle_vm_cmdLockAccount(GameClient& cl, const uint8_t* body, size_t len)
 
 void handle_vm_cmdLogin(GameClient& cl, const uint8_t* body, size_t len)
 {
+    if (std::getenv("LPCVM_TAIL"))
+        std::cerr << "[cmdLogin] cno=" << cl.clientNo << " bodylen=" << len << " first="
+                  << (len ? static_cast<unsigned>(body[0]) : 0) << "\n";
     size_t off = 0;
     if (off + 1 > len) return;
     uint8_t accountLen = body[off++];
@@ -4139,6 +4142,11 @@ void handle_vm_cmdLogin(GameClient& cl, const uint8_t* body, size_t len)
     if (off + computerIdLen > len) return;
     std::string computerId((const char*)body + off, computerIdLen);
     off += computerIdLen;
+    if (std::getenv("LPCVM_TAIL"))
+        std::cerr << "[cmdLogin] cno=" << cl.clientNo << " account=\"" << account
+                  << "\" authKey=" << authKey << " seed=" << seed
+                  << " version=\"" << version << "\" clientType=" << clientType
+                  << " key=\"" << key << "\" compId=\"" << computerId << "\"\n";
     applyLpc("cmd_login", {make_int(cl.clientNo), make_string(account), make_int((int)authKey), make_int((int)seed), make_string(version), make_int(clientType), make_string(key), make_string(computerId)});
 }
 

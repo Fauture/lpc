@@ -273,6 +273,16 @@ struct ClosureValue {
     // loop calling a daemon's do_init), call_fun_ptr resolves the function in
     // this owner instead of the current VM.  Null for efun closures.
     const struct OriginalObject* owner = nullptr;
+    // Registry key of the EXACT VM that created this closure (e.g.
+    // "clone:gs/clone/char/login.o#16960").  A clone shares its template's
+    // OriginalObject, so several registered VMs report object() == owner and
+    // object()-only resolution can bind the closure to an OLDER clone of the
+    // same program: login.o process_command dispatches
+    // (: _process_command, ... :) to threadd, and if the closure then ran on
+    // clone #1 the do_login/ask_fields 0x211B reply went to clone #1's
+    // (long-dead) client.  ownerKey pins resolution to the creating instance.
+    // Empty for global/efun closures and for plain function-name closures.
+    std::string ownerKey;
 };
 // Loop control block created by init_for_loop (original VM value type 20).
 struct LoopCtrl {
