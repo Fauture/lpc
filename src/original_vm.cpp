@@ -1686,12 +1686,18 @@ public:
         // set_operating(0) - ever happen after do_login?).  process_command
         // entries also report the live operating flag value.
         if (std::getenv("LPCVM_TAIL") &&
-            thisObjectName_.find("clone:gs/clone/char/login.o#") == 0 &&
+            (thisObjectName_.find("clone:gs/clone/char/login.o#") == 0 ||
+             thisObjectName_.find("logind.o") != std::string::npos ||
+             thisObjectName_.find("ask_fields") != std::string::npos) &&
             (name == "process_command" || name == "set_operating" ||
              name == "thread_process_command" || name == "_process_command" ||
              name == "do_login" || name == "select_char" || name == "show_char_list" ||
-             name == "create_new_char" || name == "load_existed_char" ||
-             name == "enter_world")) {
+             name == "_show_char_list" || name == "create_new_char" ||
+             name == "load_existed_char" || name == "enter_world" ||
+             name == "set_privilege" || name == "set_service" ||
+             name == "save_account_runtime_info" || name == "restore_ex" ||
+             name == "try_recover_data" || name == "read_runtime_info" ||
+             name == "main" || name == "lite_set" || name == "update_runtime_info")) {
             static bool inLf = false;
             std::string ch;
             for (const auto& fr : frames_) {
@@ -5356,6 +5362,31 @@ private:
         onResume_ = std::move(hook);
         parked_ = true;
         resumeValue_ = std::move(resumeValue);
+        if (std::getenv("LPCVM_TAIL") &&
+            (cond.kind == 3) &&
+            (objName_.find("login.o") != std::string::npos ||
+             objName_.find("logind.o") != std::string::npos ||
+             objName_.find("filed.o") != std::string::npos ||
+             thisObjectName_.find("login.o") != std::string::npos ||
+             thisObjectName_.find("logind.o") != std::string::npos)) {
+            std::string chain;
+            for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                const Frame& fr = frames_[fi];
+                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                if (!chain.empty()) chain += "<-";
+                chain += fnm;
+                if (chain.size() > 200) break;
+            }
+            std::cerr << "[fp] park vm=" << this
+                      << " tid=" << scheduler().currentProcessTid()
+                      << " kind=" << cond.kind
+                      << " ev=" << cond.ename
+                      << " mask=0x" << std::hex << cond.mask << std::dec
+                      << " obj=" << objName_ << " this=" << thisObjectName_
+                      << " ip=" << ip_ << " frames=" << frames_.size()
+                      << " chain=[" << chain << "]\n";
+            std::cerr.flush();
+        }
         if (std::getenv("LPCVM_TAIL")) {
             bool stRelevant = objName_.find("statued") != std::string::npos ||
                               thisObjectName_.find("statued") != std::string::npos ||
@@ -10302,6 +10333,22 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
         // woke it, drop this stale event wakeup.
         if (p->eventWoken) continue;
         p->eventWoken = true;
+        if (std::getenv("LPCVM_TAIL") && ename.rfind("ev_filed", 0) == 0) {
+            std::string wobj = p->parkedVm ? p->parkedVm->objName() : "?";
+            std::string wch;
+            if (p->parkedVm)
+                for (const auto& fr : p->parkedVm->frames_) {
+                    if (!wch.empty()) wch += "<-";
+                    wch += fr.fn ? fr.fn->name : "<ctx>";
+                    if (wch.size() > 150) break;
+                }
+            std::cerr << "[fe] raise " << ename << " mask=0x" << std::hex << raisedMask
+                      << std::dec << " wakes entry=" << p->entry
+                      << " tid=" << p->tid
+                      << " obj=" << wobj
+                      << " chain=[" << wch << "]\n";
+            std::cerr.flush();
+        }
         if (std::getenv("LPCVM_CONSTRUCT_TRACE") && ename.rfind("ev_filed", 0) == 0) {
             std::string wobj = p->parkedVm ? p->parkedVm->objName() : "?";
             std::cerr << "[wakeEv] " << ename << " mask=0x" << std::hex << raisedMask
@@ -10625,6 +10672,29 @@ void Scheduler::run() {
                           << " vm=" << p->vm.get() << "\n";
             runProcess(p);
             if (p->done) {
+                if (std::getenv("LPCVM_TAIL")) {
+                    auto relO = [](const std::string& o) {
+                        return o.find("login.o") != std::string::npos ||
+                               o.find("logind.o") != std::string::npos;
+                    };
+                    std::string ov = p->vm ? p->vm->objName() : "?";
+                    if (relO(ov) && p->entry != "daemon") {
+                        OriginalVm* dv = p->vm.get();
+                        size_t frN = 0;
+                        std::string top;
+                        if (dv) {
+                            frN = dv->frames_.size();
+                            if (!dv->frames_.empty() && dv->frames_.back().fn)
+                                top = dv->frames_.back().fn->name;
+                        }
+                        std::cerr << "[lp-done] entry=" << p->entry
+                                  << " vm=" << ov << " pvm="
+                                  << (p->parkedVm ? p->parkedVm->objName() : "?")
+                                  << " frames=" << frN << " top=" << top
+                                  << " callers=" << p->callers_.size() << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 // The process finished (normal return or error): release its
                 // tid so a later spawn can reuse it.  Tid is the basis of
                 // read_etc's wait/raise event (ev_readetcd<tid/32> bit
@@ -10789,6 +10859,40 @@ int64_t Scheduler::nowMs() {
 void Scheduler::runProcess(std::shared_ptr<Process> p) {
     Value callResult = make_int(0);
     currentProcess_ = p;   // get_thread_id() returns this process's tid
+    // [lp] login-process tracker: any scheduler run whose VM or parked VM is a
+    // login clone or logind - shows how the login closure process advances
+    // (or stalls) across do_login / filed round-trips.
+    if (std::getenv("LPCVM_TAIL")) {
+        auto relLogin = [](const std::string& o) {
+            return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+        };
+        std::string ov = p->vm ? p->vm->objName() : "?";
+        std::string pv = p->parkedVm ? p->parkedVm->objName() : "?";
+        bool rel = relLogin(ov) || relLogin(pv) || relLogin(p->homeVm ? p->homeVm->objName() : "");
+        if (rel && p->entry != "daemon") {
+            std::string chain;
+            OriginalVm* chv = p->parkedVm ? p->parkedVm.get() : p->vm.get();
+            if (chv)
+                for (const auto& fr : chv->frames_) {
+                    if (!chain.empty()) chain += "<-";
+                    chain += fr.fn ? fr.fn->name : "<ctx>";
+                    if (chain.size() > 240) break;
+                }
+            ResumeCond cc = chv ? chv->resumeCond() : ResumeCond();
+            std::cerr << "[lp] run entry=" << p->entry
+                      << " first=" << (p->firstRun ? 1 : 0)
+                      << " done=" << (p->done ? 1 : 0)
+                      << " rrl=" << p->resumeRunLoop
+                      << " sl=" << p->sliceResume
+                      << " evW=" << p->eventWoken
+                      << " vm=" << ov << " pvm=" << pv
+                      << " kind=" << cc.kind
+                      << " key=" << (cc.qkey.empty() ? cc.ename : cc.qkey)
+                      << " callers=" << p->callers_.size()
+                      << " chain=[" << chain << "]\n";
+            std::cerr.flush();
+        }
+    }
     if (std::getenv("LPCVM_TAIL") && p->entry == "__master__" && !p->firstRun) {
         OriginalVm* pv = p->parkedVm ? p->parkedVm.get() : nullptr;
         bool interesting = p->callers_.size() > 0 || p->resumeRunLoop || p->sliceResume ||
