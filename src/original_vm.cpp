@@ -1383,6 +1383,55 @@ Scheduler& scheduler();
 // from zone-master clone VMs, etc.).
 const OriginalVm* originalHomeVmOf(const OriginalFunction* fn);
 
+// ---- copy-on-share tables for clone VMs ----
+// Clones share the template's immutable function tables instead of deep
+// copying them per clone (boot makes ~17k NPC clones; each std::map +
+// unordered_set + vector copy was hundreds of tree/bucket nodes, >1GB of the
+// 32-bit process).  Root/template VMs own a table they fill during
+// construction; a clone's tables_ = template's tables_ (shared_ptr aliasing).
+// The tables are never written after construction, so sharing is safe.  The
+// container classes keep the EXISTING member syntax (funcsByIndex_.find etc.),
+// so no read site changes.
+class CowFtab {
+public:
+    std::map<int, const OriginalFunction*>& m() { return *impl_; }
+    const std::map<int, const OriginalFunction*>& m() const { return *impl_; }
+    operator const std::map<int, const OriginalFunction*>&() const { return *impl_; }
+    auto find(int k) const { return impl_->find(k); }
+    auto end() const { return impl_->end(); }
+    auto begin() const { return impl_->begin(); }
+    size_t size() const { return impl_->size(); }
+    // write (construction only)
+    std::map<int, const OriginalFunction*>::mapped_type& operator[](int k) { return (*impl_)[k]; }
+    void shareFrom(const CowFtab& o) { impl_ = o.impl_; }
+private:
+    std::shared_ptr<std::map<int, const OriginalFunction*>> impl_ =
+        std::make_shared<std::map<int, const OriginalFunction*>>();
+};
+class CowOwned {
+public:
+    auto& s() { return *impl_; }
+    const auto& s() const { return *impl_; }
+    operator const std::unordered_set<const OriginalFunction*>&() const { return *impl_; }
+    void insert(const OriginalFunction* f) { impl_->insert(f); }
+    size_t count(const OriginalFunction* f) const { return impl_->count(f); }
+    size_t size() const { return impl_->size(); }
+    void shareFrom(const CowOwned& o) { impl_ = o.impl_; }
+private:
+    std::shared_ptr<std::unordered_set<const OriginalFunction*>> impl_ =
+        std::make_shared<std::unordered_set<const OriginalFunction*>>();
+};
+class CowInh {
+public:
+    void push_back(std::shared_ptr<OriginalFunction> v) { impl_->push_back(std::move(v)); }
+    size_t size() const { return impl_->size(); }
+    void shareFrom(const CowInh& o) { impl_ = o.impl_; }
+    operator const std::vector<std::shared_ptr<OriginalFunction>>&() const { return *impl_; }
+private:
+    std::shared_ptr<std::vector<std::shared_ptr<OriginalFunction>>> impl_ =
+        std::make_shared<std::vector<std::shared_ptr<OriginalFunction>>>();
+};
+
 class OriginalVm {
 public:
     explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
@@ -2486,7 +2535,8 @@ private:
     // its pop restores it (survives park/resume via the frame's savedObjVars).
     std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall_;
     std::vector<Frame> frames_;
-    std::map<int, const OriginalFunction*> funcsByIndex_;
+    CowFtab funcsByIndex_;
+    CowOwned ownedFns_;
     // Function pointers reachable in THIS object's constitution (own +
     // inherited).  A closure/call whose captured function is NOT in this set
     // belongs to another object's program; running it inline without switching
@@ -2495,14 +2545,13 @@ private:
     // do_operate executed on a zone-master clone VM read the clone's "menu"
     // mapping for filed's srvQ global and its send_to_queue never reached the
     // queue, so restore() parked forever.
-    std::unordered_set<const OriginalFunction*> ownedFns_;
+    CowInh inheritedFuncs_;  // shared template copies of merged parents
     // Active function-index table.  While a cross-object inline frame (from a
     // call_other to another object, e.g. filed.c read_content running on the
     // master's stack) is active this points at the TARGET object's
     // funcsByIndex_ so the callee's internal local-index calls resolve in its
     // own program; nullptr means this VM's own funcsByIndex_.
     const std::map<int, const OriginalFunction*>* funcLookup_ = nullptr;
-    std::vector<std::shared_ptr<OriginalFunction>> inheritedFuncs_;  // owned copies of merged parents
     int lastOp_ = -1;
     int lastEfunIndex_ = -1;   // efun index of the last call_in_efun op (diag)
     size_t lastIp_ = 0;
