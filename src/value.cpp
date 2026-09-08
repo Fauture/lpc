@@ -612,36 +612,62 @@ bool value_equal(const Value& a, const Value& b) {
     case 3: return std::get<double>(a) == std::get<double>(b);
     case 4: return std::get<SharedString>(a) == std::get<SharedString>(b);
     case 5: {
-        auto& aa = *std::get<std::shared_ptr<ArrayValue>>(a);
-        auto& bb = *std::get<std::shared_ptr<ArrayValue>>(b);
+        auto pa = std::get<std::shared_ptr<ArrayValue>>(a);
+        auto pb = std::get<std::shared_ptr<ArrayValue>>(b);
+        // Same array instance (aliased variable) - equality is by identity
+        // before contents.  LPC code frequently compares a value against
+        // itself or against a copy that aliases the same container; without
+        // this the full O(n) element walk ran on every such == (op_eq_value
+        // was ~93% of gs boot CPU during NPC restore).
+        if (pa == pb) return true;
+        auto& aa = *pa;
+        auto& bb = *pb;
         if (aa.items.size() != bb.items.size()) return false;
         for (size_t i = 0; i < aa.items.size(); ++i)
             if (!value_equal(aa.items[i], bb.items[i])) return false;
         return true;
     }
     case 6: {
-        auto& aa = *std::get<std::shared_ptr<MappingValue>>(a);
-        auto& bb = *std::get<std::shared_ptr<MappingValue>>(b);
+        auto pa = std::get<std::shared_ptr<MappingValue>>(a);
+        auto pb = std::get<std::shared_ptr<MappingValue>>(b);
+        if (pa == pb) return true;
+        auto& aa = *pa;
+        auto& bb = *pb;
         if (aa.size() != bb.size()) return false;
-        for (auto& e : aa.items()) {
-            const Value* hit = bb.find(e.first);
-            if (!hit || !value_equal(e.second, *hit)) return false;
-        }
-        return true;
+        // forEachActive walks the live chains with NO allocation; items()
+        // built a whole key/value vector copy per comparison.
+        bool eq = true;
+        aa.forEachActive([&](const Value& k, const Value& v) {
+            if (!eq) return;
+            const Value* hit = bb.find(k);
+            if (!hit || !value_equal(v, *hit)) eq = false;
+        });
+        return eq;
     }
-    case 7: return std::get<std::shared_ptr<ObjectValue>>(a)->programName ==
-                    std::get<std::shared_ptr<ObjectValue>>(b)->programName;
+    case 7: {
+        auto pa = std::get<std::shared_ptr<ObjectValue>>(a);
+        auto pb = std::get<std::shared_ptr<ObjectValue>>(b);
+        if (pa == pb) return true;
+        return pa->programName == pb->programName;
+    }
     case 8: {
-        auto& ca = *std::get<std::shared_ptr<ClosureValue>>(a);
-        auto& cb = *std::get<std::shared_ptr<ClosureValue>>(b);
+        auto pa = std::get<std::shared_ptr<ClosureValue>>(a);
+        auto pb = std::get<std::shared_ptr<ClosureValue>>(b);
+        if (pa == pb) return true;
+        auto& ca = *pa;
+        auto& cb = *pb;
         if (ca.functionName != cb.functionName || ca.boundArgs.size() != cb.boundArgs.size())
             return false;
         for (size_t i = 0; i < ca.boundArgs.size(); ++i)
             if (!value_equal(ca.boundArgs[i], cb.boundArgs[i])) return false;
         return true;
     }
-    case 10: return std::get<std::shared_ptr<BufferValue>>(a)->data ==
-                     std::get<std::shared_ptr<BufferValue>>(b)->data;
+    case 10: {
+        auto pa = std::get<std::shared_ptr<BufferValue>>(a);
+        auto pb = std::get<std::shared_ptr<BufferValue>>(b);
+        if (pa == pb) return true;
+        return pa->data == pb->data;
+    }
     default: return false;
     }
 }

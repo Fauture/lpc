@@ -11807,6 +11807,20 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
                   << " client=" << cl.clientNo << " attrib=" << cl.attrib
                   << " len=" << len << " body=" << hex << "\n";
     }
+    if (std::getenv("LPCVM_TAIL")) {
+        uint64_t n = GetTickCount64();
+        if (cmdNo == 0x3400 || cmdNo == 0x3411 || cmdNo == 0x4401 ||
+            cmdNo == 0x2405 || cmdNo == 0x2407) {
+            std::string hex;
+            static const char* hx = "0123456789ABCDEF";
+            size_t c = len < 10 ? len : 10;
+            for (size_t i = 0; i < c; ++i) { hex += hx[body[i] >> 4]; hex += hx[body[i] & 15]; }
+            std::cerr << "[filed-rtt] recv0x" << std::hex << cmdNo << std::dec
+                      << " t=" << n << " cno=" << cl.clientNo
+                      << " attrib=" << cl.attrib << " body=" << hex << "\n";
+            std::cerr.flush();
+        }
+    }
     // Primary path: packet protocol analyser (comm_desc.txt interfaces).
     int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
     if (pa == 1) return;   // handled by the protocol interface
@@ -12896,6 +12910,10 @@ int startGameService(int port) {
                 if (WSAGetLastError() == WSAEINTR) continue;
                 break;
             }
+            {
+                char nd = 1;
+                setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &nd, static_cast<int>(sizeof(nd)));
+            }
             std::thread([c]() {
                 int clientNo = nextGameClientNo().fetch_add(1);
                 if (std::getenv("LPCVM_TRACE"))
@@ -13054,6 +13072,10 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
     // vm_bindToClient (0x804eccc): register a connected socket as a game
     // client and start its receive loop.  The original driver adds the socket
     // to its global scanner; we spawn a dedicated recv thread per connection.
+    {
+        char nd = 1;
+        setsockopt(static_cast<SOCKET>(fd), IPPROTO_TCP, TCP_NODELAY, &nd, static_cast<int>(sizeof(nd)));
+    }
     int clientNo = nextGameClientNo().fetch_add(1);
     {
         sockaddr_in sin{};

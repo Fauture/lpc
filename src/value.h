@@ -86,6 +86,24 @@ public:
     // True when this slot does not hold a text payload.  (An empty string is
     // represented by a null block, exactly like an empty std::string slot.)
     bool empty() const noexcept { return b_ == nullptr || b_->s.empty(); }
+    // True when both hold the SAME text block (identical payload, including
+    // both empty).  Lets equality checks short-circuit before comparing
+    // contents - LPC boots compare many strings that alias the same block.
+    bool sameBlock(const SharedString& o) const noexcept { return b_ == o.b_; }
+    // Reference count of the underlying text block (0 when empty/null).
+    size_t blockRefs() const noexcept {
+        return b_ ? b_->refs.load(std::memory_order_relaxed) : 0;
+    }
+    // Append more text IN PLACE to this string's block.  Caller must ensure
+    // the block is safe to mutate (single logical owner): use_count == 1
+    // after the callee's own copy is accounted for (see op_eq_value += path).
+    // Returns false when there is no block (empty string) - caller falls back
+    // to the copy path.
+    bool appendInPlace(const std::string& more) noexcept {
+        if (!b_) return false;
+        b_->s.append(more);
+        return true;
+    }
     size_t size() const noexcept { return b_ ? b_->s.size() : 0; }
     const char* c_str() const noexcept { return b_ ? b_->s.c_str() : kEmpty.c_str(); }
     const char* data() const noexcept { return b_ ? b_->s.data() : kEmpty.data(); }
@@ -123,8 +141,12 @@ private:
 // std::string's comparison operators are templates and cannot deduce through
 // SharedString, so provide our own, comparing through the underlying text
 // (str() binds the block's std::string with no copy).
-inline bool operator==(const SharedString& a, const SharedString& b) noexcept { return a.str() == b.str(); }
-inline bool operator!=(const SharedString& a, const SharedString& b) noexcept { return a.str() != b.str(); }
+inline bool operator==(const SharedString& a, const SharedString& b) noexcept {
+    return a.sameBlock(b) || a.str() == b.str();
+}
+inline bool operator!=(const SharedString& a, const SharedString& b) noexcept {
+    return !(a.sameBlock(b) || a.str() == b.str());
+}
 inline bool operator<(const SharedString& a, const SharedString& b) noexcept { return a.str() < b.str(); }
 inline bool operator<=(const SharedString& a, const SharedString& b) noexcept { return a.str() <= b.str(); }
 inline bool operator>(const SharedString& a, const SharedString& b) noexcept { return a.str() > b.str(); }
@@ -242,6 +264,16 @@ struct MappingValue {
 
     // (key, value) pairs in vm_mappingIndices order (bucket high->low).
     std::vector<std::pair<Value, Value>> items() const;
+
+    // Walk every LIVE entry (bucket chains only - erased nodes stay in the
+    // nodes vector but are unreachable) without allocating a copy.  fn(key,
+    // value) is invoked in vm_mappingIndices order.
+    template <typename F>
+    void forEachActive(F&& fn) const {
+        for (size_t b = 0; b < table.size(); ++b)
+            for (int32_t ni = table[b]; ni != -1; ni = nodes[static_cast<size_t>(ni)].next)
+                fn(nodes[static_cast<size_t>(ni)].key, nodes[static_cast<size_t>(ni)].value);
+    }
 };
 struct ObjectValue {
     std::string programName;

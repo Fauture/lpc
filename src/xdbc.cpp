@@ -74,6 +74,13 @@ uintptr_t realTcpConnect(const std::string& host, int port) {
         closesocket(s);
         return 0;
     }
+    {
+        // Inter-service filed/echo traffic is many tiny request/reply pairs on
+        // one connection; Nagle + delayed-ACK on loopback adds ~40-200ms per
+        // round trip (filed recovery took ~0.3s/request -> ~15min boot).
+        char nd = 1;
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &nd, static_cast<int>(sizeof(nd)));
+    }
     return static_cast<uintptr_t>(s);
 }
 } // namespace
@@ -778,6 +785,10 @@ int xdbcConnectAsync(int fd, const std::string& host, int port) {
     if (!fillSockAddr(host, port, addr)) return -1;
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return -1;
+    {
+        char nd = 1;
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &nd, static_cast<int>(sizeof(nd)));
+    }
     // Non-blocking connect: EINPROGRESS means the caller parks the process
     // until the socket becomes writable (vm_f_connect semantics).
     u_long mode = 1;
@@ -1091,6 +1102,10 @@ int xdbcAccept(int fd) {
     int cliLen = sizeof(cli);
     SOCKET c = accept(listener, reinterpret_cast<sockaddr*>(&cli), &cliLen);
     if (c == INVALID_SOCKET) return -1;
+    {
+        char nd = 1;
+        setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &nd, static_cast<int>(sizeof(nd)));
+    }
     int newFd = nextSocketFd().fetch_add(1);
     {
         std::lock_guard<std::mutex> lk(socketsMutex());

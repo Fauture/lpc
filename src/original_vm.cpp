@@ -1632,6 +1632,39 @@ public:
                       << " args=[" << a0s << "] chain=[" << chain << "]\n";
             std::cerr.flush();
         }
+        // [login-flow] probe: dump key external function entries on a login
+        // object VM so the cmd_login unwind is attributable (does the unwind -
+        // set_operating(0) - ever happen after do_login?).  process_command
+        // entries also report the live operating flag value.
+        if (std::getenv("LPCVM_TAIL") &&
+            thisObjectName_.find("clone:gs/clone/char/login.o#") == 0 &&
+            (name == "process_command" || name == "set_operating" ||
+             name == "thread_process_command" || name == "_process_command" ||
+             name == "do_login" || name == "select_char" || name == "show_char_list" ||
+             name == "create_new_char" || name == "load_existed_char" ||
+             name == "enter_world")) {
+            static bool inLf = false;
+            std::string ch;
+            for (const auto& fr : frames_) {
+                if (!ch.empty()) ch += "<-";
+                ch += fr.fn ? fr.fn->name : "<ctx>";
+                if (ch.size() > 240) break;
+            }
+            std::string a0s2 = args.empty() ? "-" : to_string(args[0], false).substr(0, 48);
+            std::string opv = "-";
+            if (name == "process_command" && !inLf) {
+                inLf = true;
+                try {
+                    Value ov = callFunctionByName("lite_query_temp", {make_string("operating")});
+                    opv = to_string(ov, false);
+                } catch (...) { opv = "err"; }
+                inLf = false;
+            }
+            std::cerr << "[login-flow] vm=" << this << " ob=" << thisObjectName_
+                      << " fn=" << name << " a0=[" << a0s2 << "] op=" << opv
+                      << " frames=" << frames_.size() << " chain=[" << ch << "]\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace() &&
             (name == "lite_query_temp" || name == "lite_set_temp" || name == "set_temp" ||
              name == "query_temp" || name == "set"))
@@ -1980,6 +2013,24 @@ public:
                           << " prevObj=" << previousObjectName_ << " index=" << index
                           << " frames=" << frames_.size() << " chain=[" << chain
                           << "] sz=" << stack_.size() << " [" << adbg << "]\n";
+                std::cerr.flush();
+            }
+            if (std::getenv("LPCVM_TAIL") && f && f->name == "set_operating" &&
+                thisObjectName_.find("login") != std::string::npos) {
+                // who sets operating (1 = process_command start, 0 = unwind)?
+                std::string chain;
+                for (const auto& fr : frames_) {
+                    if (!chain.empty()) chain += "<-";
+                    chain += fr.fn ? fr.fn->name : "<ctx>";
+                    if (chain.size() > 220) break;
+                }
+                std::string a0v = "?";
+                int top = static_cast<int>(stack_.size()) - 1;
+                if (top >= 0)
+                    a0v = to_string(stack_[static_cast<size_t>(top)].value, false).substr(0, 24);
+                std::cerr << "[setop] vm=" << this << " ob=" << thisObjectName_
+                          << " new=" << a0v << " frames=" << frames_.size()
+                          << " chain=[" << chain << "]\n";
                 std::cerr.flush();
             }
         }
@@ -5952,14 +6003,28 @@ private:
                     // handler's write_etc), which dispatched the wrong closure.
                     const OriginalFunction* cur = frames_.empty() ? nullptr : frames_.back().fn;
                     if (cur) {
-                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                        for (auto& kv : objectRegistry().vms) {
-                            if (kv.second.get() != this && kv.second->ownsFunction(cur)) {
-                                const OriginalFunction* own = kv.second->functionByIndex(in.a);
-                                if (own && own->index >= 0) {
-                                    fn = own;
-                                    fnOwner = &kv.second->object();
-                                    break;
+                        // Fast path: the frame function normally belongs to
+                        // THIS VM (self / inherited).  create_function_value ran
+                        // a full reg.vms scan looking for another VM that owns
+                        // cur on EVERY closure build (~34k during boot, times a
+                        // registry grown to 30k+ VMs -> seconds of pure scan).
+                        // Only an inline cross-object frame (function owned by a
+                        // DIFFERENT VM) needs the registry walk.
+                        bool selfOwns = false;
+                        {
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            selfOwns = ownedFns_.count(cur) != 0;
+                        }
+                        if (!selfOwns) {
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            for (auto& kv : objectRegistry().vms) {
+                                if (kv.second.get() != this && kv.second->ownsFunction(cur)) {
+                                    const OriginalFunction* own = kv.second->functionByIndex(in.a);
+                                    if (own && own->index >= 0) {
+                                        fn = own;
+                                        fnOwner = &kv.second->object();
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -6133,6 +6198,40 @@ private:
                 int op = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 Value rhs = pop().value;
                 StackItem ref = pop();
+                // string += fast path: growing a string one fragment at a time
+                // (questiond do_init's `question += ("@#$"+ans)` over a long
+                // answer list) via addValues is O(n^2) - every += rebuilt the
+                // WHOLE accumulated text (op_eq_value was ~90% of gs boot CPU,
+                // 0.3-0.5ms per instruction).  Append IN PLACE only when the
+                // LHS block has exactly ONE owner - the destination slot itself
+                // (blockRefs()==1 with no prior deref copy, mirroring the
+                // original driver's refcount==1 in-place append).  Any alias
+                // (another variable, a stored copy, an argument) raises refs
+                // and we fall back to the copy path - the shared text must not
+                // be mutated under a live observer.
+                if (op == 2 && rhs.index() == 4) {
+                    const StackItem* tgt = followRefChain(ref);
+                    if (tgt && tgt->slotIndex >= 0 &&
+                        static_cast<size_t>(tgt->slotIndex) < stack_.size()) {
+                        StackItem& slot = stack_[static_cast<size_t>(tgt->slotIndex)];
+                        if (!slot.isRef && slot.value.index() == 4) {
+                            SharedString& ts = std::get<SharedString>(slot.value);
+                            // Only amortize genuinely long strings: the
+                            // O(n^2) copy cost matters once the accumulator
+                            // grows past ~4KB; short config snippets (e.g.
+                            // mergevoted's merge_vote text, < 300B) stay on
+                            // the copy path so a shared short string is never
+                            // mutated under a live observer.
+                            if (ts.size() >= 4096 && ts.blockRefs() == 1) {
+                                const SharedString& rs = std::get<SharedString>(rhs);
+                                std::string more = rs.str();  // copy: rhs may self-alias
+                                ts.appendInPlace(more);
+                                pushValue(slot.value);        // slot already updated in place
+                                break;
+                            }
+                        }
+                    }
+                }
                 Value target = deref(ref);
                 Value result = make_int(0);
                 switch (op) {
@@ -6657,7 +6756,7 @@ private:
                         Value v = items[1].isRef ? deref(items[1]) : items[1].value;
                         int64_t qid = queueResolveId(qv);
                         bool ok = queueSend(qid, v);
-                        {
+                        if (std::getenv("LPCVM_TAIL")) {
                             std::string cf = frames_.empty() || !frames_.back().fn
                                                  ? "<global>" : frames_.back().fn->name;
                             std::string qvdesc = (qv.index() == 2)
@@ -7894,14 +7993,12 @@ private:
                             // the registry key captured at closure creation);
                             // fall back to the first object()-match.
                             if (!cl->ownerKey.empty()) {
-                                for (auto& kv : reg.vms) {
-                                    if (kv.first == cl->ownerKey) {
-                                        if (vmEnvTrace())
-                                            std::cerr << "[cfv] owner-resolve " << cl->functionName
-                                                      << " in " << kv.first << " (exact)\n";
-                                        ownerVm = kv.second;
-                                        break;
-                                    }
+                                auto itK = reg.vms.find(cl->ownerKey);
+                                if (itK != reg.vms.end()) {
+                                    if (vmEnvTrace())
+                                        std::cerr << "[cfv] owner-resolve " << cl->functionName
+                                                  << " in " << itK->first << " (exact)\n";
+                                    ownerVm = itK->second;
                                 }
                             }
                             if (!ownerVm) {
@@ -9524,6 +9621,33 @@ private:
                 stack_.resize(rec.stackSize);
                 pushValue(make_string(std::string(e.what())));
                 ip_ = rec.ipTarget;
+                if (std::getenv("LPCVM_TAIL")) {
+                    bool rel = thisObjectName_.find("login") != std::string::npos ||
+                               objName_.find("login") != std::string::npos;
+                    if (!rel) {
+                        for (const auto& fr : frames_) {
+                            if (!fr.fn) continue;
+                            const std::string fnm = fr.fn->name;
+                            if (fnm == "do_login" || fnm == "_do_login" ||
+                                fnm == "try_quick_login" ||
+                                fnm == "thread_process_command" ||
+                                fnm == "_process_command") { rel = true; break; }
+                        }
+                    }
+                    if (rel) {
+                        std::string ch;
+                        for (const auto& fr : frames_) {
+                            if (!ch.empty()) ch += "<-";
+                            ch += fr.fn ? fr.fn->name : "<ctx>";
+                            if (ch.size() > 240) break;
+                        }
+                        std::cerr << "[login-catch] swallowed error \"" << e.what()
+                                  << "\" ob=" << thisObjectName_ << " obj=" << objName_
+                                  << " vm=" << this << " frames=" << frames_.size()
+                                  << " chain=[" << ch << "] ip=" << rec.ipTarget << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 if (vmEnvTrace())
                     std::cerr << "[catch] error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
             } catch (const std::exception& e) {
@@ -12061,12 +12185,8 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
             // report object()==owner; prefer the exact creating instance via
             // ownerKey (see ClosureValue) before falling back.
             if (!cl->ownerKey.empty()) {
-                for (auto& kv : reg.vms) {
-                    if (kv.first == cl->ownerKey) {
-                        ownerVm = kv.second;
-                        break;
-                    }
-                }
+                auto itK = reg.vms.find(cl->ownerKey);
+                if (itK != reg.vms.end()) ownerVm = itK->second;
             }
             if (!ownerVm) {
                 for (auto& kv : reg.vms) {

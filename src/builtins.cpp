@@ -4271,6 +4271,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         std::string hex;
                         static const char* hx = "0123456789ABCDEF";
                         for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+                        if (std::getenv("LPCVM_TAIL") && (m2 == 0x3400 || m2 == 0x4401)) {
+                            uint64_t n = GetTickCount64();
+                            std::cerr << "[filed-rtt] send0x"
+                                      << (m2 == 0x3400 ? "3400" : "4401") << " t=" << n
+                                      << " cno=" << cno << " raw=" << hex.substr(0, 28) << "\n";
+                            std::cerr.flush();
+                        }
                         std::cerr << "[send-filed] cno=" << cno << " msgNo=0x" << std::hex
                                   << m2 << std::dec << " raw data(" << data.size() << ")="
                                   << hex << "\n";
@@ -4282,6 +4289,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
                 for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+                if (std::getenv("LPCVM_TAIL") && (msgNo == 0x3400 || msgNo == 0x4401)) {
+                    uint64_t n = GetTickCount64();
+                    std::cerr << "[filed-rtt] send0x"
+                              << (msgNo == 0x3400 ? "3400" : "4401") << " t=" << n
+                              << " cno=" << cno << " raw=" << hex.substr(0, 28) << "\n";
+                    std::cerr.flush();
+                }
                 std::cerr << "[send-filed] cno=" << cno << " msgNo=0x" << std::hex << msgNo << std::dec
                           << " data(" << data.size() << ")=" << hex << "\n";
             }
