@@ -11037,6 +11037,24 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 res = cv->lastReturnValue();
             }
             p->callers_.clear();
+            if (std::getenv("LPCVM_TAIL")) {
+                auto relO = [](const std::string& o) {
+                    return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+                };
+                if (relO(rvm->objName())) {
+                    std::string ch3;
+                    for (const auto& fr : rvm->frames_) {
+                        if (!ch3.empty()) ch3 += "<-";
+                        ch3 += fr.fn ? fr.fn->name : "<ctx>";
+                        if (ch3.size() > 160) break;
+                    }
+                    std::cerr << "[re3] after drain rvm=" << rvm->objName()
+                              << " frames=" << rvm->frames_.size()
+                              << " chain=[" << ch3 << "] ownvm="
+                              << (p->vm ? p->vm->objName() : "?") << "\n";
+                    std::cerr.flush();
+                }
+            }
             if (p->callerVm && p->callerVm != rvm) {
                 if (vmEnvTrace())
                     std::cerr << "[sched-caller] " << p->entry << " resume caller vm="
@@ -11078,6 +11096,33 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // Resume the VM whose execution state was parked (usually p->vm,
             // but cross-object blocking runs on the target's registry VM).
             auto rvm = p->parkedVm ? p->parkedVm : p->vm;
+            if (std::getenv("LPCVM_TAIL")) {
+                auto relO = [](const std::string& o) {
+                    return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+                };
+                std::string rvo = rvm ? rvm->objName() : "?";
+                std::string pvo = p->vm ? p->vm->objName() : "?";
+                if (relO(rvo) || relO(pvo)) {
+                    std::string ch;
+                    if (rvm)
+                        for (const auto& fr : rvm->frames_) {
+                            if (!ch.empty()) ch += "<-";
+                            ch += fr.fn ? fr.fn->name : "<ctx>";
+                            if (ch.size() > 160) break;
+                        }
+                    std::string cal;
+                    for (const auto& cvm2 : p->callers_) {
+                        if (!cal.empty()) cal += ",";
+                        cal += cvm2->objName();
+                    }
+                    std::cerr << "[re] resume rvm=" << rvo << " ownvm=" << pvo
+                              << " callerVm=" << (p->callerVm ? p->callerVm->objName() : "-")
+                              << " callers=[" << cal << "]"
+                              << " frames=" << (rvm ? rvm->frames_.size() : 0)
+                              << " chain=[" << ch << "]\n";
+                    std::cerr.flush();
+                }
+            }
             // Consumed: see the resumeRunLoop branch above - a stale parkedVm
             // here made noteParkedCaller drop the caller VM (shopd do_init
             // resumed from its catalog filed read then called configd
@@ -11095,10 +11140,45 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // VM's frames into callers_ (innermost first).  Resume them
             // innermost-first so do_init's remaining code (init_all_npc etc.)
             // runs after read_etc returns, then resume the process VM.
+            if (std::getenv("LPCVM_TAIL")) {
+                auto relO = [](const std::string& o) {
+                    return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+                };
+                if (relO(rvm->objName())) {
+                    std::string ch2;
+                    for (const auto& fr : rvm->frames_) {
+                        if (!ch2.empty()) ch2 += "<-";
+                        ch2 += fr.fn ? fr.fn->name : "<ctx>";
+                        if (ch2.size() > 160) break;
+                    }
+                    std::cerr << "[re2] after resumeProcess rvm=" << rvm->objName()
+                              << " frames=" << rvm->frames_.size()
+                              << " chain=[" << ch2 << "]\n";
+                    std::cerr.flush();
+                }
+            }
             Value res = rvm->lastReturnValue();
+            // [cv1] note up front whether the process's own VM is the parked
+            // call's documented caller (chained via callers_ or callerVm); if
+            // not, and it still holds suspended frames after every chained
+            // caller was resumed, we continue them below.
+            bool pvmChained = (p->vm && rvm != p->vm && p->callerVm.get() == p->vm.get());
+            for (const auto& cvm2 : p->callers_)
+                if (cvm2.get() == p->vm.get()) pvmChained = true;
+            // [cv2] If resumeProcess returned with the PARKED VM's own stack
+            // still holding live frames (login: restore_ex finished but
+            // [thread_process_command,_process_command] below it are suspended
+            // waiting for do_login's result on the logind VM), the caller-chain
+            // drain must NOT skip that VM merely because it is the rvm we just
+            // resumed: its remaining frames still need do_login's final value
+            // (set_operating(0) in _process_command never ran -> 9101).  rvm
+            // sits in callers_ (innermost), so with this flag the drain
+            // resumes it LAST, after the logind layers produced do_login's
+            // result.
+            bool rvmNeedsTail = rvm->hasActiveFrames();
             for (auto it = p->callers_.rbegin(); it != p->callers_.rend(); ++it) {
                 auto cv = *it;
-                if (cv == rvm) continue;
+                if (cv == rvm && !rvmNeedsTail) continue;
                 if (vmEnvTrace())
                     std::cerr << "[sched-caller-chain] " << p->entry
                               << " resume " << cv->objName() << "\n";
@@ -11106,12 +11186,50 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 res = cv->lastReturnValue();
             }
             p->callers_.clear();
+            if (std::getenv("LPCVM_TAIL")) {
+                auto relO = [](const std::string& o) {
+                    return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
+                };
+                if (relO(rvm->objName())) {
+                    std::string ch3;
+                    for (const auto& fr : rvm->frames_) {
+                        if (!ch3.empty()) ch3 += "<-";
+                        ch3 += fr.fn ? fr.fn->name : "<ctx>";
+                        if (ch3.size() > 160) break;
+                    }
+                    std::cerr << "[re3] after drain rvm=" << rvm->objName()
+                              << " frames=" << rvm->frames_.size()
+                              << " chain=[" << ch3 << "] ownvm="
+                              << (p->vm ? p->vm->objName() : "?") << "\n";
+                    std::cerr.flush();
+                }
+            }
             if (p->callerVm && p->callerVm != rvm) {
                 if (vmEnvTrace())
                     std::cerr << "[sched-caller] " << p->entry << " resume caller vm="
                               << p->callerVm.get() << " with callee result\n";
                 p->callerVm->resumeCaller(res);
                 p->callerVm.reset();
+            }
+            // [cv1] The process's OWN VM may still hold suspended caller
+            // frames that were never chained into callers_/callerVm (login:
+            // the threadd closure's _process_command on the login clone is the
+            // outermost caller of logind.do_login, but the park bookkeeping on
+            // the daemon-entry process lost it - so after do_login completes,
+            // set_operating(0) in _process_command never runs and every later
+            // command is rejected with 9101).  When the process VM still has
+            // live frames after all chained callers were resumed, continue
+            // them with the final result.
+            if (p->vm && p->vm != rvm && p->vm->hasActiveFrames() && !pvmChained) {
+                if (std::getenv("LPCVM_TAIL"))
+                    std::cerr << "[cv1] resume own-vm " << p->vm->objName()
+                              << " frames=" << p->vm->frames_.size()
+                              << " entry=" << p->entry << " tid=" << p->tid << "\n";
+                p->vm->resumeCaller(res);
+                res = p->vm->lastReturnValue();
+                if (std::getenv("LPCVM_TAIL"))
+                    std::cerr << "[cv1] own-vm resumed ok entry=" << p->entry << "\n";
+                std::cerr.flush();
             }
             // The parked call finished; a construction process must advance
             // its phase machine (raise the done event), and the master must
