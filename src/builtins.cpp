@@ -2719,22 +2719,70 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // on a MAPPING value: express_set(mapping, path, value) inserts
         // mapping[path] = value (path may be "a/b/c" for nested sections,
         // vm_setPathInMapping); express_add adds numerically; express_delete
-        // removes the key.
-        if (args.size() >= 3) {
+        // removes the key.  Paths containing '/' are WALKED as nested
+        // mappings, symmetric with express_query's vm_queryPathInMapping walk -
+        // writing "dynamic_key/login" as a single flat key made dbase set_temp
+        // invisible to query_temp("dynamic_key/login") and login's dynamic
+        // encryption key read back empty (aaa password check used the
+        // "abcdef" fallback key and decrypted garbage).
+        // express_delete may be called with just (path, mapping); set/add
+        // carry a value as the third argument.
+        if (args.size() >= 2 && (name != "express_delete" || args.size() >= 2)) {
             // mapping may be args[0] or args[1] (push order differs per efun);
             // key is the other non-mapping leading arg, value is args[2].
             size_t mpIdx = args[0].index() == 6 ? 0 : (args[1].index() == 6 ? 1 : size_t(-1));
             if (mpIdx != size_t(-1)) {
                 auto mp = std::get<std::shared_ptr<MappingValue>>(args[mpIdx]);
                 size_t keyIdx = mpIdx == 0 ? 1 : 0;
-                if (name == "express_set") {
-                    mp->insert(args[keyIdx], args[2]);
-                } else if (name == "express_add") {
-                    Value* hit = mp->find(args[keyIdx]);
-                    Value nv = !hit ? args[2] : make_int(as_int(*hit) + as_int(args[2]));
-                    mp->insert(args[keyIdx], nv);
-                } else if (name == "express_delete") {
-                    mp->erase(args[keyIdx]);
+                std::string path = as_string(args[keyIdx]);
+                // Normalise the path exactly like the original helpers:
+                // vm_setPathInMapping / vm_addPathInMapping /
+                // vm_deletePathInMapping skip leading and CONSECUTIVE '/'
+                // separators, and express_query (vm_queryPathInMapping) treats
+                // "a/" as "a" (trailing slashes are stripped).  Keep set/add/
+                // delete symmetric with query so a value written through
+                // express_set("dynamic_key/login", ...) is readable by
+                // express_query("dynamic_key/login").
+                while (!path.empty() && path.back() == '/') path.pop_back();
+                if (path.empty()) return make_int(0);   // root: nothing to set
+                std::shared_ptr<MappingValue> cur = mp;
+                for (;;) {
+                    while (!path.empty() && path.front() == '/') path.erase(path.begin());
+                    size_t q = path.find('/');
+                    bool last = (q == std::string::npos);
+                    std::string seg = last ? path : path.substr(0, q);
+                    if (seg.empty() && !last) {
+                        // consecutive slashes ("a//b"): skip the empty segment
+                        path = path.substr(q);
+                        continue;
+                    }
+                    Value k = make_string(seg);
+                    if (last) {
+                        if (name == "express_set") {
+                            cur->insert(k, args[2]);
+                        } else if (name == "express_add") {
+                            Value* hit = cur->find(k);
+                            Value nv = !hit ? args[2] : make_int(as_int(*hit) + as_int(args[2]));
+                            cur->insert(k, nv);
+                        } else { // express_delete
+                            cur->erase(k);
+                        }
+                        break;
+                    }
+                    Value* hit = cur->find(k);
+                    if (!hit || hit->index() != 6) {
+                        // express_set creates missing intermediate mappings
+                        // (vm_setPathInMapping 0x80b7000 allocates them);
+                        // express_add / express_delete (vm_addPathInMapping
+                        // 0x80b7204 / vm_deletePathInMapping 0x80b7398) fail
+                        // when the mid path is absent or not a mapping.
+                        if (name != "express_set") return make_int(0);
+                        auto sub = std::make_shared<MappingValue>();
+                        Value& nv = cur->insert(k, sub);
+                        hit = &nv;
+                    }
+                    cur = std::get<std::shared_ptr<MappingValue>>(*hit);
+                    path = path.substr(q);
                 }
                 return make_int(1);
             }
@@ -3625,7 +3673,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr << std::dec << " tot=" << sql.size() << "\n";
                 std::cerr.flush();
             }
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE") ||
+                (std::getenv("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos))
                 std::cerr << "[mysql_query] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
             MysqlClient::Result res;
             std::string err;
@@ -3654,6 +3703,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     if (std::getenv("LPCVM_TRACE"))
                         std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
                                   << " ptr=" << arr.get() << " (live)\n";
+                    if (std::getenv("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos) {
+                        std::cerr << "[pwd-diag] account select rows=" << arr->items.size() << "\n";
+                        for (size_t ri = 0; ri < arr->items.size() && ri < 1; ++ri) {
+                            auto mp = std::get<std::shared_ptr<MappingValue>>(arr->items[ri]);
+                            std::string dbg;
+                            for (auto& kv : mp->items()) {
+                                if (!dbg.empty()) dbg += ", ";
+                                std::string ks = kv.first.index() == 4 ? std::get<SharedString>(kv.first).str() : to_string(kv.first, false);
+                                dbg += ks + "=" + to_string(kv.second, false).substr(0, 60);
+                            }
+                            std::cerr << "[pwd-diag]   row={" << dbg << "}\n";
+                        }
+                        std::cerr.flush();
+                    }
                     return arr;
                 }
                 // Non-SELECT via mysql_query (game mostly uses mysql_execute
@@ -4695,6 +4758,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::cerr << "[des-abcdef] action=" << action << " in=" << dbg
                       << " len=" << data.size() << "\n";
         }
+        bool pwdDiag = std::getenv("LPCVM_PWD_DIAG") && action != 0;
+        if (pwdDiag) {
+            auto hexdump = [](const std::string& s) {
+                std::string h;
+                static const char* hx = "0123456789ABCDEF";
+                for (unsigned char c : s) { h += hx[c >> 4]; h += hx[c & 0xF]; }
+                return h;
+            };
+            std::cerr << "[pwd-des] key=\"" << key << "\" action=" << action
+                      << " in_hex=" << hexdump(data) << " in_len=" << data.size() << "\n";
+            std::cerr.flush();
+        }
         // d3des key derivation: makekey() hashes the key string into an
         // 8-byte DES key.  Verified against the real client: the antibot
         // checksum (des(md5, 0, "uWvgwf")) reproduces the client's exact
@@ -4741,6 +4816,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t end = out.size();
                 while (end > 0 && out[end - 1] == '\0') --end;
                 out.resize(end);
+                if (pwdDiag) {
+                    auto hexdump = [](const std::string& s) {
+                        std::string h;
+                        static const char* hx = "0123456789ABCDEF";
+                        for (unsigned char c : s) { h += hx[c >> 4]; h += hx[c & 0xF]; }
+                        return h;
+                    };
+                    std::string printable;
+                    for (unsigned char c : out)
+                        printable += (c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : '.';
+                    std::cerr << "[pwd-des] out_hex=" << hexdump(out)
+                              << " out_ascii=" << printable << " out_len=" << out.size() << "\n";
+                    std::cerr.flush();
+                }
                 return make_string(out);   // decrypt: raw bytes
             }
             // encrypt: return the cipher bytes as a UPPERCASE HEX string so
@@ -4770,6 +4859,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::string hex;
         hex.reserve(32);
         for (unsigned char c : digest) { hex += hx[c >> 4]; hex += hx[c & 0xF]; }
+        // calc_password_new_md5(account,pwd) hashes "<account><pwd>20070201".
+        if (std::getenv("LPCVM_PWD_DIAG") && data.size() > 8 &&
+            data.compare(data.size() - 8, 8, "20070201") == 0)
+            std::cerr << "[pwd-diag] md5 in=\"" << data << "\" out=" << hex << "\n";
         return make_string(hex);
     }
     if (name == "rdl") {

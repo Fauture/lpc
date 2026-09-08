@@ -1618,6 +1618,22 @@ public:
                       << " fn=" << name << " args=" << args.size()
                       << " thisObj=" << thisObjectName_ << " a0=["
                       << (args.empty() ? "" : to_string(args[0], false).substr(0, 40)) << "]\n";
+        if (std::getenv("LPCVM_PWD_DIAG") &&
+            (name == "lite_set_temp" || name == "set_temp" || name == "query_temp" ||
+             name == "lite_query_temp" || name == "set") &&
+            !args.empty() && args[0].index() == 4) {
+            const std::string& ap = std::get<SharedString>(args[0]).str();
+            if (ap.find("dynamic_key") != std::string::npos ||
+                ap.find("login_info") != std::string::npos) {
+                std::string a1s;
+                if (args.size() >= 2)
+                    a1s = to_string(args[1], false).substr(0, 60);
+                std::cerr << "[pwd-temp] fn=" << name << " this=" << thisObjectName_
+                          << " obj=" << objName_ << " path=" << ap
+                          << " val=[" << a1s << "]\n";
+                std::cerr.flush();
+            }
+        }
         if (vmEnvTrace() && (name == "register_entry" || name == "query_entry"))
             std::cerr << "[reg] callFunctionByName vm=" << this << " obj=" << objName_
                       << " fn=" << name << " args=" << args.size() << " a0=["
