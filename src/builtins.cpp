@@ -5411,40 +5411,69 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "get_all_timers") return make_array();
     // ---- more game-used efuns (mapping/string/type/introspection) ----
     if (name == "clean_mapping_by_value") {
-        // vm_f_clean_mapping_by_value (0x80d4c72): clean_mapping_by_value(m,
-        // type) removes every entry whose VALUE is not of the given type.
+        // vm_f_clean_mapping_by_value (0x80d4dfc, verified in IDA): reads the
+        // mapping (arg0, type 7) and an optional int type (arg1).  With ONE
+        // argument the driver defaults type to 255 and vm_cleanMapping
+        // (0x809c7b8) REMOVES every entry whose VALUE is type 0 (undefined /
+        // nil / U) and KEEPS everything else - including int 0 (exp=0 rows
+        // survive, verified live on the original GS telnet: a mapping holding
+        // int 5 / int 0 / array / string / undefined loses only the undefined
+        // entry).  With TWO arguments it keeps entries whose value's LPC type
+        // equals type and deletes the rest (clean_mapping_by_value(m, 10)
+        // keeps objects - statued.get_map_statue).
+        // A 0 here used to be the single-arg default, which flipped the filter:
+        // it deleted every real-valued (converted numeric) entry and kept the
+        // nil placeholders, so monster pet attrib was saved as name-keyed U
+        // values instead of the numeric id keys REF stores (R127 pet attrib U).
         if (args.empty() || args[0].index() != 6) return make_int(1);
         auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-        int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        // Value VARIANT index -> LPC raw type code (same table as var_type):
-        // variant 5 array -> 6, 6 mapping -> 7, 7 object -> 10, 8 function ->
-        // 9, 10 buffer -> 5.  The old table indexed raw codes by variant and
-        // reported an object as 7, so clean_mapping_by_value(npcs, 10) (keep
-        // objects) in statued.get_map_statue deleted every statue entry and
-        // every statue map read back empty -> jieban_chuangtianya re-registered
-        // forever waiting on statues that existed but were wiped here.
-        static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
         std::vector<Value> dead;
-        for (size_t i = 0; i < mp->nodes.size(); ++i) {
-            const Value& v = mp->nodes[i].value;
-            int vt = (v.index() < 11) ? idxToType[v.index()] : 0;
-            if (vt != type) dead.push_back(mp->nodes[i].key);
+        if (args.size() < 2) {
+            // single-arg (type = 255): drop entries whose VALUE is nil /
+            // undefined (Value monostate index 0 -> serialized 'U'); keep int
+            // 0, strings, arrays, mappings, objects and void (index 1 -> 'V',
+            // e.g. REF attrib keys 188:V survive conversion).
+            for (size_t i = 0; i < mp->nodes.size(); ++i) {
+                if (mp->nodes[i].value.index() == 0) dead.push_back(mp->nodes[i].key);
+            }
+        } else {
+            int type = static_cast<int>(as_int(args[1]));
+            // Value VARIANT index -> LPC raw type code (same table as var_type):
+            // variant 5 array -> 6, 6 mapping -> 7, 7 object -> 10, 8 function ->
+            // 9, 10 buffer -> 5.  The old table indexed raw codes by variant and
+            // reported an object as 7, so clean_mapping_by_value(npcs, 10) (keep
+            // objects) in statued.get_map_statue deleted every statue entry and
+            // every statue map read back empty -> jieban_chuangtianya re-registered
+            // forever waiting on statues that existed but were wiped here.
+            static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
+            for (size_t i = 0; i < mp->nodes.size(); ++i) {
+                const Value& v = mp->nodes[i].value;
+                int vt = (v.index() < 11) ? idxToType[v.index()] : 0;
+                if (vt != type) dead.push_back(mp->nodes[i].key);
+            }
         }
         for (auto& k : dead) mp->erase(k);
         return make_int(1);
     }
     if (name == "clean_mapping_by_key") {
-        // vm_f_clean_mapping_by_key (0x80d4cf7): clean_mapping_by_key(m, type)
-        // removes every entry whose KEY is not of the given type.
+        // vm_f_clean_mapping_by_key (0x80d4d18, verified in IDA): single-arg
+        // defaults type to 255 and removes entries whose KEY is type 0
+        // (undefined/nil); two-arg keeps keys of the given LPC type.
         if (args.empty() || args[0].index() != 6) return make_int(1);
         auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-        int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
         std::vector<Value> dead;
-        for (size_t i = 0; i < mp->nodes.size(); ++i) {
-            const Value& k = mp->nodes[i].key;
-            int vt = (k.index() < 11) ? idxToType[k.index()] : 0;
-            if (vt != type) dead.push_back(k);
+        if (args.size() < 2) {
+            for (size_t i = 0; i < mp->nodes.size(); ++i) {
+                if (mp->nodes[i].key.index() == 0) dead.push_back(mp->nodes[i].key);
+            }
+        } else {
+            int type = static_cast<int>(as_int(args[1]));
+            static const int idxToType[] = {0, 1, 2, 3, 4, 6, 7, 10, 9, -1, 5};
+            for (size_t i = 0; i < mp->nodes.size(); ++i) {
+                const Value& k = mp->nodes[i].key;
+                int vt = (k.index() < 11) ? idxToType[k.index()] : 0;
+                if (vt != type) dead.push_back(k);
+            }
         }
         for (auto& k : dead) mp->erase(k);
         return make_int(1);
