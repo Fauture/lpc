@@ -909,6 +909,14 @@ struct SuspendSignal {
     ResumeCond cond;
 };
 
+// vm_returnToBackend (exit / exit_thread / clear_env -> -8105 / -8102):
+// the original driver ENDS the current LPC thread immediately, unwinding
+// every frame back to the driver.  A stub returning 0 left the logout /
+// quit flow half-done (the client stayed online and the character was
+// never saved), so the efun throws this and the outermost execution
+// boundary catches it and treats the call as finished.
+struct ThreadExitSignal {};
+
 // Time-slice yield for the MASTER process (the original driver's runTicks:
 // the master's startup code - load_all, post_init - shares the CPU with the
 // daemon processes it creates, so "THREAD_D.service daemon start..." appears
@@ -4734,6 +4742,14 @@ private:
                 if (args.size() >= 2) createArgs.push_back(args[1]);
                 return loadObjectCooperative(vpath, createArgs);
             }
+            // exit / exit_thread / clear_env all call vm_returnToBackend in the
+            // original driver (vm_f_exit 0x80d5c4c, vm_f_exit_thread 0x80ed268,
+            // vm_f_clear_env 0x80d4ee0): the current LPC thread terminates at
+            // once.  Throwing unwinds to the outermost execution boundary, which
+            // resets the VM and lets the caller (packet dispatch, timer,
+            // scheduler process) continue normally.
+            if (nm == "exit" || nm == "exit_thread" || nm == "clear_env")
+                throw ThreadExitSignal{};
             // Remember WHO is calling before falling through to builtins.cpp,
             // so [efun-stub] lines identify object::function.
             stubCallCtx().obj = objName_;
@@ -5232,6 +5248,12 @@ private:
         Value r;
         try {
             r = fn();
+        } catch (const ThreadExitSignal&) {
+            // exit/exit_thread/clear_env inside the detached callee:
+            // restore the exec locks and report a normal finish.
+            for (int i = 0; i < d; ++i) execMutex_.lock();
+            abortThreadForExit();
+            return make_int(0);
         } catch (const SuspendSignal&) {
             // The detached call PARKED on THIS VM: merge the callee's frame
             // chain (built on the detached empty stack) back ON TOP of the
@@ -5365,6 +5387,20 @@ private:
         return placeholder;
     }
 
+    // vm_returnToBackend: end this thread's script execution.  Drop every
+    // frame/stack slot so the VM is reusable and mark the call finished.
+    void abortThreadForExit() {
+        frames_.clear();
+        stack_.clear();
+        catches_.clear();
+        code_ = nullptr;
+        meta_ = nullptr;
+        ip_ = 0;
+        returnValue_ = make_int(0);
+        returned_ = true;
+        parked_ = false;
+    }
+
     Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
         // The original VM pushes args in reverse (param0 last, on top).
         // For a zero-arg function the stack top would be -1; reserve one slot
@@ -5376,7 +5412,13 @@ private:
                                             ? "<top>" : frames_.back().fn->name) << "\n";
         // all declared arguments were pushed (missing ones as undefined)
         bool placeholder = pushArgsForFunction(fn, args);
-        return executeFunctionOnStack(fn, placeholder, static_cast<int>(args.size()));
+        try {
+            return executeFunctionOnStack(fn, placeholder, static_cast<int>(args.size()));
+        } catch (const ThreadExitSignal&) {
+            // exit / exit_thread / clear_env: the thread ends here.
+            abortThreadForExit();
+            return make_int(0);
+        }
     }
 
     // Push a Frame for fn and switch the instruction stream to it, WITHOUT
@@ -12074,6 +12116,16 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         // An external-thread call (execOnMain) is blocked on this promise:
         // release it with the call's result exactly once.
         if (p->resultPromise) p->resultPromise->set_value(callResult);
+    } catch (const ThreadExitSignal&) {
+        // exit / exit_thread / clear_env ended the process's script: the
+        // process is DONE (do not requeue it).  Unregister its timer and
+        // release any external caller waiting on the result.
+        if (p->timerEntry) {
+            timerUnregister(p->timerEntry);
+            p->timerEntry.reset();
+        }
+        if (p->vm) p->vm->abortThreadForExit();
+        if (p->resultPromise) p->resultPromise->set_value(make_int(0));
     } catch (const TimeSliceSignal& sig) {
         if (sig.vm && sig.vm != p->vm.get()) {
             // CROSS-VM time-slice yield: the master's post_init() loop ran a

@@ -1,0 +1,630 @@
+﻿/**********************************************************************
+ * LPC Decompiled Source (v37 - Readability Enhanced)
+ * File: importd.o
+ * Source: /gs/daemons/importd.c
+ * Inherits: (none)
+ * Inherited programs: /feature/daemon/register.c()
+ * Functions: 5 names, 5 code segments found
+ * Strings: 70, Variables: 2
+ *********************************************************************/
+
+inherit "/feature/daemon/register.c";
+
+/* ================================================================
+   String Literals Reference
+   ================================================================ */
+   [  0] "/gs/daemons/import/"
+   [  1] "is_task_monster"
+   [  2] "is_room"
+   [  3] "is_combat_trigger"
+   [  4] "query"
+   [  5] "import"
+   [  6] "task_monster"
+   [  7] "room"
+   [  8] "combat_trigger"
+   [  9] "type"
+   [ 10] "item_type"
+   [ 11] "monster_type"
+   [ 12] "b"
+   [ 14] "Empty import file: %s\n"
+   [ 15] "#FORM2"
+   [ 16] "#FORM3"
+   [ 17] "#"
+   [ 18] ","
+   [ 19] "key_name"
+   [ 20] "query_entire_dbase"
+   [ 21] "set"
+   [ 22] "/"
+   [ 23] "boss_monster"
+   [ 24] "monster"
+   [ 25] "hidden_boss"
+   [ 26] "mud_monster"
+   [ 27] "npc"
+   [ 28] "change_look_card"
+   [ 29] "equip"
+   [ 30] "medicine"
+   [ 31] "task_item"
+   [ 32] "special_item"
+   [ 33] "upgrade_item"
+   [ 34] "artifact"
+   [ 35] "service_item"
+   [ 36] "charge_item"
+   [ 37] "carpet_item"
+   [ 38] "god_book"
+   [ 39] "furniture"
+   [ 40] "luban_book"
+   [ 41] "furniture_rough"
+   [ 42] "pet-skill-book"
+   [ 43] "newbie_gift"
+   [ 44] "magic_card"
+   [ 45] "promotion_gift"
+   [ 46] "scroll"
+   [ 47] "pocket_upgrade_item"
+   [ 48] "child_item"
+   [ 49] "child_equip"
+   [ 50] "relay_scroll"
+   [ 51] "hell_item"
+   [ 52] "arena_pet_card"
+   [ 53] "packed_item"
+   [ 54] "child_book"
+   [ 55] "pattern_item"
+   [ 56] "visual_packs"
+   [ 57] "exquisite_item"
+   [ 58] "magic_pennant"
+   [ 59] "magic_stone_item"
+   [ 60] "nameplate"
+   [ 61] "inborn_skill_stone"
+   [ 62] "inborn_mount_stone"
+   [ 63] "mount_changing_item"
+   [ 64] "runic_diamond"
+   [ 65] "runic_curse"
+   [ 66] "super_change"
+   [ 67] "shennong_book"
+   [ 68] "goods_bonus"
+   [ 69] "zodiac_plate"
+
+/* ================================================================
+   Global/Object Variables
+   ================================================================ */
+   /* mixed global_0; */
+   mapping import_type;
+
+/* ================================================================
+   FORWARD DECLARATIONS
+   ================================================================ */
+
+void set_attrib(object ob, array attrib_index, array attrib_list);
+void import(object ob, mixed mark);
+void create_data(string file, array &attrib_index, mapping &attrib_list);
+private void create();
+mapping explode_key_to_mapping(mapping src_map);
+
+/* ================================================================
+   GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
+   ================================================================ */
+
+   import_type = ([ 2 : ([ 1 : "boss_monster", 2 : "monster", 3 : "hidden_boss", 4 : "mud_monster" ]), 4 : "npc", 16 : "npc", 8 : ([ 12 : "change_look_card", 1 : "equip", 2 : "medicine", 3 : "task_item", 5 : "special_item", 6 : "upgrade_item", 7 : "artifact", 8 : "special_item", 9 : "service_item", 10 : "charge_item", 11 : "carpet_item", 13 : "god_book", 15 : "furniture", 16 : "luban_book", 17 : "furniture_rough", 14 : "pet-skill-book", 18 : "newbie_gift", 19 : "magic_card", 20 : "promotion_gift", 22 : "scroll", 23 : "pocket_upgrade_item", 24 : "child_item", 25 : "child_equip", 26 : "relay_scroll", 27 : "hell_item", 28 : "arena_pet_card", 29 : "packed_item", 30 : "child_book", 31 : "pattern_item", 32 : "visual_packs", 33 : "exquisite_item", 34 : "magic_pennant", 35 : "magic_stone_item", 36 : "nameplate", 37 : "inborn_skill_stone", 38 : "inborn_mount_stone", 39 : "mount_changing_item", 40 : "runic_diamond", 41 : "runic_curse", 42 : "super_change", 43 : "shennong_book", 44 : "goods_bonus", 45 : "zodiac_plate" ]) ]);
+
+/* ================================================================
+   FUNCTION DEFINITIONS
+   ================================================================ */
+
+// --------------------------------------------------------------------
+// @brief  mutator: set property
+// @code  nc=57, nargs=3, insts=57
+// --------------------------------------------------------------------
+void set_attrib(object ob, array attrib_index, array attrib_list) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_s(#20: "query_entire_dbase")
+    [  3] push_local(ob)
+    [  4] call_other(flags=4, nargs=0)
+    [  5] push_local_ptr(my)
+    [  6] assign
+    [  7] pop
+    [  8] push_i(0)
+    [  9] push_local_ptr(i)
+    [ 10] assign
+    [ 11] pop
+    [ 12] push_local_ptr(i)
+    [ 13] push_local(attrib_list)
+    [ 14] sizeof
+    [ 15] push_i(1)
+    [ 16] sub
+    [ 17] push_i(1)
+    [ 18] for_init(65532)
+    [ 19] for_cond: if_false goto L0055
+  L0020:
+    [ 20] push_local(attrib_list)
+    [ 21] push_local(i)
+    [ 22] member[0]
+    [ 23] not
+    [ 24] if_jnz(if_false), pop -> L0026
+    [ 25] goto L0054
+  L0026:
+    [ 26] push_local(attrib_index)
+    [ 27] push_local(i)
+    [ 28] member[0]
+    [ 29] push_local_ptr(str)
+    [ 30] assign
+    [ 31] pop
+    [ 32] push_s(#22: "/")
+    [ 33] push_local(str)
+    [ 34] call_efun(strsrch, nargs=2)
+    [ 35] if_jnz(if_false), pop -> L0045
+    [ 36] push_local(attrib_list)
+    [ 37] push_local(i)
+    [ 38] member[0]
+    [ 39] push_local(str)
+    [ 40] push_s(#21: "set")
+    [ 41] push_local(ob)
+    [ 42] call_other(flags=4, nargs=2)
+    [ 43] pop
+    [ 44] goto L0053
+  L0045:
+    [ 45] push_local(attrib_list)
+    [ 46] push_local(i)
+    [ 47] member[0]
+    [ 48] push_local_ptr(my)
+    [ 49] push_local(str)
+    [ 50] member_ptr[0]
+    [ 51] assign
+    [ 52] pop
+  L0053:
+    [ 53] nop
+  L0054:
+    [ 54] for_step: goto L0020
+  L0055:
+    [ 55] nop
+    [ 56] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=116, nargs=2, insts=116
+// --------------------------------------------------------------------
+void import(object ob, mixed mark) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+  L0002:
+    [  2] push_s(#1: "is_task_monster")
+    [  3] push_local(ob)
+    [  4] call_other(flags=4, nargs=0)
+    [  5] if_jnz(if_false), pop -> L0012
+    [  6] push_s(#6: "task_monster")
+    [  7] push_local_ptr(str)
+    [  8] assign
+    [  9] pop
+    [ 10] goto L0093
+    [ 11] nop
+  L0012:
+    [ 12] push_s(#2: "is_room")
+    [ 13] push_local(ob)
+    [ 14] call_other(flags=4, nargs=0)
+    [ 15] if_jnz(if_false), pop -> L0022
+    [ 16] push_s(#7: "room")
+    [ 17] push_local_ptr(str)
+    [ 18] assign
+    [ 19] pop
+    [ 20] goto L0093
+    [ 21] nop
+  L0022:
+    [ 22] push_s(#3: "is_combat_trigger")
+    [ 23] push_local(ob)
+    [ 24] call_other(flags=4, nargs=0)
+    [ 25] if_jnz(if_false), pop -> L0032
+    [ 26] push_s(#8: "combat_trigger")
+    [ 27] push_local_ptr(str)
+    [ 28] assign
+    [ 29] pop
+    [ 30] goto L0093
+    [ 31] nop
+  L0032:
+    [ 32] push_s(#9: "type")
+    [ 33] push_s(#4: "query")
+    [ 34] push_local(ob)
+    [ 35] call_other(flags=4, nargs=1)
+    [ 36] push_local_ptr(imp_type)
+    [ 37] assign
+    [ 38] pop
+    [ 39] push_local(imp_type)
+    [ 40] case_num(0)
+    [ 41] case_num(8)
+    [ 42] default(offset=40)
+    [ 43] push_s(#10: "item_type")
+    [ 44] push_s(#4: "query")
+    [ 45] push_local(ob)
+    [ 46] call_other(flags=4, nargs=1)
+    [ 47] push_local_ptr(sub_type)
+    [ 48] assign
+    [ 49] is_undefined
+    [ 50] if_jnz(if_false), pop -> L0053
+    [ 51] ret
+    [ 52] nop
+  L0053:
+    [ 53] push_ovar(import_type)
+    [ 54] push_i(8)
+    [ 55] member[0]
+    [ 56] push_local(sub_type)
+    [ 57] member[0]
+    [ 58] push_local_ptr(str)
+    [ 59] assign
+    [ 60] pop
+    [ 61] goto L0090
+    [ 62] nop
+    [ 63] push_s(#11: "monster_type")
+    [ 64] push_s(#4: "query")
+    [ 65] push_local(ob)
+    [ 66] call_other(flags=4, nargs=1)
+    [ 67] push_local_ptr(sub_type)
+    [ 68] assign
+    [ 69] is_undefined
+    [ 70] if_jnz(if_false), pop -> L0073
+    [ 71] ret
+    [ 72] nop
+  L0073:
+    [ 73] push_ovar(import_type)
+    [ 74] push_i(2)
+    [ 75] member[0]
+    [ 76] push_local(sub_type)
+    [ 77] member[0]
+    [ 78] push_local_ptr(str)
+    [ 79] assign
+    [ 80] pop
+    [ 81] goto L0090
+    [ 82] nop
+    [ 83] push_ovar(import_type)
+    [ 84] push_local(imp_type)
+    [ 85] member[0]
+    [ 86] push_local_ptr(str)
+    [ 87] assign
+    [ 88] pop
+    [ 89] nop
+  L0090:
+    [ 90] nop
+    [ 91] push_i(0)
+    [ 92] if_jz(if_true), pop -> L0002
+  L0093:
+    [ 93] push_local(str)
+    [ 94] is_string
+    [ 95] not
+    [ 96] if_jnz(if_false), pop -> L0099
+    [ 97] ret
+    [ 98] nop
+  L0099:
+    [ 99] push_local(str)
+    [100] call_user_fn(#2, nargs=1)
+    [101] push_local_ptr(import_ob)
+    [102] assign
+    [103] is_object
+    [104] not
+    [105] if_jnz(if_false), pop -> L0108
+    [106] ret
+    [107] nop
+  L0108:
+    [108] push_local(mark)
+    [109] push_local(ob)
+    [110] push_s(#5: "import")
+    [111] push_local(import_ob)
+    [112] call_other(flags=4, nargs=2)
+    [113] pop
+    [114] nop
+    [115] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=155, nargs=3, insts=155
+// --------------------------------------------------------------------
+void create_data(string file, array &attrib_index, mapping &attrib_list) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_s(#12: "b")
+    [  3] push_local(file)
+    [  4] call_global_fn(#701, nargs=2)
+    [  5] cast(string)
+    [  6] push_local_ptr(str)
+    [  7] assign
+    [  8] pop
+    [  9] new_func(141, capture=0)
+    [ 10] push_s(#13: "\n")
+    [ 11] push_local(str)
+    [ 12] call_efun(explode, nargs=2)  ; split()
+    [ 13] call_efun(mapping_array, nargs=2)
+    [ 14] push_local_ptr(arr)
+    [ 15] assign
+    [ 16] pop
+    [ 17] push_local(arr)
+    [ 18] sizeof
+    [ 19] not
+    [ 20] if_jnz(if_false), pop -> L0027
+    [ 21] push_local(file)
+    [ 22] push_s(#14: "Empty import file: %s\n")
+    [ 23] call_efun(printf, nargs=2)  ; print_f
+    [ 24] pop
+    [ 25] ret
+    [ 26] nop
+  L0027:
+    [ 27] push_local(arr)
+    [ 28] push_i(0)
+    [ 29] member[0]
+    [ 30] call_efun(trim, nargs=1)  ; trim()
+    [ 31] push_s(#15: "#FORM2")
+    [ 32] eq
+    [ 33] if_jnz(if_false), pop -> L0041
+    [ 34] push_local_ptr(attrib_list)
+    [ 35] push_local_ptr(attrib_index)
+    [ 36] push_local(arr)
+    [ 37] call_global_fn(#752, nargs=3)
+    [ 38] pop
+    [ 39] ret
+    [ 40] nop
+  L0041:
+    [ 41] push_local(arr)
+    [ 42] push_i(0)
+    [ 43] member[0]
+    [ 44] call_efun(trim, nargs=1)  ; trim()
+    [ 45] push_s(#16: "#FORM3")
+    [ 46] eq
+    [ 47] if_jnz(if_false), pop -> L0055
+    [ 48] push_local_ptr(attrib_list)
+    [ 49] push_local_ptr(attrib_index)
+    [ 50] push_local(arr)
+    [ 51] call_global_fn(#753, nargs=3)
+    [ 52] pop
+    [ 53] ret
+    [ 54] nop
+  L0055:
+    [ 55] push_i(0)
+    [ 56] push_local_ptr(flag)
+    [ 57] assign
+    [ 58] pop
+    [ 59] push_local_ptr(mks)
+    [ 60] push_local(arr)
+    [ 61] push_i(997)
+    [ 62] for_init(65529)
+    [ 63] for_cond: if_false goto L0153
+  L0064:
+    [ 64] push_local(mks)
+    [ 65] call_efun(strlen, nargs=1)  ; len
+    [ 66] push_i(1)
+    [ 67] le
+    [ 68] if_jnz(if_false), pop -> L0070
+    [ 69] goto L0152
+  L0070:
+    [ 70] push_local(mks)
+    [ 71] push_i(0)
+    [ 72] push_i(0)
+    [ 73] range[0]
+    [ 74] push_s(#17: "#")
+    [ 75] eq
+    [ 76] if_jnz(if_false), pop -> L0078
+    [ 77] goto L0152
+  L0078:
+    [ 78] push_s(#18: ",")
+    [ 79] push_local(mks)
+    [ 80] call_efun(explode, nargs=2)  ; split()
+    [ 81] push_local_ptr(content)
+    [ 82] assign
+    [ 83] pop
+    [ 84] push_local(flag)
+    [ 85] not
+    [ 86] if_jnz(if_false) -> L0093
+    [ 87] pop
+    [ 88] push_local(content)
+    [ 89] push_i(0)
+    [ 90] member[0]
+    [ 91] push_s(#19: "key_name")
+    [ 92] eq
+  L0093:
+    [ 93] if_jnz(if_false), pop -> L0121
+    [ 94] push_i(1)
+    [ 95] push_local_ptr(flag)
+    [ 96] assign
+    [ 97] pop
+    [ 98] new_array(elems=0)
+    [ 99] push_local_ptr(attrib_index)
+    [100] assign
+    [101] pop
+    [102] push_local_ptr(str)
+    [103] push_local(content)
+    [104] push_i(997)
+    [105] for_init(65528)
+    [106] for_cond: if_false goto L0119
+  L0107:
+    [107] push_local(str)
+    [108] call_efun(trim, nargs=1)  ; trim()
+    [109] push_local_ptr(str)
+    [110] assign
+    [111] pop
+    [112] push_local_ptr(attrib_index)
+    [113] push_local(str)
+    [114] new_array(elems=1)
+    [115] op_eq(+=)
+    [116] pop
+    [117] nop
+    [118] for_step: goto L0107
+  L0119:
+    [119] goto L0152
+    [120] nop
+  L0121:
+    [121] new_array(elems=0)
+    [122] push_local_ptr(matter)
+    [123] assign
+    [124] pop
+    [125] push_local_ptr(str)
+    [126] push_local(content)
+    [127] push_i(997)
+    [128] for_init(65528)
+    [129] for_cond: if_false goto L0143
+  L0130:
+    [130] push_local(str)
+    [131] is_string
+    [132] not
+    [133] if_jnz(if_false), pop -> L0135
+    [134] goto L0142
+  L0135:
+    [135] push_local_ptr(matter)
+    [136] push_local(str)
+    [137] call_global_fn(#751, nargs=1)
+    [138] new_array(elems=1)
+    [139] op_eq(+=)
+    [140] pop
+    [141] nop
+  L0142:
+    [142] for_step: goto L0130
+  L0143:
+    [143] push_local(matter)
+    [144] push_local_ptr(attrib_list)
+    [145] push_local(content)
+    [146] push_i(0)
+    [147] member[0]
+    [148] member_ptr[0]
+    [149] assign
+    [150] pop
+    [151] nop
+  L0152:
+    [152] for_step: goto L0064
+  L0153:
+    [153] nop
+    [154] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  constructor: initialize object state
+// @code  nc=7, nargs=0, insts=7
+// --------------------------------------------------------------------
+private void create() {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_s(#0: "/gs/daemons/import/")
+    [  3] call_global_fn(#799, nargs=1)
+    [  4] pop
+    [  5] nop
+    [  6] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=88, nargs=1, insts=88
+// --------------------------------------------------------------------
+mapping explode_key_to_mapping(mapping src_map) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] new_mapping(pairs=0)
+    [  3] push_local_ptr(dest_map)
+    [  4] assign
+    [  5] pop
+    [  6] push_local_ptr(arr)
+    [  7] push_local(src_map)
+    [  8] push_i(997)
+    [  9] for_init(65527)
+    [ 10] for_cond: if_false goto L0084
+  L0011:
+    [ 11] push_local(arr)
+    [ 12] push_i(0)
+    [ 13] member[0]
+    [ 14] push_local_ptr(key)
+    [ 15] assign
+    [ 16] pop
+    [ 17] push_local(arr)
+    [ 18] push_i(1)
+    [ 19] member[0]
+    [ 20] push_local_ptr(value)
+    [ 21] assign
+    [ 22] pop
+    [ 23] push_local(dest_map)
+    [ 24] push_local_ptr(cur_map)
+    [ 25] assign
+    [ 26] pop
+    [ 27] push_s(#22: "/")
+    [ 28] push_local(key)
+    [ 29] call_efun(explode, nargs=2)  ; split()
+    [ 30] push_local_ptr(sub_keys)
+    [ 31] assign
+    [ 32] pop
+    [ 33] push_i(0)
+    [ 34] push_local_ptr(i)
+    [ 35] assign
+    [ 36] pop
+  L0037:
+    [ 37] push_local(i)
+    [ 38] push_local(sub_keys)
+    [ 39] sizeof
+    [ 40] push_i(1)
+    [ 41] sub
+    [ 42] lt
+    [ 43] if_jnz(if_false), pop -> L0074
+    [ 44] push_local(sub_keys)
+    [ 45] push_local(i)
+    [ 46] member[0]
+    [ 47] push_local_ptr(sub_key)
+    [ 48] assign
+    [ 49] pop
+    [ 50] push_local(cur_map)
+    [ 51] push_local(sub_key)
+    [ 52] member[0]
+    [ 53] is_undefined
+    [ 54] if_jnz(if_false), pop -> L0061
+    [ 55] new_mapping(pairs=0)
+    [ 56] push_local_ptr(cur_map)
+    [ 57] push_local(sub_key)
+    [ 58] member_ptr[0]
+    [ 59] assign
+    [ 60] pop
+  L0061:
+    [ 61] push_local(cur_map)
+    [ 62] push_local(sub_key)
+    [ 63] member[0]
+    [ 64] push_local_ptr(cur_map)
+    [ 65] assign
+    [ 66] pop
+    [ 67] nop
+    [ 68] nop
+    [ 69] nop
+    [ 70] push_local_ptr(i)
+    [ 71] inc(amount=1, *TOS)
+    [ 72] nop
+    [ 73] goto L0037
+  L0074:
+    [ 74] push_local(value)
+    [ 75] push_local_ptr(cur_map)
+    [ 76] push_local(sub_keys)
+    [ 77] push_i(1)
+    [ 78] member[1]
+    [ 79] member_ptr[0]
+    [ 80] assign
+    [ 81] pop
+    [ 82] nop
+    [ 83] for_step: goto L0011
+  L0084:
+    [ 84] push_local(dest_map)
+    [ 85] ret
+    [ 86] nop
+    [ 87] ret
+
+}
+
+/* ================================================================
+   DECOMPILATION SUMMARY
+   ================================================================
+   Total function names:        5
+   Code segments found:         5
+   Successfully decoded:        5
+   Unresolved/minimal:          0
+   Functions without code:      0
+   Inherited programs:          1
+      - /feature/daemon/register.c()
+   ================================================================ */
