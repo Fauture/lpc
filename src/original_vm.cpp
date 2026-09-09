@@ -5343,11 +5343,24 @@ private:
         // set_operating(0), leaving operating=1 -> every later command is
         // rejected with 9101).
         if (!frames_.empty() && frames_.back().fn) {
-            if (code_ != &frames_.back().fn->code) code_ = &frames_.back().fn->code;
+            if (code_ != &frames_.back().fn->code) {
+                code_ = &frames_.back().fn->code;
+                meta_ = &frames_.back().fn->metaData;   // [cv4] meta must track code_
+            }
             if (!frames_.back().funcLookupSwitched) funcLookup_ = nullptr;
         }
         pushValue(std::move(result));
-        runLoop();
+        try {
+            runLoop();
+        } catch (const std::exception& e) {
+            if (std::getenv("LPCVM_TAIL"))
+                std::cerr << "[rc-ex] vm=" << this << " obj=" << objName_
+                          << " frames=" << frames_.size()
+                          << " top=" << (frames_.empty() ? "none" : (frames_.back().fn ? frames_.back().fn->name : "?"))
+                          << " what=[" << e.what() << "]\n";
+            std::cerr.flush();
+            throw;
+        }
         if (rcLog) {
             std::cerr << "[rc-end] vm=" << this << " obj=" << objName_
                       << " frames=" << frames_.size() << " ip=" << ip_
