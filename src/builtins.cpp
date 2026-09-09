@@ -42,6 +42,46 @@
 namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------------
+// Banned-word (illegal-list) registry shared by attach_illegal_list /
+// find_illegal_string / detach_illegal_list.  Each attach_illegal_list call
+// (game slices ban_words.list groups into chunks of 200) stores its words
+// under a handle; find_illegal_string does a substring search.  Without this
+// the efun was a stub (find always 0): GM-account character names never
+// matched the "GM必用字符" include group -> create failed 9111 缺少必含字符.
+// ---------------------------------------------------------------------------
+namespace {
+struct IllegalWordRegistry {
+    std::mutex m;
+    std::unordered_map<int64_t, std::vector<std::string>> reg;
+};
+IllegalWordRegistry& illegalWordRegistry() {
+    static IllegalWordRegistry r;
+    return r;
+}
+void illegalWordsAdd(int64_t handle, const std::vector<std::string>& ws) {
+    std::lock_guard<std::mutex> g(illegalWordRegistry().m);
+    illegalWordRegistry().reg[handle] = ws;
+}
+void illegalWordsRemove(int64_t handle) {
+    std::lock_guard<std::mutex> g(illegalWordRegistry().m);
+    illegalWordRegistry().reg.erase(handle);
+}
+int illegalWordsFind(int64_t handle, const std::string& text) {
+    std::vector<std::string> ws;
+    {
+        std::lock_guard<std::mutex> g(illegalWordRegistry().m);
+        auto it = illegalWordRegistry().reg.find(handle);
+        if (it == illegalWordRegistry().reg.end()) return 0;
+        ws = it->second;
+    }
+    for (const auto& w : ws) {
+        if (!w.empty() && text.find(w) != std::string::npos) return 1;
+    }
+    return 0;
+}
+}  // namespace
+
+// ---------------------------------------------------------------------------
 // Standard MD5 (RFC 1321) - used by calc_account_checksum:
 //   save_string(md5(str))[1..<2] -> 32 uppercase hex chars
 // ---------------------------------------------------------------------------
@@ -5901,14 +5941,58 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "attach_illegal_list") {
         // vm_f_attach_illegal_list (0x80e2a28): register a banned-word list,
         // returns a match handle (int).  The game passes an array of words.
+        // The real driver compiles the word table; find_illegal_string then
+        // reports substring hits.  Previously a stub returning a bare handle
+        // (find always 0), so GM-account character names never satisfied the
+        // "GM必用字符" include group and creation failed with 9111.
         static std::atomic<int64_t> hSeq{1};
-        return make_int(hSeq.fetch_add(1));
+        int64_t h = hSeq.fetch_add(1);
+        std::vector<std::string> ws;
+        if (!args.empty() && args[0].index() == 5) {
+            const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[0])->items;
+            for (const auto& v : items) {
+                if (v.index() == 4) ws.push_back(std::get<SharedString>(v).str());
+                else ws.push_back(to_string(v, false));
+            }
+        }
+        illegalWordsAdd(h, ws);
+        if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_BAN")) {
+            static int baN = 0;
+            if (baN++ < 40) {
+                std::string head;
+                for (size_t k = 0; k < ws.size() && k < 4; ++k) {
+                    if (!head.empty()) head += "|";
+                    head += ws[k];
+                }
+                std::cerr << "[ban-attach] h=" << h << " words=" << ws.size()
+                          << " head=[" << head << "]\n";
+            }
+            std::cerr.flush();
+        }
+        return make_int(h);
     }
-    if (name == "detach_illegal_list") return make_int(1);
+    if (name == "detach_illegal_list") {
+        if (!args.empty()) illegalWordsRemove(as_int(args[0]));
+        return make_int(1);
+    }
     if (name == "find_illegal_string") {
         // vm_f_find_illegal_string (0x80e2cdc): find_illegal_string(handle,
-        // text) -> 1 when text contains a banned word.  With no real word
-        // table we check common patterns; return 0 (allow).
+        // text) -> 1 when text contains a banned word.
+        if (args.size() >= 2) {
+            int64_t h = as_int(args[0]);
+            std::string text;
+            if (args[1].index() == 4) text = std::get<SharedString>(args[1]).str();
+            else text = to_string(args[1], false);
+            int res = illegalWordsFind(h, text);
+            if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_BAN")) {
+                static int bfN = 0;
+                if (bfN++ < 200)
+                    std::cerr << "[ban-find] h=" << h << " text=[" << text
+                              << "] -> " << res << "\n";
+                std::cerr.flush();
+            }
+            return make_int(res);
+        }
         return make_int(0);
     }
     if (name == "get_obj_var") {

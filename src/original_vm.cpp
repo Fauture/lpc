@@ -519,6 +519,29 @@ Value rshValues(const Value& a, const Value& b) {
 Value andValues(const Value& a, const Value& b) { return make_int(static_cast<int32_t>(toInt(a)) & static_cast<int32_t>(toInt(b))); }
 Value orValues(const Value& a, const Value& b) { return make_int(static_cast<int32_t>(toInt(a)) | static_cast<int32_t>(toInt(b))); }
 Value xorValues(const Value& a, const Value& b) { return make_int(static_cast<int32_t>(toInt(a)) ^ static_cast<int32_t>(toInt(b))); }
+// LPC '|' / '|=' on ARRAYS is set union (unique elements), e.g.
+// load_ban_words' `ban_words_match_id[group] |= ({ match_id })`.  The plain
+// orValues above only bitwise-ORs ints, so that compound assign wrote an int
+// into the mapping and valid_ban_words_by_group's is_array() check failed -
+// GM-account names never matched the "GM必用字符" include group (create ->
+// 9111 缺少必含字符) and banned names were never filtered.
+Value lpcOrValues(const Value& a, const Value& b) {
+    if (a.index() == 5 && b.index() == 5) {
+        auto out = std::make_shared<ArrayValue>();
+        const auto& ai = std::get<std::shared_ptr<ArrayValue>>(a)->items;
+        const auto& bi = std::get<std::shared_ptr<ArrayValue>>(b)->items;
+        out->items.reserve(ai.size() + bi.size());
+        for (const auto& x : ai) out->items.push_back(x);
+        for (const auto& x : bi) {
+            bool dup = false;
+            for (const auto& y : out->items)
+                if (value_equal(x, y)) { dup = true; break; }
+            if (!dup) out->items.push_back(x);
+        }
+        return out;
+    }
+    return orValues(a, b);
+}
 Value negValue(const Value& a) {
     if (a.index() == 3) return make_float(-f32(toReal(a)));
     return make_int(i32(-toInt(a)));
@@ -1756,6 +1779,32 @@ public:
                       << " argc=" << args.size() << " args=[" << adbg
                       << "] frames=" << frames_.size() << " chain=[" << ch << "]\n";
             std::cerr.flush();
+        }
+        // [rst] restore-path entry probe (user enter chain: userd/user/achieved)
+        if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") &&
+            (name == "restore_from_text" || name == "internal_restore_user" ||
+             name == "internal_restore_position" || name == "internal_restore_item" ||
+             name == "restore_user_patch_data" || name == "internal_restore_stall" ||
+             name == "restore_upgrade" || name == "restore_achieve_data" ||
+             name == "create_achieve_data" || name == "repair_user_attrib" ||
+             name == "restore" || name == "raw_restore" || name == "restore_ex") &&
+            (objName_.find("userd.o") != std::string::npos ||
+             thisObjectName_.find("clone:gs/clone/char/user.o") == 0 ||
+             objName_.find("achieved.o") != std::string::npos ||
+             objName_.find("save.o") != std::string::npos)) {
+            static int rstN = 0;
+            if (rstN++ < 400) {
+                std::string ch;
+                for (const auto& fr : frames_) {
+                    if (!ch.empty()) ch += "<-";
+                    ch += fr.fn ? fr.fn->name : "<ctx>";
+                    if (ch.size() > 200) break;
+                }
+                std::cerr << "[rst] ENTER fn=" << name << " obj=" << objName_
+                          << " this=" << thisObjectName_ << " vm=" << this
+                          << " frames=" << frames_.size() << " chain=[" << ch << "]\n";
+                std::cerr.flush();
+            }
         }
         if (vmEnvTrace() &&
             (name == "lite_query_temp" || name == "lite_set_temp" || name == "set_temp" ||
@@ -5881,6 +5930,27 @@ private:
                 if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
                     std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 returned_ = true;
+                // [rst] restore-path return probe
+                if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") && f.fn &&
+                    (f.fn->name == "restore_from_text" || f.fn->name == "internal_restore_user" ||
+                     f.fn->name == "internal_restore_position" || f.fn->name == "internal_restore_item" ||
+                     f.fn->name == "restore_user_patch_data" || f.fn->name == "internal_restore_stall" ||
+                     f.fn->name == "restore_upgrade" || f.fn->name == "restore_achieve_data" ||
+                     f.fn->name == "create_achieve_data" || f.fn->name == "repair_user_attrib" ||
+                     f.fn->name == "restore" || f.fn->name == "raw_restore" || f.fn->name == "restore_ex") &&
+                    (objName_.find("userd.o") != std::string::npos ||
+                     thisObjectName_.find("clone:gs/clone/char/user.o") == 0 ||
+                     objName_.find("achieved.o") != std::string::npos)) {
+                    static int rstR = 0;
+                    if (rstR++ < 400) {
+                        std::string rd = (returnValue_.index() == 2)
+                                             ? ("int " + std::to_string(std::get<int64_t>(returnValue_)))
+                                             : ("t" + std::to_string(returnValue_.index()));
+                        std::cerr << "[rst] RETURN fn=" << f.fn->name << " -> " << rd
+                                  << " obj=" << objName_ << " this=" << thisObjectName_ << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 if (constructDiagOn() && f.fn) {
                     static const char* probeFns[] = {
                         "create_data_from2", "create_data_from3", "add_to_section",
@@ -6381,7 +6451,7 @@ private:
             case 48: { // or_value
                 Value b = pop().value;
                 Value a = pop().value;
-                pushValue(orValues(a, b));
+                pushValue(lpcOrValues(a, b));
                 break;
             }
             case 85: { // xor_value
@@ -6495,7 +6565,7 @@ private:
                 case 4: result = mulValues(target, rhs); break;
                 case 5: result = divValues(target, rhs); break;
                 case 6: result = andValues(target, rhs); break;
-                case 7: result = orValues(target, rhs); break;
+                case 7: result = lpcOrValues(target, rhs); break;
                 case 8: result = xorValues(target, rhs); break;
                 case 9: result = rshValues(target, rhs); break;
                 case 10: result = lshValues(target, rhs); break;
