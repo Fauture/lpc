@@ -5771,9 +5771,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "info") {
         // vm_f_info: driver statistics mapping.  The game reads
-        // info()["cpu_cost"] for load balancing.
+        // info()["cpu_cost"]["idle_ticks"] in sysinfod.get_report_status_info:
+        //   cpu_possess = 1 - (cur_idle - last_idle) / (cur_tick - last_tick)
+        // Returning cpu_cost as an int made idle_ticks resolve to 0 every
+        // sample, so cpu_possess stayed 1.0 (100% busy) and
+        // logind.check_login_limit treated the server as overloaded -
+        // ordinary accounts were forced into the "buy service" dialog
+        // (0x2337) instead of entering the game.  Report idle_ticks on the
+        // same wall-clock millisecond base as tick(): when the server is
+        // idle the ratio is ~1 and cpu_possess ~0.
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        auto cpu = std::make_shared<MappingValue>();
+        cpu->insert(make_string("idle_ticks"), make_int(ms));
+        cpu->insert(make_string("user_ticks"), make_int(0));
+        cpu->insert(make_string("system_ticks"), make_int(0));
+        cpu->insert(make_string("total_ticks"), make_int(ms));
         auto mp = std::make_shared<MappingValue>();
-        mp->insert(make_string("cpu_cost"), make_int(0));
+        mp->insert(make_string("cpu_cost"), cpu);
         mp->insert(make_string("total_values"), make_int(0));
         mp->insert(make_string("total_array_num"), make_int(0));
         mp->insert(make_string("total_mapping_num"), make_int(0));

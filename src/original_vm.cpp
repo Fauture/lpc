@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -1781,29 +1782,46 @@ public:
             std::cerr.flush();
         }
         // [rst] restore-path entry probe (user enter chain: userd/user/achieved)
-        if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") &&
-            (name == "restore_from_text" || name == "internal_restore_user" ||
-             name == "internal_restore_position" || name == "internal_restore_item" ||
-             name == "restore_user_patch_data" || name == "internal_restore_stall" ||
-             name == "restore_upgrade" || name == "restore_achieve_data" ||
-             name == "create_achieve_data" || name == "repair_user_attrib" ||
-             name == "restore" || name == "raw_restore" || name == "restore_ex") &&
-            (objName_.find("userd.o") != std::string::npos ||
-             thisObjectName_.find("clone:gs/clone/char/user.o") == 0 ||
-             objName_.find("achieved.o") != std::string::npos ||
-             objName_.find("save.o") != std::string::npos)) {
-            static int rstN = 0;
-            if (rstN++ < 400) {
-                std::string ch;
-                for (const auto& fr : frames_) {
-                    if (!ch.empty()) ch += "<-";
-                    ch += fr.fn ? fr.fn->name : "<ctx>";
-                    if (ch.size() > 200) break;
+        {
+            const char* rfn = name.c_str();
+            bool rstHit =
+                (strcmp(rfn, "restore_from_text") == 0 || strcmp(rfn, "internal_restore_user") == 0 ||
+                 strcmp(rfn, "internal_restore_position") == 0 || strcmp(rfn, "internal_restore_item") == 0 ||
+                 strcmp(rfn, "restore_user_patch_data") == 0 || strcmp(rfn, "internal_restore_stall") == 0 ||
+                 strcmp(rfn, "restore_upgrade") == 0 || strcmp(rfn, "restore_achieve_data") == 0 ||
+                 strcmp(rfn, "create_achieve_data") == 0 || strcmp(rfn, "get_achieve_repair_max_version") == 0 ||
+                 strcmp(rfn, "repair_user_attrib") == 0 || strcmp(rfn, "restore") == 0 ||
+                 strcmp(rfn, "raw_restore") == 0 || strcmp(rfn, "restore_ex") == 0 ||
+                 strcmp(rfn, "create_content") == 0 || strcmp(rfn, "create_content_to") == 0 ||
+                 strcmp(rfn, "do_operate") == 0);
+            // object filter: user clones/userd/achieved, PLUS unconditional
+            // create_achieve_data/create_content (may run inline on any VM).
+            bool rstObj = (objName_.find("userd.o") != std::string::npos ||
+                           thisObjectName_.find("clone:gs/clone/char/user.o") == 0 ||
+                           objName_.find("achieved.o") != std::string::npos ||
+                           objName_.find("save.o") != std::string::npos ||
+                           objName_.find("filed.o") != std::string::npos ||
+                           thisObjectName_.find("achieved") != std::string::npos);
+            if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") && rstHit && rstObj) {
+                static int rstN = 0;
+                if (rstN++ < 1200) {
+                    std::string ch;
+                    for (const auto& fr : frames_) {
+                        if (!ch.empty()) ch += "<-";
+                        ch += fr.fn ? fr.fn->name : "<ctx>";
+                        if (ch.size() > 200) break;
+                    }
+                    std::string adbg;
+                    for (size_t ai = 0; ai < args.size() && ai < 6; ++ai) {
+                        if (!adbg.empty()) adbg += " | ";
+                        adbg += to_string(args[ai], false).substr(0, 46);
+                    }
+                    std::cerr << "[rst] ENTER fn=" << name << " obj=" << objName_
+                              << " this=" << thisObjectName_ << " vm=" << this
+                              << " frames=" << frames_.size() << " a=[" << adbg
+                              << "] chain=[" << ch << "]\n";
+                    std::cerr.flush();
                 }
-                std::cerr << "[rst] ENTER fn=" << name << " obj=" << objName_
-                          << " this=" << thisObjectName_ << " vm=" << this
-                          << " frames=" << frames_.size() << " chain=[" << ch << "]\n";
-                std::cerr.flush();
             }
         }
         if (vmEnvTrace() &&
@@ -4903,6 +4921,20 @@ private:
             if (!frames_.empty()) {
                 size_t calleeStart = f.size();
                 int shift = static_cast<int>(detachedStack_.size());
+                if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST")) {
+                    std::string dbg;
+                    for (const auto& fr : frames_)
+                        dbg += (fr.fn ? fr.fn->name : "<ctx>") + std::string("(bp=") +
+                               std::to_string(fr.bp) + ") ";
+                    std::string cdbg;
+                    for (const auto& fr : f)
+                        cdbg += (fr.fn ? fr.fn->name : "<ctx>") + std::string("(bp=") +
+                                std::to_string(fr.bp) + ") ";
+                    std::cerr << "[bp-shift] vm=" << this << " obj=" << objName_
+                              << " shift=" << shift << " calleeFrames=[" << dbg
+                              << "] callerFrames=[" << cdbg << "]\n";
+                    std::cerr.flush();
+                }
                 for (auto& fr : frames_) fr.bp += shift;
                 detachedStack_.insert(detachedStack_.end(), stack_.begin(), stack_.end());
                 f.insert(f.end(), frames_.begin(), frames_.end());
@@ -5931,24 +5963,33 @@ private:
                     std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 returned_ = true;
                 // [rst] restore-path return probe
-                if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") && f.fn &&
-                    (f.fn->name == "restore_from_text" || f.fn->name == "internal_restore_user" ||
-                     f.fn->name == "internal_restore_position" || f.fn->name == "internal_restore_item" ||
-                     f.fn->name == "restore_user_patch_data" || f.fn->name == "internal_restore_stall" ||
-                     f.fn->name == "restore_upgrade" || f.fn->name == "restore_achieve_data" ||
-                     f.fn->name == "create_achieve_data" || f.fn->name == "repair_user_attrib" ||
-                     f.fn->name == "restore" || f.fn->name == "raw_restore" || f.fn->name == "restore_ex") &&
-                    (objName_.find("userd.o") != std::string::npos ||
-                     thisObjectName_.find("clone:gs/clone/char/user.o") == 0 ||
-                     objName_.find("achieved.o") != std::string::npos)) {
-                    static int rstR = 0;
-                    if (rstR++ < 400) {
-                        std::string rd = (returnValue_.index() == 2)
-                                             ? ("int " + std::to_string(std::get<int64_t>(returnValue_)))
-                                             : ("t" + std::to_string(returnValue_.index()));
-                        std::cerr << "[rst] RETURN fn=" << f.fn->name << " -> " << rd
-                                  << " obj=" << objName_ << " this=" << thisObjectName_ << "\n";
-                        std::cerr.flush();
+                {
+                    const char* rfn = f.fn ? f.fn->name.c_str() : "";
+                    bool rstHit =
+                        (strcmp(rfn, "restore_from_text") == 0 || strcmp(rfn, "internal_restore_user") == 0 ||
+                         strcmp(rfn, "internal_restore_position") == 0 || strcmp(rfn, "internal_restore_item") == 0 ||
+                         strcmp(rfn, "restore_user_patch_data") == 0 || strcmp(rfn, "internal_restore_stall") == 0 ||
+                         strcmp(rfn, "restore_upgrade") == 0 || strcmp(rfn, "restore_achieve_data") == 0 ||
+                         strcmp(rfn, "create_achieve_data") == 0 || strcmp(rfn, "get_achieve_repair_max_version") == 0 ||
+                         strcmp(rfn, "repair_user_attrib") == 0 || strcmp(rfn, "restore") == 0 ||
+                         strcmp(rfn, "raw_restore") == 0 || strcmp(rfn, "restore_ex") == 0 ||
+                         strcmp(rfn, "create_content") == 0 || strcmp(rfn, "create_content_to") == 0);
+                    bool rstObj = (objName_.find("userd.o") != std::string::npos ||
+                                   thisObjectName_.find("clone:gs/clone/char/user.o") == 0 ||
+                                   objName_.find("achieved.o") != std::string::npos ||
+                                   objName_.find("save.o") != std::string::npos ||
+                                   objName_.find("filed.o") != std::string::npos ||
+                                   thisObjectName_.find("achieved") != std::string::npos);
+                    if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") && f.fn && rstHit && rstObj) {
+                        static int rstR = 0;
+                        if (rstR++ < 1200) {
+                            std::string rd = (returnValue_.index() == 2)
+                                                 ? ("int " + std::to_string(std::get<int64_t>(returnValue_)))
+                                                 : ("t" + std::to_string(returnValue_.index()));
+                            std::cerr << "[rst] RETURN fn=" << f.fn->name << " -> " << rd
+                                      << " obj=" << objName_ << " this=" << thisObjectName_ << "\n";
+                            std::cerr.flush();
+                        }
                     }
                 }
                 if (constructDiagOn() && f.fn) {
@@ -6144,6 +6185,24 @@ private:
             case 56: { // push_local_var_i (index popped from stack)
                 int idx = static_cast<int16_t>(in.a);
                 if (in.op == 56) idx = static_cast<int>(toInt(pop().value));
+                if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_RST") && !frames_.empty() &&
+                    frames_.back().fn && frames_.back().fn->name == "restore_achieve_data") {
+                    static int plN = 0;
+                    if (plN++ < 60) {
+                        int absSlot = slotOf(idx);
+                        std::string sv = "OOB";
+                        if (absSlot >= 0 && static_cast<size_t>(absSlot) < stack_.size())
+                            sv = "t" + std::to_string(stack_[static_cast<size_t>(absSlot)].value.index()) +
+                                 ":" + to_string(stack_[static_cast<size_t>(absSlot)].value, false).substr(0, 40);
+                        std::cerr << "[rst] PUSHLOCAL fn=restore_achieve_data idx=" << idx
+                                  << " slot=" << absSlot << " val=" << sv
+                                  << " bp=" << frames_.back().bp
+                                  << " stack=" << stack_.size()
+                                  << " obj=" << objName_ << " this=" << thisObjectName_
+                                  << " frames=" << frames_.size() << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 pushValue(slotValue(slotOf(idx)));
                 break;
             }
@@ -7811,12 +7870,42 @@ private:
                                 std::cerr.flush();
                             }
                         }
+                        // Restore-chain forced inline: user->restore() runs on a
+                        // USER CLONE VM (objName contains '#'), so the normal
+                        // inline gate below skipped it and the achieved.o calls
+                        // (restore_achieve_data / create_achieve_data -> filed
+                        // create_content) went through the serviced cross-VM path.
+                        // That created nested runDetached layers; when the callee
+                        // parked, the caller's frames were merged/shifted twice and
+                        // the feature's local slot addressing broke (achieve_data_temp
+                        // read garbage instead of -1 -> restore returned 0 -> 9211).
+                        // Run achieved.o and the filed calls inside this restore
+                        // chain INLINE on the same VM stack (objVars switched), so
+                        // the whole chain parks/resumes as one layer.
+                        bool rstChainInline = false;
+                        if (targetVm && targetFn) {
+                            bool rstFrame = false;
+                            for (const auto& fr : frames_) {
+                                if (fr.fn && (fr.fn->name == "restore_achieve_data" ||
+                                              fr.fn->name == "create_achieve_data" ||
+                                              fr.fn->name == "restore_from_text" ||
+                                              fr.fn->name == "raw_restore"))
+                                    rstFrame = true;
+                            }
+                            bool achievedTarget = targetVm->objName().find("achieved.o") != std::string::npos;
+                            bool filedTarget = targetVm->objName().find("filed.o") != std::string::npos;
+                            rstChainInline = achievedTarget ||
+                                             (filedTarget && rstFrame &&
+                                              (targetFn->name == "create_content" ||
+                                               targetFn->name == "create_content_to" ||
+                                               targetFn->name == "read_content"));
+                        }
                         if (targetFn && targetFn->index >= 0 && !targetFn->code.empty() &&
                             ((targetVm->objName().find("filed.o") != std::string::npos ||
                               targetVm->objName().find("importd.o") != std::string::npos ||
                               targetVm->objName().find("taskd.o") != std::string::npos) ||
-                             roomdSetupCtx) &&
-                            objName_.find('#') == std::string::npos &&
+                             roomdSetupCtx || rstChainInline) &&
+                            (objName_.find('#') == std::string::npos || rstChainInline) &&
                             !serveTaskd) {
                             // Cross-object inline for filed.o/importd.o service
                             // calls (a blocking efun parks the whole caller
