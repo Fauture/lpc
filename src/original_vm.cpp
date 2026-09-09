@@ -1720,6 +1720,43 @@ public:
                       << " frames=" << frames_.size() << " chain=[" << ch << "]\n";
             std::cerr.flush();
         }
+        // [gsp] probe: restore_raw / get_save_path entry - confirm whether the
+        // cross-VM reference args (&path,&id,&branch) survive as CrossVmRef
+        // (index 11) or get flattened, and who the caller (prev) is.
+        if (std::getenv("LPCVM_TAIL") && (name == "get_save_path" || name == "restore_raw")) {
+            std::string ch;
+            for (const auto& fr : frames_) {
+                if (!ch.empty()) ch += "<-";
+                ch += fr.fn ? fr.fn->name : "<ctx>";
+                if (ch.size() > 220) break;
+            }
+            std::string adbg;
+            for (size_t ai = 0; ai < args.size(); ++ai) {
+                if (!adbg.empty()) adbg += " | ";
+                adbg += "t" + std::to_string(args[ai].index()) + ":" + to_string(args[ai], false).substr(0, 60);
+                if (args[ai].index() == 11) {
+                    auto r = std::get<std::shared_ptr<CrossVmRef>>(args[ai]);
+                    OriginalVm* tvm = r ? static_cast<OriginalVm*>(r->vm) : nullptr;
+                    std::string tval = "?";
+                    std::string tkind = "dead";
+                    if (tvm) {
+                        tkind = (tvm == this) ? "self" : "other";
+                        Value vv = resolveCrossVmRef(args[ai]);
+                        tval = to_string(vv, false).substr(0, 40);
+                    }
+                    adbg += "{->vm=" + std::to_string(reinterpret_cast<uintptr_t>(tvm))
+                          + (tvm ? ("(" + (tvm == this ? std::string("this") : tvm->objName()) + ")") : std::string(""))
+                          + " slot=" + std::to_string(r ? r->slotIndex : -2)
+                          + " obj=" + std::to_string(r ? r->objIndex : -2)
+                          + " kind=" + tkind + " cur=[" + tval + "]}";
+                }
+            }
+            std::cerr << "[gsp] fn=" << name << " vm=" << this << " obj=" << objName_
+                      << " this=" << thisObjectName_ << " prev=" << previousObjectName_
+                      << " argc=" << args.size() << " args=[" << adbg
+                      << "] frames=" << frames_.size() << " chain=[" << ch << "]\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace() &&
             (name == "lite_query_temp" || name == "lite_set_temp" || name == "set_temp" ||
              name == "query_temp" || name == "set"))
@@ -2529,6 +2566,14 @@ private:
     // environment and env queries never depend on process/scheduler state.
     std::string envContainerKey_;
     std::vector<StackItem> stack_;
+    // While runDetached() is executing a detached callee, the CALLER's stack
+    // lives here (moved out of stack_ so the callee gets a clean stack).
+    // CrossVmRef by-ref arguments that point into the caller's slots must
+    // resolve reads/writes against BOTH stack_ and this buffer - otherwise a
+    // callee running on ANOTHER VM (e.g. userd.restore_raw -> raw_user's
+    // get_save_path(&path,&id,&branch)) writes into an empty stack and the
+    // by-ref writes are lost (character restore read an empty path/name).
+    std::vector<StackItem> detachedStack_;
     std::shared_ptr<std::vector<Value>> objVars_;  // per-object instance variables (shared across threads of the same object)
     // This VM's OWN object-variable table (never switched by cross-object
     // inline frames).  A top-level function call (external entry) must run in
@@ -2876,10 +2921,39 @@ private:
                     // (importd.create_data's attrib_index).
                     auto r = std::get<std::shared_ptr<CrossVmRef>>(slot.value);
                     OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
+                    if (std::getenv("LPCVM_TAIL") && thisObjectName_.find("raw_user") != std::string::npos) {
+                        static int wtN = 0;
+                        if (wtN < 40) {
+                            ++wtN;
+                            std::string tg = "?";
+                            if (vm) {
+                                if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size())
+                                    tg = "slot=" + std::to_string(r->slotIndex) + " val=t" +
+                                         std::to_string(vm->stack_[static_cast<size_t>(r->slotIndex)].value.index());
+                                else if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
+                                    tg = "detach-slot=" + std::to_string(r->slotIndex) + " val=t" +
+                                         std::to_string(vm->detachedStack_[static_cast<size_t>(r->slotIndex)].value.index());
+                                else if (r->objIndex >= 0)
+                                    tg = "obj=" + std::to_string(r->objIndex);
+                                else tg = "unresolved";
+                            } else tg = "nullvm";
+                            std::cerr << "[wt-cvf] vm=" << this << " this=" << thisObjectName_
+                                      << " write=[" << to_string(v, false).substr(0, 40)
+                                      << "] -> tgtvm=" << std::to_string(reinterpret_cast<uintptr_t>(vm))
+                                      << " " << tg << "\n";
+                            std::cerr.flush();
+                        }
+                    }
                     if (vm) {
-                        if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
-                            StackItem& cslot = vm->stack_[static_cast<size_t>(r->slotIndex)];
-                            cslot.value = v;
+                        StackItem* cslot = nullptr;
+                        if (r->slotIndex >= 0) {
+                            if (static_cast<size_t>(r->slotIndex) < vm->stack_.size())
+                                cslot = &vm->stack_[static_cast<size_t>(r->slotIndex)];
+                            else if (static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
+                                cslot = &vm->detachedStack_[static_cast<size_t>(r->slotIndex)];
+                        }
+                        if (cslot) {
+                            cslot->value = v;
                         } else if (r->objIndex >= 0 &&
                                    static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
                             vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = v;
@@ -2919,14 +2993,20 @@ private:
             auto r = std::get<std::shared_ptr<CrossVmRef>>(v);
             OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
             if (!vm) return make_int(0);
-            if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
-                const StackItem& it = vm->stack_[static_cast<size_t>(r->slotIndex)];
-                if (it.isRef) {
-                    // ref-to-ref: the caller's slot itself is a reference
-                    // (nested case-8 ref chain); follow it on the CALLER VM.
-                    return vm->deref(it);
+            if (r->slotIndex >= 0) {
+                const StackItem* it = nullptr;
+                if (static_cast<size_t>(r->slotIndex) < vm->stack_.size())
+                    it = &vm->stack_[static_cast<size_t>(r->slotIndex)];
+                else if (static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
+                    it = &vm->detachedStack_[static_cast<size_t>(r->slotIndex)];  // caller stack moved out by runDetached
+                if (it) {
+                    if (it->isRef) {
+                        // ref-to-ref: the caller's slot itself is a reference
+                        // (nested case-8 ref chain); follow it on the CALLER VM.
+                        return vm->deref(*it);
+                    }
+                    return vm->resolveCrossVmRef(it->value);
                 }
-                return vm->resolveCrossVmRef(it.value);
             }
             if (r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->ownObjVars().size())
                 return vm->ownObjVars()[static_cast<size_t>(r->objIndex)];
@@ -4732,7 +4812,10 @@ private:
     template <typename F>
     Value runDetached(F&& fn) {
         int d = execDepth_;
-        std::vector<StackItem> s = std::move(stack_);
+        // Preserve an outer detached layer (re-entrant runDetached on the same
+        // VM) so the inner window doesn't clobber the outer caller's slots.
+        std::vector<StackItem> outerDetached = std::move(detachedStack_);
+        detachedStack_ = std::move(stack_);
         std::vector<Frame> f = std::move(frames_);
         Value rv = returnValue_;
         bool rd = returned_;
@@ -4770,9 +4853,9 @@ private:
             execDepth_ = d;
             if (!frames_.empty()) {
                 size_t calleeStart = f.size();
-                int shift = static_cast<int>(s.size());
+                int shift = static_cast<int>(detachedStack_.size());
                 for (auto& fr : frames_) fr.bp += shift;
-                s.insert(s.end(), stack_.begin(), stack_.end());
+                detachedStack_.insert(detachedStack_.end(), stack_.begin(), stack_.end());
                 f.insert(f.end(), frames_.begin(), frames_.end());
                 if (calleeStart < f.size()) {
                     f[calleeStart].retCode = savedCode;
@@ -4787,10 +4870,12 @@ private:
                     f[calleeStart].savedFuncLookup = savedLookup;
                     f[calleeStart].funcLookupSwitched = true;
                 }
-                stack_ = std::move(s);
+                stack_ = std::move(detachedStack_);
+                detachedStack_ = std::move(outerDetached);
                 frames_ = std::move(f);
             } else {
-                stack_ = std::move(s);
+                stack_ = std::move(detachedStack_);
+                detachedStack_ = std::move(outerDetached);
                 frames_ = std::move(f);
                 funcLookup_ = savedLookup;
                 // CROSS-VM blocking park: this VM's caller frames (e.g. a
@@ -4809,7 +4894,8 @@ private:
         } catch (...) {
             for (int i = 0; i < d; ++i) execMutex_.lock();
             execDepth_ = d;
-            stack_ = std::move(s);
+            stack_ = std::move(detachedStack_);
+            detachedStack_ = std::move(outerDetached);
             frames_ = std::move(f);
             funcLookup_ = savedLookup;
             returnValue_ = rv;
@@ -4818,7 +4904,8 @@ private:
         }
         for (int i = 0; i < d; ++i) execMutex_.lock();
         execDepth_ = d;
-        stack_ = std::move(s);
+        stack_ = std::move(detachedStack_);
+        detachedStack_ = std::move(outerDetached);
         frames_ = std::move(f);
         funcLookup_ = savedLookup;
         returnValue_ = rv;
@@ -6033,9 +6120,29 @@ private:
                     if (slot.value.index() == 11) {
                         auto r = std::get<std::shared_ptr<CrossVmRef>>(slot.value);
                         OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
+                        if (std::getenv("LPCVM_TAIL") && thisObjectName_.find("raw_user") != std::string::npos) {
+                            static int slN = 0;
+                            if (slN < 40) {
+                                ++slN;
+                                std::cerr << "[sl-cvf] vm=" << this << " this=" << thisObjectName_
+                                          << " local=" << static_cast<int16_t>(in.a)
+                                          << " write=[" << to_string(sv, false).substr(0, 40)
+                                          << "] -> tgtvm=" << std::to_string(reinterpret_cast<uintptr_t>(vm))
+                                          << " slot=" << r->slotIndex << " obj=" << r->objIndex
+                                          << " tgtSz=" << (vm ? vm->stack_.size() : size_t(0)) << "\n";
+                                std::cerr.flush();
+                            }
+                        }
                         if (vm) {
-                            if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size()) {
-                                vm->stack_[static_cast<size_t>(r->slotIndex)].value = sv;
+                            StackItem* cslot = nullptr;
+                            if (r->slotIndex >= 0) {
+                                if (static_cast<size_t>(r->slotIndex) < vm->stack_.size())
+                                    cslot = &vm->stack_[static_cast<size_t>(r->slotIndex)];
+                                else if (static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
+                                    cslot = &vm->detachedStack_[static_cast<size_t>(r->slotIndex)];
+                            }
+                            if (cslot) {
+                                cslot->value = sv;
                             } else if (r->objIndex >= 0 &&
                                        static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
                                 vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = sv;
@@ -7348,11 +7455,17 @@ private:
                         // across the VM boundary and is a known limitation.)
                         if (it.isRef) {
                             Value dv = deref(it);
-                            if (vmEnvTrace() && funName == "create_data")
-                                std::cerr << "[popref] create_data arg[" << i << "] refKind="
+                            if ((vmEnvTrace() && funName == "create_data") ||
+                                (std::getenv("LPCVM_TAIL") && funName == "get_save_path" &&
+                                 pathVal.index() == 4 &&
+                                 std::get<SharedString>(pathVal).str().find("raw_user") != std::string::npos))
+                                std::cerr << "[popref] arg[" << i << "] fn=" << funName
+                                          << " path=" << (pathVal.index() == 4 ? std::get<SharedString>(pathVal).str() : "?")
+                                          << " refKind="
                                           << (it.slotIndex >= 0 ? "slot" : it.globalIndex >= 0 ? "global"
                                              : it.objIndex >= 0 ? "obj" : "member")
-                                          << " idx=" << it.objIndex << " derefType=" << dv.index() << "\n";
+                                          << " idx=" << it.objIndex << "/" << it.slotIndex
+                                          << " derefType=" << dv.index() << "\n";
                             // Object-variable AND local-stack-slot references must
                             // stay WRITABLE across the VM boundary: pass a
                             // CrossVmRef so the callee's assignments AND whole-ref
