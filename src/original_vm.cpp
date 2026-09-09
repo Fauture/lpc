@@ -5314,11 +5314,47 @@ private:
         // THIS VM's frame chain, so the continuation already happened inside
         // the parked VM's resume) - skip.
         if (frames_.empty()) return;
+        bool rcLog = std::getenv("LPCVM_TAIL") &&
+                     (objName_.find("login.o") != std::string::npos ||
+                      objName_.find("logind.o") != std::string::npos ||
+                      thisObjectName_.find("login.o") != std::string::npos);
+        if (rcLog) {
+            std::string top = frames_.back().fn ? frames_.back().fn->name : "?";
+            size_t topCode = frames_.back().fn && code_ == &frames_.back().fn->code
+                                 ? code_->size() : 0;
+            std::cerr << "[rc] vm=" << this << " obj=" << objName_
+                      << " frames=" << frames_.size() << " ip=" << ip_
+                      << " top=" << top
+                      << " codeOk=" << (code_ && frames_.back().fn &&
+                                        code_ == &frames_.back().fn->code ? 1 : 0)
+                      << " codeSize=" << (code_ ? code_->size() : 0)
+                      << " topCodeSize=" << topCode << "\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace())
             std::cerr << "[resume-caller] vm=" << this << " obj=" << objName_
                       << " frames=" << frames_.size() << " ip=" << ip_ << "\n";
+        // [cv3] Switch the execution context back to the TOP frame's own
+        // function before continuing: after a deep cross-VM detach chain the
+        // code_ member still points at the last executed (callee) function,
+        // not at this VM's suspended caller frame.  Running runLoop with a
+        // mismatched code_ falls straight out of the frame (skipping the
+        // caller's continuation - login's _process_command never reached
+        // set_operating(0), leaving operating=1 -> every later command is
+        // rejected with 9101).
+        if (!frames_.empty() && frames_.back().fn) {
+            if (code_ != &frames_.back().fn->code) code_ = &frames_.back().fn->code;
+            if (!frames_.back().funcLookupSwitched) funcLookup_ = nullptr;
+        }
         pushValue(std::move(result));
         runLoop();
+        if (rcLog) {
+            std::cerr << "[rc-end] vm=" << this << " obj=" << objName_
+                      << " frames=" << frames_.size() << " ip=" << ip_
+                      << " top=" << (frames_.empty() ? "none" : (frames_.back().fn ? frames_.back().fn->name : "?"))
+                      << " ret=" << to_string(returnValue_, false).substr(0, 40) << "\n";
+            std::cerr.flush();
+        }
     }
 
     // True while this VM is parked (a blocking efun suspended it).
