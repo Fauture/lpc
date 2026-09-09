@@ -90,6 +90,10 @@ public:
     Value checkSteps(const std::vector<Value>& args);
     // is_pt_in_poly(x, y, poly) - even-odd point-in-polygon test.
     static bool pointInPoly(int x, int y, const std::vector<int>& poly);
+    // get_in_polygens(mapIndex, poly) - vm_f_get_in_polygens (0x807b148):
+    // array of the ids of every object on that map whose (x,y) lies inside
+    // the polygon (polygon coordinates are clamped to the map size).
+    Value getInPolygens(const std::vector<Value>& args);
 
     // ---- map event hooks (driver hook_map_event / unhook_map_event) ----
     // An LPC hook is (mapIndex, polygon, idFilter, closure); the driver fires

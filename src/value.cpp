@@ -1,4 +1,5 @@
 #include "value.h"
+#include "original_vm.h"
 
 #include <atomic>
 #include <cmath>
@@ -648,7 +649,18 @@ bool value_equal(const Value& a, const Value& b) {
         auto pa = std::get<std::shared_ptr<ObjectValue>>(a);
         auto pb = std::get<std::shared_ptr<ObjectValue>>(b);
         if (pa == pb) return true;
-        return pa->programName == pb->programName;
+        if (pa->programName == pb->programName) return true;
+        // Same object addressed differently: LPC code holds the room/daemon by
+        // its program path ("/gs/zone/x/x.c") while object()/env_object()
+        // return the registered key ("pak:gs/zone/x/x.o").  Only pay for the
+        // registry lookup when one side is a plain source path - comparing two
+        // different clones must stay a string compare.
+        auto plainSourcePath = [](const std::string& s) {
+            return s.size() > 2 && s.compare(s.size() - 2, 2, ".c") == 0;
+        };
+        if (plainSourcePath(pa->programName) || plainSourcePath(pb->programName))
+            return canonicalObjectPath(pa->programName) == canonicalObjectPath(pb->programName);
+        return false;
     }
     case 8: {
         auto pa = std::get<std::shared_ptr<ClosureValue>>(a);

@@ -569,6 +569,47 @@ bool MapModule::pointInPoly(int x, int y, const std::vector<int>& poly) {
     return inside;
 }
 
+// vm_f_get_in_polygens (0x807b148): get_in_polygens(mapIndex, poly) returns
+// the ids of all objects on the map whose cell lies inside the polygon.  The
+// original clamps the polygon coordinates to the map size, computes the
+// bounding block range and walks every cell in it.
+Value MapModule::getInPolygens(const std::vector<Value>& args) {
+    auto out = std::make_shared<ArrayValue>();
+    if (args.size() < 2 || args[1].index() != 5) return out;
+    MapInfo* m = findMapIndex(static_cast<int>(valToInt(args[0])));
+    if (!m) return out;
+    const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[1])->items;
+    std::vector<int> poly;
+    poly.reserve(items.size());
+    for (const auto& v : items) poly.push_back(static_cast<int>(valToInt(v)));
+    if (poly.size() < 6 || (poly.size() & 1)) return out;
+    int minX = m->width, maxX = 0, minY = m->height, maxY = 0;
+    for (size_t i = 0; i + 1 < poly.size(); i += 2) {
+        int x = poly[i], y = poly[i + 1];
+        if (x < 0) x = 0;
+        if (x > m->width) x = m->width;
+        if (y < 0) y = 0;
+        if (y > m->height) y = m->height;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+    int bx0 = minX / 8, bx1 = maxX / 8, by0 = minY / 8, by1 = maxY / 8;
+    if (bx0 < 0) bx0 = 0;
+    if (by0 < 0) by0 = 0;
+    if (bx1 > m->xblocks - 1) bx1 = m->xblocks - 1;
+    if (by1 > m->yblocks - 1) by1 = m->yblocks - 1;
+    for (int bx = bx0; bx <= bx1; ++bx) {
+        for (int by = by0; by <= by1; ++by) {
+            for (MapObj* o = m->cells[bx * m->yblocks + by]; o; o = o->next) {
+                if (pointInPoly(o->x, o->y, poly)) out->items.push_back(make_int(o->id));
+            }
+        }
+    }
+    return out;
+}
+
 // ---- map event hooks ----
 namespace {
 std::mutex g_hookMutex;

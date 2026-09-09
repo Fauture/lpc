@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -2327,6 +2328,23 @@ std::string gbkToUtf8(const std::string& s) {
     return out;
 }
 #endif
+
+// ---- small process-wide tables for the batch-1 efuns (efun_batch1.inc) ----
+// vm_getPrompt/vm_setPrompt
+std::string& promptText() {
+    static std::string p = "> ";
+    return p;
+}
+// vm_getProcessConfig/vm_changeProcessConfig (driver tuning knobs, id -> value)
+std::map<int64_t, int64_t>& pconfigTable() {
+    static std::map<int64_t, int64_t> t;
+    return t;
+}
+// vm_getVar/vm_setVar (driver-wide named variables)
+std::map<std::string, Value>& globalVarTable() {
+    static std::map<std::string, Value> t;
+    return t;
+}
 } // namespace
 
 StubCallCtx& stubCallCtx() {
@@ -2336,6 +2354,9 @@ StubCallCtx& stubCallCtx() {
 
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
+
+#include "efun_batch1.inc"
+#include "efun_batch2.inc"
 
     // ------------------------------------------------------------------
     // Stub-efun tracker.  The name list is GENERATED (tools/gen_stubset.py)
@@ -2351,26 +2372,42 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         static const std::unordered_set<std::string> stubSet = {
 #include "stub_efuns.inc"
         };
+        // Print the COMPLETE unimplemented list once per process, so efuns the
+        // game never happens to trigger are visible too (and can be fixed).
+        static const bool listed = [] {
+            std::string all;
+            for (const auto& s : stubSet) {
+                if (!all.empty()) all += ' ';
+                all += s;
+            }
+            std::cerr << "[efun-stub-list] " << stubSet.size()
+                      << " unimplemented efuns: " << all << "\n";
+            std::cerr.flush();
+            return true;
+        }();
+        (void)listed;
         if (stubSet.find(name) != stubSet.end()) {
             std::lock_guard<std::mutex> lk(m);
             int c = ++counts[name];
-            if (c <= 20 || c % 500 == 0) {
-                std::string ad;
-                if (!args.empty()) {
-                    if (args[0].index() == 4) {
-                        std::string s = std::get<SharedString>(args[0]);
-                        if (s.size() > 48) s = s.substr(0, 48) + "...";
-                        ad = "a0='" + s + "'";
-                    } else if (args[0].index() == 2) {
-                        ad = "a0=" + std::to_string(std::get<int64_t>(args[0]));
-                    } else {
-                        ad = "a0=t" + std::to_string(args[0].index());
-                    }
+            // Every trigger is printed (no rate limiting): the log then shows
+            // exactly which unimplemented efun the game needed, where, and how
+            // often.  Implement one -> remove it from the generated list.
+            std::string ad;
+            if (!args.empty()) {
+                if (args[0].index() == 4) {
+                    std::string s = std::get<SharedString>(args[0]);
+                    if (s.size() > 48) s = s.substr(0, 48) + "...";
+                    ad = "a0='" + s + "'";
+                } else if (args[0].index() == 2) {
+                    ad = "a0=" + std::to_string(std::get<int64_t>(args[0]));
+                } else {
+                    ad = "a0=t" + std::to_string(args[0].index());
                 }
-                std::cerr << "[efun-stub] " << name << " @" << stubCallCtx().obj
-                          << "::" << stubCallCtx().fn << " args=" << args.size()
-                          << " " << ad << " calls=" << c << " (unimplemented efun)\n";
             }
+            std::cerr << "[efun-stub] " << name << " @" << stubCallCtx().obj
+                      << "::" << stubCallCtx().fn << " args=" << args.size()
+                      << " " << ad << " calls=" << c << " (unimplemented efun)\n";
+            std::cerr.flush();
             // The generated list covers ONLY efuns with no dispatch branch
             // below, so return immediately (avoid double-logging at the
             // catch-all).  Unknown efuns silently return 0.
@@ -5808,7 +5845,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return lpc::mapModule().freeId(args.empty() ? Value{} : args[0]);
     }
     if (name == "get_object_by_id") {
-        return lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
+        Value r = lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
+        if (std::getenv("LPCVM_NEAR") &&
+            (stubCallCtx().obj.find("open_menu") != std::string::npos ||
+             stubCallCtx().fn == "main")) {
+                std::cerr << "[near-gob] id=" << (args.empty() ? -1 : as_int(args[0]))
+                          << " -> " << to_string(r, false).substr(0, 60) << "\n";
+        }
+        return r;
     }
     if (name == "init_id_pool") {
         // init_id_pool(poolSize[, startId]) - startId defaults to 10000.
@@ -5879,7 +5923,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return lpc::mapModule().readMapInfo(args);
     }
     if (name == "calc_offset") {
-        return lpc::mapModule().calcOffset(args);
+        Value r = lpc::mapModule().calcOffset(args);
+        if (std::getenv("LPCVM_NEAR") && stubCallCtx().fn == "is_near") {
+                std::cerr << "[near-off] (" << (args.size() > 0 ? as_int(args[0]) : -1) << ","
+                          << (args.size() > 1 ? as_int(args[1]) : -1) << ")->("
+                          << (args.size() > 2 ? as_int(args[2]) : -1) << ","
+                          << (args.size() > 3 ? as_int(args[3]) : -1) << ") = " << as_int(r) << "\n";
+        }
+        return r;
     }
     if (name == "check_steps") {
         // vm_f_check_steps: validate a movement path (move_v37.multi_move_to).
@@ -5912,6 +5963,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(lpc::MapModule::pointInPoly(static_cast<int>(as_int(args[0])),
                                                     static_cast<int>(as_int(args[1])), poly)
                             ? 1 : 0);
+    }
+    if (name == "get_in_polygens") {
+        // vm_f_get_in_polygens (0x807b148): ids of every object inside the
+        // polygon on that map.  A stub returning 0 broke area queries
+        // (region triggers, quest checks).
+        return lpc::mapModule().getInPolygens(args);
     }
     if (name == "hook_map_event") {
         // vm_f_hook_map_event(mapIndex, poly, idFilter, closure) -> event id.

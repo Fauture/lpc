@@ -3255,29 +3255,44 @@ private:
             // register_post_init forever -> post_init() never returned -> 8160
             // never opened.  Track env as registry-key -> registry-key.
             if (nm == "move_object") {
-                std::string destKey;
-                if (!args.empty()) {
-                    if (args[0].index() == 7)
-                        destKey = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
-                    else if (args[0].index() == 4)
-                        destKey = std::get<SharedString>(args[0]).str();
-                }
-                std::string myKey;
-                {
+                // This game's move_object is (container, object_to_move) - the
+                // OPPOSITE of MudOS's (item, dest).  Evidence: start_gs's
+                // update_object does `move_object(ob, obs[i])` to put the
+                // contained object obs[i] back into the reloaded ob and then
+                // `move_object(env, ob)` to put ob back into its room;
+                // userd does `move_object(me, pet)` (pet into player),
+                // guard.c `move_object(this_object(), weapon)` (weapon into
+                // guard), dongfu_tiaozhan `move_object(tower, monster)`.
+                // The old code treated args[0] as the DESTINATION OF SELF and
+                // ignored args[1], so every object's environment ended up
+                // wrong: env_object(player) != env_object(npc) made is_near()
+                // fail (NPC menus/triggers dead), and inventory/room contents
+                // were lost (shops, quests, story all unusable).
+                auto keyOf = [&](const Value& v) -> std::string {
+                    if (v.index() == 7)
+                        return std::get<std::shared_ptr<ObjectValue>>(v)->programName;
+                    if (v.index() == 4)
+                        return std::get<SharedString>(v).str();
+                    return std::string();
+                };
+                std::string destKey = args.empty() ? std::string() : keyOf(args[0]);
+                std::string movedKey = (args.size() >= 2) ? keyOf(args[1]) : std::string();
+                if (movedKey.empty()) {
+                    // move_object(container) - self is the moved object.
                     auto& reg = objectRegistry();
                     std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     for (auto& kv : reg.vms)
-                        if (kv.second.get() == this) { myKey = kv.first; break; }
+                        if (kv.second.get() == this) { movedKey = kv.first; break; }
                 }
-                if (!myKey.empty()) {
-                    envStoreObjKey(myKey, destKey);
+                if (!movedKey.empty()) {
+                    envStoreObjKey(movedKey, destKey);
                 }
                 if (std::getenv("LPCVM_TAIL") &&
-                    (myKey.find("misc") != std::string::npos || destKey.find("misc") != std::string::npos ||
-                     myKey.find("bangpai") != std::string::npos || destKey.find("bangpai") != std::string::npos)) {
+                    (movedKey.find("misc") != std::string::npos || destKey.find("misc") != std::string::npos ||
+                     movedKey.find("bangpai") != std::string::npos || destKey.find("bangpai") != std::string::npos)) {
                     static int mvN = 0;
                     if (mvN++ < 60)
-                        std::cerr << "[env-mv] self=" << myKey << " dest=" << destKey << "\n";
+                        std::cerr << "[env-mv] moved=" << movedKey << " dest=" << destKey << "\n";
                     std::cerr.flush();
                 }
                 return make_int(1);
@@ -3296,6 +3311,19 @@ private:
                 }
                 if (!obKey.empty()) {
                     std::string env = envLookupObjKey(obKey);
+                    if (std::getenv("LPCVM_NEAR")) {
+                        // is_near() (gs/inherit/misc/char.c) requires
+                        // env_object(me) == env_object(ob); log only the calls
+                        // made from is_near so the 400-line budget is not
+                        // consumed by unrelated boot-time lookups.
+                        std::string fnC = frames_.empty() || !frames_.back().fn ? "<g>" : frames_.back().fn->name;
+                        if (fnC == "is_near") {
+                            std::cerr << "[near-env] q=" << obKey << " env="
+                                      << (env.empty() ? std::string("0") : env)
+                                      << " fn=" << fnC << " caller=" << objName_ << "\n";
+                            std::cerr.flush();
+                        }
+                    }
                     if (std::getenv("LPCVM_TAIL")) {
                         static int evN = 0;
                         if (evN++ < 80) {
@@ -3310,6 +3338,238 @@ private:
                         return make_object(env);
                 }
                 return make_int(0);
+            }
+            // ---------------- efun batch 2 (vm_f_* verified) ----------------
+            if (nm == "get_timer_id") {
+                // vm_f_get_timer_id (0x80ef6d4): get_timer_id(name|id) -> the
+                // timer's id, or 0 when no such timer is registered.
+                std::shared_ptr<TimerEntry> e;
+                if (!args.empty()) {
+                    if (args[0].index() == 4)
+                        e = timerFindByName(std::get<SharedString>(args[0]));
+                    else if (args[0].index() == 2)
+                        e = timerFindById(toInt(args[0]));
+                }
+                return make_int(e ? e->id : 0);
+            }
+            if (nm == "previous_function") {
+                // vm_f_previous_function (0x80f62ec): name of the function at
+                // the given call level (1 = the direct caller), 0 when the
+                // level is outside the stack.
+                int64_t level = args.empty() ? 1 : toInt(args[0]);
+                if (level < 1) level = 1;
+                if (static_cast<size_t>(level) >= frames_.size()) return make_int(0);
+                const Frame& fr = frames_[frames_.size() - 1 - static_cast<size_t>(level)];
+                if (!fr.fn) return make_int(0);
+                return make_string(fr.fn->name);
+            }
+            if (nm == "object_dir") {
+                // vm_f_object_dir (0x80f63e8): the directory part (up to and
+                // including the last '/') of the object's program path.
+                std::string path = obj_.sourceName.empty() ? objName_ : obj_.sourceName;
+                if (!args.empty()) {
+                    if (args[0].index() == 4) path = std::get<SharedString>(args[0]);
+                    else if (args[0].index() == 7)
+                        path = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                }
+                size_t slash = path.rfind('/');
+                return make_string(slash == std::string::npos ? path : path.substr(0, slash + 1));
+            }
+            if (nm == "leave_object") {
+                // vm_f_leave_object (0x80f6454): unlink the object (default
+                // this_object()) from its container.  The original also
+                // unlinks it from the container's lodger list, which our env
+                // map models as the single container key.
+                std::string key = objName_;
+                if (!args.empty()) {
+                    if (args[0].index() == 4) key = std::get<SharedString>(args[0]);
+                    else if (args[0].index() == 7)
+                        key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                }
+                if (!key.empty()) envStoreObjKey(key, "");
+                return make_int(0);
+            }
+            if (nm == "neighbour_object") {
+                // vm_f_neighbour_object (0x80f69b4): every object sharing the
+                // container of the given object (default this_object()),
+                // excluding the object itself.
+                std::string key = objName_;
+                if (!args.empty()) {
+                    if (args[0].index() == 4) key = std::get<SharedString>(args[0]);
+                    else if (args[0].index() == 7)
+                        key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                }
+                auto out = std::make_shared<ArrayValue>();
+                const std::string env = envLookupObjKey(key);
+                if (!env.empty()) {
+                    auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    for (auto& kv : reg.vms) {
+                        if (kv.first == key) continue;
+                        if (envLookupObjKey(kv.first) == env)
+                            out->items.push_back(make_object(kv.first));
+                    }
+                }
+                return out;
+            }
+            if (nm == "get_obj_string") {
+                // vm_f_get_obj_string (0x80f6dac): the object's string table;
+                // argument 2 selects one entry (out of range -> 0).
+                const OriginalObject* o = &obj_;
+                if (!args.empty() && args[0].index() == 4) {
+                    auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    auto it = reg.objects.find(std::get<SharedString>(args[0]));
+                    if (it != reg.objects.end()) o = it->second.get();
+                }
+                if (args.size() > 1 && args[1].index() == 2) {
+                    int64_t idx = toInt(args[1]);
+                    if (idx < 0 || static_cast<size_t>(idx) >= o->strings.size())
+                        return make_int(0);
+                    return make_string(o->strings[static_cast<size_t>(idx)]);
+                }
+                auto a = std::make_shared<ArrayValue>();
+                for (const std::string& s : o->strings) a->items.push_back(make_string(s));
+                return a;
+            }
+            if (nm == "bind_value") {
+                // vm_f_bind_value (0x80f5874): store/read a value bound to an
+                // object (the driver keeps it in the object's bind slot).
+                std::string key = objName_;
+                if (!args.empty()) {
+                    if (args[0].index() == 4) key = std::get<SharedString>(args[0]);
+                    else if (args[0].index() == 7)
+                        key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                }
+                static std::mutex bvMx;
+                static std::unordered_map<std::string, Value> bvMap;
+                std::lock_guard<std::mutex> lk(bvMx);
+                if (args.size() > 1) bvMap[key] = args[1];
+                auto it = bvMap.find(key);
+                if (it == bvMap.end()) return Value(UndefinedTag{});
+                return it->second;
+            }
+            if (nm == "find_object_function") {
+                // vm_f_find_object_function (0x80f6194): build a function
+                // closure for obj|name (extra arguments become bound args).
+                if (args.size() < 2) return make_int(0);
+                std::string targetKey;
+                if (args[0].index() == 7)
+                    targetKey = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                else if (args[0].index() == 4)
+                    targetKey = std::get<SharedString>(args[0]);
+                std::string fnName = (args[1].index() == 4) ? std::get<SharedString>(args[1]) : std::string();
+                if (targetKey.empty() || fnName.empty()) return make_int(0);
+                std::shared_ptr<OriginalVm> tv;
+                {
+                    auto& reg = objectRegistry();
+                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                    auto it2 = reg.vms.find(targetKey);
+                    if (it2 != reg.vms.end()) tv = it2->second;
+                }
+                const OriginalFunction* fn = tv ? tv->findFunctionAny(fnName) : nullptr;
+                if (!fn) return make_int(0);
+                auto cl = std::make_shared<ClosureValue>();
+                cl->functionName = fnName;
+                cl->func = fn;
+                cl->funcIndex = fn->index;
+                cl->owner = &tv->object();
+                cl->ownerKey = targetKey;
+                for (size_t i = 2; i < args.size(); ++i) cl->boundArgs.push_back(args[i]);
+                return cl;
+            }
+            if (nm == "get_global_function") {
+                // vm_f_get_global_function (0x80f65ec): closure for a function
+                // of the driver's GLOBAL program (start_aaa / master).
+                if (args.empty() || args[0].index() != 4) return make_int(0);
+                std::string fnName = std::get<SharedString>(args[0]);
+                const OriginalObject* master = objectRegistry().masterObj;
+                if (!master) return make_int(0);
+                const OriginalFunction* fn = nullptr;
+                for (const OriginalFunction& f : master->functions)
+                    if (f.name == fnName) { fn = &f; break; }
+                if (!fn) return make_int(0);
+                auto cl = std::make_shared<ClosureValue>();
+                cl->functionName = fnName;
+                cl->func = fn;
+                cl->funcIndex = fn->index;
+                cl->owner = master;
+                for (size_t i = 1; i < args.size(); ++i) cl->boundArgs.push_back(args[i]);
+                return cl;
+            }
+            if (nm == "get_function_info") {
+                // vm_f_get_function_info (0x80d6570): {args, vars, owner,
+                // is_global} for a function closure (0 for anything else).
+                if (args.empty() || args[0].index() != 8) return make_int(0);
+                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
+                if (!cl) return make_int(0);
+                auto m = std::make_shared<MappingValue>();
+                if (!cl->func) {
+                    m->insert(make_string("type"), make_string("external"));
+                    return m;
+                }
+                m->insert(make_string("args"), std::make_shared<ArrayValue>());
+                m->insert(make_string("vars"), std::make_shared<ArrayValue>());
+                if (cl->owner) m->insert(make_string("owner"), make_object(cl->ownerKey));
+                else m->insert(make_string("owner"), Value(UndefinedTag{}));
+                m->insert(make_string("is_global"), make_int(cl->owner == objectRegistry().masterObj ? 1 : 0));
+                return m;
+            }
+            if (nm == "size_program") {
+                // vm_f_size_program (0x80f9a24): memory/stat mapping of an
+                // object's program.  Counts are exact for this engine; the
+                // *_size fields are byte estimates of the same structures the
+                // original reports.
+                const OriginalObject* o = &obj_;
+                if (!args.empty()) {
+                    std::string k;
+                    if (args[0].index() == 7)
+                        k = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                    else if (args[0].index() == 4)
+                        k = std::get<SharedString>(args[0]);
+                    if (!k.empty()) {
+                        auto& reg = objectRegistry();
+                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                        auto it2 = reg.objects.find(k);
+                        if (it2 != reg.objects.end()) o = it2->second.get();
+                    }
+                }
+                size_t strBytes = 0;
+                for (const std::string& s : o->strings) strBytes += s.size() + 1;
+                size_t codeBytes = 0;
+                for (const OriginalFunction& f : o->functions) codeBytes += f.code.size() * 8;
+                auto m = std::make_shared<MappingValue>();
+                m->insert(make_string("structure_size"), make_int(static_cast<int64_t>(sizeof(OriginalObject))));
+                m->insert(make_string("hash_table_size"), make_int(0));
+                m->insert(make_string("consititution_list_size"), make_int(static_cast<int64_t>(o->inherits.size()) * 16));
+                m->insert(make_string("init_order_list_size"), make_int(0));
+                m->insert(make_string("variable_definition_size"), make_int(static_cast<int64_t>(o->globalVarCount) * 8));
+                m->insert(make_string("string_list_size"), make_int(static_cast<int64_t>(strBytes)));
+                m->insert(make_string("function_list_size"), make_int(static_cast<int64_t>(codeBytes)));
+                m->insert(make_string("program_size"),
+                          make_int(static_cast<int64_t>(strBytes + codeBytes + o->globalVarCount * 8)));
+                auto arr = std::make_shared<ArrayValue>();
+                for (const OriginalFunction& f : o->functions) {
+                    auto e = std::make_shared<ArrayValue>();
+                    e->items.push_back(make_string(f.name));
+                    e->items.push_back(make_int(static_cast<int64_t>(f.code.size())));
+                    arr->items.push_back(e);
+                }
+                m->insert(make_string("all_function"), arr);
+                return m;
+            }
+            if (nm == "get_function_report") return make_array();
+            if (nm == "orphan_values") return make_array();
+            if (nm == "seq_no_to_tid") return make_int(-1);
+            if (nm == "get_thread_name") return make_string("");
+            if (nm == "get_thread_seq_no") return make_int(0);
+            if (nm == "get_thread_priority") return make_int(0);
+            if (nm == "get_thread_attr") {
+                auto m = std::make_shared<MappingValue>();
+                m->insert(make_string("tid"), make_int(lpcThreadId()));
+                m->insert(make_string("euid"), make_int(0));
+                m->insert(make_string("attr"), make_int(0));
+                return m;
             }
             if (nm == "previous_object" || nm == "previous_objects") {
                 // vm_f_previous_object (0x80f6b28): returns the object that
@@ -6162,6 +6422,15 @@ private:
                               << " curCodePtr=" << (code_ ? std::to_string(reinterpret_cast<uintptr_t>(code_)) : "-")
                               << " retIp=" << retIp << " newStack=" << newSize
                               << " framesAfter=" << frames_.size() << "\n";
+                {
+                    static const char* retTraceObj = std::getenv("LPCVM_TRACE_OBJ");
+                    if (retTraceObj && f.fn &&
+                        objName_.find(retTraceObj) != std::string::npos) {
+                        std::cerr << "[tr-ret] " << objName_ << "::" << f.fn->name
+                                  << " ret=" << to_string(returnValue_, false).substr(0, 60) << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 pushValue(returnValue_);   // caller sees the return value on top
                 if (gRet) {
                     std::string rdbg;
@@ -7824,11 +8093,20 @@ private:
                     }
                 };
                 if (funName == "process_command" || funName == "cmd_internal_auth" ||
-                    funName == "relay_agent" || funName == "main" || funName == "send_message") {
+                    funName == "relay_agent" || funName == "main" || funName == "send_message" ||
+                    std::getenv("LPCVM_TRACE_OBJ")) {
                     std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal)
                         : (pathVal.index() == 7 ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName : "?");
-                    std::cerr << "[case8] " << objName_ << " -> " << pv << "::" << funName
-                              << " argc=" << argn << "\n";
+                    const char* trObj8 = std::getenv("LPCVM_TRACE_OBJ");
+                    bool watch = funName == "process_command" || funName == "cmd_internal_auth" ||
+                                 funName == "relay_agent" || funName == "main" ||
+                                 funName == "send_message";
+                    if (!watch && trObj8)
+                        watch = objName_.find(trObj8) != std::string::npos ||
+                                pv.find(trObj8) != std::string::npos;
+                    if (watch)
+                        std::cerr << "[case8] " << objName_ << " -> " << pv << "::" << funName
+                                  << " argc=" << argn << "\n";
                 }
                 if (pathVal.index() == 4) {
                     std::string path = std::get<SharedString>(pathVal);
@@ -8354,8 +8632,22 @@ private:
                 bool refArgCoClosure = false;
                 if (funItem.value.index() == 8) {
                     auto cl0 = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
-                    refArgCoClosure = (cl0->func == nullptr) &&
-                        (cl0->functionName == "call_other" || cl0->functionName == "call_other_arg");
+                    // EVERY closure call keeps &ref arguments as a CrossVmRef.
+                    // The original driver's closure call passes the address, and
+                    // the callee's prologue does `push_local_vptr 0;
+                    // assign_value` to write through it.  Flattening the ref to
+                    // its (undefined) value made such a write land in the
+                    // callee's own slot only: gs/feature/npc/dynamic_menu.c
+                    // create_menu_content does
+                    //     (*menu_func[i][0])(&menu_content, me, ob)
+                    // with menu_func = (: init_myself_menu_content :) which sets
+                    // `string &menu_content`, so menu_content stayed 0, the
+                    // caller returned 0, menu.c start_talk_to saw
+                    // !is_string(menu_content) and returned WITHOUT sending the
+                    // 0x2037 NPC menu - every NPC (shop, quest, trainer) was
+                    // unreachable.
+                    (void)cl0;
+                    refArgCoClosure = true;
                 }
                 std::vector<Value> args;
                 for (int i = 1; i < total && !stack_.empty(); ++i) {
@@ -8375,6 +8667,31 @@ private:
                     }
                 }
                 Value result = make_int(0);
+                // LPCVM_MENU: trace the NPC-menu closure chain (menu.c
+                // start_talk_to -> dynamic_menu create_menu_content ->
+                // per-NPC init_myself_menu_content) with argument kinds and the
+                // return value, so a menu that never reaches send(8247) can be
+                // diagnosed from the log alone.
+                bool menuTrace = false;
+                if (std::getenv("LPCVM_MENU") && funItem.value.index() == 8) {
+                    auto clm = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
+                    menuTrace = (clm && (clm->functionName == "create_menu_content" ||
+                                         clm->functionName == "init_myself_menu_content" ||
+                                         clm->functionName == "set_menu" ||
+                                         clm->functionName == "register_menu_content"));
+                    if (menuTrace) {
+                        std::string ad;
+                        for (size_t ai = 0; ai < args.size(); ++ai) {
+                            if (ai) ad += ", ";
+                            if (args[ai].index() == 11) ad += "&ref";
+                            else ad += "t" + std::to_string(args[ai].index()) + ":" +
+                                       to_string(args[ai], false).substr(0, 24);
+                        }
+                        std::cerr << "[menu-call] " << clm->functionName << " bound="
+                                  << clm->boundArgs.size() << " args=[" << ad << "] obj=" << objName_ << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 // True when a same-owner/global closure was started INLINE
                 // (its return op will push the result; we must not).
                 bool inlineStarted = false;
@@ -8695,6 +9012,9 @@ private:
                     // null function value
                 }
                 if (!inlineStarted) pushValue(result);
+                if (menuTrace)
+                    std::cerr << "[menu-ret] ret=" << to_string(result, false).substr(0, 80)
+                              << " inline=" << inlineStarted << "\n";
                 break;
             }
             case 33: { // if: jump when isZero != bit0; pop when bit1 set
@@ -8712,6 +9032,28 @@ private:
                 const Frame& f = frames_.back();
                 bool traceEnter = vmEnvTrace() && f.fn &&
                     (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc");
+                // LPCVM_TRACE_OBJ=<substring>: focused enter/return trace for
+                // every function of the objects whose registry key contains the
+                // substring (e.g. LPCVM_TRACE_OBJ=open_menu to see exactly how
+                // far a command object gets).
+                static const char* traceObj = std::getenv("LPCVM_TRACE_OBJ");
+                const bool traceObjHit = traceObj && f.fn &&
+                    objName_.find(traceObj) != std::string::npos;
+                if (traceObjHit) {
+                    std::string argsDbg;
+                    for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
+                        if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                        if (!argsDbg.empty()) argsDbg += " | ";
+                        const Value& av = stack_[static_cast<size_t>(k)].value;
+                        if (av.index() == 4) argsDbg += std::get<SharedString>(av).str().substr(0, 32);
+                        else if (av.index() == 7)
+                            argsDbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 48);
+                        else argsDbg += to_string(av, false).substr(0, 24);
+                    }
+                    std::cerr << "[tr-enter] " << objName_ << "::" << f.fn->name
+                              << " argNum=" << f.argNum << " args=[" << argsDbg << "]\n";
+                    std::cerr.flush();
+                }
                 if (std::getenv("LPCVM_TAIL") && f.fn) {
                     bool tailObj =
                         objName_.find("vendued") != std::string::npos ||
@@ -13112,21 +13454,86 @@ std::unordered_map<std::string, std::string>& envPending() {
     static std::unordered_map<std::string, std::string> m;
     return m;
 }
+// Canonical registry key for an object path.  The container key stored by
+// move_object(container, ob) must be the SAME string env_object() returns for
+// every object in that container, otherwise LPC's is_near()
+//   if (!is_object(env_m = env_object(this_object())) ||
+//       !is_object(env_y = env_object(ob)) || env_m != env_y) return 0;
+// fails and every NPC menu silently returns 0.  LPC code addresses rooms by
+// their program path ("/gs/zone/lanxianzhen/lanxianzhen.c") while the
+// registry key is the loaded object ("pak:gs/zone/lanxianzhen/lanxianzhen.o"),
+// so normalize: registered key first, then pak:-prefix/extension variants,
+// then a sourceName match.
+std::string canonicalObjKey(const std::string& key) {
+    if (key.empty()) return key;
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    if (reg.vms.find(key) != reg.vms.end() || reg.objects.find(key) != reg.objects.end())
+        return key;
+    // Build the candidate spellings of the same object:
+    //   "gs/x.c"  "gs/x.o"  "/gs/x.c"  "/gs/x.o"
+    //   "pak:gs/x.c"  "pak:gs/x.o"  "pak:/gs/x.c"  "pak:/gs/x.o"
+    // (registry keys are "pak:" + the path WITHOUT the leading slash, with .o).
+    std::string base = key;
+    if (base.rfind("pak:", 0) == 0) base = base.substr(4);
+    if (!base.empty() && base.front() == '/') base.erase(base.begin());
+    if (!base.empty() && base.back() == '/') base.pop_back();
+    std::vector<std::string> forms;
+    auto addForm = [&](const std::string& f) {
+        if (f.empty()) return;
+        for (const std::string& x : forms) if (x == f) return;
+        forms.push_back(f);
+    };
+    addForm(base);
+    if (base.size() > 2 && base.compare(base.size() - 2, 2, ".c") == 0)
+        addForm(base.substr(0, base.size() - 2) + ".o");
+    else if (base.size() > 2 && base.compare(base.size() - 2, 2, ".o") == 0)
+        addForm(base.substr(0, base.size() - 2) + ".c");
+    const size_t n = forms.size();
+    for (size_t i = 0; i < n; ++i) addForm("/" + forms[i]);
+    const size_t n2 = forms.size();
+    for (size_t i = 0; i < n2; ++i) addForm("pak:" + forms[i]);
+    for (const std::string& c : forms) {
+        if (reg.vms.find(c) != reg.vms.end() || reg.objects.find(c) != reg.objects.end())
+            return c;
+    }
+    // Fall back to a normalized sourceName match (loader may spell the path
+    // differently).
+    auto norm = [](std::string s) {
+        if (s.rfind("pak:", 0) == 0) s = s.substr(4);
+        if (!s.empty() && s.front() == '/') s.erase(s.begin());
+        if (s.size() > 2 && s.compare(s.size() - 2, 2, ".o") == 0) s.replace(s.size() - 2, 2, ".c");
+        return s;
+    };
+    const std::string want = norm(key);
+    for (const auto& kv : reg.objects) {
+        if (!kv.second) continue;
+        if (norm(kv.second->sourceName) == want) return kv.first;
+        if (norm(kv.first) == want) return kv.first;
+    }
+    return key;
+}
 }  // namespace
 
+// Public wrapper (declared in original_vm.h) so value.cpp can compare object
+// values that spell the same object differently (.c program path vs the
+// registered .o key).
+std::string canonicalObjectPath(const std::string& key) { return canonicalObjKey(key); }
+
 void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
+    const std::string dest = canonicalObjKey(destKey);
     if (auto vm = envVmForKey(selfKey)) {
-        vm->vmSetEnv(destKey);
+        vm->vmSetEnv(dest);
         std::lock_guard<std::mutex> lk(envPendMutex());
         envPending().erase(selfKey);
         return;
     }
     std::lock_guard<std::mutex> lk(envPendMutex());
-    if (destKey.empty()) envPending().erase(selfKey);
-    else envPending()[selfKey] = destKey;
+    if (dest.empty()) envPending().erase(selfKey);
+    else envPending()[selfKey] = dest;
 }
 std::string envLookupObjKey(const std::string& obKey) {
-    if (auto vm = envVmForKey(obKey)) {
+    if (auto vm = envVmForKey(canonicalObjKey(obKey))) {
         const std::string& e = vm->vmEnv();
         if (!e.empty()) return e;
     }

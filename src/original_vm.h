@@ -61,4 +61,11 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
 // timers and queue/event wakeups.  Replaces main()'s idle sleep loop.
 void schedulerRun();
 
+// Canonical registry key for an object path.  LPC addresses rooms and daemons
+// by their program path ("/gs/zone/lanxianzhen/lanxianzhen.c") while the
+// registry key of the loaded object is "pak:gs/zone/lanxianzhen/lanxianzhen.o";
+// the driver treats both as the same object, so object identity and the
+// container (env) key must be normalized through this.
+std::string canonicalObjectPath(const std::string& key);
+
 } // namespace lpc
