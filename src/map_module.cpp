@@ -1,6 +1,7 @@
 #include "map_module.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -512,6 +513,94 @@ Value MapModule::calcOffset(const std::vector<Value>& args) {
     int y = static_cast<int>(valToInt(args[2]));
     if (x < 0 || y < 0 || x >= m->width || y >= m->height) return make_int(-1);
     return make_int(x * m->height + y);
+}
+
+// ---------------------------------------------------------------------------
+// check_steps(mapIndex, x, y, steps, flag, move_type)
+// move_v37.multi_move_to validates a client movement path before applying it:
+// `steps` is a flat array of consecutive {x,y} cells (client pathfinding),
+// the last pair is the destination.  Each cell must be inside the map and
+// adjacent (chebyshev distance 1) to the previous one, and must be walkable
+// (obstacle bits 0x21 clear) unless move_type == 1 (fly, which ignores the
+// obstacle plane).  Returns 1 when the whole path is legal, else 0.  Left as
+// a stub returning 0 this rejected EVERY move (the player could not walk).
+// ---------------------------------------------------------------------------
+Value MapModule::checkSteps(const std::vector<Value>& args) {
+    if (args.size() < 4) return make_int(0);
+    std::lock_guard<std::mutex> lk(g_mapMutex);
+    MapInfo* m = getMapInfoByValue(args[0]);
+    if (!m) return make_int(0);
+    int x = static_cast<int>(valToInt(args[1]));
+    int y = static_cast<int>(valToInt(args[2]));
+    if (args[3].index() != 5) return make_int(1);   // no path data: allow
+    const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[3])->items;
+    int moveType = (args.size() >= 6) ? static_cast<int>(valToInt(args[5])) : 0;
+    bool fly = (moveType == 1);
+    size_t n = items.size() / 2;
+    for (size_t i = 0; i < n; ++i) {
+        int nx = static_cast<int>(valToInt(items[i * 2]));
+        int ny = static_cast<int>(valToInt(items[i * 2 + 1]));
+        if (nx < 0 || ny < 0 || nx >= m->width || ny >= m->height) return make_int(0);
+        int dx = nx - x, dy = ny - y;
+        if (dx < -1 || dx > 1 || dy < -1 || dy > 1) return make_int(0);
+        // A path may repeat the current cell (NPC auto-walk paths built by
+        // inspect_cityd/auto_inspectd pass move_steps[0..<2] whose first point
+        // is often the NPC's current cell) - that is not a failure.
+        if (!fly && !m->bits.empty() &&
+            (m->bits[static_cast<size_t>(nx * m->height + ny)] & 0x21) != 0)
+            return make_int(0);
+        x = nx; y = ny;
+    }
+    return make_int(1);
+}
+
+bool MapModule::pointInPoly(int x, int y, const std::vector<int>& poly) {
+    // Even-odd rule over the vertex list (flat {x1,y1,x2,y2,...}).
+    size_t n = poly.size() / 2;
+    if (n < 3) return false;
+    bool inside = false;
+    for (size_t i = 0, j = n - 1; i < n; j = i++) {
+        int xi = poly[i * 2], yi = poly[i * 2 + 1];
+        int xj = poly[j * 2], yj = poly[j * 2 + 1];
+        if (((yi > y) != (yj > y)) &&
+            (x < static_cast<double>(xj - xi) * (y - yi) / static_cast<double>(yj - yi) + xi))
+            inside = !inside;
+    }
+    return inside;
+}
+
+// ---- map event hooks ----
+namespace {
+std::mutex g_hookMutex;
+std::vector<MapModule::MapHook> g_hooks;
+std::atomic<int64_t> g_hookSeq{1};
+}  // namespace
+
+int64_t MapModule::hookAdd(int mapIndex, std::vector<int> poly, int64_t idFilter, const Value& closure) {
+    std::lock_guard<std::mutex> lk(g_hookMutex);
+    MapHook h;
+    h.eventId = g_hookSeq.fetch_add(1);
+    h.mapIndex = mapIndex;
+    h.poly = std::move(poly);
+    h.idFilter = idFilter;
+    h.closure = closure;
+    g_hooks.push_back(std::move(h));
+    return g_hooks.back().eventId;
+}
+
+void MapModule::hookRemove(int64_t eventId) {
+    std::lock_guard<std::mutex> lk(g_hookMutex);
+    for (auto it = g_hooks.begin(); it != g_hooks.end(); ++it) {
+        if (it->eventId == eventId) { g_hooks.erase(it); return; }
+    }
+}
+
+std::vector<MapModule::MapHook> MapModule::hookSnapshot(int mapIndex) const {
+    std::lock_guard<std::mutex> lk(g_hookMutex);
+    std::vector<MapHook> out;
+    for (const auto& h : g_hooks)
+        if (h.mapIndex == mapIndex) out.push_back(h);
+    return out;
 }
 
 } // namespace lpc

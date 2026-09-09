@@ -5881,6 +5881,55 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "calc_offset") {
         return lpc::mapModule().calcOffset(args);
     }
+    if (name == "check_steps") {
+        // vm_f_check_steps: validate a movement path (move_v37.multi_move_to).
+        // A stub returning 0 blocked every move.
+        Value r = lpc::mapModule().checkSteps(args);
+        if (std::getenv("LPCVM_MOVE")) {
+            static int csN = 0;
+            if (csN++ < 80) {
+                int n = (args.size() >= 4 && args[3].index() == 5)
+                            ? static_cast<int>(std::get<std::shared_ptr<ArrayValue>>(args[3])->items.size() / 2)
+                            : -1;
+                std::cerr << "[move] check_steps map=" << (args.empty() ? -1 : as_int(args[0]))
+                          << " from=(" << (args.size() > 1 ? as_int(args[1]) : -1) << ","
+                          << (args.size() > 2 ? as_int(args[2]) : -1) << ") pts=" << n
+                          << " mt=" << (args.size() > 5 ? as_int(args[5]) : -1)
+                          << " -> " << as_int(r) << "\n";
+                std::cerr.flush();
+            }
+        }
+        return r;
+    }
+    if (name == "is_pt_in_poly") {
+        // vm_f_is_pt_in_poly(x, y, poly): even-odd point-in-polygon test used
+        // by region/trigger checks (script_*.c, warcraftd).
+        if (args.size() < 3 || args[2].index() != 5) return make_int(0);
+        const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[2])->items;
+        std::vector<int> poly;
+        poly.reserve(items.size());
+        for (const auto& v : items) poly.push_back(static_cast<int>(as_int(v)));
+        return make_int(lpc::MapModule::pointInPoly(static_cast<int>(as_int(args[0])),
+                                                    static_cast<int>(as_int(args[1])), poly)
+                            ? 1 : 0);
+    }
+    if (name == "hook_map_event") {
+        // vm_f_hook_map_event(mapIndex, poly, idFilter, closure) -> event id.
+        if (args.size() < 4) return make_int(0);
+        std::vector<int> poly;
+        if (args[1].index() == 5) {
+            const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[1])->items;
+            poly.reserve(items.size());
+            for (const auto& v : items) poly.push_back(static_cast<int>(as_int(v)));
+        }
+        return make_int(lpc::mapModule().hookAdd(static_cast<int>(as_int(args[0])), std::move(poly),
+                                                 as_int(args[2]), args[3]));
+    }
+    if (name == "unhook_map_event") {
+        // vm_f_unhook_map_event(mapIndex, idFilter, eventId)
+        if (!args.empty()) lpc::mapModule().hookRemove(as_int(args[args.size() - 1]));
+        return make_int(1);
+    }
     if (name == "mark_map_plot" || name == "unmark_map_plot" || name == "get_map_plot") {
         // vm_f_mark_map_plot (0x807a8b4) / vm_f_unmark_map_plot (0x8079be8) /
         // vm_f_get_map_plot (0x807aca8): the plot layer IS the obstacle bit

@@ -84,6 +84,28 @@ public:
     Value readMapInfo(const std::vector<Value>& args);
     Value calcOffset(const std::vector<Value>& args);
 
+    // check_steps(mapIndex, x, y, steps, flag, move_type): validate a movement
+    // path (flat {x,y,...} pairs, consecutive cells must be adjacent and
+    // walkable unless move_type == 1 (fly)).  Returns 1 valid / 0 invalid.
+    Value checkSteps(const std::vector<Value>& args);
+    // is_pt_in_poly(x, y, poly) - even-odd point-in-polygon test.
+    static bool pointInPoly(int x, int y, const std::vector<int>& poly);
+
+    // ---- map event hooks (driver hook_map_event / unhook_map_event) ----
+    // An LPC hook is (mapIndex, polygon, idFilter, closure); the driver fires
+    // closure(bound..., id, x, y, flag) when an object enters (flag=1) or
+    // leaves (flag=0) the polygon on that map.
+    struct MapHook {
+        int64_t eventId = 0;
+        int mapIndex = 0;
+        std::vector<int> poly;
+        int64_t idFilter = 0;
+        Value closure;
+    };
+    int64_t hookAdd(int mapIndex, std::vector<int> poly, int64_t idFilter, const Value& closure);
+    void hookRemove(int64_t eventId);
+    std::vector<MapHook> hookSnapshot(int mapIndex) const;
+
     // helpers used by the LPC layer
     MapInfo* findMap(const Value& v);
     MapInfo* findMapIndex(int idx);

@@ -3089,6 +3089,67 @@ private:
     // ------------------------------------------------------------------
     // Efun / function dispatch
     // ------------------------------------------------------------------
+    // Driver map-event hooks (hook_map_event / unhook_map_event): fire the
+    // registered closure when an object enters (flag=1) or leaves (flag=0) a
+    // hook polygon on the map.  Callback signature seen in the game code:
+    //   func(state..., id, x, y, flag)
+    // (easy_task.c / warcraftd.c / qingbijinjian.c).
+    void invokeMapHookClosure(const Value& cl, int64_t id, int x, int y, int flag) {
+        if (cl.index() != 8) return;
+        auto c = std::get<std::shared_ptr<ClosureValue>>(cl);
+        if (!c) return;
+        std::vector<Value> hargs = c->boundArgs;
+        hargs.push_back(make_int(id));
+        hargs.push_back(make_int(x));
+        hargs.push_back(make_int(y));
+        hargs.push_back(make_int(flag));
+        try {
+            if (c->func) {
+                callFunctionPointer(c->func, hargs);
+            } else if (!c->functionName.empty()) {
+                callFunctionByName(c->functionName, hargs);
+            }
+        } catch (const SuspendSignal&) {
+            throw;
+        } catch (...) {
+            // A failing hook must not break the movement that triggered it.
+        }
+    }
+    void fireMapHooks(const std::string& efun, const std::vector<Value>& args) {
+        static thread_local int hookDepth = 0;
+        if (hookDepth > 4) return;   // re-entrancy guard (hook moves objects)
+        int mapIndex = -1;
+        int ox = -1, oy = -1, nx = -1, ny = -1;
+        int64_t id = 0;
+        if (efun == "move_in_map" && args.size() >= 6) {
+            mapIndex = static_cast<int>(toInt(args[0]));
+            ox = static_cast<int>(toInt(args[1]));
+            oy = static_cast<int>(toInt(args[2]));
+            nx = static_cast<int>(toInt(args[3]));
+            ny = static_cast<int>(toInt(args[4]));
+            id = toInt(args[5]);
+        } else if ((efun == "put_in_map" || efun == "remove_from_map") && args.size() >= 4) {
+            mapIndex = static_cast<int>(toInt(args[0]));
+            nx = ox = static_cast<int>(toInt(args[1]));
+            ny = oy = static_cast<int>(toInt(args[2]));
+            id = toInt(args[3]);
+        }
+        if (mapIndex < 0) return;
+        auto hooks = lpc::mapModule().hookSnapshot(mapIndex);
+        if (hooks.empty()) return;
+        ++hookDepth;
+        for (const auto& h : hooks) {
+            if (h.idFilter != 0 && h.idFilter != id) continue;
+            if (efun != "remove_from_map" && nx >= 0 &&
+                lpc::MapModule::pointInPoly(nx, ny, h.poly))
+                invokeMapHookClosure(h.closure, id, nx, ny, 1);
+            if (efun != "put_in_map" && ox >= 0 && (ox != nx || oy != ny) &&
+                lpc::MapModule::pointInPoly(ox, oy, h.poly))
+                invokeMapHookClosure(h.closure, id, ox, oy, 0);
+        }
+        --hookDepth;
+    }
+
     // Call an efun by index, popping its arguments from the stack.
     Value callEfun(int efunIndex, int argCount) {
         std::vector<Value> args;
@@ -4468,7 +4529,10 @@ private:
                           << "] procEntry=" << procE << "\n";
                 std::cerr.flush();
             }
-            return call_builtin(nullptr, nm, args);
+            Value bres = call_builtin(nullptr, nm, args);
+            if (nm == "move_in_map" || nm == "put_in_map" || nm == "remove_from_map")
+                fireMapHooks(nm, args);
+            return bres;
         }
         return make_int(0);
     }
@@ -6804,6 +6868,96 @@ private:
                               << " meta=" << (meta_ ? meta_->size() : 0)
                               << " t=" << std::this_thread::get_id() << "\n";
                 const auto& names = efunNameTable();
+                if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                    names[efun] == "new_view_point") {
+                    // vm_f_new_view_point(mapIndex, oldX, oldY, newX, newY,
+                    //                     &appear, &disappear): diff the 9x7 view
+                    // window before/after a move and report ids that entered /
+                    // left it.  move_v37.multi_move_to uses it for
+                    // notice_others_appear/disappear; the stub returned 0 so
+                    // players never saw each other appear or disappear.
+                    std::vector<StackItem> refs;
+                    for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                    int ret = 0;
+                    if (refs.size() >= 5) {
+                        Value mv = refs[0].isRef ? deref(refs[0]) : refs[0].value;
+                        int ox = static_cast<int>(toInt(refs[1].isRef ? deref(refs[1]) : refs[1].value));
+                        int oy = static_cast<int>(toInt(refs[2].isRef ? deref(refs[2]) : refs[2].value));
+                        int nx = static_cast<int>(toInt(refs[3].isRef ? deref(refs[3]) : refs[3].value));
+                        int ny = static_cast<int>(toInt(refs[4].isRef ? deref(refs[4]) : refs[4].value));
+                        auto idsAt = [&](int px, int py) {
+                            std::unordered_set<int64_t> out;
+                            Value a = lpc::mapModule().getInSight({mv, make_int(px), make_int(py)});
+                            if (a.index() == 5)
+                                for (const auto& v : std::get<std::shared_ptr<ArrayValue>>(a)->items)
+                                    out.insert(toInt(v));
+                            return out;
+                        };
+                        std::unordered_set<int64_t> oldSet = idsAt(ox, oy);
+                        std::unordered_set<int64_t> newSet = idsAt(nx, ny);
+                        auto appear = std::make_shared<ArrayValue>();
+                        auto disappear = std::make_shared<ArrayValue>();
+                        for (int64_t v : newSet)
+                            if (!oldSet.count(v)) appear->items.push_back(make_int(v));
+                        for (int64_t v : oldSet)
+                            if (!newSet.count(v)) disappear->items.push_back(make_int(v));
+                        ret = (appear->items.empty() && disappear->items.empty()) ? 0 : 1;
+                        if (refs.size() >= 6 && refs[5].isRef) writeThrough(refs[5], Value(appear));
+                        if (refs.size() >= 7 && refs[6].isRef) writeThrough(refs[6], Value(disappear));
+                    }
+                    pushValue(make_int(ret));
+                    break;
+                }
+                if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                    names[efun] == "find_reachable") {
+                    // vm_f_find_reachable: find_reachable(map, &x, &y [, r, plot])
+                    // searches outward from (x,y) for a walkable plot and writes
+                    // it back through the x/y references.  Used by NPC/dungeon
+                    // spawn placement (dungeond, familyd, lihe items, start_gs);
+                    // the stub returned 0 so those placements never happened.
+                    std::vector<StackItem> refs;
+                    for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                    int ok = 0, nx = 0, ny = 0;
+                    if (refs.size() >= 3) {
+                        Value mv = refs[0].isRef ? deref(refs[0]) : refs[0].value;
+                        int x = static_cast<int>(toInt(refs[1].isRef ? deref(refs[1]) : refs[1].value));
+                        int y = static_cast<int>(toInt(refs[2].isRef ? deref(refs[2]) : refs[2].value));
+                        int r = 50;
+                        if (refs.size() >= 4)
+                            r = static_cast<int>(toInt(refs[3].isRef ? deref(refs[3]) : refs[3].value));
+                        if (r < 1) r = 1;
+                        if (r > 200) r = 200;
+                        lpc::MapModule::MapInfo* mapInfo = lpc::mapModule().findMap(mv);
+                        auto walkable = [&](int px, int py) {
+                            if (!mapInfo) return true;
+                            if (px < 0 || py < 0 || px >= mapInfo->width || py >= mapInfo->height)
+                                return false;
+                            if (mapInfo->bits.empty()) return true;
+                            return (mapInfo->bits[static_cast<size_t>(px * mapInfo->height + py)] & 0x21) == 0;
+                        };
+                        if (mapInfo) {
+                            if (walkable(x, y)) { ok = 1; nx = x; ny = y; }
+                            else {
+                                for (int ir = 1; ir <= r && !ok; ++ir) {
+                                    for (int dy = -ir; dy <= ir && !ok; ++dy) {
+                                        for (int dx = -ir; dx <= ir && !ok; ++dx) {
+                                            if (std::abs(dx) != ir && std::abs(dy) != ir) continue;
+                                            if (walkable(x + dx, y + dy)) { ok = 1; nx = x + dx; ny = y + dy; }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            ok = 1; nx = x; ny = y;
+                        }
+                        if (ok) {
+                            if (refs[1].isRef) writeThrough(refs[1], make_int(nx));
+                            if (refs[2].isRef) writeThrough(refs[2], make_int(ny));
+                        }
+                    }
+                    pushValue(make_int(ok));
+                    break;
+                }
                 if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
                     names[efun] == "find_reachable_ex") {
                     // vm_f_find_reachable_ex (0x807b828): find_reachable_ex(map,
