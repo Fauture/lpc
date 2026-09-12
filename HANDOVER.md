@@ -332,7 +332,16 @@ string create_menu_content(mixed default_content, object me, object ob) {
    - `[crash]` 处理器新增 **最近 64 个 LPC 函数环形缓冲**（`g_lpcRing`），栈溢出时也能看出死在哪个函数。
    - 实测这些兜底在 relog4/relog5 都没有触发（`[deep]`/`[cdepth]`/`[refcyc]` 均为 0），说明崩溃是"角色对象没析构"这条链带出来的，而不是递归本身。
 
-**验证**：`relog6`（同一脚本）——见 §9。脚本：`_relogin_test.py`（登录建角进游戏 → 过图 ×7 → 发 `0x3E2A` 正常登出 → 断线 30s → 再登录并打印是否下发角色列表）。
+**验证**：`relog6`（修复前）与 `relog7`（修复后）同一脚本对比：
+| 现象 | relog4/5/6（修复前） | relog7（修复后） |
+|---|---|---|
+| `destruct_object(<this>)` | `-> 0`（解析不到） | 已不再出现（登出时角色已由 logind/do_login 侧注销） |
+| 第二次登录 | 走 `userd::reconnected`，直接进游戏 | **不再直接进游戏**（无 `0x39F1/F05D/1155`） |
+| gs 崩溃 | 每次 **1 次** `0xC00000FD` | **0 次** ✓ |
+| 第二次登录拿到什么 | world 包一堆 | 只有 `0xF9C3`（echo）——`logind::do_login` 里 `destruct_object(<旧角色 clone>) -> 0`（已注销，符合预期）后流程停住 |
+
+**下一步（已缩小范围）**：第二次登录现在停在 `logind::do_login`：它先对"还记着的旧角色对象"做 `destruct_object`（现在返回 0 = 已经不在注册表，正确），之后既没有 `0xF061` 角色列表也没有报错。
+要继续追：`do_login` → `_try_quick_login`/`restore_ex`/`_show_char_list`，以及 **ccs/aaa 侧账号"在线"状态是否释放**（`check_account_online`/`userd::log_file_dect`）；很可能是"账号仍被标记在线"导致第二次登录走"顶号"分支后停住。
 
 ### D. 跨房间（过图）第二次失败 — **实测没有复现，且顺手修掉一个会永久废掉房间的坑**
 
