@@ -2615,6 +2615,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<BufferValue>>(v)->data.size()));
         return make_int(0);
     }
+    if (name == "strlen" && std::getenv("LPCVM_NAMERULE")) {
+        const std::string av = args.empty() ? std::string() : as_string(args[0]);
+        std::cerr << "[namerule] strlen(" << av << ") -> " << av.size() << " bytes"
+                  << " ischinese_first=" << (av.empty() ? 0 : (static_cast<unsigned char>(av[0]) >= 0x80 ? 1 : 0))
+                  << "\n";
+        std::cerr.flush();
+    }
     if (name == "strlen") return args.empty() ? make_int(0) : make_int(static_cast<int64_t>(as_string(args[0]).size()));
     // vm_f_is_undefined (0x80d80ec): returns (type == 0).  In the original the
     // "undefined" value IS type 0 (missing keys, uninitialized vars); void
@@ -2837,10 +2844,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     if (last) {
                         if (name == "express_set") {
                             cur->insert(k, args[2]);
+                            // vm_f_express_set returns the VALUE it stored: dbase.c's
+                            // set_temp()/set() are `return express_set(path, dbase, val)`
+                            // and the game relies on the LPC `m[k] = v` expression value
+                            // (e.g. start_gs.c: set_dynamic_key returns
+                            // ob->set_temp("dynamic_key/"+idx, gen_dynamic_key()) so the
+                            // generated key reaches the client in 0x5109; returning 1
+                            // sent `key = 1` and broke the mall coin-password
+                            // encryption).  cheater_detect's
+                            // `cob->set_temp("failed_count", n) >= 2` needs the new count.
+                            return args[2];
                         } else if (name == "express_add") {
                             Value* hit = cur->find(k);
                             Value nv = !hit ? args[2] : make_int(as_int(*hit) + as_int(args[2]));
                             cur->insert(k, nv);
+                            return nv;   // add()/add_temp() return the new value
                         } else { // express_delete
                             cur->erase(k);
                         }
@@ -4384,6 +4402,34 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             pkt.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
             pkt.push_back(static_cast<char>(msgLen & 0xFF));
             pkt += data;
+            if (std::getenv("LPCVM_MALL")) {
+                uint16_t mc = 0;
+                if (args.size() >= 3) {
+                    mc = static_cast<uint16_t>(msgNo & 0xFFFF);
+                } else if (data.size() >= 2) {
+                    mc = static_cast<uint16_t>((static_cast<unsigned char>(data[0]) << 8) |
+                                               static_cast<unsigned char>(data[1]));
+                }
+                // Only the mall / coin / dialog command codes - an unfiltered log
+                // drowned the chain in ccc-daemon (0x003A) traffic.
+                static const uint16_t kKeep[] = {0xFD27, 0xFD67, 0x5109, 0x6372, 0x6373,
+                                                 0x6376, 0x6377, 0x1166, 0x3E24, 0x3393,
+                                                 0x5103, 0x5105, 0xFD64};
+                bool keep = false;
+                for (uint16_t k : kKeep)
+                    if (mc == k) { keep = true; break; }
+                if (keep) {
+                    static const char* hx2 = "0123456789ABCDEF";
+                    std::string h2;
+                    for (size_t i = 0; i < data.size() && i < 88; ++i) {
+                        h2 += hx2[(static_cast<unsigned char>(data[i]) >> 4) & 15];
+                        h2 += hx2[static_cast<unsigned char>(data[i]) & 15];
+                    }
+                    std::cerr << "[mall-send] cno=" << cno << " cmd=0x" << std::hex << mc
+                              << std::dec << " body=" << data.size() << " hex=" << h2 << "\n";
+                    std::cerr.flush();
+                }
+            }
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[send_to_client] cno=" << cno << " body=" << data.size()
                           << " total=" << pkt.size() << "\n";
@@ -4815,7 +4861,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // input lets the caller's is_mapping check fail the same way.
         if (!args.empty() && args[0].index() == 4) {
             Value out;
-            if (restoreValueAscii(std::get<SharedString>(args[0]), out)) return out;
+            bool ok = restoreValueAscii(std::get<SharedString>(args[0]), out);
+            if (std::getenv("LPCVM_MALL")) {
+                // The online-mall precost round trip (buy_from_mall_vsucc ->
+                // accountd -> aaa -> do_when_got_precost_coin) carries the
+                // purchase record as save_string(mapping) and restores it here;
+                // a parse failure makes do_when_got_precost_coin return
+                // SILENTLY (no packet, coin lock held for lock_timeout=600s).
+                const std::string& rvs = std::get<SharedString>(args[0]).str();
+                std::cerr << "[mall-rv] in=" << rvs.size()
+                          << " ok=" << ok << " type=" << (ok ? out.index() : -1)
+                          << " head=" << rvs.substr(0, 90) << "\n";
+                std::cerr.flush();
+            }
+            if (ok) return out;
         }
         return args.empty() ? make_int(0) : args[0];
     }

@@ -1,0 +1,457 @@
+# LPC 引擎复刻 — 交接文档（给下一个对话）
+
+> 用途：接手继续做的人（或 AI）照本文即可复现环境、复跑验证、直接进入未完成项。
+> 工作目录：`C:\Users\Administrator\Desktop\lpc`（源码 `src/`，产物 `build/Release/lpcvm.exe`）
+
+---
+
+## 0. 当前目标与验收标准（用户口径）
+
+> **每次优化都必须跑一遍"登录 → 建角/选角 → 进入游戏"脚本**（用户明确要求），只测启动时间和内存会漏掉功能回归。
+> 现成命令（自己清库、起 4 个服务、等 8160、再跑探针）：
+> ```powershell
+> python -X utf8 _run_func.py func1 a a charname
+> ```
+> 判据：`RESULT: PASS-ENTERED`（`_enter_probe.py`），gs 日志里应能看到
+> `[case8] <obj> -> clone:gs/clone/char/login.o#NNNNN::process_command` 与一条 `0x205C` 建角包。
+>
+> **端口别搞错（我踩过）**：登录/清表/选角/拿 agent 全在 **aaa 8001**，`_enter_probe.py` 要连 **8001**；
+> 连 8160 会在 cookie 那步报 `FAIL: no cookie`，那**不代表引擎坏了**。gs 8160 只用于"进游戏后"的包。
+> 另外两个探针**不要连着跑**（第一个会把账号占用/建角），中间隔几秒或者用不同账号。
+>
+> **临时快测（服务已在跑时）**：直接 `python -X utf8 _enter_probe.py 192.168.200.1 8001 a a 角色名 12`，
+> 不用重启服务，几秒出结果 —— 改完代码如果服务没重启，测的是**旧 exe**，注意先重启。
+
+**本轮踩过的坑（务必记住）**：注册表逆索引第一次实现里，`canonicalObjKey()` 的快路径返回了**归一化 key**
+（`gs/zone/x/x.o`），而旧实现返回的是**注册时的原样 key**（`pak:gs/zone/x/x.o`）。两者不等
+→ `env_object()` / `object()` / `is_near()` 全部对不上 → **进不去游戏**。
+修法：索引里额外保存原样拼写（`VmIdxEntry::origKey`），`canonicalObjKey()` 返回 `origKey`。
+**回归验证结果（三个改动都做了登录建角进游戏）**：
+
+| 构建 | 启动 | `RESULT` |
+|---|---|---|
+| 只有 哈希跳表 + env 记忆化（无注册表索引）| 540s | **PASS-ENTERED** |
+| 三个改动全开（含 `origKey` 修复）| 534s | **PASS-ENTERED** |
+
+→ 注册表索引（修好后）不破坏功能；建角弹窗能收到 `9111 不合格的名字` 说明建角逻辑真的跑了。
+
+1. **启动速度**：`8160` 必须在 **600s 内**打开；**不开日志时 300s 内**。
+   - **口径先说清**：`_run_keep2.py` 第 18-19 行**硬编码** `LPCVM_TAIL=1` + `LPCVM_MEM2=1`，所以用它跑=**开日志**；"不开日志"=这两个探针都不设。
+   - 本轮实测（同一份代码，先杀净残留服务再计时）：
+     - **不开日志（无探针）：532s**（起点基线 792s → -33%）
+     - **开日志（TAIL+MEM2=1）：620s 内没打开**（620s 时内存 1124MB）
+   - 结论：**600s 这档按"不开日志"已达标**；**"开日志 600s / 不开日志 300s"两档都还差** ——
+     开日志那档的瓶颈是探针本身（`LPCVM_MEM2` 每个 .o 打一行 `[heap]`，6989 行/6MB stderr），不是引擎；
+     **先瘦身探针**（§5.A 第一条"还没做的"）就能把开日志拉回 ~532s。
+2. **内存**：稳定后 gs 常驻要 **低于 500MB**（本轮起点 1013MB）。
+   - 当前：**1007MB（不开日志）/ 1124MB（开日志），未达标**。见 §5.A2 的内存诊断结论与下一步。
+
+3. **NPC 交互**：点 NPC 要出对应菜单（0x2037）—— **已修复**（op 23 `create_function_value` 没加 `baseFunOffset`，详见 §5.A3）。
+   实测：登录→建角→进游戏后，蓝仙镇两个 NPC 都回脚本内容，其中一个回完整菜单
+   `0x2037`：「自上古以后，天下分为十洲三岛… / [我想学习技能] [我想知道人物属性的作用] [我没有什么事找你]」。
+4. **在线商城**：购买要真的到账、回 `0xFD27 result=1` —— **已修复**（3 个根因：`express_set` 返回值、`set_timer` 丢参数/不写回引用、跨对象局部下标用错表，详见 §5.E）。
+   实测：4 次购买（T00000003/T00000004/T00000006/银元宝）全部 `0xFD27 result=1` + 弹「购买成功…」；不再出现「正在处理」。
+5. **下线/再上线**：退出后要真正下线并保存角色；再上线应回到**角色列表**并可选角进入（当前会跳过选角直接进游戏、无角色模型、不能移动）。
+6. **跨房间**：第二次进房间后出不去。
+7. **CPU**：空闲时不应 13% 空转；启动期不空烧。
+
+---
+
+## 1. 环境与启动
+
+- 服务：`aaa(8001) dba(8120) ccs(8110) gs(8160)`；启动脚本 **`_run_keep2.py <logdir>`**
+  - 它会先跑 `_dbclear.py` 清库；`env['LPCVM_TAIL']='1'`、`env['LPCVM_MEM2']='1'` **强制打开**（想关日志要改脚本）
+  - 额外探针通过 `$env:EXTRA_LPCVM='A,B,C=value'`（支持 `KEY=VALUE`，已改）
+- MySQL：`192.168.200.128:3306` root/123456，库 `dl_ddb_1_test`（每轮清库重建）
+- 账号：GM `a/a`、`b/b`、`11/1`、`12/1`、`23/1`（privilege 1000，登录后 set_privilege=300）；普通 `1/1`
+  - 密码公式：`md5(account + MD5hex(pwd) + "20070201")` 大写
+- 编译（**必须先杀进程，exe 会被锁**）：
+  ```powershell
+  Get-Process lpcvm,cl,MSBuild | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 3
+  & 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe' build/lpcvm.sln -p:Configuration=Release -p:Platform=Win32 -m -v:m -nologo
+  ```
+- **编码/换行坑**：`src/original_vm.cpp` 必须 **CRLF**，否则 MSVC 报 C3254/C2838。任何 python 改写后都要重转 CRLF。
+- **写文件可能被锁**（编译残留 cl.exe/MSBuild.exe 占用 `src/*.cpp`）→ 先杀 `cl,MSBuild,mspdbsrv`。
+
+---
+
+## 2. 参考二进制与 IDA
+
+- 参考二进制：`C:\Users\Administrator\Desktop\magic_Linux32x`（**未 strip**，带完整 `.symtab`）
+- IDA MCP：`http://127.0.0.1:13337/mcp`（HTTP JSON-RPC；客户端脚本 `_ida.py`，工具 `lookup_funcs` / `decompile` / `disasm`）
+- 已完成的权威扫描（脚本 `_elf_scan.py` `_elf_efuns.py` `_elf_efuntable.py` `_elf_reg2.py` `_efun_final.py`）：
+  - `vm_f_*` 符号 **604** 个；efun 注册表（.data，28 字节/项：name@+0, fptr@+20, nargs@+24）**636** 条
+  - 其中 **75** 条是 VM 操作码伪 efun（add/if/goto/push_* 等）→ **真实注册 efun = 561**
+  - 产物：`_efun_real.json`（561 个：名/地址/nargs/符号）、`_efun_report.txt`、`_ida_missing/`（206 个缺失 efun 的 IDA 反编译）
+- 生成 stub 清单：`python tools/gen_stubset.py` → 写 `src/stub_efuns.inc`
+  - **当前 507/561 已实现，剩 54 个**；54 个全部"触发即打印 `[efun-stub] obj::fn`"，不会静默返回 0
+- LPC 反编译源码树（**极有用**）：`linux/gs/pack_data/lib_gs32-c/**`（GBK 编码，用 python 以 gbk 解码读）
+
+---
+
+## 3. 引擎关键结构（读代码先看这些）
+
+- `src/original_vm.cpp`（1.3 万行，核心）：OriginalVm 解释器 + efun 分发 + Scheduler + 注册表
+  - 单线程协作模型：每个对象一个 `OriginalVm`，`frames_`/`stack_` 显式栈机；`execMutex_` 每 VM 一把
+  - 注册表：`objectRegistry()`：`objects[key]`、`vms[key]`、`initialized`；键形如 `pak:gs/zone/x/x.o`（**无前导斜杠**）、`clone:<rel>.o#<seq>`、`/gs/...`（daemon 也用带斜杠的形式）
+  - `envStoreObjKey/envLookupObjKey`：对象容器（env）关系；`canonicalObjectPath()` 做 `.c ↔ pak:.o` 归一化
+  - 关键私有机制：`SuspendSignal`（park/resume）、`ThreadExitSignal`（本次新增）、`runDetached`、`CrossVmRef`（值 variant index 11，跨 VM &引用）
+- `src/builtins.cpp`：`call_builtin()` = efun 实现 + **stub 追踪器**；批次实现在 `src/efun_batch1.inc`(118)、`efun_batch2.inc`(12)
+- `src/map_module.cpp`：地图/寻路/多边形/地图事件 hook；`src/value.cpp`：Value/Mapping/Array 语义与相等
+- `src/pak_loader.cpp`：pak 读取；`src/game_service.cpp`：客户端 socket 与包分发；`src/xdbc.cpp`：DB/socket 层
+
+**本引擎与原版的三处语义差异（已修，勿回退）**
+1. `move_object(容器, 被移动对象)`（本游戏与原版 MudOS 相反），且缺省对象是 self
+2. `exit` / `exit_thread` / `clear_env` = `vm_returnToBackend`（**终止当前 LPC 线程**），实现为 `ThreadExitSignal`
+3. 对象相等与 env 键必须经 `canonicalObjectPath()` 归一化（否则 `is_near()` 恒 0）
+
+---
+
+## 4. 已修复清单（提交历史）
+
+| 提交 | 内容 |
+|---|---|
+| `dda61c4` | CrossVmRef 写回 `detachedStack_`（修角色列表空） |
+| `59974b6` | `find_illegal_string` 真实现 + 数组 `\|=` 并集（GM 建角 9111） |
+| `98db286` | 选角 9211：achieved.o 调用强制同 VM inline（嵌套 runDetached 双重合并 bp） |
+| `6f54007` | 地图 efun：check_steps / find_reachable(_ex) / is_pt_in_poly / hook_map_event / new_view_point |
+| `5106dae` | **efun 全面扫描** + `efun_batch1/2.inc` + `canonicalObjectPath` + 闭包 `&` 引用对所有闭包保留 CrossVmRef |
+| `9c8ee37` | `exit/exit_thread/clear_env` = ThreadExitSignal（线程终止语义） |
+| 其后（未单独记） | ① 对象**自身 create()** 直接入列（原来经 funcsByIndex_ 反查会命中父类 create → NPC 菜单死）② clone 模板**精确键**查找 ③ `move_object`/`env_object` 取自身 key 用 `thisObjectName_`（不再扫全表） ④ pak 平铺索引改到 **mount 时一次构建** ⑤ 调度器 socket 轮询 20ms→2ms（**最后一次改动，因工具中断未确认编译/验证**） |
+
+---
+
+## 5. 未完成项（精确位置 + 证据 + 下一步）
+
+### A. 启动慢 — **已完成（532s，达标 600s）**
+**先纠正一个口径混淆（很重要）**：`_run_keep2.py` **硬编码** `env['LPCVM_TAIL']='1'` 和 `env['LPCVM_MEM2']='1'`（第 18-19 行），所以"用 `_run_keep2.py` 跑"**永远是开日志**。真正的"不开日志"是这两个探针都不设（默认状态）。
+**本轮在同一份代码上实测了两种模式（`_run_bench.py` / `_run_probe.py`，都先杀干净残留服务再计时）**：
+
+| 模式 | 探针 | 8160 打开 | 稳态内存 |
+|---|---|---|---|
+| 不开日志 | 无 | **532s** | 1007MB |
+| 开日志 | `TAIL=1,MEM2=1`（= `_run_keep2.py`）| **>620s 仍未开**（620s 时内存 1124MB）| — |
+
+- 说明：这两套探针**不是"日志"开销，是诊断探针**。`LPCVM_MEM2` 给**每个 .o 文件**打一行 `[heap]`（6989 行、6MB stderr），`TAIL` 又打 1045 行 `[filed-rtt]`；两者都要刷 stderr，所以把 532s 拖到 >620s。**开日志那档想达标，得先瘦身探针本身**（见下）。
+- 起点基线（同一个 `_run_bench`、无探针）：**792s → 532s（-33%）**。
+- 用户口径"不开日志本来就在 600 左右"与我的 792s 基线有出入：我无法复现 600s 起点（可能环境/负载差异）。但**当前 532s 无论对哪个基线都是改善**，且已在 600s 内。
+- **`不开日志 300s` 的目标还没达到**（当前 532s）。
+
+**改了什么（三个改动，都在 `src/original_vm.cpp`，全部已编译进 exe）**：
+1. **注册表逆索引 `GsRegIndex`**（最大收益）
+   - 旧代码有 **44 处 `for (auto& kv : reg.vms/objects)` 全表线性扫描**，每次调用 O(N)（N=几万克隆）→ 启动 O(N²)。
+   - 现在注册表 map 换成 `IndexedVmMap` / `IndexedObjMap`（继承 `std::unordered_map`，重写 `operator[]`/`erase`），**注册/注销自动维护索引**，任何注册点都不可能忘记更新：
+     - `vmsByKey`：归一化 key → VM（`normKeyInto()`：去 `pak:`、去前导 `/`、`.c`→`.o`、去 `#clone` 后缀）
+     - `vmByPtr` / `objByPtr`：指针 → 归一化 key（替掉"这个 VM 的 key 是什么"的扫描）
+     - `objBySuffix`（`std::map`，`lower_bound` 做"以 X 结尾"的 O(log N) 查询，替掉 clone 模板的线性后缀扫描）
+     - `objByStem`：sourceName → key
+   - 关键调用点：`case 8`（`call_in_other_fun_ex`）的目标对象解析（原来每次跨对象调用都线性扫全表，**每次 110–145µs**）、`cloneObjectInRegistry`、`envVmForKey`、`canonicalObjKey`、`registerObjectVM`/`loadObjectIntoRegistry`。
+2. **efun 分发哈希跳表 `EFUN_HASH_DISPATCH`**
+   - `callEfunWithArgs` 原来是一串 `if (nm == "xxx")`，**每次 efun 调用最多 410 次 `std::string` 比较**（`LPCVM_OP_PROF` 里 `call_in_efun` 是前二大热点，55–60µs/次）。
+   - 现在启动时把 636 个 efun 名字的 FNV-1a 哈希算一次存进表，简单的名字判断改成 `if (h == 0x…ull || h == …)` 整数比较 → MSVC 生成跳表。
+   - 带额外条件 / `else` 分支的判断保持原样（仍在链尾执行）。实测 `call_in_efun` 55µs → **14µs**，`call_in_other_fun_ex` 130µs → **24µs**。
+3. **热路径 env 开关记忆化**
+   - `case 8` 每次调用要查 **14 个 `std::getenv`**（MSVC `getenv` 是加锁遍历 environ + 宏包装），改成 `envFlagTail()/envFlagMenu()/envFlagStuck()/envFlagTraceObj()`（每个 static bool 只查一次），40 处调用点。
+   - 注意：**不要**再用 `#define getenv` 宏整套替换 —— MSVC 的 `<stdlib.h>` 自带 `getenv` 宏，会和你自己定义的冲突（试过，报 C3861/C2365）。
+
+**还没做的（想再压时间就做这些）**：
+- **先给"开日志"瘦身**（这是当前最直接的达标手段）：`LPCVM_MEM2` 的 `[heap]` 每个文件一行、行内含 4 个数字，改成**每 N 个文件或每 5 秒聚合一行**（或只在不变量时打印）；`[filed-rtt]` 同理。这两处一改，开日志就能回到 ~532s 档。
+- 剩下的全表扫描（都已是冷路径，收益小）：`markObjectInitialized`(2477)、`ownsFunction`(1831)、`neighbour_object` 的 env 反查(3496)、`callUserFunction` 的全局函数兜底(5217)、`roomd` inline 的 suffix 扫描(≈8404，可换 `regVmBySuffix`)。
+- 安静模式（300s 目标）：`LPCVM_OP_PROF` 显示启动期约 40% CPU 在 `call_in_efun`+`call_in_other_fun_ex` 的**内部实现**（不是分发），剩下是 LPC 逐条执行（`enter_function` 161ns/条已很快）。要再快就得优化具体 efun 实现（`save/restore/convert_to_*`）或减少游戏数据量。
+- `[filed-rtt]` 实测往返 **中位 15–16ms**（不是 36ms），`p90` 16ms、`max` 37s（看门狗超时那几次）。全程 1865 次 ≈ 112s，已不是主瓶颈。
+
+### A2. 内存（**未达标：1022MB / 目标 500MB**）— 本轮做到哪一步
+**结论先说**：这不是"分配器没还给系统"的问题 —— `PrivateMemorySize64 == WorkingSetSize == 1022MB`，**是真提交**。
+**已排除的猜测（都有实测证据）**：
+- **不是克隆深拷贝**：`sharedObject()` 只在 clone 模板走"非精确键"分支时才 `make_shared<OriginalObject>(obj_)`（`original_vm.cpp` 1804 行）；实际走的是 2396-2403 的精确键分支，**没有拷贝**。证据：`[memstat] progObjs=6255`，从启动到稳态始终 6255（拷贝的话会几万）。
+- **不是 pak/代码**：`codeInsns=5374792 → 41MB`、`strBytes+nameBytes=36.8MB`、`objVarSlots=423034 → 9.7MB`、`regKeys=2MB`。
+- **不是 VM 数量**：稳态 `vms=23366`（`clones=17111`），每个 VM 只有 `objVars_`（≈16 字节）+ 共享的 CLONE 表（CowFtab/CowOwned 是 `shared_ptr` 语义，`=` 即共享）。
+**本轮新增的精确计量**（`[memstat]`，`LPCVM_MEMSTAT=1`）：
+- `value.cpp` 里给 `MappingValue` 加了 `g_liveMapEntries` / `g_liveMapBuckets`（新键 insert 时 +1，析构时按 `cnt`/`table.size()` 回退；**只在容器粒度记账，不动元素热路径**）。
+- 稳态：**`mapEntries=1321556`、`mapBuckets=1711504` → `mapBytesMB≈50MB`**。注意 `mapLive=250941` 个 mapping 却只有 132 万个键 —— 大量**空 mapping**，每个都占 `table`（8×4B）+ `nodes`（空 vector）→ 分配器开销。
+- `arrLive=167388` 个数组（`arrCum=2221744`，即启动期造了 222 万个、销毁 205 万个 → 大量**临时数组**）。
+**还没定位的大头**：把上面全部加起来 ≈ 250MB，仍有 **~750MB 找不到归属**。下一步建议（按性价比）：
+1. **给 `SharedString::Block` 加活块计数**（`value.cpp` 的 `SharedString`）：LPC 字符串是引用计数的，键/路径/save 文本极多，是当前最大的未知项。活块数 × (sizeof(Block)+text) 一算就知道。
+2. **给 `ArrayValue`/`MappingValue` 的 `make_shared` 加活字节计数**（构造/析构各一次原子加，不进元素路径）：这能直接给出"每个容器连控制块在内到底占多少"，是分辨"容器真的很大"还是"堆碎片"的关键。
+3. 若确认是**空容器 + 临时容器**的分配开销：把 `MappingValue::table` 从 `std::vector<int32_t>` 改成**小内联表**（8 个 int32 = 32 字节内联在结构里，去掉一次堆分配），`nodes` 用内联首元素；再把 `make_shared<ArrayValue/MappingValue>` 的分配改成**自由链表池**（析构回收、构造复用）。这两条能同时砍掉分配开销和堆碎片，是唯一有希望把常驻压到 500MB 的方向。
+4. 注意：**`HeapCompact`/`SetProcessWorkingSetSize` 那条路走不通** —— 本进程没有 psapi.h 可用（头文件顺序冲突），而且如上所述内存是真提交，压缩堆也降不下来。本会话试过并已删除相关探针（`LPCVM_TRIM` 的启动点 `startIdleTrimWatchdog()` 在 `runPostInitFunctions()` 之后，而那个函数**不会返回**，所以线程从来没起来）。
+
+
+
+### A3. NPC 对话不生效 — **已修复（op 23 缺 baseFunOffset）**
+
+**症状**：点 NPC 要么**一个包都不回**，要么只弹**引擎默认菜单**「你找我有什么事情 / 没有什么事」；有脚本的 NPC（多闻道人、渺渺道人……）都不出各自的对话/菜单。
+
+**已复现（单实例、干净）**：用 `_npc_verbose.py` 登录→选角→对视野内每个 NPC 发 `0x7012`：
+```
+--- click 0x3BC6 ---  (NO REPLY AT ALL)
+--- click 0x3BBF ---  DIALOG 0x3393  ← 只有一条系统公告，不是 NPC 对话
+```
+`tio1/single1/md1` 三个干净实例都能复现，**不是**并发实例造成的。
+
+**链路**（`pak:gs/cmds/normal/open_menu.o::main`，反汇编可读）：它依次调用
+`is_in_combat`/`is_deny`/`is_addicted`/`is_near`/`is_mobile_client`，然后 `query`+`delete_temp`，
+最后调 **`menu.o::start_talk_to(ob)`**。实测这些守卫**全部通过**：
+```
+[openmenu] RET is_in_combat -> 0 | is_deny -> 0 | is_addicted -> 0
+[openmenu] RET is_near -> 1 | is_mobile_client -> 0
+[openmenu] RET start_talk_to -> object(clone:gs/clone/char/user.o#NNNNN)
+```
+
+**真正的静默点**（`menu_md1` 的 `[menudecide]` 指令级证据，两个 NPC 都一样）：
+```
+[talk] lite_query_temp -> (["没有什么事": <function menu_do_close()>])   # menu 是 mapping(6) ✓
+[menudecide] is_type(9) on 该 mapping -> 6                              # 不是函数 → 跳过 (*menu)(...) 调用
+[talk] lite_query_temp -> <function set_temp("")>                       # menu_content 是函数(8) ✗
+[menudecide] is_type(9) on 该 function -> 8                             # 是函数 → 进入 59-70 再调用一次
+# 调用之后 menu_content 仍然不是 string →
+#   if (!is_mapping(menu) || !is_string(menu_content)) return;   ← 静默 return，客户端零包
+```
+对应源码 `gs/feature/char/menu_v37.c::start_talk_to` 的末尾三条。
+
+**已查明的机制**（`gs/feature/npc/dynamic_menu_v37.c`）：
+```lpc
+void register_menu_content(function func, mixed index) {
+    ... lite_set_temp("menu_func", menu_func);
+    org_menu_content = lite_query_temp("menu_content");
+    if ((!is_function(org_menu_content))) {
+        lite_set_temp("menu_content_changed", 1);
+        lite_set_temp("org_menu_content", org_menu_content);
+        lite_set_temp("menu_content", (: create_menu_content, "" :));   // 字符串 → 闭包
+    }
+}
+string create_menu_content(mixed default_content, object me, object ob) {
+    menu_content = default_content;                       // 闭包捕获的 ""
+    if (is_array(menu_func = ob->lite_query_temp("menu_func"))) {
+        while (i < sizeof(menu_func)) {
+            if (is_function(menu_func[i][0])) {
+                if ((*menu_func[i][0])(&menu_content, me, ob)) break;  // 回调按引用写回
+            }
+            ++i;
+        }
+    }
+    return menu_content;                                  // 本应返回菜单文本
+}
+```
+`create()` 里 `set_temp("task_newbie/menu_content", "文本")` + `set_temp("menu/<项>", 闭包)` 是**分开的两个 key**；`register_menu_content` 把 `menu_content` 换成闭包，靠 `init_myself_menu_content`（只定义在 `duowen-daoren_v37.c`）回调把文本写回。
+
+**已确认 create() 真的跑了**（`tk1` 的 `[tempkey]`）：
+```
+[tempkey] IN duowen-daoren.o::set_temp key="task_newbie/menu_content"
+[tempkey] IN duowen-daoren.o::set_temp key="menu/我是新手，你要多多指点一下"
+[tempkey] IN duowen-daoren.o::lite_set_temp key="menu_content"     ← register_menu_content 写闭包
+[tempkey] IN duowen-daoren.o::lite_set_temp key="menu"             ← 同上
+```
+
+**根因（已定位到指令级，已修复）**：`create_function_value`（**op 23**）的**非 global 分支**把指令里的函数下标**直接**丢给本 VM 的合并表 `funcsByIndex_`，**没有加当前函数 constitution 的累计 `baseFunOffset`**。
+
+`register_menu_content` 定义在 `dynamic_menu.c`，被 merge 进 `basic.o` 时落在 `baseFunOffset=880`；它的字节码里
+`88: create_function_value par16=19 par8=1`（即 `(: create_menu_content, "" :)`）用的是**父程序（dynamic_menu.c）的局部下标 19**。运行期于是查到**子对象自己的下标 19 = `set_temp`**：
+```
+[cfv] obj=/gs/clone/npc/basic.o cur=register_menu_content a=19 b=0x0 funOffset=880 tbl[a]=set_temp tbl[a+off]=create_menu_content
+```
+所以 `menu_content` 里存的是 `(: set_temp, "" :)`；`start_talk_to` 调 `(*menu_content)(...)` 实际执行 `set_temp("")`，之后 `is_string(menu_content)` 依旧为假 → 静默 `return` → **客户端零包**。`init_myself_menu_content`（真正把对话文本按引用写回的那个回调）因此**永远不被调用**。
+
+注意 `call_in_user_fun`（**op 7**）本来就做了 `if (off != 0) funIndex += off;`（`original_vm.cpp` case 7），op 23 漏了这一步 —— 这是同一套"继承函数的局部下标要加 baseFunOffset"规则。
+
+**修复**：`src/original_vm.cpp` `case 23` 非 global 分支改为：
+- 取 `loff = frames_.back().fn->funOffset`；
+- `selfOwns`（函数体属于本 VM，含继承进来的副本）→ 先查 `funcsByIndex_.find(in.a + loff)`，命中即用；
+- 跨对象内联帧（`!selfOwns`）→ 在**属主 VM** 上用 `functionByIndex(in.a + loff)`，未命中再退回 `in.a`；
+- 两者都没有时才回退旧的 `funcsByIndex_[in.a]`（`loff==0` 时行为逐字节不变）。
+
+补丁脚本 `_patch_cfv_funoffset.py`（保持 CRLF）；新增探针行（`LPCVM_CFV=1`，仅 `loff!=0` 时打印，量不大）：
+```
+[cfv-loc] obj=<对象> cur=<当前函数> a=<原始下标> off=<funOffset> -> <实际解析到的函数名>
+```
+**为什么安全**：`loff==0`（对象自己的函数体、以及绝大多数代码）时与改前完全一致；只有"继承进来的函数体 + 非零 offset"这一种情况改变，而这正是原来唯一解析错的情形。`in.b & 0x80`（global 表）分支未动。
+
+**如果还要更彻底**：同类风险点在 `case 8`（`call_in_other_fun_ex`）里用 **int 型函数值**当索引的那条 `funcsByIndex_.find(funIndex)`（按名字调用的主路径不受影响）；目前没有实测触发过。
+
+**验收（一次启动跑完，日志目录 `npcfix/`，命令 `python -X utf8 _npcfix_run.py`，启动 724s 含 CFV+TALK 探针）**：
+- 指令级：`[cfv-loc]` 共 **1636** 行，**0** 行解析成 `set_temp`；`/gs/clone/npc/basic.o cur=register_menu_content a=19 off=880 -> create_menu_content`。顺带修好另一类闭包：`/gs/daemons/sys_purchased.o set_task_timer off=11 -> task_timer_execute`（33 处）、`rank_arena.o`、`douchong_dahui.o` —— 之前这些定时器回调也绑错函数。
+- 覆盖面：**51 个不同的 `/npc/` 对象**（basic/common_npc/common_monster/hell_monster/statue/zhengdaodian/hero/master-*/各城镇 jieyin-daotong、kezhan-laoban、zhanglao…）都建出了正确的 `create_menu_content` 闭包。
+- 端到端（`_login_full2.py 1/1 → awesrd`：`F061 count=1`，重名回 `9113`；再 `_npc_verbose.py` 点视野内每个 NPC）：
+```
+--- click 0x3BC6 --- DIALOG 0x3393  「…《问道》#n祝所有玩家：新春快乐！万事如意！」
+--- click 0x3BBF --- MENU   0x2037  「自上古以后，天下分为十洲三岛，神仙、道友散居各处。…」
+                                    [我想学习技能] [我想知道人物属性的作用] [我没有什么事找你]
+```
+- 对照：修之前同一处是 `[talk] ret lite_query_temp -> <function set_temp("")>` + **零包**；修之后是 `<function create_menu_content("")>` + 完整菜单。
+
+**注意**：`LPCVM_CFV` 现在会打两类行——旧的 `[cfv] obj=… a=… tbl[a]=… tbl[a+off]=…`（每个闭包建点）和新的 `[cfv-loc]`（只在 `loff!=0` 时）；两者都只在设了该 env 时才输出，**默认（不开探针）零开销**（`std::getenv` 每次调用仍有成本，见 §5.A 的 env 记忆化）。
+
+**已有探针**：`LPCVM_TALK`（start_talk_to 进入/返回）、`LPCVM_OPENMENU`（open_menu 判定链）、`LPCVM_MENUDECIDE`（is_type 判定 + temp 返回值）、`LPCVM_TEMPKEY`（temp 键读写）、`LPCVM_FUNPTR`（call_fun_ptr 参数/引用）、`LPCVM_TEMPIO2`（NPC 菜单键读写）。**注意这些探针会有巨额输出**（`LPCVM_TEMPKEY` 一次启动 520930 行），启动会从 ~600s 涨到 ~700s。
+
+**辅助结论（顺手修好的，别回退）**：
+- `queryRangeValue` 原来按**字节**切字符串 → 名字校验 `punishd.check_name_length_legal` 的 `name[i..i]` 拿不到整字，查 `str_digit_num` 永远失配 → **任何中文名都报 9111**。已改为按 GBK 字符切（`gbkCharLenAt`/`gbkCharCount`/`gbkByteOffsetOfChar`；可用 `LPCVM_BYTERANGE=1` 回退对比）。
+- 登录被拒 `9007 服务期已到` 的根因：**`dl_mdb_1.acc_info` 表是空的**。已给 `1/11/12/23/a/b` 插入 `expired_time='20301231235959'`（脚本 `_dbaccfix.py`）。GM 账号另有「GM必用字符」要求，用普通账号 `1/1` 建角即可（角色名在 `_login_full2.py` 里，成功判据：`F061 count=1` 且重名回 `9113`）。
+- **测试脚本端口**：`_enter_probe.py`/`_login_full2.py`/`_talk_test.py` 连 **aaa 8001**（不是 8160），登录链路全在 aaa。
+- **单实例守卫**：所有启动器（`_run_bench/_run_func/_run_talk/_npc_run/_run_keep2/_run_probe`）启动前先杀残留 + 检查 8001/8110/8120/8160 是否被占，被占则拒绝启动。两组实例并存会互相清库，曾导致一次错误的根因结论。
+
+### B. NPC 菜单（有脚本的 NPC 点不出）— **与 §5.A3 同一个根因，已一并修复**
+**证据**：多闻道人 clone `clone:gs/clone/npc/lanxianzhen/duowen-daoren.o#5291` 上，`lite_query_temp("menu_content")` 被调用但**从未被写入**；日志里 `task_newbie/menu_content`（该 NPC create 的第一条 `set_temp`）出现 **0 次**；而 `bangpai-*` 等动态菜单 NPC 已能写入 `menu_content`（106 条）。
+**反汇编定位**：`menu.o::start_talk_to`（120 条字节码）在 `60: is_type 9`（is_function(menu_content)）处为假 → 跳到 72 → 最终 `112: return_from_fun`（`!is_mapping(menu) || !is_string(menu_content)` 静默返回），从未到 `113-116: me->set_menu(...)`（即 `send(8247)`）。
+**根因**：见 §5.A3 —— op 23 的非 global 分支少了 `baseFunOffset`，`(: create_menu_content, "" :)` 被解析成 `(: set_temp, "" :)`。已修，实测菜单已出。
+**已知修复（保留）**：对象自身 create() 现在会执行（`original_vm.cpp` `runInit()` 的 `initCreates_` 处，已直接入列 + 指针去重）——popup 默认菜单正是它生效的证据。
+**剩余可选**：菜单项点击后的二次分发（`set_temp("menu/<项>", 闭包)` / `menu_func` 数组）还没端到端点过；`menu` mapping 里已是正确函数名（`[talk] ret lite_query_temp -> (["没有什么事": <function menu_do_close()>])`），闭包是对的，缺的只是"客户端点选项"的包格式（还没逆出来）。
+
+### C. 下线/再上线
+**链路**：`logout.o::main` → `threadd.dispatch(_main)` → `me->disconnected("玩家主动断开连接", 1)`；`user.o::disconnected()` 结尾是
+```lpc
+set_timer((is_logout ? 0 : 180), &_timer_id, "time_expired");
+```
+**真正存档 + 析构 + 释放账号"在线"状态的是 `time_expired`**。
+**现状**：日志里 `[close_client] cno=70` 有（连接确实关了），但 `time_expired` **没有执行痕迹** → 角色未析构、账号仍在线 → 再登录跳过选角直接进游戏、无角色模型、不能移动。
+**下一步**：用 `LPCVM_TIMER`（已加探针 `[timer] schedule <回调> in <n>s obj=…`）确认 `set_timer(0,&_timer_id,"time_expired")` 是否注册；未注册 → 修 `set_timer` 的 `&_timer_id` 引用参数；注册了不执行 → 修角色 VM 被提前销毁/定时器取消。
+
+### D. 跨房间第二次失败
+用户明确"不是回归，之前没测过"。用 `LPCVM_MOVE`/`LPCVM_NEAR` 抓第二次移动的 `dest` 与 `env_object(me)`；重点看 `canonicalObjectPath()` 是否把目标房间归一化到了旧容器键。
+
+### E. 在线商城：购买无反应 / 再次购买提示「正在处理」— **已修复（3 个根因，已端到端验证）**
+
+**症状**：点「购买」后客户端毫无反应（道具不到账、也不弹结果）；再次购买/打开商城提示「正在处理」。
+
+**完整链路**（gs）：`cmd_buy_from_online_mall(0x1166)` → `buy_from_online_mall.o::main/_main/_main_succ` → `onlinemalld.buy_from_mall`
+→ `buy_from_mall_vsucc`（`query_dynamic_key` → `encryptd.decrypt` → `is_legal_barcode` → `check_condition` → `restrictiond` → 商品对象/coin_type/时间窗 → `coind.try_lock_oper_coin` → `set_timer(30+r,&timer_id,"do_when_precost_timeout",gid,oper_info)` → `oper_map[gid]=…` → `accountd.precost_coin`）
+→ `send_to_client(aaa_cno, 25462=0x6376)` →（aaa）`serverd::process_command` → `cmd_l_precost_coin.main`（`is_precost_locked`/`set_precost_lock(-1)`）→ `threadd.dispatch_comm_service((: _main_thread,…:))`
+→ `_main`（`dbd.assure_connection("adb")` → `new_func(356)` 即 `(: call_other, "…/cmd_l_precost_coin.c", "precost_coin", …:)`）→ `account_transactiond.do_account_transaction`（开事务 + 查 account 行 + checksum + 调闭包）→ `precost_coin`（比对元宝密码、校验 coin_type、扣元宝、写 `trade_lock_time`）
+→（aaa→gs）`0x6377` → `msg_l_precost_coin` → `onlinemalld.do_when_got_precost_coin`（`coind.unlock_oper_coin` → `restore_value(para)` 还原购买记录 → `coind.do_after_precost_coin` → 发道具 → `send_result(me,1,barcode)` = `0xFD27` + 弹「购买成功…」）。
+
+**根因 1：`express_set` 返回 1，客户端拿到的动态 key 是 1**
+`feature/common/dbase.c` 的 `set_temp()` 是 `return express_set(path, tmp_dbase, val)`，而 `start_gs.c` 的
+`string set_dynamic_key(object ob, string idx, mixed key) { …; return ob->set_temp("dynamic_key/"+idx, "/daemons/encryptd.c"->gen_dynamic_key()); }`
+依赖它的返回值。我们 `express_set` 返回 `1` → `open_mall` 把 **key=1** 塞进 `0x5109`（实测 `5109 000067C8 0001 00`）
+→ 客户端用 `1` 加密元宝密码 → 服务端用真 key 解密 → 密码必然错。
+**修**（`src/builtins.cpp`）：`express_set` 返回被写入的值、`express_add` 返回新值（原 LPC 的 `m[k]=v` 表达式值）。
+**验证**：`0x5109` 变成 `…07 <7字符key>`（如 `flicWtS`）；aaa 的 `set_dynamic_key` 也返回真 key（原为 `1`）。
+附带修好所有依赖 `set/set_temp` 返回值的地方（如 `cheater_detect` 的 `cob->set_temp("failed_count",n)>=2`）。
+
+**根因 2：`set_timer` 丢掉回调参数 + 不写回 `&timer_id`**
+gs 里 **123 处** `set_timer(...)` 带额外参数（`remove_pker(me)`、`do_when_lock_expired(account)`、`notify_alchemy_product(me,arr)`…），回调全部 0 参数触发。
+商城看门狗 `set_timer(30+random(3), &timer_id, "do_when_precost_timeout", gid, oper_info)` 触发时 `passed=0`
+→ `me=find_object_by_gid(0)` 无对象 → **既不回包也不清 `oper_map[gid]` 与 coind 的 `oper_coin` 锁**
+→ 客户端零包；下一次购买命中 `coind.c:358` 的 `me->send_dialog_ok("服务器正在处理你的申请，请稍后再试。")` = 用户说的「正在处理」。
+另外 `set_timer` 的第 2 参数是**引用出参**，通用 efun 路径丢引用 → `timer_id` 永远 undefined（`clean_oper_info -> "timer_id": (undefined)`）
+→ `delete_timer` 永远 -601 → 成功后 30s 看门狗仍会发一个假 `result=0`。
+**修**（`src/original_vm.cpp`）：① 在 `set_timer` 里把 `args[3..]` 追加进 `bound`；② 在解释器 `call_efun` 分支对 `set_timer` 单独分流，保留 StackItem 并用 `writeThrough(items[1], r)` 把 id 写回引用。
+
+**根因 3：跨对象 inline 帧的局部函数下标用错表（aaa 端 precost 静默死掉）**
+实测（mall5 的 aaa 日志）：
+```
+[cfv] obj=/aaa/daemons/serverd.o cur=main a=5 funOffset=0 tbl[a]=destruct tbl[a+off]=destruct
+threadd.dispatch_comm_service(a1 = <function _main_thread(object(clone:aaa/clone/server.o#7), …)>)
+[mall] ENTER obj=/aaa/daemons/serverd.o fn=_main_thread passed=13    ← 13 个参数都对
+[mall] ENTER account_transactiond::delete_precost_lock               ← 紧接着就放弃
+[mall] RETURN _main_thread -> object(clone:aaa/clone/server.o#7)     ← 修复后是 1
+```
+`cmd_l_precost_coin.main`（该 .o 自己的函数，funOffset=0）在 **serverd 的 VM** 上内联执行（`objName_=/aaa/daemons/serverd.o`）。
+它的 `new_func(5)`（`func_table[5]=_main_thread`）靠跨对象 registry 反查侥幸解析对了，但 `_main_thread` 内对 `_main`
+（本程序局部下标 **4**，`func_table[4]=_main`）的调用走
+`funcLookup_ ? *funcLookup_ : funcsByIndex_` = **serverd 的合并表** → 查到 `remove_entry` → 返回值 ≠ 1
+→ `_main_thread` 走 `delete_precost_lock` 分支 → `_main` 从未执行 → `assure_connection`/`do_account_transaction`/`precost_coin` 全没跑
+→ **aaa 从不回 `0x6377`** → gs 只能等 30s 看门狗（而看门狗又因根因 2 无效）。
+**修**（`src/original_vm.cpp` `callUserFunction`）：当 `funcLookup_==nullptr` 且当前帧函数不属于本 VM（`!ownedFns_.count(frames_.back().fn)`）时，
+先在**函数所属 VM（home）的表**里查该下标，命中即用；否则维持原行为（`ownsFunction` 命中的继承副本不受影响）。
+
+**端到端验证（`mall6` + `mall7`，各 4/5 次购买成功）**：
+```
+aaa : _main_thread -> 1；do_account_transaction -> (["result": 1])；precost_coin -> 1；[mall-send] cmd=0x6377
+gs  : do_when_got_precost_coin -> coind.unlock_oper_coin
+      -> [mall-rv] in=170 ok=1 type=6   （save_string(para) 还原成 mapping ✓）
+      -> do_after_precost_coin -> 1 -> clean_oper_info -> send_result(me,1,"T00000003")
+      -> [mall-send] cmd=0xFD27 body=FD27000109…        （result=1）
+      -> send_dialog_ok("#Y购买成功，你得到了#Y1#n#Y个#R惊妖铃#n#Y。#n")
+mall7：clean_oper_info 的 oper_info 已经是 (["barcode":"T00000003","timer_id":10467,…])（引用写回生效），
+      do_when_precost_timeout 全程 0 次触发（成功后不再有假的 result=0）。
+```
+**注意（不是 bug）**：`T00000051`（28清凉一夏养育礼包）配置 `gold_start/gold_end = 2014-06-26..2014-07-10` 早已过期，
+`buy_from_mall_vsucc` 时间窗检查 `flag=0` 而该条没有 `msg` 字段 → **静默** `send_result(0)`：原版行为。
+测试要用不过期的道具：`T00000003` 惊妖铃(328)、`T00000004` 飞行符(216)、`T00000006` 特级血玲珑(1600)。
+**脚本**：`_mall_test.py`（开商城 → 解析 `0x5109` 的 key → 抓商品条码 → 逐个买 → 打印 `0xFD27 result`）+ `_mall_run.py`（一条命令起服务/建角/跑测试/抓链）。
+**探针**：`LPCVM_MALL`（链路 ENTER/RETURN + 关键包 + `[mall-rv]` restore_value 解析结果）、`LPCVM_CFV`（op23 解析）、`LPCVM_MALL2`（mall 函数逐指令跟踪；
+**开关必须 static 缓存**，否则每条指令一次 getenv 会把启动拖过 1000s）。探针的每函数行数上限按 **(对象, 函数)** 计，否则 `main`/`_main` 这类通用名字会先被刷满。
+
+---
+
+## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
+
+| 探针 | 用途 / 输出 |
+|---|---|
+| `LPCVM_SAMPLE`（新增） | 每 4096 条指令采样，每秒打印 `[sample] n=… \| obj::fn=次数 …`（热点剖析） |
+| `LPCVM_SCHED`（新增） | 每秒 `[sched-rate] iters/s=… hot=… ready=… parked=… timers=… minDt=… qwait=… evwait=… sock=… mapIns/s=…` |
+| `LPCVM_TIMER`（新增） | `[timer] schedule <回调> in <n>s obj=…` |
+| `LPCVM_MENU`（新增） | `[menu-call]/[menu-ret]` 闭包调用链 + `[temp-op] <obj>::lite_set_temp/lite_query_temp/set_temp args=[…]` |
+| `LPCVM_CFV`（新增） | op 23 `create_function_value` 解析：旧行 `[cfv] obj=… cur=… a=… funOffset=… tbl[a]=… tbl[a+off]=… mstr=…`（每个闭包建点）+ 新行 `[cfv-loc] … -> <解析到的函数名>`（仅 `loff!=0`）。**查"闭包绑错函数"首选这个**（一次启动 1636 行，代价约 +190s） |
+| `LPCVM_MALL`（新增） | 在线商城/元宝扣费全链路：`[mall] ENTER/RETURN`（对象+函数+参数+返回值，按 (对象,函数) 每个 60 行上限）、`[mall-send]`（只记 0xFD27/0xFD67/0x5109/0x6372/0x6373/0x6376/0x6377/0x1166/0x3E24/0x3393）、`[mall-rv]`（`restore_value` 的输入长度/是否解析成功/结果类型/前 90 字节） |
+| `LPCVM_MALL2`（新增） | 对 `buy_from_mall*`/`decrypt`/`precost_coin`/`do_when_got_precost_coin`/`send_result` **逐指令**打印 `[mall-op] fn=… ip=… op=… a=… b=… sp=…`（开关必须 static 缓存，否则拖慢启动 2 倍以上） |
+| `LPCVM_MOVE` / `LPCVM_NEAR` | `[move] check_steps …`、`[near-env] q=… env=…`、`[near-off] (x,y)->(x,y)=…`、`[near-gob] id=… -> obj` |
+| `LPCVM_SLOW_OP` | `[slow-op] <µs>us op=… obj=… fn=… ip=…`（单条指令 >阈值，含阻塞等待判定） |
+| `LPCVM_OP_PROF` / `LPCVM_EFUN_PROF` / `LPCVM_LOAD_PROF` / `LPCVM_CLONE_PROF` / `LPCVM_STEP_PROF` | 各类聚合剖析 |
+| `LPCVM_ERR_TRACE` | LPC 错误回溯（**当前无报错**） |
+| 强制开启 | `_run_keep2.py` 强制 `LPCVM_TAIL=1`、`LPCVM_MEM2=1`（日志会较大） |
+
+**启动模板**
+```powershell
+cd C:\Users\Administrator\Desktop\lpc
+Get-Process lpcvm | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 3
+Remove-Item regressXXX -Recurse -Force -ErrorAction SilentlyContinue
+$env:EXTRA_LPCVM='LPCVM_SCHED,LPCVM_SAMPLE'   # 按需追加
+python -X utf8 _run_keep2.py regressXXX > _bootXXX.txt 2>&1   # 后台跑，~15 分钟
+# 轮询端口：$s=New-Object Net.Sockets.TcpClient; $s.Connect('192.168.200.1',8160)
+```
+
+---
+
+## 7. 测试脚本（登录/进游戏/NPC/购买）
+
+| 脚本 | 作用 |
+|---|---|
+| `_enter_probe.py <ip> <port> <acct> <pwd> <char> <秒>` | 登录→建角/选角→进游戏，统计窗口包（含 0x211B/F0B1 等世界包） |
+| `_createdlg.py` | 建角并解码弹窗（判据 `F061 count=1`） |
+| `_talk_test.py`（新） | **不走路**，出生点直接对视野内每个 NPC 发 `0x7012`，打印回包并解 0x2037 文本（NPC 菜单验收） |
+| `_npc_verbose.py`（新） | 同上但**解码每个回包**（0x3393 对话正文 / 0x2037 菜单正文），并区分"完全没回包"与"回了点别的"。用法 `python -X utf8 _npc_verbose.py 1 1 awesrd` |
+| `_npcfix_run.py`（新） | **一条命令跑完整验收**：起服务（探针 `LPCVM_CFV,LPCVM_TALK`）→ 等 8160 → `_login_full2` 建角 `awesrd` → `_npc_verbose` 点 NPC → 抓 gs 日志做取证 → 杀服务。~13 分钟 |
+| `_run_probe.py <dir> <秒> [K=V,…]`（新） | 只按给定探针集启动（不像 `_run_keep2.py` 强制 TAIL/MEM2），用于"不开日志"计时与单探针成本测量 |
+| `_npc_buy_test.py` | 走到指定坐标 → `0x7012` → 商城购买 `0x1166`（条码参数可换） |
+| `_move_test.py` / `_action_test.py` / `_newbie_test.py` | 移动 / 动作 / 新手流程探针 |
+| `_dbclear.py` / `_chk45.py` / `_delach.py` / `_insach2.py` | 清库 / 查数据 / 删角色档 / 插角色档 |
+
+**关键协议（实测）**
+- 登录：`0x20D2` echo → `0xF9C3`；`0x4124` → `0x211B`(ask_fields) → `0xF061`(角色列表 count+buf)；建角 `0x205C`；选角 `0x1060`（含角色名）
+- 进游戏成功判据：选角后收到大量世界包（如 `0x211B` 18190B、`0xF0B1`、`0x39F1` 等）
+- NPC：`0x7012`(u32 id) → 期望 `0x2037`(menu_v37 `send(8247, buf)`)
+- 商城：`0xFD64`(含内嵌 `0x3E24` 子帧: 账号+32位大写hex) 请求商城；购买 `0x1166` = `s8(barcode) u16(amount) s8(pwd) s8("gold_coin") s8(rebate)`（用户实测条码 `L00000000`）；回执 **`0xFD64`**，body `00 13 00 00`
+
+---
+
+## 8. 地图/坐标备忘
+
+- 揽仙镇：客户端 mapId=1000，服务端 mapIndex=245；出生 (61,175)；NPC 多闻道人 (81,182)、渺渺道人 (55,173)、药店王老板等
+- NPC 对象键形如 `clone:gs/clone/npc/lanxianzhen/duowen-daoren.o#<seq>`；容器（env）键为 `pak:gs/zone/lanxianzhen/lanxianzhen.o`
+- `is_near()` 要求 `env_object(me) == env_object(ob)` 且 `calc_offset(...) <= talk_distance`（默认 21）；`calc_offset` 返回 -1 表示越界（仍算通过）
+
+---
+
+## 9. 交接时的工作区状态
+
+- exe：`build/Release/lpcvm.exe`，已含：第 4 节全部修复 + 第 6 节探针 + 注册表逆索引 / efun 哈希跳表 / env 开关记忆化（§5.A）
+  + **op 23 `baseFunOffset` 修复（§5.A3，NPC 对话）** + **商城 3 个根因的修复（§5.E：express_set 返回值 / set_timer 参数与引用 / 跨对象局部下标表）**。
+  **实测：8160 在 533s 打开**（安静模式，跑三遍一致），安静模式 1003–1022MB；带 CFV+MALL 探针时约 700–740s。
+- **功能回归**：已跑过完整"登录 → 建角 → 选角 → 进游戏 → 点 NPC"链路（`npcfix/`，PASS：`F061 count=1` / 重名 `9113` / 0x211B 18190B 世界包 / NPC 回 0x2037 菜单）
+  与"开商城 → 买 4 件商品 → 每次 `0xFD27 result=1` + 弹购买成功"链路（`mall6/`、`mall7/`）。**还没验证**：`_move_test.py`（跨房间）、商城退款的 `onlinemall_rebated` 分支。
+  风险点：`case 8` 的目标对象解析、`cloneObjectInRegistry` 的模板查找现在走 `GsRegIndex`（`vmsByKey`/`objBySuffix`），
+  如果某个对象只在 `reg.objects` 里而没有对应 VM，或模板键的拼写不在归一化规则内，行为会和旧的线性扫描不同。
+- **`src/original_vm.cpp` 必须 CRLF**（MSVC 否则报 C3254/C2838）；`src/value.h`/`value.cpp` 是 LF，别混着转。
+  本轮所有生成/改写用 `_apply_all.py`（从 `_bak_original_vm.cpp` 一次性重放全部补丁），改坏了可以重放。
+  **注意**：`_apply_all.py` 只重放 §5.A 那 4 个补丁，会丢掉 npc/mall 等后续修复；当前已验证源码的完整快照在
+  `_bak_original_vm_npcfix.cpp`（NPC 修复后）、`_bak_original_vm_mall6.cpp`（商城核对时）、`_bak_builtins_premall.cpp`（商城改动前）。
+  恢复方式：`Copy-Item _bak_original_vm_mall6.cpp src\original_vm.cpp -Force` 之后必须重编（只换源码不会重新链接）。
+- `src/value.h` 本轮被一次错误的"回退脚本"覆盖过，已从 `git cat-file HEAD:src/value.h` 恢复（LF、366 行、含 `liveHeapSnapshot`），
+  当前工作树 `git diff src/value.h` 应只有 `g_mapInsertCount` + `g_liveMapEntries`/`g_liveMapBuckets` 三行新增。
+- 本轮新增探针（env 开关，不影响默认行为）：`LPCVM_MEMSTAT`、`LPCVM_LOADPROF`、`LPCVM_CFV`、`LPCVM_MALL`、`LPCVM_MALL2`。`LPCVM_TRIM` 已删除（见 §5.A2 第 4 条）。
+- 若编译报 C3254/C2838：把 `src/original_vm.cpp` 转回 CRLF 再编。
+- 若 `_run_keep2.py` 报 `_dbclear.py` 失败：先确认 `192.168.200.128:3306` 可达（`charset='utf8'`，这台 MariaDB 没有 `utf8mb4`）。
+- 大批临时脚本/日志在工作区根目录（`_*.py`、`regress*/`、`bench*/`），可随时清理，不影响构建。
+- 复跑测量命令（本轮用的）：`python -X utf8 _run_bench.py <logdir> <秒数>`，它自己清库、起 4 个服务、每 15s 打一次 `8160=` 和 gs 内存。
+
