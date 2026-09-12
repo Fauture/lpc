@@ -340,8 +340,9 @@ string create_menu_content(mixed default_content, object me, object ob) {
 | gs 崩溃 | 每次 **1 次** `0xC00000FD` | **0 次** ✓ |
 | 第二次登录拿到什么 | world 包一堆 | 只有 `0xF9C3`（echo）——`logind::do_login` 里 `destruct_object(<旧角色 clone>) -> 0`（已注销，符合预期）后流程停住 |
 
-**下一步（已缩小范围）**：第二次登录现在停在 `logind::do_login`：它先对"还记着的旧角色对象"做 `destruct_object`（现在返回 0 = 已经不在注册表，正确），之后既没有 `0xF061` 角色列表也没有报错。
-要继续追：`do_login` → `_try_quick_login`/`restore_ex`/`_show_char_list`，以及 **ccs/aaa 侧账号"在线"状态是否释放**（`check_account_online`/`userd::log_file_dect`）；很可能是"账号仍被标记在线"导致第二次登录走"顶号"分支后停住。
+**下一步（已缩小范围）**：`relog8`/`relog9` 显示**登出时角色确实被销毁了**（`[life] destruct_object(clone:gs/clone/char/user.o#NNNNN) -> 1 by=/gs/daemons/userd.o::post_leave_world` + `[life] call destruct() -> (void)` ✓，`user::destruct()` → `userd::destroy_user()` 会跑），
+但第二次登录仍只收到 echo `0xF9C3`（无 `0xF061`），且 **`do_login` 里仍出现 `destruct_object(<旧角色>) -> 0`** → 说明 `find_user_by_account()` 走的 **LPC 侧账号表**里还留着那条记录（`set_name_user`/`all_users`）。
+要继续追：把 `[life]` 的过滤表加上 `destroy_user`/`find_user_by_account`/`set_name_user`/`_do_login`/`clear_login_info`，并开 `LPCVM_TAIL` 看 `[lg] fn=do_login …` 的入参与返回；重点确认 `userd::destroy_user()` 有没有把账号从 `logind` 的表里删掉（`unregister_user`/`set_name_user(account, 0)`）。
 
 ### D. 跨房间（过图）第二次失败 — **实测没有复现，且顺手修掉一个会永久废掉房间的坑**
 
