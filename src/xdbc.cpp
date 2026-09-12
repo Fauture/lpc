@@ -261,6 +261,8 @@ void saveEscapeString(const std::string& s, std::string& out) {
 } // namespace
 
 std::string saveValueAscii(const Value& v) {
+    lpc::ValueDepthGuard dg("saveValueAscii");
+    if (!dg.ok) return "U";   // cyclic: save as undefined instead of recursing
     switch (v.index()) {
     case 0: return "U";
     case 1: return "V";

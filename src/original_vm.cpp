@@ -86,6 +86,8 @@ static const char* envTraceObjValue() { static const char* v = std::getenv("LPCV
 void envStoreObjKey(const std::string& selfKey, const std::string& destKey);
 std::string envLookupObjKey(const std::string& obKey);
 size_t envCountObjKeys();
+// Registry-key normalizer used by destructObjectByKey (defined far below).
+namespace { std::string canonicalObjKey(const std::string& key); }
 
 namespace {
 // aggregates wall time of the whole lookup helpers to size the linear suffix
@@ -1915,6 +1917,7 @@ public:
     // their "clone:<rel>#<seq>" registry key so cross-object calls and
     // set_client_agent store the REAL object, not the "<this>" placeholder).
     void setThisObjectName(const std::string& n) { thisObjectName_ = n; }
+    const std::string& thisObjectName() const { return thisObjectName_; }
     // CrossVmRef target table: the VM's OWN object variables (the table its
     // object was constructed with), NOT the currently switched one.  During an
     // inline cross-object call (filed/importd/taskd service calls) objVars_
@@ -3240,7 +3243,20 @@ private:
     // Follow ref-to-ref chains (a ref slot that itself holds a ref, e.g. a
     // callee writing through an argument that is a reference to the caller's
     // local).
-    Value deref(const StackItem& ref) const {
+    Value deref(const StackItem& ref, int depth = 0) const {
+        // A self-referential slot ref (slot A holds a ref to A) makes this
+        // recurse until the C++ stack dies: gs crashed with 0xC00000FD right
+        // after user.o::reconnected -> userd::reconnected, with NO LPC
+        // recursion and no value-walker involved.  Bail out instead.
+        if (depth > 32) {
+            static int rcN = 0;
+            if (rcN++ < 20)
+                std::cerr << "[refcyc] deref chain >32 obj=" << objName_ << " fn="
+                          << ((!frames_.empty() && frames_.back().fn) ? frames_.back().fn->name
+                                                                     : std::string("<none>"))
+                          << " slot=" << ref.slotIndex << "\n";
+            return make_int(0);
+        }
         if (ref.slotIndex >= 0) {
             if (static_cast<size_t>(ref.slotIndex) >= stack_.size()) return make_int(0);
             const StackItem& it = stack_[ref.slotIndex];
@@ -3267,8 +3283,8 @@ private:
                           << " vm=" << this << " obj=" << objName_ << "\n";
                 std::cerr.flush();
             }
-            if (it.isRef) return deref(it);
-            return resolveCrossVmRef(it.value);
+            if (it.isRef) return deref(it, depth + 1);
+            return resolveCrossVmRef(it.value, depth + 1);
         }
         if (ref.globalIndex >= 0) {
             return sharedGlobal(ref.globalIndex);
@@ -3412,7 +3428,8 @@ private:
     // Resolve a CrossVmRef argument to the value in the CALLER VM's object
     // variable / local stack slot (the callee reads the ref parameter through
     // this).  Non-ref values pass through unchanged.
-    Value resolveCrossVmRef(const Value& v) const {
+    Value resolveCrossVmRef(const Value& v, int depth = 0) const {
+        if (depth > 32) return make_int(0);   // cyclic cross-VM ref chain
         if (v.index() == 11) {
             auto r = std::get<std::shared_ptr<CrossVmRef>>(v);
             OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
@@ -3427,9 +3444,9 @@ private:
                     if (it->isRef) {
                         // ref-to-ref: the caller's slot itself is a reference
                         // (nested case-8 ref chain); follow it on the CALLER VM.
-                        return vm->deref(*it);
+                        return vm->deref(*it, depth + 1);
                     }
-                    return vm->resolveCrossVmRef(it->value);
+                    return vm->resolveCrossVmRef(it->value, depth + 1);
                 }
             }
             if (r->objIndex >= 0 && static_cast<size_t>(r->objIndex) < vm->ownObjVars().size())
@@ -4635,6 +4652,9 @@ private:
                         for (auto& kv : reg.vms) {
                             if (&kv.second->object() == owner) {
                                 vm->shareObjVars(kv.second.get());
+                                // Same instance identity (this_object()).
+                                if (vm->thisObjectName() == "<this>")
+                                    vm->setThisObjectName(kv.second->thisObjectName());
                                 break;
                             }
                         }
@@ -4671,6 +4691,8 @@ private:
                             for (auto& kv : reg.vms) {
                                 if (&kv.second->object() == owner) {
                                     vm.shareObjVars(kv.second.get());
+                                    if (vm.thisObjectName() == "<this>")
+                                        vm.setThisObjectName(kv.second->thisObjectName());
                                     break;
                                 }
                             }
@@ -5175,6 +5197,8 @@ private:
             stubCallCtx().obj = objName_;
             stubCallCtx().fn = frames_.empty() || !frames_.back().fn
                                    ? "<global>" : frames_.back().fn->name;
+            // ... and its exact instance key (destruct_object(this_object())).
+            stubCallCtx().key = thisObjectName_;
             if (envFlagTail() && nm == "printf" && !args.empty() &&
                 args[0].index() == 4 &&
                 std::get<SharedString>(args[0]).str().find("to be scanned, interval") != std::string::npos) {
@@ -6021,6 +6045,143 @@ private:
         std::cerr.flush();
     }
 
+    // ---- LPCVM_ROOM: scene/map-change tracing --------------------------------
+    // "过图" (map transition) is driven by the client sending 0x1026/0x234A/0x2212
+    // -> cmd_enter_room(cmdgroup, client_no, new_room) -> player process_command
+    // -> feature/common/move.c::enter_room(room, x, y, dir) which validates with
+    // is_blocked(map_index,x,y) (a NEGATIVE result makes it return early!) and
+    // then does leave()/move_object()/enter().  A second transition silently
+    // failing therefore means either the call never reached enter_room again, or
+    // the validation block bailed.  This probe logs every room/move-related
+    // function with its arguments so both can be told apart.
+    void roomLog(const char* what, const std::string& fn, int bp, int passed) {
+        static const bool on = (std::getenv("LPCVM_ROOM") != nullptr);
+        if (!on) return;
+        static const char* const kFns[] = {
+            "enter_room", "cmd_enter_room", "process_command", "move_object",
+            "env_object", "leave", "enter", "do_when_char_enter", "do_when_char_gone",
+            "get_reachable", "refresh_current_pos", "set_move_type", "get_move_type",
+            "is_room", "add_char", "remove_char", "get_map", "send_room_info",
+            "send_map_info", "setup_room", "load_map", "build_map", "read_map_info",
+            "get_map_info", "destruct_map", "put_in_map", "remove_from_map",
+            "move_in_map", "get_from_map", "get_alias_room", "find_room_ob",
+            "_find_room", "get_land_position", "valid_grant", "is_blocked",
+            "check_exit", "get_exit", "set_room", "change_room", "enter_map",
+            "leave_map", "do_when_enter_map", "map_index", "get_current_map"};
+        bool hit = false;
+        for (auto* n : kFns) if (fn == n) { hit = true; break; }
+        if (!hit) return;
+        static int lines = 0;
+        if (lines >= 40000) return;
+        ++lines;
+        std::string dbg;
+        int shown = passed > 0 ? passed : 0;
+        if (shown > 6) shown = 6;
+        for (int i = 0; i < shown; ++i) {
+            int si = bp - i;
+            if (!dbg.empty()) dbg += " | ";
+            if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
+                std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+                if (vs.size() > 120) vs = vs.substr(0, 120);
+                dbg += "a" + std::to_string(i) + ":t" +
+                       std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+            } else {
+                dbg += "a" + std::to_string(i) + ":<noslot>";
+            }
+        }
+        std::string chain;
+        for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 90; ++it) {
+            if (!chain.empty()) chain += "<-";
+            chain += it->fn ? it->fn->name : "<ctx>";
+        }
+        std::cerr << "[room] " << what << " obj=" << objName_ << " fn=" << fn
+                  << " passed=" << passed << " frames=" << frames_.size()
+                  << " chain=[" << chain << "]";
+        if (!dbg.empty()) std::cerr << " [" << dbg << "]";
+        std::cerr << "\n";
+        std::cerr.flush();
+    }
+
+    // ---- LPCVM_LIFE: character lifecycle (login/logout/despawn) -------------
+    // The reported "下线后再次上线错误" needs the exact despawn chain:
+    //   client disconnect -> user::disconnected(cause, is_logout)
+    //     -> set_timer(is_logout ? 0 : 180, &_timer_id, "time_expired")
+    //     -> user::time_expired -> trap_into(SF_DISCONNECTED_TIME_EXPIRED)
+    //     -> userd (save + destruct + release the account)
+    // and, on the next login, whether the still-alive object is reconnected
+    // (userd::reconnected) instead of a fresh login.
+    void lifeLog(const char* what, const std::string& fn, int bp, int passed) {
+        static const bool on = (std::getenv("LPCVM_LIFE") != nullptr);
+        if (!on) return;
+        static const char* const kFns[] = {
+            "disconnected", "reconnected", "time_expired", "destruct", "destruct_object",
+            "leave_world", "enter_world", "relogin", "restore", "restore_ex", "restore_raw",
+            "save", "save_to_text", "restore_from_text", "logout", "login", "do_login",
+            "post_char_reconnected", "set_limit_per_month", "user_leave_world",
+            "query_char_list", "create_new_char", "select_char", "enter_char",
+            "clear_unused_field", "login_pker", "check_account_online"};
+        bool hit = false;
+        for (auto* n : kFns) if (fn == n) { hit = true; break; }
+        if (!hit) return;
+        static int lines = 0;
+        if (lines++ > 30000) return;
+        std::string dbg;
+        int shown = passed > 0 ? passed : 0;
+        if (shown > 4) shown = 4;
+        for (int i = 0; i < shown; ++i) {
+            int si = bp - i;
+            if (!dbg.empty()) dbg += " | ";
+            if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
+                std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+                if (vs.size() > 90) vs = vs.substr(0, 90);
+                dbg += "a" + std::to_string(i) + ":t" +
+                       std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+            } else {
+                dbg += "a" + std::to_string(i) + ":<noslot>";
+            }
+        }
+        std::cerr << "[life] " << what << " obj=" << objName_ << " this=" << thisObjectName_
+                  << " fn=" << fn << " passed=" << passed;
+        if (!dbg.empty()) std::cerr << " [" << dbg << "]";
+        std::cerr << "\n";
+        std::cerr.flush();
+    }
+
+    // Runaway-recursion guard.  The original driver refuses to grow the LPC
+    // call stack past a limit and raises a normal LPC error ("function call
+    // stack overflow"); without one a recursive LPC path walks off the C++
+    // stack and the whole service dies with 0xC00000FD (STACK_OVERFLOW) -
+    // observed on re-login: login.o::process_command -> userd::reconnected ->
+    // ask_fields::main -> me->send(0x211B, buf) crashed gs with
+    // `[crash] code=0xc00000fd`.  Dump the chain once so the cycle is visible,
+    // then throw a catchable VmError (the LPC wraps most of these calls in
+    // try/catch, so the service survives instead of dying).
+    void checkCallDepth(const std::string& entering) {
+        static const size_t kMaxFrames =
+            static_cast<size_t>(std::getenv("LPCVM_MAXFRAMES")
+                                    ? std::atoi(std::getenv("LPCVM_MAXFRAMES")) : 400);
+        if (frames_.size() < kMaxFrames) return;
+        static int dumps = 0;
+        if (dumps++ < 4) {
+            std::map<std::string, int> counts;
+            std::string chain;
+            int shown = 0;
+            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                const std::string nm = it->fn ? it->fn->name : std::string("<ctx>");
+                counts[nm]++;
+                if (shown++ < 24) chain += (chain.empty() ? "" : "<-") + nm;
+            }
+            std::cerr << "[deep] obj=" << objName_ << " entering=" << entering
+                      << " frames=" << frames_.size() << " chain=[" << chain << "]\n";
+            for (const auto& kv : counts)
+                if (kv.second > 4)
+                    std::cerr << "[deep]   " << kv.first << " x" << kv.second << "\n";
+            std::cerr.flush();
+        }
+        throw VmError("function call stack overflow (" + entering + ", depth " +
+                      std::to_string(frames_.size()) + ")");
+    }
+
     bool startInlineFunction(const OriginalFunction& fn, bool zeroArgPlaceholder, int passedArgs,
                              std::shared_ptr<std::vector<Value>> switchObjVars = nullptr,
                              const std::vector<std::string>* targetStrings = nullptr,
@@ -6035,7 +6196,10 @@ private:
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
+        lpcRingPush(fn.name.c_str());
         mallLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
+        roomLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
+        lifeLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
         // LPCVM_NEWBIE: the exact closure handed to register_enter_world (and
         // the stack top the inline prologue will read it from).
         if (nbProbeOn() && fn.name == "register_enter_world") {
@@ -6058,6 +6222,7 @@ private:
         // home VM and switch to it.  Master-program global functions (they run
         // inline on every VM against the driver's shared global space) are
         // excluded - switching them would break their caller's context.
+        checkCallDepth(fn.name);
         std::shared_ptr<std::vector<Value>> autoVars;
         const std::vector<std::string>* autoStrings = nullptr;
         const std::map<int, const OriginalFunction*>* autoFuncs = nullptr;
@@ -6157,7 +6322,10 @@ private:
         if (static_cast<int>(stack_.size()) < need) return make_int(0);
 
         int bp = static_cast<int>(stack_.size()) - 1;
+        lpcRingPush(fn.name.c_str());
         mallLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
+        roomLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
+        lifeLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
         if (fn.name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
             // Who enters convert_to_int from OUTSIDE with a single (or odd)
             // frame?  Dump caller VM context + the argument slots.
@@ -6237,6 +6405,7 @@ private:
         // argNum records how many arguments were actually PASSED: functions
         // with default arguments compare it against the declared count in
         // check_args_num and push the missing defaults inline.
+        checkCallDepth(fn.name);
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
                     fn.strings ? fn.strings.get() : &obj_.strings};
         // A cross-object entry call (callFunctionByName) pre-switched
@@ -6984,6 +7153,8 @@ private:
                 if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
                     std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
                 if (f.fn) mallLog("RETURN", f.fn->name, f.bp, f.argNum, &returnValue_);
+                if (f.fn) roomLog("RETURN", f.fn->name, f.bp, f.argNum);
+                if (f.fn) lifeLog("RETURN", f.fn->name, f.bp, f.argNum);
                 returned_ = true;
                 // [rst] restore-path return probe
                 {
@@ -11961,6 +12132,13 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
             if (!objKeep) objKeep = std::make_shared<OriginalObject>(vm->object());
             auto dedicated = std::make_shared<OriginalVm>(objKeep, vm->searchRoot());
             dedicated->shareObjVars(vm.get());
+            // ... and the INSTANCE IDENTITY: this_object() on the dedicated VM
+            // must yield the same registry key as on the source VM.  It used to
+            // stay the "<this>" default, so a timer-dispatched
+            // user::time_expired called destruct_object(this_object()) with an
+            // unresolvable value and the logged-out character was never
+            // destroyed (see §5.C).
+            dedicated->setThisObjectName(vm->thisObjectName());
             vm = std::move(dedicated);
         }
     }
@@ -12428,6 +12606,7 @@ Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::st
             if (!objKeep) objKeep = std::make_shared<OriginalObject>(vm->object());
             runVm = std::make_shared<OriginalVm>(objKeep, vm->searchRoot());
             runVm->shareObjVars(vm.get());
+            runVm->setThisObjectName(vm->thisObjectName());   // instance identity
         }
     }
     if (isSchedulerThread()) return runVm->callFunctionByName(funName, args);
@@ -14865,6 +15044,50 @@ std::string canonicalObjKey(const std::string& key) {
 // values that spell the same object differently (.c program path vs the
 // registered .o key).
 std::string canonicalObjectPath(const std::string& key) { return canonicalObjKey(key); }
+
+// Public access to the object-pointer -> registry-key index (see the header
+// comment): this_object() built on a detached VM carries the "<this>"
+// placeholder, so destruct_object(this_object()) must be resolved through the
+// owner object pointer.
+std::string regKeyOfObjectPtr(const void* objPtr) { return regKeyOfObj(objPtr); }
+
+// destruct_object(ob): the game's object destructor efun.  It was a NO-OP
+// stub, so nothing was ever destroyed: a logged-out character stayed alive
+// (user::disconnected -> time_expired -> ... -> destruct_object(me) did
+// nothing), the account stayed "online", and the next login RECONNECTED the
+// stale character instead of showing the character list ("下线后再次上线
+// 直接进入游戏没有选择").  Unregister the object so it can no longer be
+// resolved by key (call_other/destruct checks then see "no such object").
+//
+// The VM's shared_ptr is parked (not dropped) for a while: a self-destruct or
+// a destruct triggered from inside the object's own call chain must not free
+// the VM that is still executing.
+std::vector<std::shared_ptr<OriginalVm>>& destroyedVmPark() {
+    static std::vector<std::shared_ptr<OriginalVm>> v;
+    return v;
+}
+
+bool destructObjectByKey(const std::string& keyIn) {
+    if (keyIn.empty()) return false;
+    auto& reg = objectRegistry();
+    const std::string key = canonicalObjKey(keyIn);
+    std::shared_ptr<OriginalVm> vm;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        auto it = reg.vms.find(key);
+        if (it != reg.vms.end()) vm = it->second;
+        reg.vms.erase(key);          // IndexedVmMap::erase(const std::string&)
+        reg.objects.erase(key);      // IndexedObjMap::erase(const std::string&)
+        reg.initialized.erase(key);
+    }
+    regIndexUnregister(key);
+    {
+        auto& park = destroyedVmPark();
+        if (vm) park.push_back(vm);
+        if (park.size() > 512) park.erase(park.begin(), park.begin() + 256);
+    }
+    return vm != nullptr;
+}
 
 void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
     const std::string dest = canonicalObjKey(destKey);

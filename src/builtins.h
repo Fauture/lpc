@@ -38,6 +38,11 @@ std::string vfsObjPrefix();
 struct StubCallCtx {
     std::string obj;
     std::string fn;
+    // Registry key of the CALLING instance (e.g.
+    // "clone:gs/clone/char/user.o#16137").  this_object() evaluates to an
+    // ObjectValue whose programName is the placeholder "<this>", so
+    // destruct_object(this_object()) can only be resolved through this key.
+    std::string key;
 };
 StubCallCtx& stubCallCtx();
 

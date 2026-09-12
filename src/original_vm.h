@@ -68,4 +68,16 @@ void schedulerRun();
 // container (env) key must be normalized through this.
 std::string canonicalObjectPath(const std::string& key);
 
+// destruct_object(ob) support: unregister the object identified by `key`
+// (any spelling: clone key, pak: path, .c/.o program path) so it can no longer
+// be resolved.  Returns false when the key was not registered.
+bool destructObjectByKey(const std::string& key);
+
+// Registry key of a live OriginalObject instance ("" when unknown).  A
+// this_object() value built on a detached VM carries the placeholder "<this>"
+// as its programName, so the only reliable identity is its owner object
+// pointer (threadd::daemon destroys the logged-out character with
+// destruct_object(this_object())).
+std::string regKeyOfObjectPtr(const void* objPtr);
+
 } // namespace lpc

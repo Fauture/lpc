@@ -434,6 +434,19 @@ int main(int argc, char** argv) {
                       << (base ? (reinterpret_cast<uintptr_t>(frames[i]) - base) : 0)
                       << std::dec << " in " << mn << "\n";
         }
+        // Last entered LPC functions: a C++-level recursion (a cyclic value
+        // walked by padVariableValue/to_string/saveValueAscii/value_equal)
+        // never pushes an LPC frame, so this ring is what says WHERE the
+        // process died.
+        {
+            unsigned pos = lpc::g_lpcRingPos.load();
+            std::cerr << "[crash] last LPC functions:";
+            for (unsigned k = 0; k < lpc::kLpcRingSize; ++k) {
+                const char* nm = lpc::g_lpcRing[(pos + k) % lpc::kLpcRingSize];
+                if (nm) std::cerr << " " << nm;
+            }
+            std::cerr << "\n";
+        }
         std::cerr.flush();
         return EXCEPTION_CONTINUE_SEARCH;   // let the OS generate the dump
     });

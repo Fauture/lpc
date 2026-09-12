@@ -12980,7 +12980,14 @@ int startGameService(int port) {
                         std::string hex;
                         static const char* hx = "0123456789ABCDEF";
                         for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
-                        std::cerr << "[recv-accept] client=" << clientNo << " n=" << n << " " << hex << "\n";
+                        // Elapsed ms since the first accepted packet: measures
+                        // the login -> 0x211B latency reported as "10+ seconds
+                        // before the character screen".
+                        static const auto rt0 = std::chrono::steady_clock::now();
+                        auto rms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - rt0).count();
+                        std::cerr << "[recv-accept] t=" << rms << "ms client=" << clientNo
+                                  << " n=" << n << " " << hex << "\n";
                     }
                     if (n <= 0) break;
                     GameClient* cur;

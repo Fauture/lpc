@@ -300,17 +300,50 @@ string create_menu_content(mixed default_content, object me, object ob) {
 **已知修复（保留）**：对象自身 create() 现在会执行（`original_vm.cpp` `runInit()` 的 `initCreates_` 处，已直接入列 + 指针去重）——popup 默认菜单正是它生效的证据。
 **剩余可选**：菜单项点击后的二次分发（`set_temp("menu/<项>", 闭包)` / `menu_func` 数组）还没端到端点过；`menu` mapping 里已是正确函数名（`[talk] ret lite_query_temp -> (["没有什么事": <function menu_do_close()>])`），闭包是对的，缺的只是"客户端点选项"的包格式（还没逆出来）。
 
-### C. 下线/再上线
-**链路**：`logout.o::main` → `threadd.dispatch(_main)` → `me->disconnected("玩家主动断开连接", 1)`；`user.o::disconnected()` 结尾是
-```lpc
-set_timer((is_logout ? 0 : 180), &_timer_id, "time_expired");
-```
-**真正存档 + 析构 + 释放账号"在线"状态的是 `time_expired`**。
-**现状**：日志里 `[close_client] cno=70` 有（连接确实关了），但 `time_expired` **没有执行痕迹** → 角色未析构、账号仍在线 → 再登录跳过选角直接进游戏、无角色模型、不能移动。
-**下一步**：用 `LPCVM_TIMER`（已加探针 `[timer] schedule <回调> in <n>s obj=…`）确认 `set_timer(0,&_timer_id,"time_expired")` 是否注册；未注册 → 修 `set_timer` 的 `&_timer_id` 引用参数；注册了不执行 → 修角色 VM 被提前销毁/定时器取消。
+### C. 下线/再上线 — **根因已定位并修复（`destruct_object` 是空桩）**
 
-### D. 跨房间第二次失败
-用户明确"不是回归，之前没测过"。用 `LPCVM_MOVE`/`LPCVM_NEAR` 抓第二次移动的 `dest` 与 `env_object(me)`；重点看 `canonicalObjectPath()` 是否把目标房间归一化到了旧容器键。
+**链路**：`logout.o::main`（客户端包 `0x3E2A`）→ `threadd.dispatch(_main)` → `me->disconnected("玩家主动断开连接", 1)`；
+`user.o::disconnected()` 结尾 `set_timer((is_logout ? 0 : 180), &_timer_id, "time_expired")`
+→ `user.o::time_expired()` → `trap_into(SF_DISCONNECTED_TIME_EXPIRED)` → （threadd 派发的收尾）→ **`destruct_object(this_object())`**。
+
+**实测（`relog3`/`relog4`/`relog5`，`LPCVM_LIFE`+`LPCVM_TIMER`）**：
+```
+[life] ENTER user.o#16137 fn=disconnected passed=2 [a0:"玩家主动断开连接" | a1:1]   ← is_logout=1 ✓
+[life] ENTER user.o fn=time_expired passed=0
+[life] RETURN user.o fn=time_expired                                                ← 执行了但没析构
+[life] destruct_object(<this>) -> 0 by=/daemons/threadd.o::daemon                   ← 析构调用失败
+[life] ENTER user.o#16137 fn=reconnected                                            ← 角色还活着 → 被"重连"
+[life] ENTER userd.o fn=reconnected [char]                                          ← 走重连分支
+[crash] code=0xc00000fd addr=…                                                      ← 随后 gs 栈溢出崩溃
+```
+- `set_timer(0,&_timer_id,"time_expired")` **注册/触发都正常**（`[timer] schedule time_expired in 180s`、`time_expired` 有 ENTER/RETURN）——§5.C 原来怀疑的 timer 参数/引用问题在商城那轮已修好。
+- **真正的根因**：`destruct_object` 在我们引擎里是**空桩**（`builtins.cpp` 里 `return make_int(1)`），所以**任何对象从来不会被销毁**：
+  角色登出后仍活着 → 账号仍算在线 → 再登录走 `userd::reconnected`（跳过选角、直接进游戏），而这条重连路径会因为角色对象里积累的脏状态把 gs 打成 **0xC00000FD 栈溢出**（用户看到的"重新登录炸了"）。
+- 另外 `destruct_object(this_object())` 传进来的是 `ObjectValue.programName == "<this>"` 的占位值（在 threadd 派发的 detached VM 上连 `thisObjectName_` 都是 `<this>`），**必须先解析成真实实例键**，否则即使实现了 efun 也解析不到目标。
+
+**修复**：
+1. `destruct_object(ob)` 真实现（`builtins.cpp` + `src/original_vm.cpp::destructObjectByKey`）：把对象从注册表注销（`reg.vms`/`reg.objects`/`reg.initialized` + 逆索引），`call_other` 之后再也解析不到它；
+   VM 的 `shared_ptr` 先放进 `destroyedVmPark()`（容量 512）再释放，避免"自析构/在自身调用链里析构"把正在执行的 VM 释放掉。
+2. `"<this>"` 解析：`ObjectValue.owner`（`push_this_object` 写入的 `&obj_`）→ `regKeyOfObjectPtr()`（新导出）→ 兜底 `StubCallCtx::key`（新增字段，值为 `thisObjectName_`）。
+3. 崩溃兜底（防止"递归把进程打死"这类问题再出现）：
+   - LPC 调用深度上限（`checkCallDepth`，默认 400 帧，`LPCVM_MAXFRAMES` 可调）→ 超出时报 `[deep]` 并抛可被 LPC `catch` 的 `VmError`；
+   - C++ 值遍历深度上限（`ValueDepthGuard`：`padVariableValue`/`dupValue`/`to_string`/`value_equal`/`saveValueAscii`）→ 循环引用（数组/映射自引用）报 `[cdepth]` 并截断；
+   - 引用链上限（`deref`/`resolveCrossVmRef` 深度 32）→ 自引用 slot ref 报 `[refcyc]`；
+   - `[crash]` 处理器新增 **最近 64 个 LPC 函数环形缓冲**（`g_lpcRing`），栈溢出时也能看出死在哪个函数。
+   - 实测这些兜底在 relog4/relog5 都没有触发（`[deep]`/`[cdepth]`/`[refcyc]` 均为 0），说明崩溃是"角色对象没析构"这条链带出来的，而不是递归本身。
+
+**验证**：`relog6`（同一脚本）——见 §9。脚本：`_relogin_test.py`（登录建角进游戏 → 过图 ×7 → 发 `0x3E2A` 正常登出 → 断线 30s → 再登录并打印是否下发角色列表）。
+
+### D. 跨房间（过图）第二次失败 — **实测没有复现，且顺手修掉一个会永久废掉房间的坑**
+
+- 过图 = 客户端包 `0x1026/0x234A/0x2212` → `cmd_enter_room(cmdgroup,cno,new_room)` → 玩家 `process_command("enter_room")` → `feature/common/move.c::enter_room(room,x,y,dir)`；
+  成功标志是服务端回 **`0x1155`**（`refresh_current_pos`：map_id/source_id/x/y/dir/名字/音乐）。
+- `_relogin_test.py` 连做过图 7 次（揽仙镇 ↔ 揽仙镇外 ×4、正道具店、通天塔、洞府），**每次都收到 `0x1155`** ✓（`[room-blk]` 全程 0 条 `is_blocked -> -1`）。
+- 但排查中发现一个**会让房间永久进不去**的隐患：`roomd::setup_room_basic_info` 与 `room::init_room_info` 都会调 `set_map()`，而 `set_map` 把 `build_map()` 的结果直接写进房间的 `map_index`；
+  我们原来的 `build_map` 在"同名地图已存在"时**返回 0** → `map_index=0` → `is_blocked(0,x,y)` 返回 **-1** → `move.c::enter_room` 第一句 `if (flag < 0) return;` 直接退出（静默不传送）。
+  启动日志里 `[bm0] name-exists` 有 200+ 条（帮派名人堂/洞府/正道具店/通天塔…），说明这条路径是**真会走到**的。
+  **修复**：`build_map` 改为**幂等**——同名已存在时返回**既有 mapIndex**（`[bm0] name-exists … -> reusing`）；真正需要重建的克隆房间本来就会先 `destruct_map(object_name())`。
+
 
 ### E. 在线商城：购买无反应 / 再次购买提示「正在处理」— **已修复（3 个根因，已端到端验证）**
 
@@ -509,6 +542,13 @@ python -X utf8 _run_keep2.py regressXXX > _bootXXX.txt 2>&1   # 后台跑，~15 
 - **已知同类隐患（未修）**：`runDetached` 挂起合并把 callee 栈整体上移时只修正了 `frames_.bp`，栈上**值**里存的绝对下标
   （`StackItem::slotIndex` 的引用项、`CrossVmRef::slotIndex`）不会跟着平移。本次只修了 forEach 循环变量（§5.F）。
   若以后出现"挂起恢复后某个 &引用/局部引用指向错值"的现象，优先怀疑这里。
+- **本轮（C/D 两节）新增探针**：`LPCVM_ROOM`（`[room]` 场景/过图调用链 + `[room-blk]` 只打印 `is_blocked -> -1` 的失败）、
+  `LPCVM_SEND`（`[send] t=<ms> cno= cmd= body= by=obj::fn hex=`，出站包全审计，大包打 96 字节）、
+  `LPCVM_LIFE`（`[life]` 角色生命周期：disconnected/reconnected/time_expired/enter_world/select_char/destruct_object…）。
+  `[send]`/`[recv-accept]` 都带 `t=<ms>`：**可以直接量"是服务端慢还是客户端慢"**。
+- **`destruct_object` 现在是真实现**（§5.C）：任何依赖"对象会被销毁"的老代码路径在本轮之后行为都会变
+  （启动时就有 757 次临时道具析构）。如果出现"某个克隆对象消失得太早"的问题，先怀疑这里。
+- **`build_map` 幂等**（§5.D）：同名地图返回既有 mapIndex。若某个克隆房间需要重建地图，必须先 `destruct_map()`（`clone_room.c` 已经这么做）。
 - **`src/original_vm.cpp` 必须 CRLF**（MSVC 否则报 C3254/C2838）；`src/value.h`/`value.cpp` 是 LF，别混着转。
   本轮所有生成/改写用 `_apply_all.py`（从 `_bak_original_vm.cpp` 一次性重放全部补丁），改坏了可以重放。
   **注意**：`_apply_all.py` 只重放 §5.A 那 4 个补丁，会丢掉 npc/mall 等后续修复；当前已验证源码的完整快照在

@@ -14,6 +14,8 @@ namespace lpc {
 std::atomic<int64_t> g_mapInsertCount{0};
 std::atomic<int64_t> g_liveMapEntries{0};
 std::atomic<int64_t> g_liveMapBuckets{0};
+const char* g_lpcRing[kLpcRingSize] = {};
+std::atomic<unsigned> g_lpcRingPos{0};
 
 // Out-of-line definition of SharedString's empty-text anchor (str() of a
 // null-block / empty SharedString returns this).
@@ -492,6 +494,8 @@ std::string value_type_name(const Value& v) {
 }
 
 std::string to_string(const Value& v, bool quote_strings) {
+    ValueDepthGuard dg("to_string");
+    if (!dg.ok) return "(...)";
     switch (v.index()) {
     // Original type 0 = "undefined" (missing keys/uninit vars) renders as
     // "(undefined)" (vm_typeValueAt); type 1 = "void" (void fn result)
@@ -605,6 +609,8 @@ bool is_truthy(const Value& v) {
 }
 
 bool value_equal(const Value& a, const Value& b) {
+    ValueDepthGuard dg("value_equal");
+    if (!dg.ok) return a.index() == b.index();   // cyclic: compare by type only
     if (a.index() != b.index()) {
         // LPC usually converts int/float
         if (a.index() == 2 && b.index() == 3) {

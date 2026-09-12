@@ -161,11 +161,23 @@ Value MapModule::buildMap(const std::vector<Value>& args) {
     std::lock_guard<std::mutex> lk(g_mapMutex);
     auto it = mapByName_.find(name);
     if (it != mapByName_.end()) {
+        // A map with this name is already registered: return the EXISTING
+        // index.  build_map must be idempotent per name - rooms are set up
+        // through TWO independent paths (roomd::setup_room at load time and
+        // room::init_room_info, which some rooms/zones call themselves), and
+        // room::set_map stores the result straight into the room's obj var
+        // `map_index`.  Returning 0 there left the room with map_index == 0,
+        // and is_blocked(0,x,y) answers -1, which makes
+        // feature/common/move.c::enter_room bail out on its first check
+        // (`flag < 0 -> return`) - the room became permanently unenterable,
+        // i.e. "过图一次以后再也过不去".  Rooms that really are re-created
+        // (clone rooms) call destruct_map(object_name()) first, so their name
+        // is free again and a fresh map is built.
         static int zN = 0;
-        if (zN++ < 40 || name.find("yunxiaogong") != std::string::npos)
+        if (zN++ < 4000)
             std::cerr << "[bm0] name-exists name=" << name << " idx=" << it->second
-                      << " (args[0] t" << args[0].index() << ")\n";
-        return make_int(0);   // already exists
+                      << " -> reusing\n";
+        return make_int(it->second);
     }
     if (width <= 0 || height <= 0) {
         static int zN = 0;

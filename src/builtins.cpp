@@ -2167,6 +2167,8 @@ int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Valu
 //   int -> u16 BE; float -> 4 raw bytes; string -> u8 len + bytes (max 255);
 //   buffer (string containing NUL) -> raw bytes; array -> elements; else 2 zeros.
 void padVariableValue(const Value& v, std::string& out) {
+    lpc::ValueDepthGuard dg("padVariableValue");
+    if (!dg.ok) { out.push_back(0); out.push_back(0); return; }
     switch (v.index()) {
     case 2: {
         uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
@@ -2210,6 +2212,8 @@ void padVariableValue(const Value& v, std::string& out) {
 }
 
 static Value dupValue(const Value& v) {
+    lpc::ValueDepthGuard dg("dupValue");
+    if (!dg.ok) return v;   // cyclic: keep the reference instead of recursing
     switch (v.index()) {
     case 5: { // array -> deep copy
         auto src = std::get<std::shared_ptr<ArrayValue>>(v);
@@ -2924,7 +2928,43 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "query_temp" || name == "query") return make_int(0);
     if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
-    if (name == "destruct_object" || name == "to_be_disconnect") return make_int(1);
+    if (name == "destruct_object" || name == "to_be_disconnect") {
+        // destruct_object(ob) really destroys: the game's logout chain ends in
+        // user::time_expired -> trap_into(SF_DISCONNECTED_TIME_EXPIRED) ->
+        // destruct_object(me).  It used to be a no-op, so the character stayed
+        // alive and the account stayed "online", and the next login reconnected
+        // the stale character instead of showing the character list.
+        if (name == "destruct_object" && !args.empty()) {
+            std::string k;
+            if (args[0].index() == 7) {
+                auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+                if (ov) {
+                    k = ov->programName;
+                    // this_object() yields the placeholder "<this>" (on a
+                    // detached VM even thisObjectName_ is "<this>"): resolve
+                    // through the owner object pointer.  threadd::daemon
+                    // destroys the logged-out character with
+                    // destruct_object(this_object()); without this the
+                    // character was never destroyed, the account stayed online,
+                    // and the next login reconnected the stale character
+                    // instead of showing the character list.
+                    if ((k.empty() || k == "<this>") && ov->owner)
+                        k = lpc::regKeyOfObjectPtr(ov->owner);
+                    if (k.empty() || k == "<this>") k = stubCallCtx().key;
+                }
+            } else if (args[0].index() == 4) {
+                k = std::get<SharedString>(args[0]).str();
+                if (k.empty() || k == "<this>") k = stubCallCtx().key;
+            }
+            static const bool lifeProbe = (std::getenv("LPCVM_LIFE") != nullptr);
+            bool ok = false;
+            if (!k.empty()) ok = lpc::destructObjectByKey(k);
+            if (lifeProbe)
+                std::cerr << "[life] destruct_object(" << k << ") -> " << (ok ? 1 : 0)
+                          << " by=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+        }
+        return make_int(1);
+    }
     if (name == "close_client") {
         // vm_f_close_client (0x804e5d8): close_client(client_no) closes the
         // client's socket and drops it from the game-service registry.  The
@@ -4433,6 +4473,45 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (std::getenv("LPCVM_TRACE"))
                 std::cerr << "[send_to_client] cno=" << cno << " body=" << data.size()
                           << " total=" << pkt.size() << "\n";
+            // LPCVM_SEND: full outbound packet audit (cmd + size + head bytes +
+            // the LPC function that sent it).  Needed to tell "the server never
+            // sent it" from "the client cannot read it" for client-visible
+            // regressions (task list / story dialogue / the 0x211B fields form
+            // that the client is reported to chew on for ~10s).
+            {
+                static const bool sendProbe = (std::getenv("LPCVM_SEND") != nullptr);
+                if (sendProbe) {
+                    static int sN = 0;
+                    static const char* hx3 = "0123456789ABCDEF";
+                    uint16_t sc = 0;
+                    if (args.size() >= 3) {
+                        sc = static_cast<uint16_t>(msgNo & 0xFFFF);
+                    } else if (data.size() >= 2) {
+                        sc = static_cast<uint16_t>((static_cast<unsigned char>(data[0]) << 8) |
+                                                   static_cast<unsigned char>(data[1]));
+                    }
+                    if (sN++ < 8000) {
+                        std::string h3;
+                        size_t cap3 = data.size() > 4000 ? 96 : 40;
+                        for (size_t i = 0; i < data.size() && i < cap3; ++i) {
+                            h3 += hx3[(static_cast<unsigned char>(data[i]) >> 4) & 15];
+                            h3 += hx3[static_cast<unsigned char>(data[i]) & 15];
+                        }
+                        StubCallCtx& sctx = stubCallCtx();
+                        // Elapsed ms since the first send: tells "the client
+                        // waits ~10s" apart from "the server takes ~10s to
+                        // produce the packet" (the reported 0x211B delay).
+                        static const auto t0 = std::chrono::steady_clock::now();
+                        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - t0).count();
+                        std::cerr << "[send] t=" << ms << "ms cno=" << cno << " cmd=0x" << std::hex << sc
+                                  << std::dec << " body=" << data.size()
+                                  << " by=" << sctx.obj << "::" << sctx.fn
+                                  << " hex=" << h3 << "\n";
+                        std::cerr.flush();
+                    }
+                }
+            }
             if (std::getenv("LPCVM_SQL_TRACE")) {
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
@@ -5894,7 +5973,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_is_blocked (map module): whether the map cell is blocked.
         // Returns bitsMap[x*height+y] & 0x21 (PLOT_IS_OBSTACLE=1|PLOT_IS_WATER=32),
         // or -1 when the coordinate is out of range.
-        return lpc::mapModule().is_blocked(args);
+        Value r = lpc::mapModule().is_blocked(args);
+        // LPCVM_ROOM: a NEGATIVE result makes feature/common/move.c::enter_room
+        // bail before moving anyone ("过图" silently does nothing), so log only
+        // the failures - that is cheap and pinpoints a room whose map_index was
+        // zeroed (build_map used to answer 0 for an already-registered name).
+        static const bool roomProbe = (std::getenv("LPCVM_ROOM") != nullptr);
+        if (roomProbe && as_int(r) < 0) {
+            static int rbN = 0;
+            if (rbN++ < 4000)
+                std::cerr << "[room-blk] is_blocked(map=" << as_int(args[0])
+                          << (args.size() > 1 ? ("," + std::to_string(as_int(args[1]))) : std::string())
+                          << (args.size() > 2 ? ("," + std::to_string(as_int(args[2]))) : std::string())
+                          << ") -> -1\n";
+        }
+        return r;
     }
     if (name == "allocate_id") {
         // vm_f_allocate_id: allocate an id from the pool for the given object.

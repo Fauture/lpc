@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -15,6 +16,43 @@ extern std::atomic<int64_t> g_mapInsertCount;
 // resident set to the game data rather than guessing at averages.
 extern std::atomic<int64_t> g_liveMapEntries;
 extern std::atomic<int64_t> g_liveMapBuckets;
+
+// Recursion-depth guard for the recursive C++ value walkers (packet padding,
+// deep copy, printing, save/restore, comparisons).  A CYCLIC LPC value (an
+// array that contains itself, which shared_ptr semantics allow) makes them
+// recurse until the C++ stack is exhausted and the whole service dies with
+// 0xC00000FD (STACK_OVERFLOW) - observed while gs reconnected a character:
+// userd::reconnected -> ask_fields->main -> me->send(0x211B, buf) and then a
+// silent 0xc00000fd with no LPC frames involved (the LPC call-depth guard
+// never fired).  Capping the depth turns that into one reported line plus a
+// truncated value, so the service survives and the cycle is visible.
+struct ValueDepthGuard {
+    static int& depth() { static thread_local int d = 0; return d; }
+    bool ok;
+    explicit ValueDepthGuard(const char* what) : ok(depth() < 192) {
+        if (!ok) {
+            static std::atomic<int> reported{0};
+            if (reported.fetch_add(1) < 20) {
+                std::fprintf(stderr, "[cdepth] recursion >192 in %s - cyclic value? bailing out\n", what);
+            }
+        } else {
+            ++depth();
+        }
+    }
+    ~ValueDepthGuard() { if (ok) --depth(); }
+    ValueDepthGuard(const ValueDepthGuard&) = delete;
+    ValueDepthGuard& operator=(const ValueDepthGuard&) = delete;
+};
+
+// Ring of the last entered LPC function names.  The C++ [crash] handler prints
+// it: a C++-level recursion (a cyclic value walker) never pushes an LPC frame,
+// so the VM's frame chain alone cannot say where the process died.
+constexpr int kLpcRingSize = 64;
+extern const char* g_lpcRing[kLpcRingSize];
+extern std::atomic<unsigned> g_lpcRingPos;
+inline void lpcRingPush(const char* fn) {
+    g_lpcRing[g_lpcRingPos.fetch_add(1, std::memory_order_relaxed) % kLpcRingSize] = fn;
+}
 
 struct ArrayValue;
 struct MappingValue;
