@@ -9,6 +9,12 @@
 #include <vector>
 
 namespace lpc {
+extern std::atomic<int64_t> g_mapInsertCount;
+// LPCVM_MEMSTAT: exact live LPC mapping entries/buckets (O(1) per
+// container, never per element) so the memory census can attribute the
+// resident set to the game data rather than guessing at averages.
+extern std::atomic<int64_t> g_liveMapEntries;
+extern std::atomic<int64_t> g_liveMapBuckets;
 
 struct ArrayValue;
 struct MappingValue;

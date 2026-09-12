@@ -1,4 +1,5 @@
-﻿测试环境:MySQL 192.168.200.128:3306 root/123456;
+﻿切记提交git
+测试环境:MySQL 192.168.200.128:3306 root/123456;
 aaa 表在 dl_adb_all_test(port=8001);dba 表 port=8120; 
 ddb 表在 dl_ddb_1_test 注意dl_ddb_1为参考表不得修改
 游戏服务端口由 DB 表决定,driver telnet 由 -p 决定,不得冲突。telnet 可以不开启

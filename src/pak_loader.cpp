@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include "pak_loader.h"
 
 #include <cctype>
@@ -159,7 +160,32 @@ bool extractPak(const std::string& pakPath, const std::string& outputDir) {
     return true;
 }
 
+namespace {
+// Flat "relative path -> entry" index, built once per PakFile.  Boot looks up
+// ~50k files and the tree walk below compares the name against EVERY sibling
+// in each directory (large dirs => thousands of string compares per load).
+std::unordered_map<const PakFile*, std::unordered_map<std::string, const PakEntry*>>& pakPathIndex() {
+    static std::unordered_map<const PakFile*, std::unordered_map<std::string, const PakEntry*>> m;
+    return m;
+}
+void buildPakPathIndex(const PakFile& pak, const std::vector<PakEntry>& dir,
+                       const std::string& prefix) {
+    auto& idx = pakPathIndex()[&pak];
+    for (const auto& e : dir) {
+        std::string p = prefix.empty() ? e.name : (prefix + "/" + e.name);
+        idx[p] = &e;
+        if (e.isDir && !e.children.empty()) buildPakPathIndex(pak, e.children, p);
+    }
+}
+}  // namespace
 const PakEntry* findPakEntry(const PakFile& pak, const std::string& virtualPath) {
+    {
+        auto itIdx = pakPathIndex().find(&pak);
+        if (itIdx != pakPathIndex().end()) {
+            auto itE = itIdx->second.find(virtualPath);
+            if (itE != itIdx->second.end()) return itE->second;
+        }
+    }
     const std::vector<PakEntry>* cur = &pak.root;
     const PakEntry* found = nullptr;
     size_t start = 0;
@@ -222,6 +248,12 @@ void setPakMount(const std::string& pakRealPath, const std::string& virtualPrefi
     while (!mp.prefix.empty() && mp.prefix.back() == '/') mp.prefix.pop_back();
     mp.raw = readFileBytes(pakRealPath);
     mp.pak = loadPak(pakRealPath);
+    // Build the flat path index ONCE, after the tree is fully parsed.  The
+    // tree is never modified afterwards, so the cached entry pointers stay
+    // valid; lazy building on first lookup could race a re-mount and return
+    // entries of a previous tree.
+    pakPathIndex()[&mp.pak] = std::unordered_map<std::string, const PakEntry*>();
+    buildPakPathIndex(mp.pak, mp.pak.root, std::string());
 }
 
 bool pakMounted() {

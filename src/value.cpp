@@ -11,6 +11,9 @@
 #include <sstream>
 
 namespace lpc {
+std::atomic<int64_t> g_mapInsertCount{0};
+std::atomic<int64_t> g_liveMapEntries{0};
+std::atomic<int64_t> g_liveMapBuckets{0};
 
 // Out-of-line definition of SharedString's empty-text anchor (str() of a
 // null-block / empty SharedString returns this).
@@ -184,7 +187,9 @@ HeapStats& heapStats() { static HeapStats s; return s; }
 
 ArrayValue::ArrayValue() { heapStats().arrLive++; heapStats().arrCum++; }
 ArrayValue::~ArrayValue() { heapStats().arrLive--; }
-MappingValue::~MappingValue() { heapStats().mapLive--; }
+MappingValue::~MappingValue() {
+    g_liveMapEntries -= static_cast<int64_t>(cnt);
+    g_liveMapBuckets -= static_cast<int64_t>(table.size()); heapStats().mapLive--; }
 
 void liveHeapSnapshot(long& arrLive, long& mapLive, long& arrCum, long& mapCum) {
     arrLive = heapStats().arrLive.load();
@@ -195,6 +200,7 @@ void liveHeapSnapshot(long& arrLive, long& mapLive, long& arrCum, long& mapCum) 
 
 MappingValue::MappingValue() {
     table.assign(8, -1);
+    g_liveMapBuckets += 8;
     heapStats().mapLive++;
     heapStats().mapCum++;
 }
@@ -212,6 +218,7 @@ MappingValue::MappingValue(uint32_t sizeHint) {
         table.assign(8, -1);
     }
     unfilled = static_cast<int32_t>(80 * (tableSize + 1) / 100);
+    g_liveMapBuckets += static_cast<int64_t>(table.size());
     heapStats().mapLive++;
     heapStats().mapCum++;
 }
@@ -324,6 +331,7 @@ void MappingValue::grow() {
 }
 
 Value& MappingValue::insert(const Value& key, const Value& value) {
+    ++g_mapInsertCount;
     uint32_t h = MappingValue_hashKey(key, caseSensitive);
     uint32_t bucket = h & tableSize;
     // existing key -> replace the value in place (no reorder)
@@ -349,6 +357,7 @@ Value& MappingValue::insert(const Value& key, const Value& value) {
     nd.key = key;
     nd.value = value;
     nd.next = table[bucket];
+    ++g_liveMapEntries;
     nodes.push_back(std::move(nd));
     table[bucket] = static_cast<int32_t>(nodes.size() - 1);
     ++cnt;
