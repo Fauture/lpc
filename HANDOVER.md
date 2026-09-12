@@ -111,6 +111,10 @@
 
 | 提交 | 内容 |
 |---|---|
+| `3503711` | NPC 对话（op 23 `baseFunOffset`）+ 商城 3 个根因 + 探针；`original_vm.cpp` 仓库内改存 LF |
+| `f2df875` | 测试脚本入库（登录建角进游戏 / NPC / 商城 / 新手探针 / 移动） |
+| `d07be61` | **新角色剧情任务 + 传送揽仙镇外**：forEach 循环变量相对化（`LoopCtrl::varOff`，§5.F） |
+| `0962294` | 新手链路诊断脚本（`_check_newbie.py` 等） |
 | `dda61c4` | CrossVmRef 写回 `detachedStack_`（修角色列表空） |
 | `59974b6` | `find_illegal_string` 真实现 + 数组 `\|=` 并集（GM 建角 9111） |
 | `98db286` | 选角 9211：achieved.o 调用强制同 VM inline（嵌套 runDetached 双重合并 bp） |
@@ -491,12 +495,20 @@ python -X utf8 _run_keep2.py regressXXX > _bootXXX.txt 2>&1   # 后台跑，~15 
 ## 9. 交接时的工作区状态
 
 - exe：`build/Release/lpcvm.exe`，已含：第 4 节全部修复 + 第 6 节探针 + 注册表逆索引 / efun 哈希跳表 / env 开关记忆化（§5.A）
-  + **op 23 `baseFunOffset` 修复（§5.A3，NPC 对话）** + **商城 3 个根因的修复（§5.E：express_set 返回值 / set_timer 参数与引用 / 跨对象局部下标表）**。
-  **实测：8160 在 533s 打开**（安静模式，跑三遍一致），安静模式 1003–1022MB；带 CFV+MALL 探针时约 700–740s。
+  + **op 23 `baseFunOffset` 修复（§5.A3，NPC 对话）** + **商城 3 个根因的修复（§5.E：express_set 返回值 / set_timer 参数与引用 / 跨对象局部下标表）**
+  + **forEach 循环变量相对化修复（§5.F，新角色剧情任务 + 传送揽仙镇外）**。
+  **实测：8160 在 533s 打开**（安静模式，跑三遍一致），安静模式 1003–1022MB；带 CFV+MALL 探针时约 700–740s；
+  带 `LPCVM_NEWBIE` 探针时约 930s（探针本身的 stderr 开销）。
 - **功能回归**：已跑过完整"登录 → 建角 → 选角 → 进游戏 → 点 NPC"链路（`npcfix/`，PASS：`F061 count=1` / 重名 `9113` / 0x211B 18190B 世界包 / NPC 回 0x2037 菜单）
-  与"开商城 → 买 4 件商品 → 每次 `0xFD27 result=1` + 弹购买成功"链路（`mall6/`、`mall7/`）。**还没验证**：`_move_test.py`（跨房间）、商城退款的 `onlinemall_rebated` 分支。
+  与"开商城 → 买 4 件商品 → 每次 `0xFD27 result=1` + 弹购买成功"链路（`mall6/`、`mall7/`）；
+  **新角色剧情链路已端到端验证**（`nb7/`：227/227 个钩子各执行一次、`try_create_task`→1、`send_task_log` 下发
+  `【新手】1-9级新手任务|【新手】新的开始`、`raise_event_ex("初进游戏")`→1、`moved::enter_room(me, lanxianzhenwai.o, 86,158,4)`
+  把角色送进揽仙镇外）。**还没验证**：`_move_test.py`（跨房间）、商城退款的 `onlinemall_rebated` 分支。
   风险点：`case 8` 的目标对象解析、`cloneObjectInRegistry` 的模板查找现在走 `GsRegIndex`（`vmsByKey`/`objBySuffix`），
   如果某个对象只在 `reg.objects` 里而没有对应 VM，或模板键的拼写不在归一化规则内，行为会和旧的线性扫描不同。
+- **已知同类隐患（未修）**：`runDetached` 挂起合并把 callee 栈整体上移时只修正了 `frames_.bp`，栈上**值**里存的绝对下标
+  （`StackItem::slotIndex` 的引用项、`CrossVmRef::slotIndex`）不会跟着平移。本次只修了 forEach 循环变量（§5.F）。
+  若以后出现"挂起恢复后某个 &引用/局部引用指向错值"的现象，优先怀疑这里。
 - **`src/original_vm.cpp` 必须 CRLF**（MSVC 否则报 C3254/C2838）；`src/value.h`/`value.cpp` 是 LF，别混着转。
   本轮所有生成/改写用 `_apply_all.py`（从 `_bak_original_vm.cpp` 一次性重放全部补丁），改坏了可以重放。
   **注意**：`_apply_all.py` 只重放 §5.A 那 4 个补丁，会丢掉 npc/mall 等后续修复；当前已验证源码的完整快照在
