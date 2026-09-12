@@ -340,8 +340,20 @@ string create_menu_content(mixed default_content, object me, object ob) {
 | gs 崩溃 | 每次 **1 次** `0xC00000FD` | **0 次** ✓ |
 | 第二次登录拿到什么 | world 包一堆 | 只有 `0xF9C3`（echo）——`logind::do_login` 里 `destruct_object(<旧角色 clone>) -> 0`（已注销，符合预期）后流程停住 |
 
-**下一步（已缩小范围）**：`relog8`/`relog9` 显示**登出时角色确实被销毁了**（`[life] destruct_object(clone:gs/clone/char/user.o#NNNNN) -> 1 by=/gs/daemons/userd.o::post_leave_world` + `[life] call destruct() -> (void)` ✓），
-但第二次登录仍只收到 echo `0xF9C3`（无 `0xF061`），且 `do_login` 里仍出现 `destruct_object(<旧角色>) -> 0` → **`find_user_by_account()` 用的 LPC 全局表 `account_users` 里还留着死角色的记录**。
+**最终根因（第三种，已修复并验证）**：`destruct_object` 只按名字调了**第一个** `destruct`（`callFunctionByName` 命中 own/merged 表里的第一条），
+而角色是多重继承：`user.c::destruct()`（→`userd::destroy_user`）**和** `feature/char/account.c::destruct()`（→`clean_account_runtime_info()` → `remove_account_user(account)` → `map_delete(account_users,account)`）**各有一个**。
+只跑前者 ⇒ `account_users[account]` 永远留着死角色 ⇒ 下次登录 `find_user_by_account` 命中它、走"残余 USER_OB"分支直接 return（只回 echo）。
+**修复**：`OriginalVm::callDestructors()` 在注销前把 merged 表里**所有** `destruct`/`delete` 函数各跑一遍（按函数指针去重、`beingDestroyed_` 防重入、异常吞掉）。
+
+**验证（relog12，`_relogin_test.py`）**：登出 → 断线 30s → 再登录
+```
+charlist count=1 selected=True uid=25596        ← 角色列表正常下发（选角界面）✓
+packets: F9C3 211B F061 1FE5 … 39F1 1155(房间) F05D(NPC) …   ← 再入世界正常 ✓
+crashes: 0                                       ← 不再崩溃 ✓
+VERDICT: 角色列表下发（选角界面）-> 正常
+```
+`[life] destructor destruct (idx …) -> …` 可见多个继承析构函数都被调用 ✓。**结论：下线/再上线已正常**（角色被真正析构、账号绑定被解除、再登录走正规选角流程）。
+
 
 **已定位到具体位置（下一轮直接验）**：`start_gs.c` 里
 ```lpc
