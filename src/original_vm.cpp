@@ -1918,6 +1918,11 @@ public:
     // set_client_agent store the REAL object, not the "<this>" placeholder).
     void setThisObjectName(const std::string& n) { thisObjectName_ = n; }
     const std::string& thisObjectName() const { return thisObjectName_; }
+    // True while this object's LPC destructor (destruct) runs inside
+    // destruct_object(), so a destruct_object(this_object()) issued by the
+    // destructor itself cannot recurse.
+    bool beingDestroyed() const { return beingDestroyed_; }
+    void setBeingDestroyed(bool v) { beingDestroyed_ = v; }
     // CrossVmRef target table: the VM's OWN object variables (the table its
     // object was constructed with), NOT the currently switched one.  During an
     // inline cross-object call (filed/importd/taskd service calls) objVars_
@@ -2959,6 +2964,7 @@ private:
     std::string objName_;
     std::string searchRoot_;
     std::string thisObjectName_ = "<this>";   // object identity for this_object()
+    bool beingDestroyed_ = false;             // LPC destructor in progress
     // For CLONE instances: the VM this clone was created FROM (the original
     // driver's pTemplateObject).  object_template() returns it, and
     // basic_object.c's create() uses it to inherit my_import_name from the
@@ -15081,6 +15087,22 @@ bool destructObjectByKey(const std::string& keyIn) {
         reg.initialized.erase(key);
     }
     regIndexUnregister(key);
+    // Run the object's LPC destructor (user.o declares `private void
+    // destruct()`) BEFORE unregistering: that is what removes it from
+    // logind/userd's account maps (set_name_user / all_users).  Without it the
+    // next login still found the dead object via find_user_by_account,
+    // concluded "previous login did not finish, residual USER_OB" and returned
+    // WITHOUT sending the character list - the re-login then sat there with only
+    // the echo reply (relog7: [life] destruct_object(user.o#16150) -> 0 by=
+    // logind.o::do_login, then do_login RETURN with no 0xF061).
+    if (vm && !vm->beingDestroyed()) {
+        vm->setBeingDestroyed(true);
+        try {
+            vm->callFunctionByName("destruct", {});
+        } catch (...) {
+            // A destructor error must not abort the destruction.
+        }
+    }
     {
         auto& park = destroyedVmPark();
         if (vm) park.push_back(vm);
