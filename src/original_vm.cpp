@@ -1923,6 +1923,42 @@ public:
     // destructor itself cannot recurse.
     bool beingDestroyed() const { return beingDestroyed_; }
     void setBeingDestroyed(bool v) { beingDestroyed_ = v; }
+
+    // Run EVERY destructor in the object's merged table.  A character inherits
+    // several programs that each declare one (user.c's `destruct` ->
+    // userd::destroy_user, account.c's `destruct` ->
+    // clean_account_runtime_info -> remove_account_user, ...) and
+    // callFunctionByName("destruct") only reached the FIRST by name, so the
+    // account<->user binding was never removed: the next login found the dead
+    // character in account_users ("residual USER_OB") and returned without ever
+    // sending the character list.
+    void callDestructors(bool verbose) {
+        if (beingDestroyed_) return;
+        beingDestroyed_ = true;
+        std::vector<const OriginalFunction*> fns;
+        for (const auto& kv : funcsByIndex_) {
+            const OriginalFunction* f = kv.second;
+            if (!f) continue;
+            if (f->name != "destruct" && f->name != "delete") continue;
+            bool dup = false;
+            for (auto* x : fns) if (x == f) { dup = true; break; }
+            if (!dup) fns.push_back(f);
+        }
+        for (const OriginalFunction* f : fns) {
+            try {
+                Value r = callFunctionPointer(f, {});
+                if (verbose)
+                    std::cerr << "[life] destructor " << f->name << " (idx " << f->index
+                              << ") -> " << to_string(r, false) << " on " << thisObjectName_ << "\n";
+            } catch (const std::exception& e) {
+                if (verbose) std::cerr << "[life] destructor " << f->name << " threw: " << e.what() << "\n";
+            } catch (...) {
+                if (verbose) std::cerr << "[life] destructor " << f->name << " threw (unknown)\n";
+            }
+        }
+        if (verbose && fns.empty())
+            std::cerr << "[life] no destructor on " << thisObjectName_ << "\n";
+    }
     // CrossVmRef target table: the VM's OWN object variables (the table its
     // object was constructed with), NOT the currently switched one.  During an
     // inline cross-object call (filed/importd/taskd service calls) objVars_
@@ -15105,25 +15141,9 @@ bool destructObjectByKey(const std::string& keyIn) {
     // the echo reply (relog7: [life] destruct_object(user.o#16150) -> 0 by=
     // logind.o::do_login, then do_login RETURN with no 0xF061).
     if (vm && !vm->beingDestroyed()) {
-        vm->setBeingDestroyed(true);
         static const bool lifeOn = (std::getenv("LPCVM_LIFE") != nullptr);
-        // user::destruct() -> userd::destroy_user() releases the account; the
-        // [life] probe shows whether it actually entered.
-        for (const char* dname : {"destruct", "delete"}) {
-            try {
-                Value r = vm->callFunctionByName(dname, {});
-                if (lifeOn)
-                    std::cerr << "[life] call " << dname << "() -> " << to_string(r, false)
-                              << " on " << key << "\n";
-                break;
-            } catch (const std::exception& e) {
-                if (lifeOn) std::cerr << "[life] call " << dname << "() threw: " << e.what() << "\n";
-                break;
-            } catch (...) {
-                if (lifeOn) std::cerr << "[life] call " << dname << "() threw (unknown)\n";
-                break;
-            }
-        }
+        // EVERY inherited destructor must run (see callDestructors).
+        vm->callDestructors(lifeOn);
     }
     {
         auto& park = destroyedVmPark();
