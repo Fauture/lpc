@@ -15097,10 +15097,23 @@ bool destructObjectByKey(const std::string& keyIn) {
     // logind.o::do_login, then do_login RETURN with no 0xF061).
     if (vm && !vm->beingDestroyed()) {
         vm->setBeingDestroyed(true);
-        try {
-            vm->callFunctionByName("destruct", {});
-        } catch (...) {
-            // A destructor error must not abort the destruction.
+        static const bool lifeOn = (std::getenv("LPCVM_LIFE") != nullptr);
+        // user::destruct() -> userd::destroy_user() releases the account; the
+        // [life] probe shows whether it actually entered.
+        for (const char* dname : {"destruct", "delete"}) {
+            try {
+                Value r = vm->callFunctionByName(dname, {});
+                if (lifeOn)
+                    std::cerr << "[life] call " << dname << "() -> " << to_string(r, false)
+                              << " on " << key << "\n";
+                break;
+            } catch (const std::exception& e) {
+                if (lifeOn) std::cerr << "[life] call " << dname << "() threw: " << e.what() << "\n";
+                break;
+            } catch (...) {
+                if (lifeOn) std::cerr << "[life] call " << dname << "() threw (unknown)\n";
+                break;
+            }
         }
     }
     {
