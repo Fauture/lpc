@@ -340,9 +340,29 @@ string create_menu_content(mixed default_content, object me, object ob) {
 | gs 崩溃 | 每次 **1 次** `0xC00000FD` | **0 次** ✓ |
 | 第二次登录拿到什么 | world 包一堆 | 只有 `0xF9C3`（echo）——`logind::do_login` 里 `destruct_object(<旧角色 clone>) -> 0`（已注销，符合预期）后流程停住 |
 
-**下一步（已缩小范围）**：`relog8`/`relog9` 显示**登出时角色确实被销毁了**（`[life] destruct_object(clone:gs/clone/char/user.o#NNNNN) -> 1 by=/gs/daemons/userd.o::post_leave_world` + `[life] call destruct() -> (void)` ✓，`user::destruct()` → `userd::destroy_user()` 会跑），
-但第二次登录仍只收到 echo `0xF9C3`（无 `0xF061`），且 **`do_login` 里仍出现 `destruct_object(<旧角色>) -> 0`** → 说明 `find_user_by_account()` 走的 **LPC 侧账号表**里还留着那条记录（`set_name_user`/`all_users`）。
-要继续追：把 `[life]` 的过滤表加上 `destroy_user`/`find_user_by_account`/`set_name_user`/`_do_login`/`clear_login_info`，并开 `LPCVM_TAIL` 看 `[lg] fn=do_login …` 的入参与返回；重点确认 `userd::destroy_user()` 有没有把账号从 `logind` 的表里删掉（`unregister_user`/`set_name_user(account, 0)`）。
+**下一步（已缩小范围）**：`relog8`/`relog9` 显示**登出时角色确实被销毁了**（`[life] destruct_object(clone:gs/clone/char/user.o#NNNNN) -> 1 by=/gs/daemons/userd.o::post_leave_world` + `[life] call destruct() -> (void)` ✓），
+但第二次登录仍只收到 echo `0xF9C3`（无 `0xF061`），且 `do_login` 里仍出现 `destruct_object(<旧角色>) -> 0` → **`find_user_by_account()` 用的 LPC 全局表 `account_users` 里还留着死角色的记录**。
+
+**已定位到具体位置（下一轮直接验）**：`start_gs.c` 里
+```lpc
+mixed find_user_by_account(string account) { return account_users[account]; }   // 15374
+void  set_account_user(mixed account, object ob) { account_users[account] = ob; }  // 43022
+void  remove_account_user(mixed account) { map_delete(account_users, account); }   // 30186
+```
+而删除只在 `userd::destroy_user()` 里调；`user::destruct()`（`clone/char/user_v37.c:527`）是：
+```lpc
+if (!is_clone()) return;
+lite_set_temp("logout", 1);
+if (_timer_id != -1) { delete_timer(_timer_id); _timer_id = -1; }
+if (!lite_query_temp("entered_world")) { query_skill_combat_range(this_object()); return; }   // ← 这里早退就永远不会 destroy_user
+lite_set("last_logout_time", time());
+"/gs/daemons/userd.c"->destroy_user(this_object());
+```
+所以：**只要析构时 `entered_world` 这个 temp 读不到，`destroy_user`/`remove_account_user` 就不会跑，`account_users` 永远留着旧角色，第二次登录必然走"残余 USER_OB"分支直接 return**。
+`relog10` 已把 `destroy_user`/`remove_account_user`/`set_account_user`/`find_user_by_account`/`is_login`/`query_skill_combat_range` 加进 `LPCVM_LIFE` 过滤表，下一轮看这三行即可定性：
+- 若 `[life]` 里没有 `destroy_user` → 就是 `entered_world` 读不到（查 `lite_query_temp`/`express_get` 路径）；
+- 若有 `destroy_user` 但没有 `remove_account_user` → 查 `destroy_user` 的分支条件；
+- 若两个都有 → 查 `map_delete(account_users, account)` 在我们引擎里是否真的删掉了**全局 mapping** 的那条（可能是全局 mapping 的取值/写回问题）。
 
 ### D. 跨房间（过图）第二次失败 — **实测没有复现，且顺手修掉一个会永久废掉房间的坑**
 

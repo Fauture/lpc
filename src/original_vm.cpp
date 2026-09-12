@@ -6125,7 +6125,16 @@ private:
             "save", "save_to_text", "restore_from_text", "logout", "login", "do_login",
             "post_char_reconnected", "set_limit_per_month", "user_leave_world",
             "query_char_list", "create_new_char", "select_char", "enter_char",
-            "clear_unused_field", "login_pker", "check_account_online"};
+            "clear_unused_field", "login_pker", "check_account_online",
+            // account<->user binding: user::destruct() early-returns unless the
+            // temp "entered_world" is set, and only then reaches
+            // userd::destroy_user() -> remove_account_user() ->
+            // map_delete(account_users, account).  Watching these tells whether
+            // a logged-out character is still in account_users (the next login
+            // then finds it and returns without the character list).
+            "destroy_user", "remove_account_user", "set_account_user",
+            "find_user_by_account", "find_user_by_client", "is_login",
+            "post_leave_world", "log_file_dect", "query_skill_combat_range"};
         bool hit = false;
         for (auto* n : kFns) if (fn == n) { hit = true; break; }
         if (!hit) return;
