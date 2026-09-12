@@ -374,6 +374,61 @@ mall7：clean_oper_info 的 oper_info 已经是 (["barcode":"T00000003","timer_i
 
 ---
 
+### F. 新角色无剧情任务 / 不进「揽仙镇外」— **根因已定位（forEach 循环变量在 runDetached 挂起合并后失效），修复已编译**
+
+**用户口径**：新角色进游戏应当触发剧情、被传送到 `lanxianzhenwai`（揽仙镇外），并出现新手任务；实际既无任务也不传送。
+
+**正确链路（LPC 侧）**：
+```
+logind::enter_world(620)
+  -> set_newbie_task(user)(2617)        仅设置 refuse_* / newbied->set_action_help_status
+  -> post_enter_world(user)(26938)      loop (f in _enter_world_funcs) { (*f)(me); }
+       -> newbied::do_when_enter_world(431)
+            -> taskd("新手礼包")->gift_for_newbie(me)
+            -> taskd("【新手】1-9级新手任务")->do_when_char_born(me)  -> instruction_1::do_other_thing
+            -> taskd("【新手】1-9级新手任务")->do_task_instruction(me)(331)
+                 -> try_create_task(me,0)(262)  task_info = (["state":"S0","alias":"【新手】新的开始",…])
+                 -> raise_event_ex("初进游戏", me, …)  -> 剧情 scenario
+                      -> instruction_1::finish_init_scenario(1403) -> try_finish_task("S0","S2")
+                           -> do_stage_move(me,"S0")(1496)
+                                room=_find_room("揽仙镇外"); x=102; y=157
+                                -> moved->enter_room(me, room, 102, 157, dir)   ← 传送
+```
+所以「没任务 + 不传送」= 第 2 步 `_enter_world_funcs` 里的 `newbied` 钩子没跑到。
+
+**排查过程（全部有日志证据）**：
+1. `newbied::create` 确实注册了 `register_enter_world((: do_when_enter_world :))`：`[cfv] obj=/gs/daemons/newbied.o cur=create a=11 … tbl[a]=do_when_enter_world`；`[nb-reg] obj=/gs/daemons/newbied.o … top=… f=do_when_enter_world fo=/gs/daemons/newbied.o`。
+2. `_enter_world_funcs`（master 全局 31）**建表完全正确**：`[nb-app]`/`[nb-gw]` 显示 227 次 `register_enter_world` 的 `+=` 每次 `resLast=` 都是**该 daemon 自己的闭包**（`lhsUse=3`，走的是拷贝路径，不是就地 append）；`[nb-loop]` 在 `post_enter_world` 进入循环时打印
+   `n=227 arrUse=3 e0=check_notify e38=do_when_enter_world@vipd e39=when_enter_world@appellationd el=when_enter_world@ip_card` —— **数组本身没有任何问题**。
+3. **问题在循环变量**：`[nb-apply]` 记录每次 `(*f)(me)` 弹出的闭包指针，227 次里只有 **39 个不同指针**，其中 `ptr=169CE9AC`（= 数组下标 38，vipd 的闭包）**重复了 189 次**（第 38..226 次全部是它）。
+   即：循环变量在**第 38 次迭代后不再更新**，第 39..226 次一直在重放 `arr[38]`，`newbied`/`instruction_1` 等 189 个钩子因此从未执行。
+
+**根因**：`init_for_loop` 把循环变量的**绝对栈下标** `LoopCtrl::slotOfVar` 存进循环控制块，而这个控制块本身**就放在栈槽里**。`runDetached` 的 `SuspendSignal` 合并分支会把「被 detach 的 callee 栈」**追加到 caller 栈之上**：
+```cpp
+int shift = static_cast<int>(detachedStack_.size());
+for (auto& fr : frames_) fr.bp += shift;                 // 帧的 bp 有修正 ✓
+detachedStack_.insert(detachedStack_.end(), stack_.begin(), stack_.end());
+```
+**帧的 `bp` 修正了，但栈上值里存的绝对下标没有修正**。于是：
+- 循环体读变量走 `push_local_value(-1)` → `slotOf(-1)=frame.bp+1`（**新**下标，已随 bp 平移）✓
+- `loopStep` 的 `setVar` 走 `LoopCtrl::slotOfVar`（**旧**下标）✗
+两者从此错位：`setVar` 一直写老槽，循环体一直读新槽（新槽里是挂起前最后一次写入的值 = `arr[38]` = vipd 闭包）。
+- 为什么正好第 38 次断掉：第 38 个钩子是 `vipd::do_when_enter_world`（内部 `check_vip_info` 走 filed/DB 往返 → 挂起 → 触发合并）。前 38 次都在挂起前，读写同槽所以正确。
+- 循环本身没死：`cond/step_jmp_for_loop` 的 ctrl 槽是**每次用实时帧重算**的（`slotOf(varNo)`），所以 ctrl 还能找到、`iter` 还能推进到 227、循环能正常结束（这也解释了为什么表现为「静默少跑 189 个钩子」而不是死循环）。
+
+**修复**（`src/value.h` + `src/original_vm.cpp`）：
+- `LoopCtrl` 新增 `int varNo` / `bool varIsSlot`：记录循环变量的**相对**操作数（`init_for_loop` 的 par16，`loop (f in arr)` 为 -1）。
+- `init_for_loop` 写入 `ctrl->varNo = varNo; ctrl->varIsSlot = (varRef.slotIndex >= 0);`
+- `loopStep` 的 `setVar` 改为 `int slot = c->varIsSlot ? slotOf(c->varNo) : c->slotOfVar;` —— **每步用实时帧重算**，挂起/合并后不再错位。
+- 非栈槽的循环变量（对象变量/全局）仍走原来的 `slotOfVar`（不涉及栈平移）。
+
+**同一类隐患（已知未修，非本次目标）**：callee 栈上其他存有绝对栈下标的**值**在合并时同样不会平移 —— `StackItem::slotIndex`（`push_local_vptr` 产生的引用项）与 `CrossVmRef::slotIndex`（指向本 VM 栈槽的跨 VM 引用）。只有在「detach 期间挂起且这些引用跨过合并点继续使用」时才会踩到；本次 bug 是其中最典型、也是唯一挡住主线的那个。
+
+**新增探针**（`LPCVM_NEWBIE`）：`[nb-cfv]`（op23 建的闭包 + ptr/owner/ownerKey）、`[nb-reg]`（进入 `register_enter_world` 时栈顶闭包）、`[nb-app]`（`+=` 的 lhsN/rhs0/resLast）、`[nb-gw]`/`[nb-gs]`（对全局 31 的每一次写）、`[nb-loop]`（进入循环时的数组快照 e0/e38/e39/el）、`[nb-isfn]`/`[nb-apply]`（每次 `is_function` / `(*f)(me)` 的闭包指针）。
+**验证脚本**：`_newbie_run.py`（起服务 → 建角进游戏 → 抓链路）+ `_check_newbie.py`（链路计数 + 打印存档里的 `position`，应当变成 `/lanxianzhen/lanxianzhenwai`）。
+
+---
+
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
 
 | 探针 | 用途 / 输出 |

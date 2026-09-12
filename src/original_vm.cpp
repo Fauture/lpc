@@ -46,6 +46,22 @@ namespace lpc {
 static bool vmEnvTrace() { static const bool v = (std::getenv("LPCVM_TRACE") != nullptr); return v; }
 // LPCVM_NEWBIE: new-character story/task chain diagnostics (see _newbie_run.py).
 static bool nbProbeOn() { static const bool v = (std::getenv("LPCVM_NEWBIE") != nullptr); return v; }
+// Identity dump for a closure Value: pointer, function, owner object and the
+// creating instance key.  post_enter_world's hook array ended up with 189
+// IDENTICAL entries owned by vipd.o (everything registered after vipd) even
+// though every daemon pushed its own `(: do_when_enter_world :)`, so the
+// missing newbie hook could be either a wrong closure VALUE stored in the
+// array or a wrong closure reaching register_enter_world's parameter.
+static std::string nbClosureDesc(const Value& v) {
+    if (v.index() != 8) return "t" + std::to_string(v.index());
+    auto cl = std::get<std::shared_ptr<ClosureValue>>(v);
+    if (!cl) return "nullcl";
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%p", static_cast<const void*>(cl.get()));
+    return std::string("ptr=") + buf + " f=" + cl->functionName +
+           " fo=" + (cl->owner ? cl->owner->sourceName : std::string("null")) +
+           " k=" + cl->ownerKey;
+}
 static bool vmEnvEventTrace() { static const bool v = (std::getenv("LPCVM_EVENT_TRACE") != nullptr); return v; }
 static bool vmEnvSvcTrace() { static const bool v = (std::getenv("LPCVM_SVC_TRACE") != nullptr); return v; }
 static bool vmEnvTraceC8() { static const bool v = (std::getenv("LPCVM_TRACE_C8") != nullptr); return v; }
@@ -681,18 +697,18 @@ struct StackItem {
     Value value;
 };
 
-// LPCVM_NAMECHAIN: describe the pending call arguments on the stack.
-static std::string nameChainArgs(const std::vector<StackItem>& st, int argn) {
-    std::string out;
-    int bot = static_cast<int>(st.size()) - argn;
-    if (bot < 0) bot = 0;
-    for (int k = bot; k < static_cast<int>(st.size()); ++k) {
-        if (!out.empty()) out += ", ";
-        out += "[" + std::to_string(k - bot) + "]t" +
-               std::to_string(st[static_cast<size_t>(k)].value.index()) + "=" +
-               to_string(st[static_cast<size_t>(k)].value, false).substr(0, 40);
-    }
-    return out;
+// LPCVM_NAMECHAIN: describe the pending call arguments on the stack.
+static std::string nameChainArgs(const std::vector<StackItem>& st, int argn) {
+    std::string out;
+    int bot = static_cast<int>(st.size()) - argn;
+    if (bot < 0) bot = 0;
+    for (int k = bot; k < static_cast<int>(st.size()); ++k) {
+        if (!out.empty()) out += ", ";
+        out += "[" + std::to_string(k - bot) + "]t" +
+               std::to_string(st[static_cast<size_t>(k)].value.index()) + "=" +
+               to_string(st[static_cast<size_t>(k)].value, false).substr(0, 40);
+    }
+    return out;
 }
 
 StackItem makeItem(Value v) {
@@ -3359,6 +3375,20 @@ private:
                 }
             }
         } else if (target->globalIndex >= 0) {
+            // LPCVM_NEWBIE: whoever writes the hook array (master global 31)
+            // with what - catches a rogue appender.
+            if (nbProbeOn() && target->globalIndex == 31) {
+                std::cerr << "[nb-gw] via-ref obj=" << objName_
+                          << " fn=" << ((!frames_.empty() && frames_.back().fn)
+                                            ? frames_.back().fn->name : std::string("<none>"))
+                          << " v=" << to_string(v, false).substr(0, 40)
+                          << " v0=" << ((v.index() == 5 &&
+                                         !std::get<std::shared_ptr<ArrayValue>>(v)->items.empty())
+                                            ? nbClosureDesc(std::get<std::shared_ptr<ArrayValue>>(v)->items.back())
+                                            : std::string("-"))
+                          << "\n";
+                std::cerr.flush();
+            }
             sharedGlobal(target->globalIndex) = v;
         } else if (target->objIndex >= 0) {
             if (static_cast<size_t>(target->objIndex) < objVars_->size()) (*objVars_)[target->objIndex] = v;
@@ -5940,12 +5970,20 @@ private:
                 "is_first_action", "new_bie_task_init", "send_this_task_log",
                 "send_task_log", "sf_enter_room", "do_stage_move", "change_task_alias",
                 "clean_task", "update_special_event", "do_interface_guide",
-                "do_stage_bonus", "query_entry", "register_interface"};
+                "do_stage_bonus", "query_entry", "register_interface",
+                // Story/scenario -> teleport tail (post_enter_world ->
+                // do_task_instruction -> raise_event_ex("初进游戏") ->
+                // finish_init_scenario -> try_finish_task -> do_stage_move ->
+                // moved::enter_room(me, 揽仙镇外, 102, 157, dir)).
+                "enter_room", "enter_room_ex", "leave_room", "try_finish_task",
+                "finish_init_scenario", "play_scenario", "start_scenario",
+                "do_scenario", "task_init", "create_task", "query_task",
+                "add_task_trace", "register_task_template", "update_task"};
             static const char* const kNbObjs[] = {
                 "newbied", "logind", "instruction_1", "instruction_task",
                 "scenariod", "newbie-gift-task", "newbie_gift", "easyutild",
                 "taskd", "task_base", "newbie_task", "polar_instruction",
-                "system_instructiond", "char_birthday_gift"};
+                "system_instructiond", "char_birthday_gift", "moved", "roomd"};
             for (const char* o : kNbObjs)
                 if (objName_.find(o) != std::string::npos) { hit = true; break; }
             if (!hit)
@@ -5998,6 +6036,17 @@ private:
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
         mallLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
+        // LPCVM_NEWBIE: the exact closure handed to register_enter_world (and
+        // the stack top the inline prologue will read it from).
+        if (nbProbeOn() && fn.name == "register_enter_world") {
+            std::cerr << "[nb-reg] obj=" << objName_ << " this=" << thisObjectName_
+                      << " passed=" << passedArgs << " argc=" << fn.argCount
+                      << " bp=" << bp << " stack=" << stack_.size()
+                      << " top=" << (stack_.empty() ? std::string("<empty>")
+                                                    : nbClosureDesc(stack_.back().value))
+                      << "\n";
+            std::cerr.flush();
+        }
         // AUTOMATIC cross-object switch: some dispatch paths reach the callee
         // WITHOUT an explicit switchObjVars (an inline fallback, an index-based
         // call site, ...).  A callee that belongs to ANOTHER object must still
@@ -7211,6 +7260,13 @@ private:
                 break;
             }
             case 76: // set_global_var
+                if (nbProbeOn() && (fromMeta ? m0 : static_cast<int16_t>(in.a)) == 31) {
+                    std::cerr << "[nb-gs] obj=" << objName_ << " fn="
+                              << ((!frames_.empty() && frames_.back().fn)
+                                      ? frames_.back().fn->name : std::string("<none>"))
+                              << " (set_global_var 31)\n";
+                    std::cerr.flush();
+                }
                 sharedGlobal(in.a) = pop().value;
                 break;
             case 78: { // set_obj_var
@@ -7462,6 +7518,18 @@ private:
                     // Pin cross-object invocation to THIS instance (clone key),
                     // not just the shared template object - see ClosureValue.
                     cl->ownerKey = thisObjectName_;
+                    if (nbProbeOn()) {
+                        static int nbC = 0;
+                        if (nbC++ < 6000) {
+                            const std::string curN =
+                                (!frames_.empty() && frames_.back().fn)
+                                    ? frames_.back().fn->name : std::string("<none>");
+                            std::cerr << "[nb-cfv] obj=" << objName_ << " cur=" << curN
+                                      << " idx=" << in.a << " " << nbClosureDesc(cl)
+                                      << "\n";
+                            std::cerr.flush();
+                        }
+                    }
                     pushValue(cl);
                 } else {
                     pushValue(make_int(0));
@@ -7666,6 +7734,30 @@ private:
                 case 11: result = modValues(target, rhs); break;
                 default: break;
                 }
+                // LPCVM_NEWBIE: prove what the newbie-hook append actually
+                // stores (register_enter_world does `_enter_world_funcs += ({f})`).
+                if (nbProbeOn() && !frames_.empty() && frames_.back().fn &&
+                    frames_.back().fn->name == "register_enter_world") {
+                    auto trg = (target.index() == 5)
+                                   ? std::get<std::shared_ptr<ArrayValue>>(target) : nullptr;
+                    auto rvv = (rhs.index() == 5)
+                                   ? std::get<std::shared_ptr<ArrayValue>>(rhs) : nullptr;
+                    auto res = (result.index() == 5)
+                                   ? std::get<std::shared_ptr<ArrayValue>>(result) : nullptr;
+                    std::cerr << "[nb-app] obj=" << objName_
+                              << " lhsN=" << (trg ? trg->items.size() : size_t(0))
+                              << " lhsUse=" << (trg ? trg.use_count() : 0)
+                              << " rhsN=" << (rvv ? rvv->items.size() : size_t(0))
+                              << " rhs0=" << ((rvv && !rvv->items.empty())
+                                                  ? nbClosureDesc(rvv->items[0])
+                                                  : std::string("-"))
+                              << " resN=" << (res ? res->items.size() : size_t(0))
+                              << " resLast=" << ((res && !res->items.empty())
+                                                     ? nbClosureDesc(res->items.back())
+                                                     : std::string("-"))
+                              << "\n";
+                    std::cerr.flush();
+                }
                 writeThrough(ref, result);
                 pushValue(result);
                 break;
@@ -7709,7 +7801,8 @@ private:
                                 std::string d = stack_.empty()
                                     ? std::string("<empty>")
                                     : ("t" + std::to_string(stack_.back().value.index()) + ":"
-                                       + to_string(stack_.back().value, false).substr(0, 70));
+                                       + to_string(stack_.back().value, false).substr(0, 70)
+                                       + " " + nbClosureDesc(stack_.back().value));
                                 std::cerr << "[nb-isfn] " << d << "\n";
                                 std::cerr.flush();
                             }
@@ -9601,6 +9694,7 @@ private:
                                       << " bound=" << (cl2 ? cl2->boundArgs.size() : 0)
                                       << " func=" << ((cl2 && cl2->func) ? cl2->func->name : std::string("null"))
                                       << " owner=" << ((cl2 && cl2->owner) ? cl2->owner->sourceName : std::string("null"))
+                                      << " " << nbClosureDesc(funItem.value)
                                       << "\n";
                             std::cerr.flush();
                         }
@@ -11367,6 +11461,16 @@ private:
                               << " varRef.isRef=" << varRef.isRef << " varSlot=" << varRef.slotIndex << "\n";
                 auto ctrl = std::make_shared<LoopCtrl>();
                 ctrl->slotOfVar = varRef.slotIndex >= 0 ? varRef.slotIndex : slot;
+                // Recompute the variable slot from the LIVE frame at every step
+                // when it is a stack slot: the absolute index captured here is
+                // stored inside the stack itself, so it survives but goes stale
+                // across runDetached's suspend merge (see LoopCtrl::varOff).
+                // The offset is derived from the ACTUAL variable ref (the
+                // push_local_vptr pushed before this op) - not from varNo, which
+                // addresses the hidden control slot.
+                ctrl->varIsSlot = (varRef.slotIndex >= 0);
+                ctrl->varOff = ctrl->varIsSlot && !frames_.empty()
+                                   ? (frames_.back().bp - varRef.slotIndex) : 0;
                 if (number == 1 || number == -1) {
                     ctrl->type = number;
                     ctrl->to = toInt(second);
@@ -11383,10 +11487,24 @@ private:
                         ctrl->mElementIndex = 0;
                     }
                 }
+                // LPCVM_NEWBIE: the post_enter_world hook array as the LOOP sees
+                // it - proves whether the tail really holds duplicate closures.
+                if (nbProbeOn() && !frames_.empty() && frames_.back().fn &&
+                    frames_.back().fn->name == "post_enter_world" && ctrl->arr) {
+                    const auto& it = ctrl->arr->items;
+                    std::cerr << "[nb-loop] n=" << it.size()
+                              << " arrUse=" << (ctrl->arr.use_count())
+                              << " ctrlSlot=" << ctrl->slotOfVar
+                              << " e0=" << (it.empty() ? std::string("-") : nbClosureDesc(it[0]))
+                              << " e38=" << (it.size() > 38 ? nbClosureDesc(it[38]) : std::string("-"))
+                              << " e39=" << (it.size() > 39 ? nbClosureDesc(it[39]) : std::string("-"))
+                              << " el=" << (it.empty() ? std::string("-") : nbClosureDesc(it.back()))
+                              << "\n";
+                    std::cerr.flush();
+                }
                 if (slot >= 0 && static_cast<size_t>(slot) < stack_.size())
                     stack_[static_cast<size_t>(slot)].value = ctrl;
-                else if (vmEnvTrace())
-                    std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size()
+                else if (vmEnvTrace())                    std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size()
                               << " fn=" << (frames_.empty() || !frames_.back().fn
                                                 ? "<global>" : frames_.back().fn->name)
                               << " bp=" << (frames_.empty() ? -999 : frames_.back().bp) << "\n";
@@ -11608,8 +11726,15 @@ private:
         auto c = std::get<std::shared_ptr<LoopCtrl>>(slotItem.value);
         if (!c) return;
         auto setVar = [&](const Value& v) {
-            if (c->slotOfVar >= 0 && static_cast<size_t>(c->slotOfVar) < stack_.size())
-                stack_[static_cast<size_t>(c->slotOfVar)].value = v;
+            // Prefer the RELATIVE variable operand: the loop ctrl is stored in a
+            // stack slot, so after runDetached's suspend merge (which appends the
+            // detached callee's stack above the caller's and shifts every frame
+            // bp) the absolute slotOfVar captured at init_for_loop is stale while
+            // the frame is live.  Recomputing frame.bp - varNo keeps the write on
+            // the slot the loop body actually reads.
+            int slot = c->varIsSlot ? slotOf(c->varOff) : c->slotOfVar;
+            if (slot >= 0 && static_cast<size_t>(slot) < stack_.size())
+                stack_[static_cast<size_t>(slot)].value = v;
         };
         if (c->type == 1 || c->type == -1) {
             int64_t current = c->current;
@@ -11683,33 +11808,33 @@ private:
         return Value{};
     }
 
-    // GBK character helpers for string ranges.
-//
-// The engine stores multi-byte text as raw bytes but the game's LPC code
-// indexes strings BY CHARACTER (see punishd.check_name_length_legal, which
-// looks up name[i..i] in a mapping whose keys are whole characters).  A
-// single high byte can never match such a key, so byte slicing made every
-// Chinese name fail the 9111 rule.  A GBK character is a lead byte (>=0x80)
-// followed by its trail byte.
-static size_t gbkCharLenAt(const std::string& s, size_t bytePos) {
-    if (bytePos >= s.size()) return 0;
-    if (static_cast<unsigned char>(s[bytePos]) < 0x80) return 1;
-    return (bytePos + 1 < s.size()) ? 2 : 1;
-}
-static size_t gbkCharCount(const std::string& s) {
-    size_t n = 0, i = 0;
-    while (i < s.size()) { ++n; i += gbkCharLenAt(s, i); }
-    return n;
-}
-// Byte offset of character `charIdx` (== s.size() when past the end).
-static size_t gbkByteOffsetOfChar(const std::string& s, int64_t charIdx) {
-    if (charIdx <= 0) return 0;
-    size_t i = 0;
-    int64_t c = 0;
-    while (i < s.size() && c < charIdx) { i += gbkCharLenAt(s, i); ++c; }
-    return i;
-}
-
+    // GBK character helpers for string ranges.
+//
+// The engine stores multi-byte text as raw bytes but the game's LPC code
+// indexes strings BY CHARACTER (see punishd.check_name_length_legal, which
+// looks up name[i..i] in a mapping whose keys are whole characters).  A
+// single high byte can never match such a key, so byte slicing made every
+// Chinese name fail the 9111 rule.  A GBK character is a lead byte (>=0x80)
+// followed by its trail byte.
+static size_t gbkCharLenAt(const std::string& s, size_t bytePos) {
+    if (bytePos >= s.size()) return 0;
+    if (static_cast<unsigned char>(s[bytePos]) < 0x80) return 1;
+    return (bytePos + 1 < s.size()) ? 2 : 1;
+}
+static size_t gbkCharCount(const std::string& s) {
+    size_t n = 0, i = 0;
+    while (i < s.size()) { ++n; i += gbkCharLenAt(s, i); }
+    return n;
+}
+// Byte offset of character `charIdx` (== s.size() when past the end).
+static size_t gbkByteOffsetOfChar(const std::string& s, int64_t charIdx) {
+    if (charIdx <= 0) return 0;
+    size_t i = 0;
+    int64_t c = 0;
+    while (i < s.size() && c < charIdx) { i += gbkCharLenAt(s, i); ++c; }
+    return i;
+}
+
 Value queryRangeValue(const Value& container, const Value& from, const Value& to,
                           int flag, bool asPtr) {
         int64_t a = toInt(from);

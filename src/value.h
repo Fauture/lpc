@@ -326,6 +326,24 @@ struct ClosureValue {
 struct LoopCtrl {
     int type = 0;                     // 1 / -1 (int), 901 (array), 902 (mapping)
     int slotOfVar = -1;               // stack index of the loop variable
+    // The loop variable's slot expressed as a FRAME-RELATIVE offset:
+    //   slot = frame.bp - varOff      (varOff is -1 for `loop (f in arr)`,
+    //                                  whose variable sits one slot ABOVE bp)
+    // The absolute slot above is captured once and then lives inside a stack
+    // slot, so it goes STALE whenever that stack is re-based - which
+    // runDetached's SuspendSignal merge does (it appends the detached callee's
+    // stack above the caller's and shifts every frame's bp).  The loop keeps
+    // working (its own ctrl slot is looked up from the live frame) but every
+    // setVar() kept writing the OLD slot while the body read the NEW one, so
+    // `loop (f in _enter_world_funcs)` re-applied element 38 (vipd's
+    // do_when_enter_world) for all 189 remaining hooks and the newbie story
+    // never ran.  When the variable really is a stack slot, recompute
+    // `frame.bp - varOff` at every step instead.  NOTE: this is NOT the
+    // init_for_loop par16 - that operand addresses the hidden CONTROL slot
+    // (-2 for the same loop), while the variable comes from the
+    // push_local_vptr pushed just before it.
+    int varOff = 0;                   // relative slot offset (valid if varIsSlot)
+    bool varIsSlot = false;           // loop variable lives in a stack slot
     int64_t current = 0;
     int64_t to = 0;
     int done = 0;
