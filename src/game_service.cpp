@@ -13052,6 +13052,26 @@ int startGameService(int port) {
                     feedClient(*cur, buf, static_cast<size_t>(n));
                 }
                 closesocket(c);
+                // Driver-side disconnect notification.  The original driver
+                // applies cmd_disconnected(cno, where) when the socket goes
+                // away; start_gs::_cmd_disconnected -> user.o::disconnected ->
+                // (no logout) 180s timer -> time_expired -> destruct ->
+                // userd::destroy_user -> me->save(0, cb), which is the ONLY
+                // path that writes the character's dbase back to the ddb.  Our
+                // port used to drop the client slot silently, so a character
+                // was written once at creation and never again: level, items
+                // and the "newbie" flag were lost on every re-login (so the
+                // newbie story re-ran and the newbie gift looked empty, making
+                // apply rebuild a NEW gift instead of listing its items).
+                // 2 = "driver_callback" per start_gs::stat_disconnect(34691).
+                // Called while the client slot is still registered: the LPC
+                // looks the user up with find_user_by_client(cno).
+                try {
+                    callMasterProgramFunction("cmd_disconnected",
+                                              {make_int(clientNo), make_int(2)},
+                                              lpc::masterSearchRoot());
+                } catch (...) {
+                }
                 {
                     std::lock_guard<std::mutex> lk(gameMutex());
                     gameClients().erase(clientNo);

@@ -751,7 +751,16 @@ StackItem makeMemberRef(const Value& container, const Value& key) {
 static bool fnTraceMatch(const std::string& name) {
     static const char* const flt = std::getenv("LPCVM_FNTRACE");
     if (!flt || !*flt || name.empty()) return false;
-    return name.find(flt) != std::string::npos;
+    // Comma-separated list of substrings: any match traces the function.
+    const char* p = flt;
+    while (*p) {
+        const char* comma = std::strchr(p, ',');
+        size_t n = comma ? static_cast<size_t>(comma - p) : std::strlen(p);
+        if (n && name.find(p, 0, n) != std::string::npos) return true;
+        if (!comma) break;
+        p = comma + 1;
+    }
+    return false;
 }
 
 // Loop control block (value type 20 in the original VM).
@@ -1960,6 +1969,21 @@ public:
             for (auto* x : fns) if (x == f) { dup = true; break; }
             if (!dup) fns.push_back(f);
         }
+        // MOST-DERIVED FIRST.  user.o inherits /gs/feature/char/carry.c, whose
+        // destruct() sets lite_set_temp("destructing", 1) - and user.o::save()
+        // bails out with `if (destructing || destructing_store) return 1;`.
+        // user.o::destruct -> userd::destroy_user -> me->save(0, cb)
+        // (userd:2711) is the ONLY writer of the character's dbase, so with an
+        // inherited destructor running first the flag was already set and the
+        // save silently did nothing (level/items/"newbie" flag lost, the
+        // account stayed in stun_account[] and the next login was rejected with
+        // 9026/9029).  The object's OWN program has funOffset 0; inherited
+        // programs get increasing baseFunOffset in inheritance order.
+        std::stable_sort(fns.begin(), fns.end(),
+                         [](const OriginalFunction* a, const OriginalFunction* b) {
+                             if (a->funOffset != b->funOffset) return a->funOffset < b->funOffset;
+                             return a->index < b->index;
+                         });
         for (const OriginalFunction* f : fns) {
             try {
                 Value r = callFunctionPointer(f, {});
@@ -15211,30 +15235,45 @@ bool destructObjectByKey(const std::string& keyIn) {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
         auto it = reg.vms.find(key);
         if (it != reg.vms.end()) vm = it->second;
-        reg.vms.erase(key);          // IndexedVmMap::erase(const std::string&)
-        reg.objects.erase(key);      // IndexedObjMap::erase(const std::string&)
-        reg.initialized.erase(key);
     }
-    regIndexUnregister(key);
-    // Run the object's LPC destructor (user.o declares `private void
-    // destruct()`) BEFORE unregistering: that is what removes it from
-    // logind/userd's account maps (set_name_user / all_users).  Without it the
-    // next login still found the dead object via find_user_by_account,
-    // concluded "previous login did not finish, residual USER_OB" and returned
-    // WITHOUT sending the character list - the re-login then sat there with only
-    // the echo reply (relog7: [life] destruct_object(user.o#16150) -> 0 by=
-    // logind.o::do_login, then do_login RETURN with no 0xF061).
-    if (vm && !vm->beingDestroyed()) {
+    if (!vm) return false;           // unknown / already destroyed
+    if (vm->beingDestroyed()) {
+        // Re-entrant destruct_object(<same key>) from inside the destructor
+        // chain (a destructor destroying its own object): the OUTER call owns
+        // the registry teardown and the parking, so leave the entry in place -
+        // the chain keeps calling back into the object (me->save()).
+        return true;
+    }
+    // Run the object's LPC destructors WHILE IT IS STILL REGISTERED - and that
+    // ordering is load-bearing in BOTH directions:
+    //  * the destructor chain resolves the object through reg.vms/objects, e.g.
+    //    user.o::destruct -> userd::destroy_user -> me->save(0, cb)
+    //    (userd:2711, the ONLY path that writes the character's dbase back to
+    //    dl_ddb_1_test.`user`<gid>).  With the entry erased first that call was
+    //    a silent no-op and the save never happened (level/items/"newbie" flag
+    //    lost on every re-login);
+    //  * user.o's destruct removes the char from logind/userd's account maps
+    //    (set_name_user / all_users); without it the next login found the dead
+    //    object via find_user_by_account, concluded "residual USER_OB" and
+    //    returned WITHOUT the character list (relog7).
+    {
         static const bool lifeOn = (std::getenv("LPCVM_LIFE") != nullptr);
         // EVERY inherited destructor must run (see callDestructors).
         vm->callDestructors(lifeOn);
     }
     {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        reg.vms.erase(key);          // IndexedVmMap::erase(const std::string&)
+        reg.objects.erase(key);      // IndexedObjMap::erase(const std::string&)
+        reg.initialized.erase(key);
+    }
+    regIndexUnregister(key);
+    {
         auto& park = destroyedVmPark();
-        if (vm) park.push_back(vm);
+        park.push_back(vm);
         if (park.size() > 512) park.erase(park.begin(), park.begin() + 256);
     }
-    return vm != nullptr;
+    return true;
 }
 
 void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
