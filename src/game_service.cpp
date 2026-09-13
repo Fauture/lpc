@@ -1095,10 +1095,17 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     if (len >= 8) v5 = rd32be(body + 4);
     if (cl.tickLastRecvLastEcho != 0) {
         uint32_t period = v9 - cl.tickLastRecvLastEcho;
-        if (period <= 0x270F) {  // <= 9999ms: "Got bad ECHO" - drop it
+        // Drop only a REPLAY (the same client tick again).  This used to drop
+        // every echo whose tick was <= 9999ms after the previous one, i.e. EVERY
+        // heartbeat of a 1-3s client: no 0xF9C3 was ever sent, the client sat
+        // waiting for its echo reply and only continued after its own timeout
+        // ("选择线路后要 10 多秒才到选角界面"; measured: client echo at
+        // t=941687ms, its next packet at t=949369ms = 7.7s of silence, with no
+        // 0xF9C3 in between).
+        if (period == 0) {
             if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[game] bad echo client=" << cl.clientNo
-                          << " period=" << period << "ms\n";
+                std::cerr << "[game] duplicate echo client=" << cl.clientNo
+                          << " tick=" << v9 << "\n";
             return;
         }
     }
@@ -12980,13 +12987,9 @@ int startGameService(int port) {
                         std::string hex;
                         static const char* hx = "0123456789ABCDEF";
                         for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
-                        // Elapsed ms since the first accepted packet: measures
-                        // the login -> 0x211B latency reported as "10+ seconds
-                        // before the character screen".
-                        static const auto rt0 = std::chrono::steady_clock::now();
-                        auto rms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                       std::chrono::steady_clock::now() - rt0).count();
-                        std::cerr << "[recv-accept] t=" << rms << "ms client=" << clientNo
+                        // Same shared clock as [send]/[life], so the
+                        // login -> 0x211B/0xF061 latency is measurable.
+                        std::cerr << "[recv-accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
                                   << " n=" << n << " " << hex << "\n";
                     }
                     if (n <= 0) break;

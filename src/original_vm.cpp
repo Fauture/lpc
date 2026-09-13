@@ -6192,7 +6192,8 @@ private:
             }
         }
         std::cerr << "[life] " << what << " obj=" << objName_ << " this=" << thisObjectName_
-                  << " fn=" << fn << " passed=" << passed;
+                  << " fn=" << fn << " passed=" << passed
+                  << " t=" << msSinceStart() << "ms";
         if (!dbg.empty()) std::cerr << " [" << dbg << "]";
         std::cerr << "\n";
         std::cerr.flush();
@@ -15101,6 +15102,13 @@ std::string canonicalObjectPath(const std::string& key) { return canonicalObjKey
 // placeholder, so destruct_object(this_object()) must be resolved through the
 // owner object pointer.
 std::string regKeyOfObjectPtr(const void* objPtr) { return regKeyOfObj(objPtr); }
+
+// One shared clock origin for every probe's t=<ms> stamp (see the header).
+int64_t msSinceStart() {
+    static const auto t0 = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - t0).count();
+}
 
 // destruct_object(ob): the game's object destructor efun.  It was a NO-OP
 // stub, so nothing was ever destroyed: a logged-out character stayed alive

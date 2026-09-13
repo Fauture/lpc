@@ -80,4 +80,12 @@ bool destructObjectByKey(const std::string& key);
 // destruct_object(this_object())).
 std::string regKeyOfObjectPtr(const void* objPtr);
 
+// Milliseconds since this process started, from ONE shared origin so that
+// timestamps printed by different probes ([recv-accept] in game_service.cpp,
+// [send] in builtins.cpp, [life]/[room] in original_vm.cpp) are directly
+// comparable.  The client reports that the original reaches the character
+// screen in ~1ms after choosing a line, so the login path must be measured on
+// a single clock.
+int64_t msSinceStart();
+
 } // namespace lpc

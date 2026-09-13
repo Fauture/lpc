@@ -4498,13 +4498,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                             h3 += hx3[static_cast<unsigned char>(data[i]) & 15];
                         }
                         StubCallCtx& sctx = stubCallCtx();
-                        // Elapsed ms since the first send: tells "the client
-                        // waits ~10s" apart from "the server takes ~10s to
-                        // produce the packet" (the reported 0x211B delay).
-                        static const auto t0 = std::chrono::steady_clock::now();
-                        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                      std::chrono::steady_clock::now() - t0).count();
-                        std::cerr << "[send] t=" << ms << "ms cno=" << cno << " cmd=0x" << std::hex << sc
+                        // t= comes from the ONE shared clock (lpc::msSinceStart)
+                        // so it can be compared with [recv-accept] and [life].
+                        std::cerr << "[send] t=" << lpc::msSinceStart() << "ms cno=" << cno
+                                  << " cmd=0x" << std::hex << sc
                                   << std::dec << " body=" << data.size()
                                   << " by=" << sctx.obj << "::" << sctx.fn
                                   << " hex=" << h3 << "\n";
