@@ -745,6 +745,15 @@ StackItem makeMemberRef(const Value& container, const Value& key) {
     return it;
 }
 
+// LPCVM_FNTRACE=<substr>: diagnostic ENTER/RETURN trace of LPC functions
+// whose name contains <substr>, with the return value.  Env-gated and cached
+// once (a per-call getenv would slow the whole VM down).
+static bool fnTraceMatch(const std::string& name) {
+    static const char* const flt = std::getenv("LPCVM_FNTRACE");
+    if (!flt || !*flt || name.empty()) return false;
+    return name.find(flt) != std::string::npos;
+}
+
 // Loop control block (value type 20 in the original VM).
 struct Frame {
     const OriginalFunction* fn = nullptr;
@@ -4479,6 +4488,7 @@ private:
                         cl->functionName = src->functionName;
                         cl->funcIndex = src->funcIndex;
                         cl->func = src->func;
+                        cl->efunClosure = src->efunClosure;
                         cl->owner = src->owner;
                         cl->ownerKey = src->ownerKey;
                         cl->boundArgs = src->boundArgs;
@@ -4532,6 +4542,7 @@ private:
                     cl->functionName = src->functionName;
                     cl->funcIndex = src->funcIndex;
                     cl->func = src->func;
+                    cl->efunClosure = src->efunClosure;
                     cl->owner = src->owner;
                     cl->ownerKey = src->ownerKey;
                     cl->boundArgs = src->boundArgs;
@@ -6256,6 +6267,9 @@ private:
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
         lpcRingPush(fn.name.c_str());
+        if (fnTraceMatch(fn.name))
+            std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
+                      << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount) << "\n";
         mallLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
         roomLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
         lifeLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
@@ -6382,6 +6396,9 @@ private:
 
         int bp = static_cast<int>(stack_.size()) - 1;
         lpcRingPush(fn.name.c_str());
+        if (fnTraceMatch(fn.name))
+            std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
+                      << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount) << "\n";
         mallLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
         roomLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
         lifeLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
@@ -7088,6 +7105,30 @@ private:
                 m0 = readI32(*meta_, off);
                 if (ai.parameters == 2) m1 = readI32(*meta_, off + 4);
             }
+            // LPCVM_OPFN=<substr>: per-instruction trace (operand + stack top)
+            // of matching LPC functions.  Diagnostic only; capped per function.
+            {
+                static const bool opFnOn = (std::getenv("LPCVM_OPFN") != nullptr);
+                if (opFnOn && !frames_.empty() && frames_.back().fn) {
+                    static const char* const opFnFlt = std::getenv("LPCVM_OPFN");
+                    const std::string& tfn = frames_.back().fn->name;
+                    if (opFnFlt && *opFnFlt && tfn.find(opFnFlt) != std::string::npos) {
+                        static std::map<std::string, int> opFnCount;
+                        int& oc = opFnCount[tfn];
+                        if (oc < 400) {
+                            ++oc;
+                            std::string topS = "<empty>";
+                            if (!stack_.empty())
+                                topS = "t" + std::to_string(stack_.back().value.index()) + ":" +
+                                       to_string(stack_.back().value, false).substr(0, 70);
+                            std::cerr << "[op] fn=" << tfn << " ip=" << ip_ << " op=" << in.op
+                                      << " a=" << in.a << " b=" << in.b;
+                            if (fromMeta) std::cerr << " m0=" << m0 << " m1=" << m1;
+                            std::cerr << " sp=" << stack_.size() << " top=" << topS << "\n";
+                        }
+                    }
+                }
+            }
             try {
                 switch (in.op) {
             case 46: // null_action
@@ -7314,6 +7355,9 @@ private:
                 // closed, exactly like vm_returnFromFun's vm_endThreadCatch.
                 while (!catches_.empty() && catches_.back().frameCount >= frames_.size())
                     catches_.pop_back();
+                if (fnTraceMatch(f.fn->name))
+                    std::cerr << "[fn] RETURN " << f.fn->name
+                              << " ret=" << to_string(returnValue_, false).substr(0, 160) << "\n";
                 // ---- explicit stack machine: return to the caller ----
                 // Clean the callee's argument/local slots off the stack
                 // (mirrors the cleanup executeFunctionOnStack used to do
@@ -7629,6 +7673,7 @@ private:
                             cl->functionName = names[in.a];
                             cl->funcIndex = in.a;
                             cl->func = nullptr;   // efun: resolved by name at call time
+                            cl->efunClosure = true;
                             // owner = nullptr so invocation reaches the efun
                             // fallback (call_fun_ptr's final else) instead of
                             // the cross-object owner-resolve path.
@@ -10092,7 +10137,7 @@ private:
                         // global function (owner = master) or same-object:
                         // run inline on THIS VM's stack/obj vars.
                         fn = cl->func;
-                    } else if (cl->funcIndex >= 0 && !cl->func) {
+                    } else if (cl->funcIndex >= 0 && !cl->func && !cl->efunClosure) {
                         // legacy closure without a func pointer
                         auto fit = funcsByIndex_.find(cl->funcIndex);
                         if (fit != funcsByIndex_.end()) {

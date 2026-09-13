@@ -50,8 +50,15 @@ if(WIN32)
     # LARGEADDRESSAWARE, giving the process a 4GB user address space on 64-bit
     # Windows.  Without it the 2GB cap exhausts during GS boot (bad allocation
     # at ~1.9GB, dropping the rest of post_init -> tasks/zone data never
-    # loads).  /STACK:0x100000 keeps the main thread's reserved stack small so
-    # the address space stays available for LPC heap data; deep LPC call
-    # chains run on explicitly-reserved big-stack threads (create_thread).
-    target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x100000)
+    # loads).
+    # /STACK:0x2000000 (32MB) - the cooperative scheduler runs on the MAIN
+    # thread (main.cpp -> lpc::schedulerRun()), so every LPC call nests on the
+    # main thread's stack.  With the old 1MB reserve, opening the newbie gift
+    # (open_newgift_item -> rebuild_newbie_gift -> new_item -> move_to_bag ->
+    # build_item_ex -> get_item_basic_info -> ... ~100 nested LPC frames) blew
+    # the stack: [crash] code=0xc00000fd frames=4, killing the whole GS.  The
+    # original driver ran on Linux's 8MB default.  "deep chains run on
+    # create_thread threads" is no longer true - create_thread goes through
+    # scheduler().spawn() (single-threaded) too.
+    target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x2000000)
 endif()

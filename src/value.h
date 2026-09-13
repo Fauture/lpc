@@ -349,6 +349,15 @@ struct ClosureValue {
     // loop calling a daemon's do_init), call_fun_ptr resolves the function in
     // this owner instead of the current VM.  Null for efun closures.
     const struct OriginalObject* owner = nullptr;
+    // True when this closure wraps a BUILTIN EFUN (create_function_value with
+    // the global-table bit and no matching master function, e.g.
+    // (: call_other, path, "fn" :) or (: create_thread, ... :)).  funcIndex is
+    // then the EFUN's slot number, which COLLIDES with real function indexes in
+    // a VM's merged table: call_fun_ptr's funcsByIndex_[funcIndex] fallback
+    // would silently run that unrelated function (taskd's (*funcs["tip"])(...)
+    // returned int 1 instead of instruction_1's tip string -> every task
+    // log/tip empty).  Such closures must go to the efun-by-name fallback.
+    bool efunClosure = false;
     // Registry key of the EXACT VM that created this closure (e.g.
     // "clone:gs/clone/char/login.o#16960").  A clone shares its template's
     // OriginalObject, so several registered VMs report object() == owner and
