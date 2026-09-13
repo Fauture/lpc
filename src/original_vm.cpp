@@ -755,6 +755,13 @@ struct Frame {
     // functions carry their own program's strings (shared-string indexes are
     // resolved against the callee's table, not the current object's).
     const std::vector<std::string>* strings = nullptr;
+    // MAX argument count (declared params + defaulted params) as recorded by
+    // the last check_args_num (op 15) of this frame.  resort_stack needs it to
+    // decide which of the inline-pushed defaults belong to parameters that were
+    // NOT passed (see the op-71 handler).  Kept AFTER `strings` on purpose: the
+    // Frame aggregate initializers are positional ({fn, bp, argNum, localCount,
+    // strings}).
+    int maxArgNo = 0;
     // Accumulated baseVarOffset of the function's constitution.  The original
     // driver adds consititution->baseVarOffset to every obj-var access
     // (vm_pushObjVar 0x8091224 / vm_pushObjVptr 0x80911a8 /
@@ -11627,6 +11634,7 @@ private:
                 int declared = frames_.empty() || !frames_.back().fn ? 0 : frames_.back().fn->argCount;
                 int maxArgNo = skipAll;
                 if (maxArgNo < declared) maxArgNo = declared;
+                if (!frames_.empty()) frames_.back().maxArgNo = maxArgNo;
                 if (vmEnvTrace() && frames_.back().fn &&
                     frames_.back().fn->name == "read_etc_file")
                     std::cerr << "[checkargs] read_etc_file passed=" << passed
@@ -11643,8 +11651,31 @@ private:
                 Frame& f = frames_.back();
                 int defaultPushed = static_cast<int>(stack_.size()) - 1 - f.bp;
                 if (defaultPushed > 0) {
+                    // The compiler emits the default-value block for ALL
+                    // parameters that HAVE a default - it cannot know at compile
+                    // time how many were actually passed - so the block also
+                    // pushes the defaults of parameters the caller DID supply.
+                    // Those extras must be DISCARDED here: only
+                    // `maxArgNo - argNum` of them belong to missing parameters,
+                    // and because the block is emitted in FORWARD parameter
+                    // order they are its LAST `missing` entries.
+                    //
+                    // Without this slice set_talk_drama(talk_npc, actors,
+                    // content, func) - 5 declared params, `mixed func = 1`,
+                    // `string para = ""`, called with 4 args - handed `func`'s
+                    // default (int 1) to `para`.  build_talk_drama_buffer then
+                    // wrote strlen(para)=1 and (buffer)1 = 00 00 00 01 as the
+                    // drama header, so the client read list_count = 0 and played
+                    // NO story at all (no drama, no story actors).
+                    int keep = defaultPushed;
+                    if (f.maxArgNo > 0) {
+                        int missing = f.maxArgNo - f.argNum;
+                        if (missing < 0) missing = 0;
+                        if (missing < defaultPushed) keep = missing;
+                    }
+                    if (keep < 0) keep = 0;
                     std::vector<StackItem> defaults;
-                    for (int i = 0; i < defaultPushed; ++i)
+                    for (int i = defaultPushed - keep; i < defaultPushed; ++i)
                         defaults.push_back(stack_[static_cast<size_t>(f.bp + 1 + i)]);
                     std::vector<StackItem> args;
                     for (int i = f.argNum - 1; i >= 0; --i)
@@ -11663,7 +11694,7 @@ private:
                     for (auto it = defaults.rbegin(); it != defaults.rend(); ++it)
                         stack_.push_back(*it);
                     for (auto& a : args) stack_.push_back(a);
-                    f.argNum += defaultPushed;
+                    f.argNum += keep;
                     f.bp = static_cast<int>(stack_.size()) - 1;
                 }
                 break;

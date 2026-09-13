@@ -12963,22 +12963,49 @@ int startGameService(int port) {
                 // this client exists before feeding any packet - otherwise the
                 // first packet's process_command -> find_agent_by_client races
                 // the registration and the command is silently dropped.
+                int waitMs = 0;
+                int agentType = 0;
+                int userType = 0;
                 {
+                    // The original driver is single threaded: the listen
+                    // callback (cmd_new_connection -> logind::new_user ->
+                    // comm::set_client -> set_client_user) completes BEFORE the
+                    // first packet is parsed.  Here cmd_new_connection only
+                    // QUEUES the dispatch on the scheduler thread, so the socket
+                    // thread must wait for the registration itself or the first
+                    // packet (0x4124 login) finds no user object.
+                    //
+                    // TWO registries exist and they must not be confused:
+                    //   client_users[cno]  <- find_user_by_client: every player
+                    //                         connection (logind::new_user)
+                    //   client_agents[cno] <- find_agent_by_client: INTERNAL
+                    //                         comm agents (feature/common/
+                    //                         agent.c::comm_set_client_no)
+                    // Waiting on the agent alone (the previous code) never
+                    // matched for a player: the loop burnt all 200 iterations
+                    // (200 x 5ms + one LPC round trip each ~10ms = ~3.1s) before
+                    // every read, which is exactly the "first packet after a new
+                    // connection takes ~3.6s" the client reported.
                     auto root = lpc::masterSearchRoot();
+                    uint64_t waitStart = GetTickCount64();
                     for (int tries = 0; tries < 200; ++tries) {
-                        Value agent = callMasterProgramFunction("find_agent_by_client",
-                                                               {make_int(clientNo)}, root);
-                        if (agent.index() == 7) break;   // object registered
+                        Value u = callMasterProgramFunction("find_user_by_client",
+                                                            {make_int(clientNo)}, root);
+                        userType = static_cast<int>(u.index());
+                        if (u.index() == 7) break;   // login object registered
+                        Value a = callMasterProgramFunction("find_agent_by_client",
+                                                            {make_int(clientNo)}, root);
+                        agentType = static_cast<int>(a.index());
+                        if (a.index() == 7) break;   // internal comm agent
                         if (std::getenv("LPCVM_TRACE"))
-                            std::cerr << "[game] waiting agent client=" << clientNo
-                                      << " try=" << tries << "\n";
+                            std::cerr << "[game] waiting client=" << clientNo
+                                      << " try=" << tries << " user=" << userType
+                                      << " agent=" << agentType << "\n";
                         std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     }
+                    waitMs = static_cast<int>(GetTickCount64() - waitStart);
                 }
                 {
-                    auto root = lpc::masterSearchRoot();
-                    Value agent = callMasterProgramFunction("find_agent_by_client",
-                                                           {make_int(clientNo)}, root);
                     std::string peer = "?";
                     sockaddr_in sin{};
                     int slen = static_cast<int>(sizeof(sin));
@@ -12987,8 +13014,10 @@ int startGameService(int port) {
                         snprintf(pbuf, sizeof(pbuf), "%s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
                         peer = pbuf;
                     }
-                    std::cerr << "[accept] client=" << clientNo << " agent-type="
-                              << static_cast<int>(agent.index()) << " peer=" << peer << "\n";
+                    std::cerr << "[accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
+                              << " wait=" << waitMs << "ms user-type=" << userType
+                              << " agent-type=" << agentType
+                              << " peer=" << peer << "\n";
                 }
                 char buf[4096];
                 for (;;) {
