@@ -4492,7 +4492,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     }
                     if (sN++ < 8000) {
                         std::string h3;
-                        size_t cap3 = data.size() > 4000 ? 96 : 40;
+                        // Full body for the two client-visible story packets
+                        // (0x2603 task log, 0x20D1 drama) so they can be
+                        // compared byte-for-byte with a real client capture.
+                        const bool fullBody = (sc == 0x2603 || sc == 0x20D1);
+                        size_t cap3 = fullBody ? data.size() : (data.size() > 4000 ? 96 : 40);
                         for (size_t i = 0; i < data.size() && i < cap3; ++i) {
                             h3 += hx3[(static_cast<unsigned char>(data[i]) >> 4) & 15];
                             h3 += hx3[static_cast<unsigned char>(data[i]) & 15];

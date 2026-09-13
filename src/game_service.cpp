@@ -1087,6 +1087,7 @@ void handleMsgLAuth(GameClient& cl, const uint8_t* body, size_t len) {
 // heartbeat to LPC cmd_echo() at most once per 180s.
 void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     (void)body;
+    static const bool echoProbe = (std::getenv("LPCVM_ECHO") != nullptr);
     if (len < 4) return;
     // Original reads the client tick (v9) and an optional server tick (v5);
     // tickLastRecvLastEcho guards against replayed/duplicate echoes.
@@ -1095,6 +1096,9 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     if (len >= 8) v5 = rd32be(body + 4);
     if (cl.tickLastRecvLastEcho != 0) {
         uint32_t period = v9 - cl.tickLastRecvLastEcho;
+        if (echoProbe)
+            std::cerr << "[echo] recv cno=" << cl.clientNo << " tick=" << v9
+                      << " period=" << period << " t=" << lpc::msSinceStart() << "ms\n";
         // Drop only a REPLAY (the same client tick again).  This used to drop
         // every echo whose tick was <= 9999ms after the previous one, i.e. EVERY
         // heartbeat of a 1-3s client: no 0xF9C3 was ever sent, the client sat
@@ -1108,6 +1112,9 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
                           << " tick=" << v9 << "\n";
             return;
         }
+    } else if (echoProbe) {
+        std::cerr << "[echo] recv cno=" << cl.clientNo << " tick=" << v9
+                  << " first t=" << lpc::msSinceStart() << "ms\n";
     }
     cl.tickLastRecvLastEcho = v9;
     time_t now = time(nullptr);
@@ -1133,6 +1140,9 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     frame.push_back(static_cast<char>(tick & 0xFF));
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[game] echo reply client=" << cl.clientNo << " tick=" << tick << "\n";
+    if (echoProbe)
+        std::cerr << "[echo] reply cno=" << cl.clientNo << " tick=" << tick
+                  << " t=" << lpc::msSinceStart() << "ms\n";
     gameServiceSend(cl.clientNo, frame);
     if (now - cl.timeLastReportHeartBeat > 179) {
         cl.timeLastReportHeartBeat = now;
