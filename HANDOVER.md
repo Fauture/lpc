@@ -506,6 +506,18 @@ detachedStack_.insert(detachedStack_.end(), stack_.begin(), stack_.end());
 **新增探针**（`LPCVM_NEWBIE`）：`[nb-cfv]`（op23 建的闭包 + ptr/owner/ownerKey）、`[nb-reg]`（进入 `register_enter_world` 时栈顶闭包）、`[nb-app]`（`+=` 的 lhsN/rhs0/resLast）、`[nb-gw]`/`[nb-gs]`（对全局 31 的每一次写）、`[nb-loop]`（进入循环时的数组快照 e0/e38/e39/el）、`[nb-isfn]`/`[nb-apply]`（每次 `is_function` / `(*f)(me)` 的闭包指针）。
 **验证脚本**：`_newbie_run.py`（起服务 → 建角进游戏 → 抓链路）+ `_check_newbie.py`（链路计数 + 打印存档里的 `position`，应当变成 `/lanxianzhen/lanxianzhenwai`）。
 
+### G. 客户端「选择线路后 10 多秒才到选角界面」— **服务端 echo 心跳不回包（已修）**
+
+**用户口径**：原版选线路后 ≤1ms 就到选角界面；我们这要 10 多秒。
+**排查**（先把探针时钟统一：`[send]`/`[recv-accept]`/`[life]`/`[room]` 的 `t=<ms>` 现在都来自同一起点 `lpc::msSinceStart()` —— **之前两套探针各用各的起点，所以上一轮"是客户端慢"的结论是错的**）：
+- 服务端登录本身很快：`[recv-accept] IN 4124` → `+81ms OUT 0x211b`（18KB 表单）→ `+114ms OUT 0xf061`（角色列表）✓；AAA 段 64ms ✓。
+- 客户端在**等 echo 回包**：`[recv-accept] t=941687ms client=17 …0620D2991BEDCA`（客户端 echo）→ 中间**没有任何回包** → `t=949369ms` 客户端才发下一个包（**7.7 秒空档**）。
+- 根因：`game_service.cpp::handleCmdEcho` 把「客户端 tick 间隔 ≤ 9999ms」的 echo **直接丢弃且不回 `0xF9C3`**。真实客户端心跳 1–3 秒 ⇒ **第二次之后的每个心跳都被丢**，客户端只能等自己的 echo 超时；服务与服务之间心跳约 10 秒，正好越过阈值，所以只有真实客户端受害。
+- **修复**：只丢**完全重复**的 tick（`period == 0`），其余照常回 `MSG_REPLY_ECHO`。
+**注意**：echo 回包由引擎直接 `gameServiceSend()` 发出，**不经过 LPC `send_to_client`**，所以 `[send]` 探针看不到 `0xf9c3`；验证要看客户端**下一个包的时间间隔**。
+**待真实客户端复测**：选线路是否立即到选角界面；剧本/任务是否随之下发（socket 不再被 echo 卡住后，之前可能丢掉的后续包应能收到）。
+
+
 ---
 
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
