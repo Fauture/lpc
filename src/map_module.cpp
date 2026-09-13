@@ -515,8 +515,27 @@ Value MapModule::readMapInfo(const std::vector<Value>& args) {
 }
 
 Value MapModule::calcOffset(const std::vector<Value>& args) {
-    // calc_offset(mapIndex, x, y) -> offset into bits (x*height+y); used by
-    // the LPC layer for plot manipulation.
+    // Two overloads share this efun name in the LPC layer:
+    //   calc_offset(x1, y1, x2, y2)   -> distance between two cells
+    //        (move.c::is_near `if (calc_offset(my_x,my_y,i_x,i_y) > distance)
+    //         return 0;`, enter_room.c's nearest-exit search, shift.c, ...)
+    //   calc_offset(mapIndex, x, y)   -> offset into the obstacle bits
+    //        (x*height+y), used by the plot/map code.
+    // Only the 3-arg form used to be implemented: the 4-arg call took x1 as a
+    // map index, getMapInfoByValue failed and every call returned -1, so
+    // `is_near`'s distance test was ALWAYS false -> the range check silently
+    // did nothing (probe: [near-off] (86,158)->(48,161) = -1).
+    if (args.size() >= 4) {
+        int x1 = static_cast<int>(valToInt(args[0]));
+        int y1 = static_cast<int>(valToInt(args[1]));
+        int x2 = static_cast<int>(valToInt(args[2]));
+        int y2 = static_cast<int>(valToInt(args[3]));
+        int dx = x1 > x2 ? x1 - x2 : x2 - x1;
+        int dy = y1 > y2 ? y1 - y2 : y2 - y1;
+        // Chebyshev: "N cells away" on an 8-direction tile grid.  Matches the
+        // engine's own adjacency test in checkSteps (dx,dy within 1).
+        return make_int(dx > dy ? dx : dy);
+    }
     if (args.size() < 3) return make_int(-1);
     std::lock_guard<std::mutex> lk(g_mapMutex);
     MapInfo* m = getMapInfoByValue(args[0]);
