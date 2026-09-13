@@ -1,0 +1,18 @@
+fix: NPC 对话没头像/没名字（省略形参补位必须是 undefined，不是 int 0）
+
+open_menu::main -> menu.c::start_talk_to 调 set_menu(ob, menu, menu_content) 只传 3 个参数，
+声明有 7 个；build_menu_buffer 用 is_undefined(portrait) 判断"调用方没给头像"，
+此时取 actor_name = ob->get_name()、portrait_used = ob->query("portrait")；
+否则走 else 分支 portrait_used = -1、actor_name = ""。
+
+原版驱动把帧的形参区清零，全零值在本 VM 里就是 type 0 = undefined
+（is_undefined 真、is_int 假）。我们补位用 pushValue(make_int(0))（int 0）
+-> is_undefined 假 -> 走 else -> 客户端收到 portrait=0xFFFFFFFF、名字长度 0
+（用户口径："头像变成了FF FF FF FF 名字变成了00长度"）。
+
+修：src/original_vm.cpp 五处省略形参补位改为 pushValue(Value{})。
+
+验证 _npc_menu_check.py（新增：点 NPC 并解码 0x2037 的 id/portrait/pic_no/content/actor_name）：
+修复前 portrait=0xFFFFFFFF name="" len=0；修复后 name="宝箱" len=4、portrait=0（该临时 NPC 自身值）。
+同轮回归：0x20D1 剧本、0x2603 log(49)/tip(45)、[crash] 0 次。
+HANDOVER 5.K 记录，并记下两条待查线索（过图后不重播 0xF05D 对象列表；卡死角色都停在揽仙镇外）。

@@ -4353,7 +4353,7 @@ private:
                     // int 0 - never "undefined" (is_int(undefined) fails in
                     // update_child.c's formula 79 when childd's
                     // create_phy_child calls update_child(child) with one arg).
-                    for (int i = 0; i < pad; ++i) pushValue(make_int(0));
+                    for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
                     for (int i = static_cast<int>(callArgs.size()) - 1; i >= 0; --i)
                         pushValue(callArgs[static_cast<size_t>(i)]);
                     if (declared == 0 && callArgs.empty()) {
@@ -4446,7 +4446,7 @@ private:
                         size_t base = stack_.size();
                         // Omitted declared args are int 0 (frame-area zero
                         // init in the original driver), see call_other above.
-                        for (int i = 0; i < pad; ++i) pushValue(make_int(0));
+                        for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
                         for (int i = static_cast<int>(callArgs.size()) - 1; i >= 0; --i)
                             pushValue(callArgs[static_cast<size_t>(i)]);
                         if (declared == 0 && callArgs.empty()) {
@@ -5636,7 +5636,7 @@ private:
                     // the master NPC clone's create()).
                     std::vector<StackItem> args2;
                     for (int i = 0; i < ac && !stack_.empty(); ++i) args2.push_back(pop());
-                    for (int i = 0; i < pad; ++i) pushValue(make_int(0));
+                    for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
                     for (auto it = args2.rbegin(); it != args2.rend(); ++it) stack_.push_back(*it);
                 }
                 // The callee inherits the CURRENT frame's string table (a
@@ -9272,7 +9272,7 @@ private:
                             // real[0] = param0 (popped from top first).
                             int declared = fn.argCount;
                             int pad = (declared > argn) ? declared - argn : 0;
-                            for (int i = 0; i < pad; ++i) pushValue(make_int(0));
+                            for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
                             for (int i = static_cast<int>(real.size()) - 1; i >= 0; --i)
                                 push(real[static_cast<size_t>(i)]);
                             if (declared == 0 && argn == 0) {
@@ -9685,7 +9685,7 @@ private:
                                 std::cerr.flush();
                             }
                             // Omitted declared args are int 0 (see resolveSelf).
-                            for (int i = 0; i < pad; ++i) pushValue(make_int(0));
+                            for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
                             for (int i = static_cast<int>(args.size()) - 1; i >= 0; --i)
                                 pushValue(args[static_cast<size_t>(i)]);
                             if (declared == 0 && args.empty()) {
