@@ -11746,6 +11746,13 @@ void handleMsgWrittenContent(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 8) return;
     uint32_t a = rd32be(body);
     int32_t b = static_cast<int32_t>(rd32be(body + 4));   // result (signed)
+    // The DBA answers a WRITE with MSG_WRITTEN_CONTENT (0x2403,
+    // dba cmd_write_content -> send_message(9219, cookie, ret, 0)).  Log the
+    // arrival: a stalled write (filed do_operate -> -2) is indistinguishable
+    // from a dropped reply without it.
+    if (std::getenv("LPCVM_SVC_TRACE"))
+        std::cerr << "[game] msg_written_content client=" << cl.clientNo
+                  << " cookie=" << a << " result=" << b << " attrib=" << cl.attrib << "\n";
     applyLpc("msg_written_content",
              {make_int(cl.clientNo), make_int(a), make_int(b)});
 }

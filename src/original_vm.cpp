@@ -63,6 +63,13 @@ static std::string nbClosureDesc(const Value& v) {
            " k=" + cl->ownerKey;
 }
 static bool vmEnvEventTrace() { static const bool v = (std::getenv("LPCVM_EVENT_TRACE") != nullptr); return v; }
+// LPCVM_EVDBG: only the DBA operate events (ev_filed*/ev_readetcd*/ev_config) -
+// park/raise/wake with the tid, so a lost or mis-targeted wake is visible
+// without the full EVENT_TRACE flood.
+static bool vmEnvEvDbg() { static const bool v = (std::getenv("LPCVM_EVDBG") != nullptr); return v; }
+static bool evDbgName(const std::string& n) {
+    return n.rfind("ev_filed", 0) == 0 || n.rfind("ev_readetcd", 0) == 0 || n == "ev_config";
+}
 static bool vmEnvSvcTrace() { static const bool v = (std::getenv("LPCVM_SVC_TRACE") != nullptr); return v; }
 static bool vmEnvTraceC8() { static const bool v = (std::getenv("LPCVM_TRACE_C8") != nullptr); return v; }
 static bool vmEnvDbgObjVar() { static const bool v = (std::getenv("LPCVM_DBG_OBJVAR") != nullptr); return v; }
@@ -757,6 +764,25 @@ static bool fnTraceMatch(const std::string& name) {
         const char* comma = std::strchr(p, ',');
         size_t n = comma ? static_cast<size_t>(comma - p) : std::strlen(p);
         if (n && name.find(p, 0, n) != std::string::npos) return true;
+        if (!comma) break;
+        p = comma + 1;
+    }
+    return false;
+}
+
+// LPCVM_FNOBJ=<substr>[,<substr>...]: extra filter for LPCVM_FNTRACE - only
+// trace when the executing OBJECT's name contains one of these.  FNTRACE
+// matches substrings, so tracing e.g. "create" or "import" is unusable without
+// it; with FNOBJ=newbie_gift only the gift object's calls are logged.
+static bool fnObjMatch(const std::string& objName) {
+    static const char* const flt = std::getenv("LPCVM_FNOBJ");
+    if (!flt || !*flt) return true;
+    if (objName.empty()) return false;
+    const char* p = flt;
+    while (*p) {
+        const char* comma = std::strchr(p, ',');
+        size_t n = comma ? static_cast<size_t>(comma - p) : std::strlen(p);
+        if (n && objName.find(p, 0, n) != std::string::npos) return true;
         if (!comma) break;
         p = comma + 1;
     }
@@ -1749,6 +1775,10 @@ Scheduler& scheduler();
 // the owner's variable/string/function tables (filed.o service functions run
 // from zone-master clone VMs, etc.).
 const OriginalVm* originalHomeVmOf(const OriginalFunction* fn);
+// The same instance as a mutable registry handle (closure dispatch calls into
+// it).  Declared here because the closure-call opcode is defined above the
+// registry helpers.
+std::shared_ptr<OriginalVm> homeVmMutable(const OriginalFunction* fn);
 
 // ---- copy-on-share tables for clone VMs ----
 // Clones share the template's immutable function tables instead of deep
@@ -6291,7 +6321,7 @@ private:
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
         lpcRingPush(fn.name.c_str());
-        if (fnTraceMatch(fn.name))
+        if (fnTraceMatch(fn.name) && fnObjMatch(objName_))
             std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
                       << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount) << "\n";
         mallLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
@@ -6420,7 +6450,7 @@ private:
 
         int bp = static_cast<int>(stack_.size()) - 1;
         lpcRingPush(fn.name.c_str());
-        if (fnTraceMatch(fn.name))
+        if (fnTraceMatch(fn.name) && fnObjMatch(objName_))
             std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
                       << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount) << "\n";
         mallLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
@@ -7379,7 +7409,7 @@ private:
                 // closed, exactly like vm_returnFromFun's vm_endThreadCatch.
                 while (!catches_.empty() && catches_.back().frameCount >= frames_.size())
                     catches_.pop_back();
-                if (fnTraceMatch(f.fn->name))
+                if (fnTraceMatch(f.fn->name) && fnObjMatch(objName_))
                     std::cerr << "[fn] RETURN " << f.fn->name
                               << " ret=" << to_string(returnValue_, false).substr(0, 160) << "\n";
                 // ---- explicit stack machine: return to the caller ----
@@ -8894,10 +8924,23 @@ private:
                                   << " vm=" << this << " obj=" << objName_
                                   << " fn=" << wfn << " ip=" << ip_ << "\n";
                     }
+                    bool evDbg = vmEnvEvDbg() && evDbgName(ename);
+                    if (evDbg) {
+                        std::string wfn = frames_.empty() || !frames_.back().fn
+                                              ? "<global>" : frames_.back().fn->name;
+                        std::cerr << "[ev] wait " << ename << " mask=0x" << std::hex
+                                  << mask << std::dec << " secs=" << secs
+                                  << " tid=" << scheduler().currentProcessTid()
+                                  << " obj=" << objName_ << " fn=" << wfn << "\n";
+                    }
                     // Cooperative scheduling: probe with timeout 0 first.  If
                     // the event is already raised, return immediately; else
                     // PARK this VM on the event (raise_event wakes it).
                     int64_t probe = lpc::eventWait(eref, mask, 0.0);
+                    if (evDbg)
+                        std::cerr << "[ev] wait-probe " << ename << " mask=0x" << std::hex
+                                  << mask << std::dec << " -> " << probe
+                                  << " tid=" << scheduler().currentProcessTid() << "\n";
                     if (probe == -101) {
                         // The event token does not resolve to a REGISTERED event
                         // (an int oid with no create_event mapping, e.g. a
@@ -8985,6 +9028,14 @@ private:
                         mask = static_cast<uint32_t>(toInt(mv));
                     }
                     int64_t rc = lpc::eventRaise(eref, mask);
+                    if (vmEnvEvDbg() && evDbgName(ename)) {
+                        std::string wfn = frames_.empty() || !frames_.back().fn
+                                              ? "<global>" : frames_.back().fn->name;
+                        std::cerr << "[ev] raise " << ename << " mask=0x" << std::hex
+                                  << mask << std::dec << " -> " << rc
+                                  << " tid=" << scheduler().currentProcessTid()
+                                  << " obj=" << objName_ << " fn=" << wfn << "\n";
+                    }
                     if (vmEnvEventTrace())
                         std::cerr << "[raise_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " -> " << rc
@@ -10284,6 +10335,30 @@ private:
                                 }
                             }
                         }
+                        // The instance found through ownerKey may not own the
+                        // function: a closure created inside a cross-object
+                        // INLINE call records the CALLER's instance key, so
+                        // filed.do_operate inlined into vendued.o's VM stores
+                        // ownerKey="/gs/daemons/vendued.o" for a closure whose
+                        // function belongs to /daemons/filed.o.  Dispatching it
+                        // there ran operate_done with vendued.o's variables: the
+                        // oper_map lookup missed, raise_event never fired and the
+                        // waiting do_operate stalled to -2 (the DBA reply then
+                        // looks lost -> login's "通讯故障 ... 9030").  Re-target
+                        // to the function's HOME instance, keeping the detached
+                        // invocation (an inline run inside the reply dispatcher
+                        // parks the dispatcher and stops every later reply).
+                        if (cl->func && (!ownerVm || !ownerVm->ownsFunction(cl->func))) {
+                            auto hv = homeVmMutable(cl->func);
+                            if (hv) {
+                                if (std::getenv("LPCVM_EVDBG") || vmEnvTrace())
+                                    std::cerr << "[cfv] owner-instance retarget "
+                                              << cl->functionName << " ownerKey=" << cl->ownerKey
+                                              << " ownerVm=" << (ownerVm ? ownerVm->objName() : std::string("-"))
+                                              << " -> home=" << hv->objName() << "\n";
+                                ownerVm = hv;
+                            }
+                        }
                         if (ownerVm) {
                             if ((vmEnvTrace() || vmEnvEventTrace()) &&
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
@@ -10375,6 +10450,29 @@ private:
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
                                 std::cerr << "[cfptr] owner-init DONE " << cl->functionName
                                           << " on " << ownerVm->object().sourceName << "\n";
+                        } else if (cl->func) {
+                            // No owner instance in the registry at all: the
+                            // closure's function is still callable - run it
+                            // inline with its HOME tables instead of dropping
+                            // the call silently (a dropped operate_done is a
+                            // lost DBA wakeup).
+                            const OriginalVm* h = originalHomeVmOf(cl->func);
+                            std::shared_ptr<std::vector<Value>> hv;
+                            const std::vector<std::string>* hs = nullptr;
+                            const std::map<int, const OriginalFunction*>* hf = nullptr;
+                            if (h && h != this) {
+                                hv = h->objVarsShared();
+                                hs = &h->object().strings;
+                                hf = &h->functionTable();
+                            }
+                            if (std::getenv("LPCVM_EVDBG") || vmEnvTrace())
+                                std::cerr << "[cfv] owner-vm missing " << cl->functionName
+                                          << " ownerKey=" << cl->ownerKey
+                                          << " home=" << (h ? h->objName() : std::string("?"))
+                                          << " -> inline\n";
+                            bool ph2 = pushArgsForFunction(*cl->func, all);
+                            inlineStarted = startInlineFunction(*cl->func, ph2, static_cast<int>(all.size()),
+                                                                hv, hs, hf);
                         } else if (inPostInit) {
                             // post_init closure whose owner VM is gone (or the
                             // closure's owner is not in the registry): the LPC
@@ -12662,6 +12760,20 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
             if (keep.empty()) eventWaiters_.erase(it);
             else it->second = std::move(keep);
         }
+        if (vmEnvEvDbg() && evDbgName(ename)) {
+            std::cerr << "[ev] wake " << ename << " raised=0x" << std::hex << raisedMask
+                      << std::dec << " hits=" << hits.size() << " keep=" << keep.size()
+                      << " hitTids=[";
+            for (size_t hi = 0; hi < hits.size(); ++hi)
+                std::cerr << (hi ? "," : "") << hits[hi]->tid << ":0x" << std::hex
+                          << hits[hi]->cond.mask << std::dec;
+            std::cerr << "] keepTids=[";
+            for (size_t ki = 0; ki < keep.size(); ++ki)
+                std::cerr << (ki ? "," : "") << keep[ki]->tid << ":0x" << std::hex
+                          << keep[ki]->cond.mask << std::dec;
+            std::cerr << "]\n";
+            std::cerr.flush();
+        }
         // A normal wake ends the park: drop the watchdog's first-sight state
         // so the next park on this event starts a fresh 15s window.
         if (!hits.empty()) {
@@ -13880,6 +13992,17 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
 Scheduler& scheduler() {
     static Scheduler s;
     return s;
+}
+
+// Mutable registry instance that owns fn (the closure-dispatch path calls
+// callFunctionPointer on it; originalHomeVmOf returns the const view).
+std::shared_ptr<OriginalVm> homeVmMutable(const OriginalFunction* fn) {
+    const OriginalVm* h = originalHomeVmOf(fn);
+    if (!h) return nullptr;
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    for (auto& kv : objectRegistry().vms)
+        if (kv.second.get() == h) return kv.second;
+    return nullptr;
 }
 
 const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {

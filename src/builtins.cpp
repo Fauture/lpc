@@ -4839,6 +4839,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // process, timing out and returning -1 instead of the config value).
         if (args.empty()) {
             int64_t pid = lpc::schedulerCurrentTid();
+            // LPCVM_EVDBG: the DBA operate path (filed.c::do_operate) builds its
+            // wait/raise event name from get_thread_id(); if the tid seen here
+            // differs from the one the parked process used, the raise targets a
+            // bit nobody waits on and the operation stalls to -2 (通讯故障).
+            if (std::getenv("LPCVM_EVDBG") &&
+                (stubCallCtx().obj.find("filed") != std::string::npos ||
+                 stubCallCtx().fn == "do_operate"))
+                std::cerr << "[ev] get_thread_id -> " << pid
+                          << " obj=" << stubCallCtx().obj
+                          << " fn=" << stubCallCtx().fn << "\n";
             return make_int(pid >= 0 ? pid : lpc::lpcThreadId());
         }
         return make_int(-1);
