@@ -1888,6 +1888,54 @@ static void sqlLoadAll() {
     });
 }
 
+// [keyt] probe: print the key and value TYPE INDEX of every entry of a
+// mapping.  Value index: 0 undefined, 2 int, 4 string, 5 array, 6 mapping,
+// 7 object, 10 buffer.  A path query (express_query / db->query("a/b")) only
+// ever matches STRING keys, so an int key is invisible to the whole LPC data
+// layer even though the value is still there.
+void dumpKeyTypes(const Value& v, const char* tag) {
+    static int budget = 400;
+    if (budget <= 0) return;
+    if (v.index() != 6) {
+        std::cerr << "[keyt] " << tag << " not-a-mapping(t" << v.index() << ")\n";
+        return;
+    }
+    auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+    std::cerr << "[keyt] " << tag << " entries=" << mp->items().size() << "\n";
+    for (auto& kv : mp->items()) {
+        std::cerr << "[keyt]   key=" << to_string(kv.first, false).substr(0, 20)
+                  << " keyType=" << kv.first.index()
+                  << " valType=" << kv.second.index() << "\n";
+        if (--budget <= 0) { std::cerr << "[keyt]   ...budget\n"; break; }
+    }
+    std::cerr.flush();
+}
+
+// [keyt] dbase-level dump: what top-level fields does this mapping have and
+// what TYPE are their keys?  "任务" lives under the key "task"; if that
+// key were an int the whole LPC data layer (express_query) could never see it.
+void dumpDbaseKeys(const Value& v, const char* tag) {
+    static int budget = 60;
+    if (budget <= 0 || v.index() != 6) return;
+    --budget;
+    auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+    std::cerr << "[keyt] " << tag << " topEntries=" << mp->items().size() << "\n";
+    int shown = 0;
+    for (auto& kv : mp->items()) {
+        if (kv.first.index() != 4) {
+            std::cerr << "[keyt]   <nonstring key type=" << kv.first.index() << ">\n";
+            continue;
+        }
+        const std::string& k = std::get<SharedString>(kv.first).str();
+        if (k == "task" || k == "carry" || k == "achieve" || k == "name" ||
+            k == "account" || k == "patch" || k == "guide" || k == "newbie" ||
+            k == "trace_task")
+            std::cerr << "[keyt]   key=" << k << " valType=" << kv.second.index() << "\n";
+        if (++shown >= 60) break;
+    }
+    std::cerr.flush();
+}
+
 Value simpleDbSelect(const std::string& table) {
     auto arr = std::make_shared<ArrayValue>();
     sqlLoadAll();
@@ -2635,7 +2683,29 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "is_undefined") return make_int(!args.empty() && args[0].index() == 0 ? 1 : 0);
     if (name == "is_mapping") return make_int(!args.empty() && args[0].index() == 6 ? 1 : 0);
     if (name == "is_array") return make_int(!args.empty() && args[0].index() == 5 ? 1 : 0);
-    if (name == "is_function") return make_int(!args.empty() && args[0].index() == 8 ? 1 : 0);
+    if (name == "is_function") {
+        // [isfn] what does the caller actually hold?  A template closure that
+        // comes back out of the all_templates mapping as type != 8 explains
+        // "task_log() is never entered, query_task_log returns ''".
+        if (std::getenv("LPCVM_KEYT") && !args.empty()) {
+            static const char* f = std::getenv("LPCVM_ISFN_FN");
+            const std::string& cf = stubCallCtx().fn;
+            if (!f || cf.find(f) != std::string::npos) {
+                static int budget = 200;
+                if (budget > 0) {
+                    --budget;
+                    std::string dump = to_string(args[0], false);
+                    if (dump.size() > 120) dump = dump.substr(0, 120) + "...";
+                    std::cerr << "[isfn] caller=" << stubCallCtx().obj << "::" << cf
+                              << " argType=" << args[0].index()
+                              << " argc=" << args.size()
+                              << " val=" << dump << "\n";
+                    std::cerr.flush();
+                }
+            }
+        }
+        return make_int(!args.empty() && args[0].index() == 8 ? 1 : 0);
+    }
     if (name == "is_string") return make_int(!args.empty() && args[0].index() == 4 ? 1 : 0);
     if (name == "is_int") return make_int(!args.empty() && args[0].index() == 2 ? 1 : 0);
     if (name == "is_float") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
@@ -3436,6 +3506,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "read_file") {
         if (args.empty()) return make_string("");
         std::string vpath = as_string(args[0]);
+        // [listread] every ".list" config read (task_name.list / task_alias.list
+        // / shop goods lists ...): a zero-length answer means the caller's
+        // destination mapping stays empty and the whole feature silently
+        // degrades (get_task_class -> task name -> no template -> empty quest
+        // log; no shop goods).
+        if (vpath.find(".list") != std::string::npos) {
+            static int listBudget = 400;
+            std::string rv = readVfsFile(vpath);
+            if (listBudget > 0) {
+                --listBudget;
+                std::cerr << "[listread] path=" << vpath << " bytes=" << rv.size() << "\n";
+                std::cerr.flush();
+            }
+            if (args.size() >= 2 && args[1].index() == 4 &&
+                std::get<SharedString>(args[1]).str() == "b")
+                return make_buffer(rv);
+            return make_string(rv);
+        }
         if (std::getenv("LPCVM_TRACE"))
             std::cerr << "[read_file] path=" << vpath << "\n";
         std::string content = readVfsFile(vpath);
@@ -5037,6 +5125,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                           << " head=" << rvs.substr(0, 90) << "\n";
                 std::cerr.flush();
             }
+            if (ok && out.index() == 6 && std::getenv("LPCVM_KEYT")) {
+                auto mp = std::get<std::shared_ptr<MappingValue>>(out);
+                dumpDbaseKeys(out, "restore");
+                for (const char* k : {"task", "carry", "achieve"}) {
+                    const Value* sub = mp->find(make_string(k));
+                    if (sub) {
+                        std::string tg = std::string("restore/") + k;
+                        dumpKeyTypes(*sub, tg.c_str());
+                    }
+                }
+            }
             if (ok) return out;
         }
         return args.empty() ? make_int(0) : args[0];
@@ -5347,6 +5446,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "is_buffer") {
         // Buffers are the distinct BufferValue type (vm buffer type 5).
         return make_int((!args.empty() && args[0].index() == 10) ? 1 : 0);
+    }
+    if (name == "save_string" && !args.empty() && args[0].index() == 6 &&
+        std::getenv("LPCVM_KEYT")) {
+        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        dumpDbaseKeys(args[0], "save");
+        for (const char* k : {"task", "carry", "achieve"}) {
+            const Value* sub = mp->find(make_string(k));
+            if (sub) {
+                std::string tg = std::string("save/") + k;
+                dumpKeyTypes(*sub, tg.c_str());
+            }
+        }
     }
     if (name == "save_string") {
         // vm_f_save_string (0x80db0d0) -> vm_saveValueToString: the ASCII

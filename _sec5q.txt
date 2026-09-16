@@ -1,0 +1,50 @@
+---
+
+### Q. 「再次上线任务面板空白 / 背包不显示 / 商店没货」— 进行中（已收窄到 is_function(funcs["log"])）
+
+用户口径：再次上线后任务没了、药店/防具/杂货/武器都没有物品、背包物品不显示（但存在，换位一下就出来）。
+
+**已确认的链路（全部有日志证据；脚本 `_bagtask_probe.py` / `_sender_probe.py`）**
+
+1. 客户端收到的 `0x2603`（任务日志）首次/重登都是 **62 字节**（正常 284 字节）；
+   结构 = `pad_buffer(9731, 1, task_name, len(desc), desc, len(log), log, len(tip), tip, ...)`
+   （`comm_v37.c:986`），我们这里 **desc/log/tip 长度全是 0**。
+2. **不是「没发包」**：`LPCVM_SEND` 追踪显示每个包的发送函数与次数首次/重登完全一致。
+3. **不是「存档形状不对」**：`dl_ddb_1` 原版数据与我们的 `dl_ddb_1_test` 形状一致：
+   `"task":([729:(["state":"S2","alias":38,"upgrade_type":0,]),])`。
+4. **不是「键类型」问题**：`[keyt]` 实测我们 restore/save 后 `carry` 的键是 `keyType=2`（int，裸 `101:`），
+   与 IDA 的 `vm_restoreMixedString`(0x8107ecc) / `vm_saveValueAscii`(0x8107ac4) 行为一致 ⇒ 忠实。
+5. `.list` 配置读得到：`[listread]` 显示 `task_name.list bytes=60178`、`task_alias.list bytes=4041`。
+6. 任务数据在对象里：`[fn] RETURN query_task ret=(["state":"S0","alias":"【新手】新的开始",
+   "name":"【新手】1-9级新手任务","upgrade_type":0])`。
+7. `get_task_class` 返回 `【新手】1-9级新手任务` —— **这是对的**：`etc/task_name.list:2859` 就是
+   `class : 【新手】1-9级新手任务`（与 name 同名）。
+8. 模板**确实注册了**：boot 期间 `register_task_template` 共 **1072** 次，其中一次
+   `obj=/gs/daemons/tasks/instruction_v4/sub_tasks/instruction_1.o a0=t4:【新手】1-9级新手任务
+   a1=t6:(["dest": <function …>, "tip": <function …>, "log": <function …>])`。
+9. **但 `task_log()` / `task_tip()`（模板里的闭包）整个登录过程一次都没被进入**
+   （`ENTER task_log: 0`），而 `query_task_log` 进了 2 次并返回空串。
+   按 `taskd_v37.c:1612`：
+   ```lpc
+   task_log = funcs["log"];
+   if (is_function(task_log)) task_log = (*task_log)(me, task_info);   // ← 没走到
+   else if (!is_string(task_log)) task_log = task_info["log"];
+   if (!is_string(task_log)) return "";                                // ← 在这里返回
+   ```
+   ⇒ **`is_function(funcs["log"])` 为假**：从 `all_templates` 映射里读回来的闭包不再是闭包（类型 != 8），
+   或者这次 `funcs["log"]` 查找落空。
+
+**下一步（只差一次重启）**
+
+`is_function` **不在** `src/builtins.cpp` 的 `call_builtin` 里（`[isfn]` 探针 0 命中即证据），
+而在 `src/original_vm.cpp` 的 efun 名字哈希分发链（`callEfunWithArgs`）里。
+把 `[isfn]` 探针搬到那里的 `is_function` 分支，打 `caller=obj::fn argType=<type> val=<dump>`：
+
+- `argType != 8` ⇒ 我们 VM 在**映射里存/取闭包**时丢了闭包类型（查 `MappingValue` 的
+  拷贝/删除/闭包共享），修那里；
+- `argType == 8` 却仍不进 `task_log` ⇒ 是闭包**调用**路径的问题
+  （`call_fun_ptr`/`call_other` 处理 `(: call_other, obj, "fn" :)` 这类闭包），修那条。
+
+**背包 / 商店**：`0x5103`（build_inventory）首次与重登**逐字节相同**（112B），数据没问题；
+结合「商店也没货」，怀疑与任务同一根（同一套 `easy_task`/模板按需克隆机制），
+任务这条修好后一起复验。

@@ -838,6 +838,25 @@ static bool fnTraceMatch(const std::string& name) {
 // trace when the executing OBJECT's name contains one of these.  FNTRACE
 // matches substrings, so tracing e.g. "create" or "import" is unusable without
 // it; with FNOBJ=newbie_gift only the gift object's calls are logged.
+// LPCVM_FNARGS=<substr>[,<substr>...]: also dump the first few ARGUMENT
+// VALUES on the [fn] ENTER line for those functions (LPCVM_FNTRACE only prints
+// argc).  Deliberately independent of LPCVM_FNOBJ - the question it answers
+// ("which object registered which task class / template fields") needs the
+// caller's identity too.
+static bool fnArgsMatch(const std::string& name) {
+    static const char* const flt = std::getenv("LPCVM_FNARGS");
+    if (!flt || !*flt || name.empty()) return false;
+    const char* p = flt;
+    while (*p) {
+        const char* comma = std::strchr(p, ',');
+        size_t n = comma ? static_cast<size_t>(comma - p) : std::strlen(p);
+        if (n && name.find(p, 0, n) != std::string::npos) return true;
+        if (!comma) break;
+        p = comma + 1;
+    }
+    return false;
+}
+
 static bool fnObjMatch(const std::string& objName) {
     static const char* const flt = std::getenv("LPCVM_FNOBJ");
     if (!flt || !*flt) return true;
@@ -6545,9 +6564,23 @@ private:
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
         lpcRingPush(fn.name.c_str());
-        if (fnTraceMatch(fn.name) && fnObjMatch(objName_))
+        if (fnTraceMatch(fn.name) && fnObjMatch(objName_)) {
             std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
-                      << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount) << "\n";
+                      << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount);
+            if (fnArgsMatch(fn.name)) {
+                int acA = (passedArgs >= 0) ? passedArgs : fn.argCount;
+                for (int ai = 0; ai < acA && ai < 4; ++ai) {
+                    int si = bp - ai;   // param0 is on TOP of the stack
+                    if (si < 0 || si >= static_cast<int>(stack_.size())) break;
+                    const Value& av = stack_[static_cast<size_t>(si)].value;
+                    std::string s = to_string(av, false);
+                    if (s.size() > 140) s = s.substr(0, 140) + "...";
+                    std::cerr << " a" << ai << "=t" << av.index() << ":" << s;
+                }
+            }
+            std::cerr << "\n";
+            std::cerr.flush();
+        }
         mallLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
         roomLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
         lifeLog("ENTER-inline", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
@@ -6690,9 +6723,23 @@ private:
 
         int bp = static_cast<int>(stack_.size()) - 1;
         lpcRingPush(fn.name.c_str());
-        if (fnTraceMatch(fn.name) && fnObjMatch(objName_))
+        if (fnTraceMatch(fn.name) && fnObjMatch(objName_)) {
             std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
-                      << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount) << "\n";
+                      << " args=" << ((passedArgs >= 0) ? passedArgs : fn.argCount);
+            if (fnArgsMatch(fn.name)) {
+                int acA = (passedArgs >= 0) ? passedArgs : fn.argCount;
+                for (int ai = 0; ai < acA && ai < 4; ++ai) {
+                    int si = bp - ai;   // param0 is on TOP of the stack
+                    if (si < 0 || si >= static_cast<int>(stack_.size())) break;
+                    const Value& av = stack_[static_cast<size_t>(si)].value;
+                    std::string s = to_string(av, false);
+                    if (s.size() > 140) s = s.substr(0, 140) + "...";
+                    std::cerr << " a" << ai << "=t" << av.index() << ":" << s;
+                }
+            }
+            std::cerr << "\n";
+            std::cerr.flush();
+        }
         mallLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount, nullptr);
         roomLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
         lifeLog("ENTER", fn.name, bp, (passedArgs >= 0) ? passedArgs : fn.argCount);
