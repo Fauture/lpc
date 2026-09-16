@@ -897,19 +897,33 @@ oper_map[cookie] = msg;
 - **背包格位从 101 开始**（`carry.c::get_inv_start_pos()=101`，`is_legal_inv_pos` 只认
   101..101+get_inv_size()-1）。之前用 0..40/101..145 去试 `cmd_apply`，0..40 必然全空。
 
-**待办（礼包）**：新手礼包打开会「变成下一级礼包」，根因已缩到
-`newbie_gift.c::create()` 的第一道门：
+**礼包问题（已修复，已端到端验证）**：新手礼包打开会「变成下一级礼包」、也没有赠品属性。
+根因是 **create() 的顺序反了**：
 ```lpc
-if (!is_object(this_object()->basic_object())) return;   // ← 这里返回 → 没有 set_gift_item()/gift_info
+// newbie_gift.c::create() 第一行
+if (!is_object(this_object()->basic_object())) return;   // ← 这里返回 ⇒ 没有 set_gift_item()/gift_info
 ```
-`[call8]` 探针实测：同一个 `find_basic_object_by_import_name("新手礼包（10级）")`
-在 `gift_for_newbie`（任务对象 VM）里返回**模板对象**（所以礼包确实被 clone 出来、也确实进了背包），
-但在**礼包 clone 自己的 create() 里返回 0** —— 同一个全局函数、同一毫秒、不同 VM 上下文得到不同结果，
-也就是说这个全局函数被解析到了**另一台 VM 的变量块**（`global_basic_object` 是 master 的全局变量）。
-下一步：用 `[gfallback]`（本轮新增）看 index→target 究竟是哪台 VM，然后按 §5.L 同样的办法
-（认"函数真正所属的 VM"）收口。另：`object_template` 之前**忽略实参**、只返回当前 VM 的模板，
-已按 IDA `vm_f_object_template`（0x80f4b9c：取"该对象自己的 pTemplateObject"）改成先解析实参对象、
-再读它的模板。
+`my_import_name` 是基类 `basic_object.c::create()` 里设置的
+（`from_ob = object_template(this_object()); my_import_name = from_ob->get_import_name();`），
+而 `callCreate` 收集各 constitution 的 create 时把**派生类先入表**，于是派生 create 跑在基类 create 之前 ⇒
+`my_import_name` 还是空 ⇒ `basic_object()` = 0 ⇒ 直接 return：既没有 `set_gift_item()`（赠品标志），
+也没有 `init_newbie_gift_items()`（`gift_info`）。客户端开礼包时 `is_empty()` 为真，
+`open_newgift_item` 走 `rebuild_newbie_gift`：把礼包吃掉、生成下一级礼包（用户口径「打开后生成一个新的新手礼包」）。
+
+**修**：`callCreate` 的收集改成 **base-first**（先递归父类的 inherits，再登记本层；对象自己的 create 仍最后），
+和引擎 initOrderList/"基类构造在前"的语义一致。顺带把 `object_template` 按 IDA
+`vm_f_object_template`（0x80f4b9c）还原：**带参数时要返回"实参对象自己的 pTemplateObject"**
+（之前忽略实参，只返回当前 VM 的模板）。
+
+**验证**（`mv14`，全新启动）：
+- `[call8] .../newbie_gift/basic.o fn=create -> newbie-gift-task.o::init_newbie_gift_items` ✓ 链路走通。
+- `_gift_probe.py 1 1 gift5 101 145`：`0x220C pos=101` → **`0x21B7`(8631) 415B**
+  （"新手礼包（10级）" + 物品列表 `80|75|70|65|60|55|50|45|40|35|30|25|20|15|10`）✓
+  —— 就是用户说的「弹出一个列表选择取出物品」。**注意背包格位从 101 起**（见上）。
+- `_save_probe.py`（干净 `0x3E2A` 下线）：`carry` 17B → **206B**：
+  `([101:"新手礼包（10级）":([...,"type":8,"gift_info":(["1":"驯兽诀","2":"烟花筒","3":"功能卷轴·神行千里",]),47:1,])])`
+  —— **gift_info 与赠品标志（47:1）都进了存档** ✓；主档 1519→3050B、achieve 4→488B ✓。
+- 回归：走路 (86→90) ✓、过图 揽仙镇外→揽仙镇 (341,246) ✓、硬断线重上 `dialogs=[]` ✓、`construct-wdog` 0 次 ✓。
 
 
 ---
