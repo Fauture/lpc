@@ -846,6 +846,72 @@ else { portrait_used = ((portrait == 0) ? -1 : portrait); actor_name = ""; }
   过图卡死要按"当前房间的 `exits` 查不到目标"来查（`enter_room.c::main` 第 66/69 行两处 `break` 都是静默返回）。
 
 
+### L. 「提示通讯故障」= DBA 回包永远唤不醒等待的 do_operate（**已修复，已端到端验证**）
+
+用户口径：「提示通讯故障，没有测试，每次先测试一次登录再报告」。这句提示是**服务端下发**的
+（`logind.c::try_recover_data` case -2 → `send_dialog_ok("通讯故障，暂时无法登录，请稍候重试。（原因：9030）")`，
+`logind_v37.c:1964`），触发条件只有一个：`read_content("runtime", account)` 返回 **-2**，也就是
+`filed.c::do_operate` 里那个初始值 `result = ({-2, cookie})` 从未被回调改写。
+
+**根因（闭包被派发到错误的实例）**：
+
+`do_operate` 把回调写进 `oper_map[cookie]`：
+```lpc
+msg = ([ ..., "to": (: operate_done, blocked, get_thread_id(), result, to :), ... ]);
+oper_map[cookie] = msg;
+```
+`operate_done` 属于 `/daemons/filed.o`，但这个闭包**是在调用方内联执行 do_operate 时创建的**
+（例如 `vendued.o → /daemons/filed.c->write_content()` 走 VM 的跨对象内联，代码是 filed 的、
+`objName_` 是 vendued），于是闭包记录的是**调用方的实例 key**（`ownerKey=pak:gs/daemons/vendued.o`）。
+
+回包到达时 `msg_operate_done` → `(*msg["to"])(cookie, content)` 按 `ownerKey` 找到 **vendued 的 VM**，
+`operate_done` 就在那台 VM 上跑：读到的是 vendued 的变量块（不是 filed 的 `oper_map`）→ 查不到 cookie →
+静默 return → **`raise_event` 永不发生** → 等待的 `do_operate` 一直 park，直到我们的
+`[construct-wdog]`（15s）把它用失败结果强唤醒 → 返回 -2。
+
+影响面（实测）：一次 15 小时运行里有 **1554 次** `construct-wdog`（vendue/order 等所有后台 DBA 写全部失败，
+`linux/gs/log/filed_backup.sql` 里堆满失败写；登录时的 runtime 读也会 -2 → 就是那句「通讯故障」，
+前面的「要 30 秒左右才能登录」也是同一件事：15~20s 卡住 + 失败重试）。
+
+**修**（`src/original_vm.cpp`，闭包调用 op 5 `call_fun_ptr`）：
+解析出 owner 实例后，只有当它**确实拥有该函数**（`ownsFunction(cl->func)`）才用它；否则用
+`homeVmMutable(cl->func)`（即 `originalHomeVmOf` 的可写版本）改派到**函数真正所属的 VM**，
+并**保持 runDetached 语义**。
+
+> 教训（已经踩过一次）：第一版改成"就地 inline 执行"看起来也对（`ev_filed` 立刻有 raise），
+> 但 inline 会把**回包分发线程**一起 park 住 —— 下一个回包就再也处理不了（一整轮启动 0 条
+> `[readcontent]`、`[pkt-filed]`，启动被拖到 960s+）。跨实例闭包必须 detach 到目标 VM 上跑。
+
+**验证**（`mv7`，一轮全新启动）：
+- `construct-wdog` **19 → 0**（mv1 1554、mv5 17、mv6 19），`[readcontent]` 1770 条、
+  `[game] msg_created_content` 1478 条、`[cfv] owner-instance retarget` 3312 次，全部 DBA 回包都落地。
+- 登录 → 建号 → 进世界 → 走路 → 过图 → 硬断线 → 重上：全部通过，重上 `dialogs=[]`（**没有通讯故障**），
+  角色停在存档坐标。
+
+**同一轮顺手确认（之前误判的两件事，都有真实客户端包证明）**：
+- **过图本来就是好的**：客户端发的是**房间名**不是路径（`0x1026` body = `u8 len + "揽仙镇"`）。
+  `enter_room.c` 用 `exits[名字]` / `zone->get_all_rooms()[名字]` 查表；我上一轮发的是
+  `/gs/zone/lanxianzhen/lanxianzhen.c` 所以必然失败。实测 `_walk_probe.py`：从 (86,158) 走到
+  (9,139)（出口格 (1,131)，`calc_offset<=10`）→ 发 `0x1026 "揽仙镇"` → `map_id 2000→1000`、
+  坐标 (341,246)，**过图 OK**。
+- **背包格位从 101 开始**（`carry.c::get_inv_start_pos()=101`，`is_legal_inv_pos` 只认
+  101..101+get_inv_size()-1）。之前用 0..40/101..145 去试 `cmd_apply`，0..40 必然全空。
+
+**待办（礼包）**：新手礼包打开会「变成下一级礼包」，根因已缩到
+`newbie_gift.c::create()` 的第一道门：
+```lpc
+if (!is_object(this_object()->basic_object())) return;   // ← 这里返回 → 没有 set_gift_item()/gift_info
+```
+`[call8]` 探针实测：同一个 `find_basic_object_by_import_name("新手礼包（10级）")`
+在 `gift_for_newbie`（任务对象 VM）里返回**模板对象**（所以礼包确实被 clone 出来、也确实进了背包），
+但在**礼包 clone 自己的 create() 里返回 0** —— 同一个全局函数、同一毫秒、不同 VM 上下文得到不同结果，
+也就是说这个全局函数被解析到了**另一台 VM 的变量块**（`global_basic_object` 是 master 的全局变量）。
+下一步：用 `[gfallback]`（本轮新增）看 index→target 究竟是哪台 VM，然后按 §5.L 同样的办法
+（认"函数真正所属的 VM"）收口。另：`object_template` 之前**忽略实参**、只返回当前 VM 的模板，
+已按 IDA `vm_f_object_template`（0x80f4b9c：取"该对象自己的 pTemplateObject"）改成先解析实参对象、
+再读它的模板。
+
+
 ---
 
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）

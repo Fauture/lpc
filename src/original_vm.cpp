@@ -67,6 +67,9 @@ static bool vmEnvEventTrace() { static const bool v = (std::getenv("LPCVM_EVENT_
 // park/raise/wake with the tid, so a lost or mis-targeted wake is visible
 // without the full EVENT_TRACE flood.
 static bool vmEnvEvDbg() { static const bool v = (std::getenv("LPCVM_EVDBG") != nullptr); return v; }
+// Counter for the [cfu-miss] trace (bounded so a systematic miss cannot flood
+// the log; objects of interest are always logged).
+static int64_t& cfuMissCount() { static int64_t n = 0; return n; }
 static bool evDbgName(const std::string& n) {
     return n.rfind("ev_filed", 0) == 0 || n.rfind("ev_readetcd", 0) == 0 || n == "ev_config";
 }
@@ -1779,6 +1782,8 @@ const OriginalVm* originalHomeVmOf(const OriginalFunction* fn);
 // it).  Declared here because the closure-call opcode is defined above the
 // registry helpers.
 std::shared_ptr<OriginalVm> homeVmMutable(const OriginalFunction* fn);
+// Registry lookup for an object key (used by object_template(ob|name)).
+std::shared_ptr<OriginalVm> envVmForKey(const std::string& key);
 
 // ---- copy-on-share tables for clone VMs ----
 // Clones share the template's immutable function tables instead of deep
@@ -2960,11 +2965,22 @@ public:
                         continue;
                     }
                     int funOff = accFun + inh.baseFunOffset;
+                    // BASE-FIRST order: an inherit's own ancestors come before
+                    // it, and the object's own create runs last (appended
+                    // below).  The derived creates DEPEND on the base ones:
+                    // basic_object.c::create() sets my_import_name (from
+                    // object_template()) and newbie_gift.c::create() reads it
+                    // through basic_object() on its very first line - with the
+                    // derived create first the check saw an empty
+                    // my_import_name, returned early, and the newbie gift had
+                    // no gift_info (opening it rebuilt the next-level gift
+                    // instead of showing the item list).  The engine's
+                    // initOrderList walks the constitutions base-first too.
+                    walk(*parentObj, funOff, accVar + inh.baseVarOffset);
                     if (seenPrograms.insert(inh.path).second) {
                         for (const auto& fn : parentObj->functions)
                             addCreateOf(fn, funOff + fn.index);
                     }
-                    walk(*parentObj, funOff, accVar + inh.baseVarOffset);
                 }
             };
             walk(obj_, 0, 0);
@@ -4260,15 +4276,49 @@ private:
                 throw VmError(msg);
             }
             if (h == 0xABCB23648594386Bull) {
-                // vm_f_object_template (0x80f4b9c): return the object this one
-                // was cloned from (pTemplateObject); 0 when not a clone or no
-                // template.  basic_object.c's create() uses it on clones to
-                // inherit my_import_name from the template, which is what lets
-                // a place_char'd NPC clone's get_name()/query() fall through to
-                // its basic object's dbase (name �ػ����� etc.).
-                if (templateVm_) {
-                    std::string tp = templateVm_->thisObjectName_;
-                    if (tp == "<this>" || tp.empty()) tp = templateVm_->objName();
+                // vm_f_object_template (0x80f4b9c): object_template() returns
+                // the object this one was cloned from (pTemplateObject), 0 when
+                // not a clone; object_template(ob|name) resolves the ARGUMENT
+                // and returns THAT object's template.  Ignoring the argument
+                // made basic_object.c's create() read the wrong template (the
+                // executing VM's) whenever a clone's create() ran inline in the
+                // cloning object's VM: my_import_name came out empty, so
+                // newbie_gift::create() returned before set_gift_item() and
+                // init_newbie_gift_items(), leaving gift_info empty - opening
+                // the gift then rebuilt the next-level gift instead of showing
+                // the item list, and the item lost its 赠品 flag.
+                std::shared_ptr<OriginalVm> tvm;
+                if (args.empty()) {
+                    tvm = templateVm_;
+                } else {
+                    // The ARGUMENT object's own template (pTemplateObject),
+                    // exactly like vm_f_object_template: resolve the argument
+                    // to its VM, then read THAT VM's template.
+                    std::shared_ptr<OriginalVm> argVm;
+                    const Value& av = args[0];
+                    if (av.index() == 7) {
+                        auto ov = std::get<std::shared_ptr<ObjectValue>>(av);
+                        if (ov) argVm = envVmForKey(ov->programName);
+                    } else if (av.index() == 4) {
+                        argVm = envVmForKey(std::get<SharedString>(av));
+                    }
+                    if (argVm) tvm = argVm->templateVm();
+                    // Unresolvable argument (e.g. this_object() rendered as
+                    // "<this>", or an inline frame whose object is not the
+                    // registry instance): fall back to this VM's template.
+                    if (!tvm) tvm = templateVm_;
+                }
+                const bool otmplTrace = vmEnvEvDbg() &&
+                    (objName_.find("newbie") != std::string::npos ||
+                     objName_.find("gift") != std::string::npos);
+                if (otmplTrace)
+                    std::cerr << "[otmpl] this=" << thisObjectName_ << " args=" << args.size()
+                              << " arg0=" << (args.empty() ? std::string("-") : to_string(args[0], false).substr(0, 60))
+                              << " -> " << (tvm ? tvm->thisObjectName_ : std::string("0"))
+                              << " own=" << (templateVm_ ? templateVm_->thisObjectName_ : std::string("-")) << "\n";
+                if (tvm) {
+                    std::string tp = tvm->thisObjectName_;
+                    if (tp == "<this>" || tp.empty()) tp = tvm->objName();
                     return make_object(tp);
                 }
                 return make_int(0);
@@ -5759,6 +5809,26 @@ private:
             }
         }
         if (target) {
+            // LPCVM_EVDBG: which instance a GLOBAL function index resolved to.
+            // A global (find_basic_object_by_import_name / register_basic_object)
+            // must run against the MASTER's variable block; resolving it to
+            // another VM reads a different global_basic_object and the lookup
+            // comes back empty (newbie_gift.c::create then returns before
+            // set_gift_item()/init_newbie_gift_items()).
+            if (vmEnvEvDbg() &&
+                (name == "find_basic_object_by_import_name" ||
+                 name == "register_basic_object" || name == "safe_find_basic_object_by_import_name")) {
+                std::cerr << "[gfallback] idx=" << index << " name=" << name
+                          << " target=" << target->objName()
+                          << " same=" << (target.get() == this)
+                          << " caller=" << objName_ << " args=";
+                for (int i = 0; i < argCount; ++i) {
+                    size_t si = stack_.size() - static_cast<size_t>(argCount) + static_cast<size_t>(i);
+                    std::cerr << (i ? "," : "")
+                              << (si < stack_.size() ? to_string(stack_[si].value, false).substr(0, 40) : "?");
+                }
+                std::cerr << "\n";
+            }
             if (vmEnvTrace())
                 std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
             std::vector<Value> args;
@@ -5798,6 +5868,28 @@ private:
                           << " argc=" << argCount << "\n";
             result = callEfun(index, argCount);
             return false;
+        }
+        // LPCVM_EVDBG: a call_in_user_fun index that resolved NOWHERE is a
+        // SILENT no-op (the caller keeps running with an int 0 result).  That
+        // is how an object whose inherit chain failed to merge loses whole
+        // statement groups - e.g. clone/item/newbie_gift/basic.o's
+        // init_basic_object calls import(69)/setup_newbie_gift_item(222) by
+        // merged index; a miss means no basic-object registration and no
+        // gift_info.
+        if (vmEnvEvDbg()) {
+            int64_t& n = cfuMissCount();
+            bool interesting = objName_.find("newbie") != std::string::npos ||
+                               objName_.find("item") != std::string::npos ||
+                               objName_.find("gift") != std::string::npos;
+            if (interesting || n < 400) {
+                ++n;
+                std::cerr << "[cfu-miss] obj=" << objName_ << " idx=" << index
+                          << " flags=0x" << std::hex << flags << std::dec
+                          << " fn=" << ((!frames_.empty() && frames_.back().fn)
+                                            ? frames_.back().fn->name : std::string("?"))
+                          << " table=" << funcsByIndex_.size()
+                          << " miss=" << n << "\n";
+            }
         }
         return false;
     }
@@ -9142,6 +9234,19 @@ private:
                               << " obj=" << objName_ << " vm=" << this << "\n";
                 }
                 Value r7 = make_int(0);
+                if (vmEnvEvDbg() && (objName_.find("newbie") != std::string::npos ||
+                                     objName_.find("gift") != std::string::npos)) {
+                    auto itc = funcsByIndex_.find(funIndex);
+                    std::cerr << "[call7] obj=" << objName_
+                              << " fn=" << ((!frames_.empty() && frames_.back().fn)
+                                                ? frames_.back().fn->name : std::string("?"))
+                              << " raw=" << (fromMeta ? m0 : static_cast<int16_t>(in.a))
+                              << " off=" << off << " idx=" << funIndex
+                              << " flags=0x" << std::hex << flags << std::dec
+                              << " -> " << (itc != funcsByIndex_.end() ? itc->second->name
+                                                                       : std::string("NOT-FOUND"))
+                              << " table=" << funcsByIndex_.size() << "\n";
+                }
                 bool started = callUserFunction(funIndex, flags, r7);
                 // Inline start: the callee's return op will push its own
                 // result; do NOT push anything here.
@@ -9964,6 +10069,30 @@ private:
                                   << "  (obj=" << objName_ << ")\n";
                 }
                 if (!inlineStarted) pushValue(result);
+                // LPCVM_EVDBG: trace cross-object calls made BY the newbie-gift
+                // objects (the basic_object()/get_import_name() chain in
+                // newbie_gift.c::create decides whether the gift gets its
+                // gift_info).  The RESULT is the point: a non-object answer
+                // makes create() return before set_gift_item().
+                if (vmEnvEvDbg() && !funName.empty() &&
+                    (objName_.find("newbie") != std::string::npos ||
+                     objName_.find("gift") != std::string::npos)) {
+                    std::string cur8 = frames_.empty() || !frames_.back().fn
+                                           ? "<top>" : frames_.back().fn->name;
+                    if (cur8 == "create" || cur8 == "import" || cur8 == "setup" ||
+                        funName == "basic_object" || funName == "get_import_name" ||
+                        funName == "find_basic_object_by_import_name" ||
+                        funName == "set_gift_item" || funName == "init_newbie_gift_items") {
+                        std::string pv8 = pathVal.index() == 4
+                                              ? std::get<SharedString>(pathVal).str()
+                                              : (pathVal.index() == 7
+                                                     ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName
+                                                     : std::string("?"));
+                        std::cerr << "[call8] " << objName_ << " fn=" << cur8
+                                  << " -> " << pv8.substr(0, 60) << "::" << funName
+                                  << " = " << to_string(result, false).substr(0, 70) << "\n";
+                    }
+                }
                 if (vmEnvTrace() && funVal.index() == 4 &&
                     std::get<SharedString>(funVal) == "get_registered_name")
                     std::cerr << "[grn] result=[" << to_string(result, false).substr(0, 60)
