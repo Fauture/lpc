@@ -8465,6 +8465,117 @@ private:
                                         d += std::string(1, hx2[(static_cast<unsigned char>(sv[q]) >> 4) & 15]) +
                                              hx2[static_cast<unsigned char>(sv[q]) & 15];
                                 }
+                                if (vv.index() == 6) {
+                                    // Byte-compare the task name carried by the runtime
+                                    // mapping with the class string that
+                                    // register_task_template stored (measured
+                                    // A1BED0C2CAD6A1BF312D39BCB6D0C2CAD6C8CECEF1, 21 bytes
+                                    // for 【新手】1-9级新手任务) - if they differ the
+                                    // name->class / class->template lookups can never hit.
+                                    auto mp36 = std::get<std::shared_ptr<MappingValue>>(vv);
+                                    const Value* nv = mp36->find(make_string("name"));
+                                    if (nv && nv->index() == 4) {
+                                        const std::string& sv = std::get<SharedString>(*nv).str();
+                                        d += " nameLen=" + std::to_string(sv.size()) + " nameHex=";
+                                        static const char* hx3 = "0123456789ABCDEF";
+                                        for (size_t q = 0; q < sv.size() && q < 40; ++q)
+                                            d += std::string(1, hx3[(static_cast<unsigned char>(sv[q]) >> 4) & 15]) +
+                                                 hx3[static_cast<unsigned char>(sv[q]) & 15];
+                                    } else {
+                                        d += " nameKey=<none>";
+                                    }
+                                }
+                                // Which object's GLOBALS is this frame actually reading?
+                                // taskd's all_templates must be the one that holds the
+                                // 1110 registered templates; if the frame's block is
+                                // another object's, every lookup inside query_task_log
+                                // comes out undefined even though the key bytes match.
+                                {
+                                    std::lock_guard<std::recursive_mutex> rl36(registryMutex());
+                                    auto& reg36 = objectRegistry();
+                                    std::string owner36 = "?";
+                                    uintptr_t taskdBlk = 0;
+                                    for (auto& kv36 : reg36.vms) {
+                                        if (!kv36.second) continue;
+                                        if (kv36.second->objVarsShared().get() == objVars_.get())
+                                            owner36 = kv36.first;
+                                        if (kv36.first == "pak:gs/daemons/taskd.o" ||
+                                            kv36.first == "pak:gs/daemons/taskd.c")
+                                            taskdBlk = reinterpret_cast<uintptr_t>(
+                                                kv36.second->objVarsShared().get());
+                                    }
+                                    d += " vars=" + std::to_string(reinterpret_cast<uintptr_t>(objVars_.get())) +
+                                         " varsOwner=" + owner36 +
+                                         " own=" + std::to_string(reinterpret_cast<uintptr_t>(ownObjVars_.get())) +
+                                         " taskdBlk=" + std::to_string(taskdBlk) +
+                                         " this=" + thisObjectName_;
+                                    // taskd's globals, straight out of the block the
+                                    // frame is using.  The name pool has no GLOBAL
+                                    // variable names, so identify them by shape:
+                                    // all_templates = the mapping with the registered
+                                    // templates (measured 1110); task_name_list should
+                                    // have one entry per task in etc/task_name.list
+                                    // (~4460) - if it is missing/empty, the
+                                    // create_data(..., mapping &out) write-back (or the
+                                    // #FORM2 parse) dropped it and get_task_class can
+                                    // never resolve a class.
+                                    for (auto& kv37 : reg36.vms) {
+                                        if (!kv37.second || kv37.first != "pak:gs/daemons/taskd.o") continue;
+                                        auto vars37 = kv37.second->objVarsShared();
+                                        std::string maps37;
+                                        for (size_t gi = 0; gi < vars37->size(); ++gi) {
+                                            const Value& gv = (*vars37)[gi];
+                                            if (gv.index() != 6) continue;
+                                            auto gm = std::get<std::shared_ptr<MappingValue>>(gv);
+                                            if (gm->size() < 50) continue;
+                                            maps37 += " idx" + std::to_string(gi) + "=" +
+                                                      std::to_string(gm->size());
+                                        }
+                                        d += " taskdMaps{" + maps37 + " }";
+                                        break;
+                                    }
+                                }
+                                // on a separate thread (the scheduler is the only
+                                // thread allowed to run LPC).
+                                if (frames_.back().fn &&
+                                    frames_.back().fn->name == "query_task_log" && t36 == 7) {
+                                    static std::atomic<bool> dumped{false};
+                                    if (!dumped.exchange(true)) {
+                                        std::string root = searchRoot();
+                                        std::thread([root]() {
+                                            std::this_thread::sleep_for(
+                                                std::chrono::milliseconds(1500));
+                                            std::cerr << "[treg] dumping taskd all_templates via "
+                                                         "query_all_templates()\n";
+                                            std::cerr.flush();
+                                            try {
+                                                Value r = callOriginalObjectFunction(
+                                                    "/gs/daemons/taskd.c", "query_all_templates",
+                                                    {}, root);
+                                                std::cerr << "[treg] ret type=" << r.index() << "\n";
+                                                if (r.index() == 6) {
+                                                    auto mp = std::get<std::shared_ptr<MappingValue>>(r);
+                                                    std::cerr << "[treg] size=" << mp->size() << "\n";
+                                                    int n = 0;
+                                                    for (auto& kv : mp->items()) {
+                                                        std::string k = to_string(kv.first, false);
+                                                        if (k.size() > 60) k = k.substr(0, 60);
+                                                        std::cerr << "[treg]   key=" << k
+                                                                  << " keyType=" << kv.first.index()
+                                                                  << " valType=" << kv.second.index()
+                                                                  << (k.find("1-9") != std::string::npos
+                                                                          ? "   <<< 1-9 TASK" : "")
+                                                                  << "\n";
+                                                        if (++n >= 40) { std::cerr << "[treg]   ...\n"; break; }
+                                                    }
+                                                }
+                                                std::cerr.flush();
+                                            } catch (const std::exception& e) {
+                                                std::cerr << "[treg] error: " << e.what() << "\n";
+                                            }
+                                        }).detach();
+                                    }
+                                }
                                 std::string cur = frames_.empty() || !frames_.back().fn
                                                       ? "<top>" : frames_.back().fn->name;
                                 std::cerr << "[istype] fn=" << cur << " obj=" << objName_
