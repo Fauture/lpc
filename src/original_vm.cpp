@@ -8519,6 +8519,28 @@ private:
                                     // create_data(..., mapping &out) write-back (or the
                                     // #FORM2 parse) dropped it and get_task_class can
                                     // never resolve a class.
+                                    // Every registry VM of this object file, with its block
+                                    // pointer and its biggest mapping global: the instance
+                                    // that holds the registered templates must be visible
+                                    // here, and this names its KEY.
+                                    {
+                                        std::string all37;
+                                        for (auto& kv38 : reg36.vms) {
+                                            if (!kv38.second) continue;
+                                            const std::string& sn38 = kv38.second->object().sourceName;
+                                            if (sn38.find("taskd") == std::string::npos) continue;
+                                            auto blk38 = kv38.second->objVarsShared();
+                                            size_t maxMap = 0;
+                                            for (const Value& gv38 : *blk38)
+                                                if (gv38.index() == 6)
+                                                    maxMap = std::max(maxMap, std::get<std::shared_ptr<MappingValue>>(gv38)->size());
+                                            all37 += " [" + kv38.first + " blk=" +
+                                                     std::to_string(reinterpret_cast<uintptr_t>(blk38.get())) +
+                                                     " globals=" + std::to_string(blk38->size()) +
+                                                     " maxMap=" + std::to_string(maxMap) + "]";
+                                        }
+                                        d += " taskdVms{" + all37 + " }";
+                                    }
                                     for (auto& kv37 : reg36.vms) {
                                         if (!kv37.second || kv37.first != "pak:gs/daemons/taskd.o") continue;
                                         auto vars37 = kv37.second->objVarsShared();
@@ -14531,8 +14553,27 @@ const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {
     const OriginalVm* hit = nullptr;
     {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        // Two registry VMs can own the same function pointer when the object
+        // was registered twice (a proto/template instance plus the live one -
+        // a clone of the same OriginalObject shares its function table).  The
+        // first key in map order used to win, and for /daemons/taskd.o that is
+        // `pak:gs/daemons/taskd.o`, an instance that never ran its global
+        // initializer: measured 2026-09-17, its variable block held NO mapping
+        // global at all (taskdMaps{ }), so taskd::query_task_log read
+        // `all_templates` as undefined and every task log came out empty -
+        // while the live instance held 1110 registered templates.
+        // Prefer the instance that has actually been initialized: count its
+        // non-undefined globals and take the richest one.
+        int bestInit = -1;
         for (auto& kv : objectRegistry().vms) {
-            if (kv.second && kv.second->ownsFunction(fn)) { hit = kv.second.get(); break; }
+            if (!kv.second || !kv.second->ownsFunction(fn)) continue;
+            if (!hit) { hit = kv.second.get(); bestInit = -1; }
+            int inited = 0;
+            auto blk = kv.second->objVarsShared();
+            for (const Value& gv : *blk) {
+                if (gv.index() != 0 && ++inited > 32) break;
+            }
+            if (inited > bestInit) { bestInit = inited; hit = kv.second.get(); }
         }
     }
     std::lock_guard<std::mutex> lk(mtx);
