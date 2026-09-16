@@ -2681,27 +2681,46 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     //   is_undefined(m["nope"])=1, is_undefined(uninit mixed)=1,
     //   is_void(m["nope"])=0, is_void(void fn())=1.
     if (name == "is_undefined") return make_int(!args.empty() && args[0].index() == 0 ? 1 : 0);
-    if (name == "is_mapping") return make_int(!args.empty() && args[0].index() == 6 ? 1 : 0);
+    if (name == "is_mapping") {
+        // [ismp] runtime-armed (type nul > _probe_on\LPCVM_ISFN): what did
+        // query_task_log/query_task_tip actually get back from all_templates?
+        static const std::atomic<bool>& ismpFlag = lpc::dynProbeFlag("LPCVM_ISFN");
+        if (ismpFlag.load(std::memory_order_relaxed)) {
+            static int ismpBudget = 600;
+            const std::string& cf = stubCallCtx().fn;
+            if (ismpBudget > 0 && cf.find("query_task") != std::string::npos) {
+                --ismpBudget;
+                std::string dump = args.empty() ? std::string("<noargs>") : to_string(args[0], false);
+                if (dump.size() > 130) dump = dump.substr(0, 130) + "...";
+                std::cerr << "[ismp] caller=" << stubCallCtx().obj << "::" << cf
+                          << " argType=" << (args.empty() ? -1 : args[0].index())
+                          << " val=" << dump
+                          << " -> " << (!args.empty() && args[0].index() == 6 ? 1 : 0) << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(!args.empty() && args[0].index() == 6 ? 1 : 0);
+    }
     if (name == "is_array") return make_int(!args.empty() && args[0].index() == 5 ? 1 : 0);
     if (name == "is_function") {
-        // [isfn] what does the caller actually hold?  A template closure that
-        // comes back out of the all_templates mapping as type != 8 explains
-        // "task_log() is never entered, query_task_log returns ''".
-        if (std::getenv("LPCVM_KEYT") && !args.empty()) {
-            static const char* f = std::getenv("LPCVM_ISFN_FN");
-            const std::string& cf = stubCallCtx().fn;
-            if (!f || cf.find(f) != std::string::npos) {
-                static int budget = 200;
-                if (budget > 0) {
-                    --budget;
-                    std::string dump = to_string(args[0], false);
-                    if (dump.size() > 120) dump = dump.substr(0, 120) + "...";
-                    std::cerr << "[isfn] caller=" << stubCallCtx().obj << "::" << cf
-                              << " argType=" << args[0].index()
-                              << " argc=" << args.size()
-                              << " val=" << dump << "\n";
-                    std::cerr.flush();
-                }
+        // [isfn]: runtime-armable (type nul > _probe_on\LPCVM_ISFN) dump of
+        // every is_function() argument.  Round 1 showed taskd::query_task_log
+        // returns "" without ever entering the template's task_log() closure,
+        // i.e. `is_function(funcs["log"])` is false - this says whether the
+        // value read back out of all_templates is still a closure (type 8) and
+        // who is asking.
+        static const std::atomic<bool>& isfnFlag = lpc::dynProbeFlag("LPCVM_ISFN");
+        if (isfnFlag.load(std::memory_order_relaxed)) {
+            static int isfnBudget = 600;
+            if (isfnBudget > 0 && !args.empty()) {
+                --isfnBudget;
+                std::string dump = to_string(args[0], false);
+                if (dump.size() > 110) dump = dump.substr(0, 110) + "...";
+                std::cerr << "[isfn] caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn
+                          << " argc=" << args.size()
+                          << " argType=" << args[0].index()
+                          << " val=" << dump << "\n";
+                std::cerr.flush();
             }
         }
         return make_int(!args.empty() && args[0].index() == 8 ? 1 : 0);

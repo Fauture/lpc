@@ -5846,7 +5846,9 @@ private:
                                                      "create_content", "create_content_to", "process_request",
                                                      "fetch_data", "write_data", "delete_content_to",
                                                      "delete_content", "daemon", "dba_comm", "operate_done",
-                                                     "msg_operate_done"};
+                                                     "msg_operate_done", "query_task_log",
+                                                     "query_task_tip", "query_task_desc", "query_task",
+                                                     "get_task_class", "send_task_log"};
                     for (auto* ff : filedFns) {
                         if (impl->name == ff && vmEnvSvcTrace()) {
                             std::string chain;
@@ -6576,6 +6578,15 @@ private:
                     std::string s = to_string(av, false);
                     if (s.size() > 140) s = s.substr(0, 140) + "...";
                     std::cerr << " a" << ai << "=t" << av.index() << ":" << s;
+                    if (av.index() == 4) {
+                        const std::string& sv = std::get<SharedString>(av).str();
+                        std::cerr << " len=" << sv.size() << " hex=";
+                        static const char* hx = "0123456789ABCDEF";
+                        for (size_t q = 0; q < sv.size() && q < 40; ++q) {
+                            std::cerr << hx[(static_cast<unsigned char>(sv[q]) >> 4) & 15]
+                                      << hx[static_cast<unsigned char>(sv[q]) & 15];
+                        }
+                    }
                 }
             }
             std::cerr << "\n";
@@ -6610,6 +6621,21 @@ private:
         std::shared_ptr<std::vector<Value>> autoVars;
         const std::vector<std::string>* autoStrings = nullptr;
         const std::map<int, const OriginalFunction*>* autoFuncs = nullptr;
+        // The variable block handed in by the caller must be the CALLEE's own
+        // object block.  A cross-object call issued from inside another object's
+        // inline frame passes the *caller's* current block instead: measured
+        // 2026-09-17, taskd's query_task_log / get_task_class / query_task ran
+        // with the task object instruction_1.o's block, so taskd's globals
+        // `all_templates` and `task_name_list` read as undefined ->
+        // `if (!is_mapping(funcs)) return ""` -> the 0x2603 task log carried
+        // empty desc/log/tip and the client's quest panel stayed blank.
+        // (The is_type probe showed exactly: query_task_log testing is_mapping on
+        // valueType=0 = undefined.)
+        if (switchObjVars && !ownedFns_.count(&fn)) {
+            const OriginalVm* homeForVars = originalHomeVmOf(&fn);
+            if (homeForVars && homeForVars->objVarsShared().get() != switchObjVars.get())
+                switchObjVars = homeForVars->objVarsShared();
+        }
         if (!switchObjVars && !ownedFns_.count(&fn)) {
             const OriginalVm* home = originalHomeVmOf(&fn);
             if (home && home != this &&
@@ -8405,6 +8431,50 @@ private:
                 break;
             }
             case 36: { // is_type
+                // [istype] runtime-armed (type nul > _probe_on\LPCVM_ISFN):
+                // what do taskd's query_task_log / query_task_tip actually test?
+                // They open with `funcs = all_templates[task_class];
+                // if (!is_mapping(funcs)) return "";` and the answer decides
+                // whether the template registry is missing the entry (value
+                // undefined -> type 0) or the entry exists but its "log" field
+                // is not a closure.
+                {
+                    static const std::atomic<bool>& istFlag = dynProbeFlag("LPCVM_ISFN");
+                    if (istFlag.load(std::memory_order_relaxed)) {
+                        static int istBudget = 400;
+                        if (istBudget > 0 && !stack_.empty()) {
+                            bool want36 = false;
+                            for (const auto& fr : frames_) {
+                                if (fr.fn && (fr.fn->name == "query_task_log" ||
+                                              fr.fn->name == "query_task_tip" ||
+                                              fr.fn->name == "query_task_desc")) {
+                                    want36 = true; break;
+                                }
+                            }
+                            if (want36) {
+                                --istBudget;
+                                int t36 = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                                const Value& vv = stack_.back().value;
+                                std::string d = to_string(vv, false);
+                                if (d.size() > 120) d = d.substr(0, 120) + "...";
+                                if (vv.index() == 4) {
+                                    const std::string& sv = std::get<SharedString>(vv).str();
+                                    d += " len=" + std::to_string(sv.size()) + " hex=";
+                                    static const char* hx2 = "0123456789ABCDEF";
+                                    for (size_t q = 0; q < sv.size() && q < 40; ++q)
+                                        d += std::string(1, hx2[(static_cast<unsigned char>(sv[q]) >> 4) & 15]) +
+                                             hx2[static_cast<unsigned char>(sv[q]) & 15];
+                                }
+                                std::string cur = frames_.empty() || !frames_.back().fn
+                                                      ? "<top>" : frames_.back().fn->name;
+                                std::cerr << "[istype] fn=" << cur << " obj=" << objName_
+                                          << " want=" << t36 << " valueType=" << vv.index()
+                                          << " val=" << d << "\n";
+                                std::cerr.flush();
+                            }
+                        }
+                    }
+                }
                 if (nbProbeOn()) {
                     int t36 = fromMeta ? m0 : static_cast<int16_t>(in.a);
                     if (t36 == 9) {   // 9 = function

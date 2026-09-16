@@ -1184,6 +1184,75 @@ time(&ti); if (!v5 || cl.tickServer == v5) cl.timeRecvEcho = ti;
 结合「商店也没货」，怀疑与任务同一根（同一套 `easy_task`/模板按需克隆机制），
 任务这条修好后一起复验。
 
+---
+
+### R. 任务面板空白：`is_type` 探针的直接证据（进行中，下一步已明确）
+
+给 §5.Q 加了一个新探针：**opcode 36 `is_type`**（`original_vm.cpp` case 36）在
+`query_task_log` / `query_task_tip` / `query_task_desc` 帧内时，打印
+`want=<期望类型> valueType=<实际类型> val=<值>`（运行时用 `_probe_on\LPCVM_ISFN` 打开，
+因为 `is_mapping`/`is_string` 在**我们的 VM 里不是 efun 调用**，而是编译成 `is_type` 操作码 ——
+这就是为什么在 `call_builtin` 里加的 `[isfn]`/`[ismp]` 探针 0 命中）。
+
+**登录时抓到的关键三行：**
+
+```
+[istype] fn=query_task      obj=/gs/clone/char/user.o want=7 valueType=6
+         val=(["state":"S0","alias":"【新手】新的开始","name":"【新手】1-9级新手任务","upgrade_type":0])
+[istype] fn=get_task_class  obj=/gs/clone/char/user.o want=4 valueType=0 val=(undefined)   ×3
+[istype] fn=query_task_log  obj=/gs/clone/char/user.o want=7 valueType=0 val=(undefined)
+```
+
+解读：
+
+1. `query_task` 返回的是**正常的 mapping**（`want=7`=is_mapping，`valueType=6`=mapping）⇒ 任务数据没问题。
+2. `get_task_class` 里连续三次 `is_string`（`want=4`）拿到的都是 **undefined**：
+   - `task_info["class"]`（本来就没有，正常）
+   - `task_name_list[task_info["sub_name"]]`
+   - `task_name_list[task_info["name"]]` ← **按任务名查类名失败**
+   ⇒ 落到最后一行 `return task_info["name"]`（名字当类名返回）。
+3. `query_task_log` 里 `funcs = all_templates[task_class]`，`is_mapping` 也是 **undefined**
+   ⇒ `if (!is_mapping(funcs)) return "";` ⇒ 0x2603 的 desc/log/tip 全空。
+
+**同时确认了注册是好的**（`[fn] ENTER register_task_template` + `[fnargs]` 打十六进制）：
+
+```
+obj=/gs/daemons/tasks/instruction_v4/sub_tasks/instruction_1.o
+  a0="【新手】1-9级新手任务" len=21 hex=A1BED0C2CAD6A1BF312D39BCB6D0C2CAD6C8CECEF1
+  a1=(["dest": <function …>, "tip": <function …>, "log": <function …>, …])
+```
+（`etc/task_name.list:2858-2859` 里这个任务的 `class` 与 `name` **同名**，且 `class` 那行的值是
+**不带引号**的：`class : 【新手】1-9级新手任务`，而别的条目是 `class : "新手指导"`。）
+
+**现在剩两个必须二选一（或同时）的原因：**
+
+- **(a) `#FORM2` 解析**：不带引号的中文值可能没被解析成字符串 ⇒ `task_name_list[name] = undefined`
+  （键存在但值是 undefined，正好表现为 `is_string` 得到 `valueType=0`），于是 `get_task_class`
+  只能回退成名字。
+- **(b) `all_templates` 查不到**：即使回退成名字（而注册时用的就是这个名字、
+  `etc` 里的 class 也同名），`all_templates[名字]` 仍是 undefined ⇒ 要么那个映射在查询帧里
+  读到的是**另一个对象/另一个 taskd 实例**的全局，要么注册时 `register_task_template`
+  在 `error()` 处提前退出（第 1676/1685 行的 dest / convert-restore 校验）而没执行到
+  1688 行的 `all_templates[task_class] = task_template;`
+  （`LPCVM_ERR_TRACE=1` 的 boot 里只有 3 条 `[lpc-error]`，都与任务无关，所以更像是 (a)+(b)
+  里的"读到别的实例"）。
+
+**下一步（一个探针就能定案）**：把 `[istype]` 探针扩展成——当待测值是 mapping 时，
+顺手把它的 `"name"` 键的值打成 **len + hex**，和上面注册时的 21 字节 hex 对比：
+- 若与 `A1BED0C2CAD6A1BF312D39BCB6D0C2CAD6C8CECEF1` **不同** ⇒ 编码/还原问题（回到 DB 读写或 pak 读的编码），修那里；
+- 若**完全相同**却查不到 ⇒ `all_templates` 在那个帧里不是注册时那个映射 ⇒ 查 taskd 是否被二次
+  初始化（`all_templates = ([ ])` 在全局初始化段）或存在两个 taskd 实例，修 var-block/实例解析。
+
+同时已加进 `[filed-call]` 诊断名单（`filedFns[]`）的：`query_task_log` / `query_task_tip` /
+`query_task_desc` / `query_task` / `get_task_class` / `send_task_log`，下次可以直接看
+`vars/varsOwner/varsIsOwn/ownedFn`。
+（注意：`varsOwner` 这一列在多实例共享变量块时会指到"最后一个匹配的注册键"，**不可单独作为证据**。）
+
+另外本轮已经在 `src/original_vm.cpp` 的 `startInlineFunction` 里加了一条修正：
+`switchObjVars` 传入的变量块如果不是**被调函数的 home 实例**的块，就用 home 的块。
+这条修正本身是对的（同样的不变量），但**没有解决本问题**（实测 0x2603 仍是 62 字节），
+说明这条链上的变量块并不是错的，问题更可能在 (a)/(b)。
+
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
 
 ### 6.0 运行时开关（**新**：不用再为重开探针等 11 分钟重启）
