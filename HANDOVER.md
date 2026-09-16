@@ -1073,6 +1073,64 @@ time(&ti); if (!v5 || cl.tickServer == v5) cl.timeRecvEcho = ti;
   两侧都是**单调毫秒差**，起点会抵消（实测客户端 tick 与服务端 ms 同步走：10016ms vs 10016ms）。
   探针 `LPCVM_ECHO` 会打 `[echo] recv/reply/Got bad ECHO`、`[accelerate]`、`[echo-state]`。
 
+
+---
+
+### P. 「服务跑几个小时后登录不了」= DBA 的 filed 请求分发静默死掉，gs 永不重连
+
+用户口径：「gs 又死了，等几个小时登录现在无法连接，中间没有登陆过」；
+随后补充「普通账号提示数据不一致，gm 账号无任何提示」。
+
+#### 取证（2026-09-16，mv22 已连续运行 9.6 小时）
+
+| 证据 | 数值 |
+|---|---|
+| 登录现象 | 先 `0x1FE5: 通讯故障…（原因：9030）`（~20s），随后账号被卡临界区 `9026`；偶发一次 `9031 数据不一致` |
+| gs 侧 | `[send-filed] cno=5 msgNo=0x3400 raw data(22)=3400…0772756E74696D650131000464617461`（path=runtime/name=1/branch=/data）**7 次请求 × 3 次重试全都在发** |
+| gs 侧 | `[q-hook] qid=31 … "retry":0/1/2/3` → `clean_timeout_cookie` 重试 3 次后 `do_operate` 超时返回 **-2** |
+| DBA 侧 | `mv22/live_dba.txt` **0 字节**（连 `[accept]`/`[recv-accept]` 都没有） |
+| MySQL | `show processlist`：DBA 的 `dl_ddb_1_test` 连接 `Time=18499s` —— **最后一次 SQL 在 ~17:25**，之后一次查询都没执行 |
+| 进程 | 四个服务都活着、端口 ESTABLISHED、CPU 空闲（不是死循环；`Wait/UserRequest`） |
+| 线程数 | 健康启动 DBA=**7** 线程，挂死时=**6**（少了一个） |
+
+⇒ **读请求根本没进到 DBA 的 SQL 层**：DBA 的 filed 请求分发在长时间运行后死掉；
+而 gs 侧 `filed.c` 只在 `dba_client_no < 0` 时 `try_to_connect_dba()`，
+`internat_comm_closed()` 只处理 `ldba_client_no`，**dba 链路断了没有任何重连路径** ⇒ 永久 9030。
+
+关于「数据不一致 9031」：**不是数据坏了**。`create_check_sum` 被实现成固定返回 1，
+所以 `1 ^ -1418120497 = -1418120498`，库里 4 行 `path='user'` 的 checksum 全是 `-1418120498`，
+`path='runtime'` 行数为 0（§5.N 修好后登出会正常删掉它）。9031 是同一故障下的一次瞬时异常
+（`read_runtime_info` 的 -3 分支）。**没有 runtime 行本身是正常的**：`try_recover_data` 的
+`case -1` 就是「没有 runtime 信息、不恢复、继续登录」。已用 keepdb 重启实测确认可登录。
+
+#### 本轮加的诊断（默认开，量很小；下次挂死直接看日志定位）
+
+- `[hb] port=… t=…s pktsIn=…(+) pktsOut=…(+) filedIn=…(+) filedOut=…(+) schedIters=…(+)
+  sendFail=…(+) clients=…` —— **每个服务每分钟一行**。挂死时哪个计数不再增长就指向哪一层：
+  收不到包 → 链路/接收线程；收到不回 → LPC 处理层；`schedIters` 停了 → 调度器线程。
+- `[send-fail] cno=… not-found|bad-fd|err=… len=…` —— `send_to_client` 的失败**以前完全静默**
+  （LPC 调用方都忽略返回值），这是「链路死了但没人知道」的根源。
+- `[recv-filed] cno=… cmd=0x… body=…` —— 接收侧的 0x3400/0x3411/0x4401/0x2403/0x2405/0x2407/0x236F，
+  和既有的 `[send-filed]`（**一直是无条件打的**）配对，一眼分清「没发出」还是「收到没回」。
+  开关：`LPCVM_DBGLINK=1` 或 `LPCVM_TAIL`。
+- 实现：`src/original_vm.h` 的 `liveness()` 计数器 + 调度器主循环每轮 `schedIters+1`
+  + `src/game_service.cpp` 的 `startGameService` 里起一个 60s 心跳线程。
+
+#### 复现/恢复用的脚本
+
+- `_run_probe_keepdb.py <dir> <秒> [探针]`：**不清库**起 4 个服务（`_run_probe.py` 必定先跑
+  `_dbclear.py`）。服务挂了但不想毁角色数据时用它恢复。
+- `_db_runtime2.py`：按 `path='runtime'` 查 DDB（注意 `read_content(path,name,branch)` 的
+  `path` 才是 'runtime'，`branch` 是空串——按 `branch='runtime'` 查是查不到的）。
+- `_gbkgrep.py <root> <中文串…>`：GBK 反编译源码检索（`grep` 工具按 UTF-8 读会全部漏掉）。
+
+#### 现场结论 / 下一步
+
+- 已用 keepdb 重启恢复（mv23，714s 开出 8160），`_relogin_cycle.py 1 1 fix1` →「RE-LOGIN OK 15.3s」，
+  角色位置 (138,158) 原样保留。
+- **还没找到 DBA 分发线程为什么会死**。下次挂死时对比：DBA 的 `[hb]` 里
+  `filedIn` 是否停止增长、`schedIters` 是否停、`clients` 是否异常，以及线程数是否从 7 掉到 6。
+
 ---
 
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
