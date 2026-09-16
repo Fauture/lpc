@@ -38,6 +38,56 @@ namespace fs = std::filesystem;
 
 namespace lpc {
 
+// ---- runtime-toggleable diagnostics (see original_vm.h) ------------------
+// A probe slot is ON when its LPCVM_* env var is set OR the marker file
+// _probe_on/<name> exists.  Env vars cannot change after start, so the file
+// half is what makes a probe armable on a RUNNING server; a watcher thread
+// refreshes every slot once a second and the call sites only pay one relaxed
+// atomic load.
+namespace {
+struct DynProbeSlot {
+    const char* name;
+    std::atomic<bool> on;
+};
+std::vector<DynProbeSlot*>& dynProbeSlots() { static std::vector<DynProbeSlot*> v; return v; }
+std::mutex& dynProbeMx() { static std::mutex m; return m; }
+bool& dynProbeWatcherStarted() { static bool b = false; return b; }
+
+void dynProbeRefresh() {
+    std::lock_guard<std::mutex> lk(dynProbeMx());
+    for (DynProbeSlot* s : dynProbeSlots()) {
+        bool on = (std::getenv(s->name) != nullptr);
+        if (!on) {
+            std::error_code ec;
+            on = fs::exists(fs::path("_probe_on") / s->name, ec);
+        }
+        s->on.store(on, std::memory_order_relaxed);
+    }
+}
+
+void dynProbeStartWatcher() {
+    if (dynProbeWatcherStarted()) return;
+    dynProbeWatcherStarted() = true;
+    std::thread([] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            dynProbeRefresh();
+        }
+    }).detach();
+}
+}  // namespace
+
+const std::atomic<bool>& dynProbeFlag(const char* name) {
+    static std::mutex reg;
+    std::lock_guard<std::mutex> lk(reg);
+    for (DynProbeSlot* s : dynProbeSlots())
+        if (std::strcmp(s->name, name) == 0) return s->on;
+    DynProbeSlot* s = new DynProbeSlot{name, {std::getenv(name) != nullptr}};
+    dynProbeSlots().push_back(s);
+    dynProbeStartWatcher();
+    return s->on;
+}
+
 // Cached copies of the LPCVM_* trace/diagnostic environment switches.  The
 // interpreter consults these on per-opcode / per-efun hot paths; std::getenv
 // itself is expensive (locked environ scan; the boot notes measured ~0.5-1.5us
@@ -45,7 +95,10 @@ namespace lpc {
 // Environment is fixed before the services start, so caching is exact.
 static bool vmEnvTrace() { static const bool v = (std::getenv("LPCVM_TRACE") != nullptr); return v; }
 // LPCVM_NEWBIE: new-character story/task chain diagnostics (see _newbie_run.py).
-static bool nbProbeOn() { static const bool v = (std::getenv("LPCVM_NEWBIE") != nullptr); return v; }
+static bool nbProbeOn() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_NEWBIE");
+    return f.load(std::memory_order_relaxed);
+}
 // Identity dump for a closure Value: pointer, function, owner object and the
 // creating instance key.  post_enter_world's hook array ended up with 189
 // IDENTICAL entries owned by vipd.o (everything registered after vipd) even
@@ -66,14 +119,20 @@ static bool vmEnvEventTrace() { static const bool v = (std::getenv("LPCVM_EVENT_
 // LPCVM_EVDBG: only the DBA operate events (ev_filed*/ev_readetcd*/ev_config) -
 // park/raise/wake with the tid, so a lost or mis-targeted wake is visible
 // without the full EVENT_TRACE flood.
-static bool vmEnvEvDbg() { static const bool v = (std::getenv("LPCVM_EVDBG") != nullptr); return v; }
+static bool vmEnvEvDbg() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_EVDBG");
+    return f.load(std::memory_order_relaxed);
+}
 // Counter for the [cfu-miss] trace (bounded so a systematic miss cannot flood
 // the log; objects of interest are always logged).
 static int64_t& cfuMissCount() { static int64_t n = 0; return n; }
 static bool evDbgName(const std::string& n) {
     return n.rfind("ev_filed", 0) == 0 || n.rfind("ev_readetcd", 0) == 0 || n == "ev_config";
 }
-static bool vmEnvSvcTrace() { static const bool v = (std::getenv("LPCVM_SVC_TRACE") != nullptr); return v; }
+static bool vmEnvSvcTrace() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_SVC_TRACE");
+    return f.load(std::memory_order_relaxed);
+}
 static bool vmEnvTraceC8() { static const bool v = (std::getenv("LPCVM_TRACE_C8") != nullptr); return v; }
 static bool vmEnvDbgObjVar() { static const bool v = (std::getenv("LPCVM_DBG_OBJVAR") != nullptr); return v; }
 static const char* vmEnvTraceFn() { static const char* v = std::getenv("LPCVM_TRACE_FN"); return v ? v : ""; }
@@ -1926,6 +1985,19 @@ public:
     Value callEfunPublic(int efunIndex, const std::vector<Value>& args) {
         return callEfunWithArgs(efunIndex, args);
     }
+    // Share another instance's variable block.  The original driver keeps ONE
+    // variable instance per OBJECT; our per-thread VMs used to deep-COPY the
+    // registry instance's variables at spawn time.  filed.o's daemon threads
+    // then saw a stale/empty snapshot: `service_flag` read as undefined, so
+    // `do_operate` returned -2 immediately without ever queueing the request -
+    // the runtime delete after a logout never reached the DBA, its callback
+    // never fired and the account stayed in the 9026 "暂时无法登录" critical
+    // section forever.  Threads of the same object must SHARE the block.
+    void adoptObjVars(const std::shared_ptr<std::vector<Value>>& v) {
+        if (!v) return;
+        objVars_ = v;
+        ownObjVars_ = v;
+    }
     // Whether this VM currently has an active LPC frame chain (used by the
     // scheduler to decide if a resumed process still has work on another VM).
     bool hasActiveFrames() const { return !frames_.empty(); }
@@ -2582,7 +2654,28 @@ public:
     // Used by call_fun_ptr to run a closure's captured function on its owner VM.
     Value callFunctionPointer(const OriginalFunction* fn, const std::vector<Value>& args) {
         if (!fn) return make_int(0);
-        return executeFunctionFromOutside(*fn, args);
+        // Same contract as callFunctionByName: the callee must read ITS OWN
+        // program's globals.  A cross-object inline call leaves the CALLER's
+        // variable block active, and this dispatch (the owner-instance retarget
+        // for a closure created inside a cross-object inline call) skipped the
+        // fixup that callFunctionByName does - so /daemons/filed.o's
+        // notify_save_done/delete_content_to/do_operate ran against
+        // /gs/daemons/userd.o's table.  `service_flag` then read as undefined,
+        // do_operate returned -2 BEFORE send_to_queue, the logout's runtime
+        // delete never reached the DBA, notify_delete_runtime_done never ran and
+        // the account stayed in the 9026 「暂时无法登录」 critical section for
+        // ever (measured: [fn] ENTER delete_content_to, a do_operate frame, then
+        // no [q-send], no [q-fail], no msg_deleted_content, no
+        // stop_stun_account).
+        std::shared_ptr<std::vector<Value>> savedVars;
+        if (objVars_ != ownObjVars_) {
+            savedVars = objVars_;
+            objVars_ = ownObjVars_;
+            savedObjVarsForNextCall_ = savedVars;
+        }
+        Value r = executeFunctionFromOutside(*fn, args);
+        if (savedVars && !parked_) objVars_ = savedVars;
+        return r;
     }
 
     Value callFunctionByIndex(int index) {
@@ -5730,7 +5823,9 @@ private:
                     static const char* filedFns[] = {"do_operate", "do_operate_ex", "read_content",
                                                      "read_content_to", "write_content", "write_content_to",
                                                      "create_content", "create_content_to", "process_request",
-                                                     "fetch_data", "write_data"};
+                                                     "fetch_data", "write_data", "delete_content_to",
+                                                     "delete_content", "daemon", "dba_comm", "operate_done",
+                                                     "msg_operate_done"};
                     for (auto* ff : filedFns) {
                         if (impl->name == ff && vmEnvSvcTrace()) {
                             std::string chain;
@@ -5739,12 +5834,47 @@ private:
                                 chain += frames_[static_cast<size_t>(fi)].fn
                                              ? frames_[static_cast<size_t>(fi)].fn->name : "?";
                             }
+                            // Which variable BLOCK is live in this frame, and is
+                            // this VM the registered instance at all?  A second
+                            // VM for the same object whose block is a private
+                            // copy reads the object's globals (filed's
+                            // service_flag / srvQ) as undefined and silently
+                            // early-returns.
+                            std::string varsOwner = "-";
+                            std::string regSelf = "no";
+                            std::string sibs;
+                            {
+                                std::lock_guard<std::recursive_mutex> rl5(registryMutex());
+                                auto& reg5 = objectRegistry();
+                                for (auto& kv5 : reg5.vms) {
+                                    if (kv5.second.get() == this) regSelf = "yes";
+                                    if (kv5.second && kv5.second->objName() == objName_) {
+                                        sibs += " ";
+                                        sibs += kv5.first;
+                                        sibs += "@";
+                                        sibs += std::to_string(reinterpret_cast<uintptr_t>(kv5.second.get()));
+                                        sibs += "/v";
+                                        sibs += std::to_string(reinterpret_cast<uintptr_t>(
+                                            kv5.second->objVarsShared().get()));
+                                    }
+                                    if (kv5.second && kv5.second->objVarsShared().get() == objVars_.get())
+                                        varsOwner = kv5.first;
+                                }
+                            }
                             std::cerr << "[filed-call] " << impl->name << " obj=" << objName_
                                       << " vm=" << this
+                                      << " vars=" << reinterpret_cast<uintptr_t>(objVars_.get())
+                                      << " own=" << reinterpret_cast<uintptr_t>(ownObjVars_.get())
+                                      << " varsIsOwn=" << (objVars_ == ownObjVars_ ? 1 : 0)
+                                      << " ownedFn=" << (ownedFns_.count(impl) ? 1 : 0)
+                                      << " varsOwner=" << varsOwner
+                                      << " regSelf=" << regSelf
+                                      << " this=" << thisObjectName_
                                       << " frames=" << frames_.size()
                                       << " chain=[" << chain << "]"
                                       << " lookup=" << (funcLookup_ ? "func" : "byIndex")
-                                      << " varOff=" << impl->varOffset << "\n";
+                                      << " varOff=" << impl->varOffset
+                                      << " sibs=[" << sibs << " ]\n";
                             break;
                         }
                     }
@@ -6453,6 +6583,22 @@ private:
                 autoStrings = &home->object().strings;
                 autoFuncs = &home->functionTable();
             }
+        } else if (!switchObjVars && objVars_ != ownObjVars_ &&
+                   objectRegistry().masterObj != &object()) {
+            // The callee BELONGS to this VM, yet another object's variable block
+            // is currently active.  A function must always read its own
+            // program's globals (the driver sets current_object per call), so
+            // restore this VM's own block for the frame.  Without this,
+            // /daemons/filed.o's do_operate inlined into a chain that started in
+            // another object read the wrong table: `service_flag` came out
+            // undefined, `do_operate` returned -2 BEFORE send_to_queue, the
+            // logout's runtime delete never reached the DBA, its callback never
+            // ran and the account stayed in the 9026 「暂时无法登录」 critical
+            // section forever (measured: delete_content_to entered, do_operate
+            // frame logged, no [q-send], no [q-fail], no msg_deleted_content).
+            autoVars = ownObjVars_;
+            autoStrings = &obj_.strings;
+            autoFuncs = &functionTable();
         }
         // Cross-object inline call: the callee's push_shared_string indexes its
         // OWN program's string table, not the caller's.  fn.strings carries the
@@ -8737,8 +8883,9 @@ private:
                         // first; if the queue is empty, PARK this VM on the
                         // queue (send_to_queue wakes it) instead of blocking
                         // the OS thread.
-                        const bool qTraceOn =
-                            (std::getenv("LPCVM_QUEUE_TRACE") != nullptr);
+                        static const std::atomic<bool>& qTraceFlag =
+                            dynProbeFlag("LPCVM_QUEUE_TRACE");
+                        const bool qTraceOn = qTraceFlag.load(std::memory_order_relaxed);
                         bool ok = false;
                         Value msg = queueReceive(qid, 0, ok);
                         if (qTraceOn) {
@@ -8794,7 +8941,9 @@ private:
                         Value v = items[1].isRef ? deref(items[1]) : items[1].value;
                         int64_t qid = queueResolveId(qv);
                         bool ok = queueSend(qid, v);
-                        if (std::getenv("LPCVM_TAIL")) {
+                        static const std::atomic<bool>& qSendTrace =
+                            dynProbeFlag("LPCVM_QUEUE_TRACE");
+                        if (envFlagTail() || qSendTrace.load(std::memory_order_relaxed)) {
                             std::string cf = frames_.empty() || !frames_.back().fn
                                                  ? "<global>" : frames_.back().fn->name;
                             std::string qvdesc = (qv.index() == 2)
@@ -15314,18 +15463,34 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
             }
             try {
                 OriginalVm vm(*copy.obj, searchRoot);
-                // Never re-run the initializer (would restart the driver);
-                // copy the initialized instance variables instead.
+                // Never re-run the initializer (would restart the driver).
+                // The thread's VM must SHARE the object's variable block with
+                // its registry instance (the original has exactly one variable
+                // instance per object).  A value COPY gave the thread a stale
+                // snapshot: filed.o's daemon threads read an undefined
+                // service_flag, so do_operate returned -2 without queueing and
+                // the logout's runtime delete never reached the DBA (the
+                // account then stayed stunned with 9026).
+                bool sharedVars = false;
                 {
                     auto& reg = objectRegistry();
                     std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     for (auto& kv : reg.vms) {
-                        if (&kv.second->object() == copy.obj) {
-                            auto& src = kv.second->objVars();
-                            auto& dst = vm.objVars();
-                            if (dst.size() < src.size()) dst.resize(src.size());
-                            for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
+                        if (kv.second && &kv.second->object() == copy.obj) {
+                            vm.adoptObjVars(kv.second->objVarsShared());
+                            sharedVars = true;
                             break;
+                        }
+                    }
+                    if (!sharedVars) {
+                        for (auto& kv : reg.vms) {
+                            if (&kv.second->object() == copy.obj) {
+                                auto& src = kv.second->objVars();
+                                auto& dst = vm.objVars();
+                                if (dst.size() < src.size()) dst.resize(src.size());
+                                for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
+                                break;
+                            }
                         }
                     }
                 }

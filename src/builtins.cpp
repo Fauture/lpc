@@ -4750,11 +4750,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_send_to_queue (0x80f2d94): send_to_queue(qid_or_name, value,
         // timeout) enqueues value on the real cross-thread queue; returns 0 on
         // success, -101 if the queue does not exist, -401 if full (no bound).
+        //
+        // LPC callers IGNORE the result (`send_to_queue(srvQ, msg); return;`),
+        // so a failure silently drops the request forever - exactly how the
+        // runtime delete (notify_save_done -> delete_content_to) disappeared
+        // and left the account in the 9026 "暂时无法登录" critical section.
+        // Always log a failure, and log every call under LPCVM_EVDBG.
         if (args.empty()) return make_int(-101);
         int64_t qid = queueResolveId(args[0]);
+        if (qid < 0 || std::getenv("LPCVM_EVDBG")) {
+            std::cerr << "[q-send] qid=" << qid
+                      << " arg0t=" << static_cast<int>(args[0].index())
+                      << " arg0=" << to_string(args[0], false).substr(0, 20)
+                      << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn
+                      << (qid < 0 ? "  *** QUEUE NOT FOUND -> -101 ***" : "") << "\n";
+        }
         if (qid < 0) return make_int(-101);
         Value v = args.size() >= 2 ? args[1] : Value{};
         bool ok = lpc::queueSend(qid, v);
+        if (!ok)
+            std::cerr << "[q-send] qid=" << qid << " SEND FAILED caller="
+                      << stubCallCtx().obj << "::" << stubCallCtx().fn << " -> -101\n";
         return make_int(ok ? 0 : -101);
     }
     if (name == "wait_event") {
@@ -4853,7 +4869,56 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(-1);
     }
-    if (name == "time" || name == "time_desc")
+    if (name == "time") {
+        // vm_f_time (0x80dd030), verified against the IDA decompilation:
+        //   argNum <= 0  -> vm_getShiftTime() (the current shifted time)
+        //   time(string):
+        //     strlen+1 == 15 (~(strlen+1) == -16) -> compact "YYYYMMDDHHMMSS"
+        //         (14 chars): year[0], mon[4]-1, mday[6], hour[8], min[10],
+        //         sec[12]
+        //     strlen+1 == 20 (~(strlen+1) == -21) -> "YYYY-MM-DD-HH:MM:SS"
+        //         (19 chars): year[0], mon[5]-1, mday[8], hour[11], min[14],
+        //         sec[17]
+        //     anything else -> atoi(string) = the LEADING NUMBER ONLY, after
+        //         which the original calls mktime() on a zeroed tm UNCONDITIONALLY
+        //         (the atoi path does `t = strtol(...)`, pops/pushes and returns;
+        //         it never reaches mktime - only the two shaped branches do).
+        //   The tm is `memset(...,0)` so tm_isdst == 0, not -1.
+        // Getting this wrong mattered: returning "now" for every string made
+        // the 2012 spring-festival entries in etc/banner.list look current, so
+        // gs broadcast 「新春快乐」 banners the original never shows.
+        if (!args.empty() && args[0].index() == 4) {
+            const std::string s = std::get<SharedString>(args[0]).str();
+            std::tm when{};
+            const size_t n = s.size();
+            auto at = [&s](size_t off) -> int {
+                return off < s.size() ? std::atoi(s.c_str() + off) : 0;
+            };
+            if (n + 1 == 15) {
+                when.tm_year = at(0) - 1900;
+                when.tm_mon = at(4) - 1;
+                when.tm_mday = at(6);
+                when.tm_hour = at(8);
+                when.tm_min = at(10);
+                when.tm_sec = at(12);
+            } else if (n + 1 == 20) {
+                when.tm_year = at(0) - 1900;
+                when.tm_mon = at(5) - 1;
+                when.tm_mday = at(8);
+                when.tm_hour = at(11);
+                when.tm_min = at(14);
+                when.tm_sec = at(17);
+            } else {
+                return make_int(static_cast<int64_t>(std::atoi(s.c_str())));
+            }
+            // memset(&when, 0, sizeof(when)) in the original => tm_isdst = 0.
+            when.tm_isdst = 0;
+            std::time_t t = std::mktime(&when);
+            return make_int(static_cast<int64_t>(t == static_cast<std::time_t>(-1) ? 0 : t));
+        }
+        return make_int(static_cast<int64_t>(std::time(nullptr)));
+    }
+    if (name == "time_desc")
         return make_int(static_cast<int64_t>(std::time(nullptr)));
     if (name == "tick") {
         // tick() - milliseconds since the epoch (the driver uses

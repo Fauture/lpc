@@ -926,6 +926,153 @@ if (!is_object(this_object()->basic_object())) return;   // ← 这里返回 ⇒
 - 回归：走路 (86→90) ✓、过图 揽仙镇外→揽仙镇 (341,246) ✓、硬断线重上 `dialogs=[]` ✓、`construct-wdog` 0 次 ✓。
 
 
+### M. 「上线出现新春横幅（原版没有）」= `time(string)` 被实现成「返回当前时间」（**已修，待实测**）
+
+用户口径：「上线的横幅应该是错误的…原版并没有提示」，横幅内容是
+`#Y《问道》#n祝所有玩家：新春快乐！龙年大吉！` 之类。
+
+来源：`/gs/daemons/banner_managed.c` 的 `system_banner`，配置在 `etc/banner.list`：
+```
+sys_banner_config$ : ({ "2012-01-22-20:00:00", 3, 10, "spring_festival_2012" })
+...
+spring_festival_2012$ : "#Y《问道》#n祝所有玩家：新春快乐！龙年大吉！"
+```
+过滤条件（`banner_managed_v37.c:244`）：
+```lpc
+if ((time(arr[0]) + arr[2]) <= time()) continue;   // 过期条目跳过
+```
+**原版 `vm_f_time`（IDA 0x80dd030，逐行核对过）对字符串参数的行为**：
+```c
+v3 = strlen(s) + 1;
+if ( ~v3 == -16 )            // ~v3 == -16  <=>  v3 == 15  <=>  strlen == 14
+{   /* 紧凑 "YYYYMMDDHHMMSS"：sec=[12] min=[10] hour=[8] mday=[6] mon=[4]-1 year=[0] */ }
+else { v4 = strlen(s) + 1;
+       if ( ~v4 != -21 )     // 不是 strlen == 19
+       { t = strtol(s,0,10,0); ... return t; }        // ← 其它长度：只取前导数字
+       /* "YYYY-MM-DD-HH:MM:SS"：sec=[17] min=[14] hour=[11] mday=[8] mon=[5]-1 year=[0] */ }
+when.tm_year = strtol(...) - 1900;  t = mktime(&when);
+```
+- `strlen == 14` → 紧凑 `YYYYMMDDHHMMSS`（偏移 0/4/6/8/10/12）+ `mktime`
+- `strlen == 19` → `YYYY-MM-DD-HH:MM:SS`（偏移 0/5/8/11/14/17）+ `mktime`
+- **其它长度一律 `strtol(s)`（只取前导数字）后直接返回**，根本不进 `mktime`
+- `tm` 是 `memset(...,0)` ⇒ `tm_isdst = 0`（**不是** -1）
+
+⚠️ 第一版 HANDOVER 把长度写成了 16/21（`~v3 == -16` 误读成 `v3 == 16`）。正确是 **15/20**，
+即 `strlen == 14 / 19`。长度判错的后果：`time("2012-01-22-20:00:00")`（19 字符）本该走 `mktime`
+返回 2012-01-22 20:00 的时间戳，却被当成"其它长度"→ `atoi` → 2012。**两种走法都让 2012 的条目过期**
+（`2012 + 10 <= now` 为真），所以横幅现象一致修好，但对别的调用方是错的，已按 IDA 改正。
+
+我们的 `time` 曾经只有一个分支「返回当前时间」，字符串参数被直接忽略 ✗ ⇒ 2012 的条目看起来"还没过期"
+⇒ gs 定时广播新春横幅 ✗。**修**：`src/builtins.cpp` 按上面三分支还原（长度 15/20、`tm_isdst=0`）。
+
+**验证方法**：新一轮启动日志里 `[fn] ENTER get_next_sys_banner` 之后应当**取不到条目**
+（`sizeof(all_list) < 1 → return`），不再出现 `timer_broadcast_banner → broadcast_banner`；
+客户端登录收不到那条横幅。
+
+
+---
+
+### N. 「重新登录提示『暂时无法登录（错误：9026）』，永远好不了」= 闭包在跨对象内联调用里创建，实例记成了调用方
+
+用户口径：「角色重上提示暂时无法登录需 ~30s」（实测更糟：**永久**卡住）。
+
+#### 现象与取证（`mv20/`，复现命令 `python -X utf8 _relogin_cycle.py 1 1 stunC3`）
+
+第 1–2 次「进世界 → `0x3E2A` 登出 → 立刻重登」正常（~10.4s）；**第 3 次必挂**，
+之后每次登录都收到 `0x1FE5: 你的帐号现在暂时无法登录，请稍候再尝试。（错误：9026）`，90 秒内 7 次全失败。
+
+`mv20/live_gs.txt` 最后一次挂死的关键行：
+```
+L131181 [q-hook] qid=1 ... <function destruct_object(object(clone:gs/clone/char/user.o#16298))>
+L131182 [fn] ENTER do_stun_account obj=/gs/daemons/logind.o args=1     ← 进临界区
+L131184 [filed-call] do_operate ... chain=[save_user_patch_data<-write_content_to]     ← 4 次存盘都成功
+L131237 [pkt] analyse cmd=0x2403 ... [game] msg_written_content cookie=126802 result=0
+L131276 [fn] ENTER notify_save_done obj=/daemons/filed.o args=6        ← 第 4 个存盘回来
+L131277 [fn] ENTER delete_content_to obj=/daemons/filed.o args=4       ← 删除 runtime 开始了
+L131278 [filed-call] do_operate obj=/daemons/filed.o vm=13DEB5F0 ... chain=[operate_done<-notify_save_done<-delete_content_to]
+L131279 [fn] RETURN delete_content_to ret=(void)                       ← 直接返回，什么都没做
+```
+**此后既没有 `[q-send] qid=26`，也没有 `[q-fail]`，没有 `cmd_delete_content`/`msg_deleted_content`(0x2405)，
+`notify_delete_runtime_done` 0 次、`stop_stun_account` 0 次。**
+
+#### 根因
+
+`/daemons/filed.c::do_operate` 的第一步就是
+```lpc
+if ((!service_flag)) return -2;      // service_flag 是 filed.o 的全局
+```
+`do_operate` 是 **filed.o 的函数**，但它这一帧读的是 **`/gs/daemons/userd.o` 的变量表**
+（`[filed-call]` 探针里 `varsOwner=pak:gs/daemons/userd.o`）⇒ `service_flag` 取到 undefined
+⇒ `!service_flag` 成立 ⇒ **`return -2`，`send_to_queue(srvQ, msg)` 根本没执行**。
+LPC 调用方忽略 `do_operate` 的返回值，所以请求静默消失：
+DBA 收不到删除 → `notify_delete_runtime_done` 不跑 → `stop_stun_account` 永远不调用
+→ `logind.stun_account[account]` 一直是 1 → 后续登录全被判 9026。
+
+为什么变量表是 userd 的：`do_operate` 里创建的闭包
+`(: operate_done, blocked, get_thread_id(), result, to :)` 是在**跨对象内联调用**中创建的
+（userd.o 的 `save_user_patch_data` → `"/daemons/filed.c"->write_content_to` → `do_operate`），
+闭包因此记下了**调用方 userd.o** 的实例。回复回来时 `operate_done`（= `notify_save_done` 链）
+需要改投到函数的 home 实例（§5.L 的 `[cfv] owner-instance retarget`），
+但那条路走的是 `OriginalVm::callFunctionPointer()`，它**没有**做 `callFunctionByName()` 里那段
+「先把 `objVars_` 还原成自己的表再调用」的修正：
+```cpp
+// callFunctionByName（原来就有）
+if (objVars_ != ownObjVars_) { savedVars = objVars_; objVars_ = ownObjVars_; ... }
+```
+于是 `notify_save_done` / `delete_content_to` / `do_operate` 整条链都在 userd.o 的表上跑。
+
+#### 修复（`src/original_vm.cpp`，两处，同一个不变量：函数必须读自己程序的全局）
+
+1. `OriginalVm::callFunctionPointer()` 补上和 `callFunctionByName()` 一样的变量表修正
+   （`savedObjVarsForNextCall_` 也照抄，保留外层表以便恢复）。
+2. `startInlineFunction()` 的自动切表加一条 else 分支：
+   ```cpp
+   } else if (!switchObjVars && objVars_ != ownObjVars_ &&
+              objectRegistry().masterObj != &object()) {
+       autoVars = ownObjVars_;          // callee 属于本 VM，却挂着别人的表
+       autoStrings = &obj_.strings;
+       autoFuncs  = &functionTable();
+   }
+   ```
+   （master 程序被排除，和上面那条既有的跨对象分支保持一致。）
+
+#### 验证方法
+
+`_relogin_cycle.py` 连跑 ≥3 轮，每轮：
+`do_stun_account` 与 `stop_stun_account` **成对出现**（各 1 次）、
+出现 `[q-send] qid=26 ... fn=do_operate`、`cmd_delete_content`/`0x2405`、
+`[fn] ENTER notify_delete_runtime_done`，登录不再出现 9026。
+
+
+---
+
+### O. `vm_cmdEcho` 的「坏 echo」与反加速判定按 IDA 还原
+
+`vm_cmdEcho`（IDA 0x8053178）真正的判定顺序是：
+
+```c
+if (len <= 3) return 0;
+v9 = 客户端 tick;  v5 = 可选的"回显的服务端 tick"（len > 4 时必须 len >= 8 才读）
+if ( !vm_checkClientAccelerate(clientNo, v9) ) return 0;      // ← 先反加速
+if ( cl.tickLastRecvLastEcho ) { v21 = v9 - cl.tickLastRecvLastEcho;
+    if ( v21 <= 0x270F ) { printf("Got bad ECHO ... time period = %dms."); return 0; } }  // ≤9999ms 丢弃
+cl.tickLastRecvLastEcho = v9;
+time(&ti); if (!v5 || cl.tickServer == v5) cl.timeRecvEcho = ti;
+... 回 0xF9C3（dtick = vm_getCurrentTick()）...
+```
+
+- 早先我们只判 `period == 0`（当时为了修「选线路后 10 多秒」而放宽）。**实测真实客户端**
+  （`mv18/live_gs.txt`，client 75 连续 60 个 echo）间隔是 **10000/10010/10016 ms，从无 ≤9999**，
+  所以原版的 `<= 0x270F` 丢弃规则对真实客户端**不会误伤**，那 10 多秒是 §H1 的 accept 等待，
+  已在别处修掉。现按原版还原。
+- `vm_checkClientAccelerate`（IDA 0x804ef50）**是驱动里唯一会强关游戏客户端的地方**
+  （`cmd_close_client`），并且 `vm_cmdMoveTo`/`vm_cmdAccelerateMoveTo`/`vm_cmdMultiMoveTo` 也都会调它。
+  已在 `src/game_service.cpp` 里按 IDA 逐条还原（首次同步 `tickLocalStartSync`/`tickClientStartSync`、
+  客户端 tick 回退 = 异常 1、`tickLocalLost>0xBB7` 后 `localLost+5000 < clientLost*0.98` = 异常 2（客户端过快）、
+  `clientLost+150000 < localLost` = 异常 3（客户端过慢）、累计 3 次才 `cmd_close_client`）。
+  两侧都是**单调毫秒差**，起点会抵消（实测客户端 tick 与服务端 ms 同步走：10016ms vs 10016ms）。
+  探针 `LPCVM_ECHO` 会打 `[echo] recv/reply/Got bad ECHO`、`[accelerate]`、`[echo-state]`。
+
 ---
 
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）

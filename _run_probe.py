@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """Boot the 4 services with an explicit LPCVM_* probe set.
 
-usage: python -X utf8 _run_probe.py <logdir> <seconds> [KEY=VAL,KEY,...]
+usage: python -X utf8 _run_probe.py <logdir> <seconds> [KEY=VAL;KEY=VAL;...]
+
+NOTE: probe entries are separated by ';' (NOT ','), because several probe
+VALUES are themselves comma lists (LPCVM_FNTRACE=a,b,c / LPCVM_FNOBJ=x,y).
+An earlier ',' split silently truncated those values to the first name, which
+made whole probe sets look like they never fired.
 
 Unlike _run_keep2.py (which unconditionally forces LPCVM_TAIL + LPCVM_MEM2)
 this applies exactly the probes given, so the cost of each diagnostic switch
@@ -17,13 +22,14 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 LOG_DIR = sys.argv[1] if len(sys.argv) > 1 else 'probe1'
 MAXS = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 900
 SPEC = sys.argv[3] if len(sys.argv) > 3 else ''
+SEP = ';' if ';' in SPEC else ','
 shutil.rmtree(LOG_DIR, ignore_errors=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 env = dict(os.environ)
 for k in [k for k in list(env) if k.startswith('LPCVM_')]:
     env.pop(k, None)
-for kv in [x.strip() for x in SPEC.split(',') if x.strip()]:
+for kv in [x.strip() for x in SPEC.split(SEP) if x.strip()]:
     if '=' in kv:
         k, v = kv.split('=', 1)
         env[k.strip()] = v

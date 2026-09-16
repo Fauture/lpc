@@ -58,6 +58,17 @@ struct GameClient {
     uint32_t tickServer = 0;   // last tick we sent in an echo reply
     uint32_t tickLastRecvLastEcho = 0;  // client tick of the last echo (bad-echo check)
     time_t timeLastReportHeartBeat = 0; // 180s heartbeat-report throttle
+    // vm_checkClientAccelerate (0x804ef50) accounting.  The original driver
+    // runs this on every echo AND on every move packet: it counts the packet,
+    // syncs the client tick against the driver tick, flags an abnormal rate
+    // (v9=1 client tick went backwards, 2 client running FAST, 3 client running
+    // SLOW) and - after a THIRD failure - calls cmd_close_client, i.e. this is
+    // the only place in the driver that force-closes a live game client.
+    uint64_t tickLocalStartSync = 0;      // driver tick at the first packet
+    uint32_t tickClientStartSync = 0;     // client tick at the first packet
+    uint32_t tickClientSendLastPacket = 0;  // client tick of the last accepted packet
+    int totalReceive = 0;                 // packets the accelerate check has seen
+    int failedCount = 0;                  // accumulated abnormalities (3 => close)
 };
 
 // Start the game client service on `port` (start_service_on).  Returns 0 on

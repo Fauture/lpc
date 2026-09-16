@@ -36,6 +36,13 @@ namespace lpc {
 
 namespace {
 
+// Runtime-toggleable SVC_TRACE (see lpc::dynProbeFlag): the once-cached env
+// read made a probe impossible to arm on a running server.
+inline bool svcTraceOn() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_SVC_TRACE");
+    return f.load(std::memory_order_relaxed);
+}
+
 constexpr uint16_t kSyncMagic = 0x5A4D;  // 'M''Z' read as little-endian word
 
 void ensureWsaGame() {
@@ -1079,37 +1086,112 @@ void handleMsgLAuth(GameClient& cl, const uint8_t* body, size_t len) {
     applyLpc("msg_l_auth", {make_int(cl.clientNo), make_int(result), make_int(authKey), make_string(name)});
 }
 
+// vm_checkClientAccelerate (0x804ef50): the driver's speed-hack gate, called
+// from vm_cmdEcho AND from every move command (vm_cmdMoveTo,
+// vm_cmdAccelerateMoveTo, vm_cmdMultiMoveTo).  It is the ONLY place in the
+// driver that force-closes a live game client.
+//
+//   totalReceive++
+//   first packet      -> record tickLocalStartSync/tickClientStartSync,
+//                        tickClientSendLastPacket = clientTick, OK
+//   clientTick < tickClientSendLastPacket (client clock went BACKWARDS)  => fail 1
+//   tickLocalLost = driverTick - tickLocalStartSync > 2999ms:
+//       tickLocalLost + 5000 < tickClientLost * 0.98   => fail 2 (client FAST)
+//       tickClientLost + 150000 < tickLocalLost        => fail 3 (client SLOW)
+//   after the checks: failedCount <= 2  -> OK (tickClientSendLastPacket=clientTick
+//                                           only when failedCount did NOT change)
+//                     failedCount >  2  -> cmd_close_client(clientNo), return 0
+//
+// Both losses are DIFFERENCES of a monotonic millisecond clock on each side, so
+// the origins cancel: the real client's tick and our msSinceStart() advance by
+// the same amount (measured 10016ms vs 10016ms over one heartbeat).
+bool checkClientAccelerate(GameClient& cl, uint32_t clientTick) {
+    static const std::atomic<bool>& accFlag = dynProbeFlag("LPCVM_ECHO");
+    const bool accProbe = accFlag.load(std::memory_order_relaxed);
+    cl.totalReceive += 1;
+    int64_t nowMs = lpc::msSinceStart();
+    if (cl.totalReceive <= 1) {
+        cl.tickLocalStartSync = static_cast<uint64_t>(nowMs);
+        cl.tickClientStartSync = clientTick;
+        cl.tickClientSendLastPacket = clientTick;
+        return true;
+    }
+    const int prevFailed = cl.failedCount;
+    int reason = 0;
+    if (cl.tickClientSendLastPacket > clientTick) {
+        cl.failedCount = prevFailed + 1;
+        reason = 1;
+    } else {
+        int64_t tickLocalLost = nowMs - static_cast<int64_t>(cl.tickLocalStartSync);
+        if (tickLocalLost > 0xBB7) {
+            int64_t tickClientLost =
+                static_cast<int64_t>(static_cast<int32_t>(clientTick - cl.tickClientStartSync));
+            if (static_cast<double>(tickLocalLost) + 5000.0 <
+                static_cast<double>(tickClientLost) * 0.98) {
+                cl.failedCount = prevFailed + 1;
+                reason = 2;
+            } else if (tickClientLost + 150000 < tickLocalLost) {
+                cl.failedCount = prevFailed + 1;
+                reason = 3;
+            }
+        }
+    }
+    if (reason && accProbe)
+        std::cerr << "[accelerate] cno=" << cl.clientNo << " abnormal=" << reason
+                  << " failed=" << cl.failedCount << "/3"
+                  << " clientTick=" << clientTick
+                  << " lastPacket=" << cl.tickClientSendLastPacket
+                  << " localLost=" << (nowMs - static_cast<int64_t>(cl.tickLocalStartSync))
+                  << "ms clientLost="
+                  << static_cast<int32_t>(clientTick - cl.tickClientStartSync)
+                  << "ms t=" << lpc::msSinceStart() << "ms\n";
+    if (cl.failedCount <= 2) {
+        if (cl.failedCount != prevFailed) return true;   // original: p_stat->ref = 0
+        cl.tickClientSendLastPacket = clientTick;
+        return true;
+    }
+    if (accProbe)
+        std::cerr << "[accelerate] cno=" << cl.clientNo
+                  << " failedCount=" << cl.failedCount << " -> cmd_close_client\n";
+    applyLpc("cmd_close_client", {make_int(cl.clientNo)});
+    return false;
+}
+
 // vm_cmdEcho (0x8053178): echo/heartbeat (CMD_ECHO 0x20D2).  body = client
-// tick (be:u32).  Replies MSG_REPLY_ECHO (0xF9C3) carrying the server's
-// current tick so the remote end (dba/gs/cta) can verify the link is alive.
-// Mirrors the original: refreshes timeRecvEcho on a valid echo (so the gs's
-// scansocketd daemon does not drop the connection as dead) and reports the
-// heartbeat to LPC cmd_echo() at most once per 180s.
+// tick (be:u32) [+ optional echoed server tick].  Replies MSG_REPLY_ECHO
+// (0xF9C3) carrying the server's current tick.  Refreshes timeRecvEcho on an
+// accepted echo (so the gs's scansocketd daemon does not drop the connection as
+// dead) and reports the heartbeat to LPC cmd_echo() at most once per 180s.
 void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
-    (void)body;
-    static const bool echoProbe = (std::getenv("LPCVM_ECHO") != nullptr);
+    static const std::atomic<bool>& echoFlag = dynProbeFlag("LPCVM_ECHO");
+    const bool echoProbe = echoFlag.load(std::memory_order_relaxed);
+    // a3 <= 3 -> return 0; a3 > 4 requires 4 more bytes (the echoed server
+    // tick), i.e. a3 >= 8.
     if (len < 4) return;
-    // Original reads the client tick (v9) and an optional server tick (v5);
-    // tickLastRecvLastEcho guards against replayed/duplicate echoes.
     uint32_t v9 = rd32be(body);
     uint32_t v5 = 0;
-    if (len >= 8) v5 = rd32be(body + 4);
+    if (len > 4) {
+        if (len < 8) return;
+        v5 = rd32be(body + 4);
+    }
+    // The accelerate/anti-cheat accounting runs BEFORE the bad-echo check and
+    // gates the whole handler: on a 3rd abnormality the original closes the
+    // client here instead of replying.
+    if (!checkClientAccelerate(cl, v9)) return;
     if (cl.tickLastRecvLastEcho != 0) {
         uint32_t period = v9 - cl.tickLastRecvLastEcho;
         if (echoProbe)
             std::cerr << "[echo] recv cno=" << cl.clientNo << " tick=" << v9
                       << " period=" << period << " t=" << lpc::msSinceStart() << "ms\n";
-        // Drop only a REPLAY (the same client tick again).  This used to drop
-        // every echo whose tick was <= 9999ms after the previous one, i.e. EVERY
-        // heartbeat of a 1-3s client: no 0xF9C3 was ever sent, the client sat
-        // waiting for its echo reply and only continued after its own timeout
-        // ("选择线路后要 10 多秒才到选角界面"; measured: client echo at
-        // t=941687ms, its next packet at t=949369ms = 7.7s of silence, with no
-        // 0xF9C3 in between).
-        if (period == 0) {
-            if (std::getenv("LPCVM_TRACE"))
-                std::cerr << "[game] duplicate echo client=" << cl.clientNo
-                          << " tick=" << v9 << "\n";
+        // vm_cmdEcho: `if (v21 <= 0x270F) { printf("Got bad ECHO from client
+        // %d, time period = %dms.\n"); return 0; }` - an echo whose client tick
+        // is less than 9999ms after the previous ACCEPTED one is rejected: no
+        // 0xF9C3, no timeRecvEcho refresh, and tickLastRecvLastEcho is NOT
+        // updated, so the next echo is measured against the last accepted one.
+        if (period <= 0x270F) {
+            if (echoProbe)
+                std::cerr << "[echo] Got bad ECHO from client " << cl.clientNo
+                          << ", time period = " << period << "ms.\n";
             return;
         }
     } else if (echoProbe) {
@@ -1143,7 +1225,10 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     if (echoProbe)
         std::cerr << "[echo] reply cno=" << cl.clientNo << " tick=" << tick
                   << " t=" << lpc::msSinceStart() << "ms\n";
-    gameServiceSend(cl.clientNo, frame);
+    // A failed 0xF9C3 is invisible otherwise, and the client hangs up a few
+    // hundred ms after an unanswered echo.
+    if (!gameServiceSend(cl.clientNo, frame))
+        std::cerr << "[echo] reply SEND FAILED cno=" << cl.clientNo << "\n";
     if (now - cl.timeLastReportHeartBeat > 179) {
         cl.timeLastReportHeartBeat = now;
         applyLpc("cmd_echo", {make_int(cl.clientNo)});
@@ -1323,7 +1408,7 @@ void handleMsgIntInt(GameClient& cl, const uint8_t* body, size_t len, const char
     // do_operate sees -1 instead of 4294967295.
     int32_t a = static_cast<int32_t>(rd32be(body));
     int32_t b = static_cast<int32_t>(rd32be(body + 4));
-    if (std::getenv("LPCVM_SVC_TRACE"))
+    if (svcTraceOn())
         std::cerr << "[game] " << fun << " client=" << cl.clientNo
                   << " a=" << a << " b=" << b << "\n";
     applyLpc(fun, {make_int(cl.clientNo), make_int(a), make_int(b)});
@@ -11733,7 +11818,7 @@ void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
     // result is a SIGNED int32 in the original wire protocol (0xFFFFFFFF = -1
     // "not found"); passing it unsigned made ccs's filed do_operate see
     // 4294967295 instead of -1 and share_datad's restore loop forever.
-    if (std::getenv("LPCVM_SVC_TRACE"))
+    if (svcTraceOn())
         std::cerr << "[readcontent] client=" << cl.clientNo << " cookie=" << a
                   << " result=" << (int32_t)b << " len=" << slen << "\n";
     applyLpc("msg_read_content",
@@ -11750,7 +11835,7 @@ void handleMsgWrittenContent(GameClient& cl, const uint8_t* body, size_t len) {
     // dba cmd_write_content -> send_message(9219, cookie, ret, 0)).  Log the
     // arrival: a stalled write (filed do_operate -> -2) is indistinguishable
     // from a dropped reply without it.
-    if (std::getenv("LPCVM_SVC_TRACE"))
+    if (svcTraceOn())
         std::cerr << "[game] msg_written_content client=" << cl.clientNo
                   << " cookie=" << a << " result=" << b << " attrib=" << cl.attrib << "\n";
     applyLpc("msg_written_content",
@@ -13038,7 +13123,24 @@ int startGameService(int port) {
                         std::cerr << "[recv-accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
                                   << " n=" << n << " " << hex << "\n";
                     }
-                    if (n <= 0) break;
+                    if (n <= 0) {
+                        // Why did the peer hang up?  The real client drops the
+                        // link a few hundred ms after its own echo when it stops
+                        // getting MSG_REPLY_ECHO, so a close is only diagnosable
+                        // with the echo state printed next to it.
+                        static const std::atomic<bool>& echoCloseFlag = dynProbeFlag("LPCVM_ECHO");
+                        if (echoCloseFlag.load(std::memory_order_relaxed)) {
+                            std::lock_guard<std::mutex> lk(gameMutex());
+                            auto it = gameClients().find(clientNo);
+                            if (it != gameClients().end())
+                                std::cerr << "[echo-state] cno=" << clientNo << " n=" << n
+                                          << " lastEchoTick=" << it->second.tickLastRecvLastEcho
+                                          << " tickServer=" << it->second.tickServer
+                                          << " echoAge=" << (time(nullptr) - it->second.timeRecvEcho)
+                                          << "s t=" << lpc::msSinceStart() << "ms\n";
+                        }
+                        break;
+                    }
                     GameClient* cur;
                     {
                         std::lock_guard<std::mutex> lk(gameMutex());

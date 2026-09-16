@@ -1,10 +1,30 @@
 #pragma once
+#include <atomic>
 #include <iosfwd>
 
 #include "o_loader.h"
 #include "value.h"
 
 namespace lpc {
+
+// ---- runtime-toggleable diagnostics -------------------------------------
+// The LPCVM_* switches are read ONCE per process and cached, because the
+// interpreter consults several of them on per-opcode / per-efun hot paths.
+// That makes a probe impossible to arm on a server that is already running -
+// and a reboot costs ~11 minutes (gs must import every zone/NPC).
+//
+// This adds a FILE switch next to the env var, re-read at most once a second:
+//     mkdir _probe_on ; type nul > _probe_on\LPCVM_ECHO
+// A probe is ON when the env var is set OR its marker file exists; deleting
+// the file turns it back off.
+//
+// `dynProbeFlag` registers/looks the slot up (mutex + scan) - call it ONCE
+// into a function-local static and then just load the returned atomic:
+//     static bool echoOn() {
+//         static const std::atomic<bool>& f = dynProbeFlag("LPCVM_ECHO");
+//         return f.load(std::memory_order_relaxed);
+//     }
+const std::atomic<bool>& dynProbeFlag(const char* name);
 
 // Runs the original action-bytecode VM for a parsed .o object.
 // Currently supports the common global-initializer opcodes and stubs efun/user
