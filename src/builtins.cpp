@@ -4479,9 +4479,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // regressions (task list / story dialogue / the 0x211B fields form
             // that the client is reported to chew on for ~10s).
             {
-                static const bool sendProbe = (std::getenv("LPCVM_SEND") != nullptr);
+                // Runtime-toggleable (see lpc::dynProbeFlag): the per-process
+                // 8000-line cap means the probe MUST be armed just before the
+                // login under test, otherwise the boot's own traffic eats it.
+                static const std::atomic<bool>& sendFlag = lpc::dynProbeFlag("LPCVM_SEND");
+                const bool sendProbe = sendFlag.load(std::memory_order_relaxed);
                 if (sendProbe) {
                     static int sN = 0;
+                    static const int sMax = [] {
+                        const char* v = std::getenv("LPCVM_SEND_MAX");
+                        return v ? std::atoi(v) : 8000;
+                    }();
                     static const char* hx3 = "0123456789ABCDEF";
                     uint16_t sc = 0;
                     if (args.size() >= 3) {
@@ -4490,7 +4498,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         sc = static_cast<uint16_t>((static_cast<unsigned char>(data[0]) << 8) |
                                                    static_cast<unsigned char>(data[1]));
                     }
-                    if (sN++ < 8000) {
+                    if (sN++ < sMax) {
                         std::string h3;
                         // Full body for the two client-visible story packets
                         // (0x2603 task log, 0x20D1 drama) so they can be
