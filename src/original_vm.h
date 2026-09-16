@@ -26,6 +26,27 @@ namespace lpc {
 //     }
 const std::atomic<bool>& dynProbeFlag(const char* name);
 
+// ---- liveness counters ([hb] heartbeat) ---------------------------------
+// A service that stops making progress used to be invisible: no crash, the
+// listening socket still ESTABLISHED, the process idle - only "the client
+// cannot log in" (measured 2026-09-16: the dba executed its last SQL query at
+// ~17:25, then silently stopped dispatching filed requests, so every login
+// timed out with 9030 通讯故障 and left the account stunned with 9026).
+//
+// Every service prints ONE line per minute:
+//   [hb] t=<ms> pktsIn= pktsOut= filedIn= filedOut= schedIters= clients= regs=
+// so after the fact it is obvious WHICH counter stopped advancing.
+struct LivenessCounters {
+    std::atomic<uint64_t> schedIters{0};   // scheduler main-loop iterations
+    std::atomic<uint64_t> pktsIn{0};       // frames received from any socket
+    std::atomic<uint64_t> pktsOut{0};      // frames written to any socket
+    std::atomic<uint64_t> filedIn{0};      // 0x3400/0x4401/0x2403/0x236F in
+    std::atomic<uint64_t> filedOut{0};     // ... and out
+    std::atomic<uint64_t> sendFail{0};     // gameServiceSend failures
+    std::atomic<uint64_t> threads{0};      // detached worker threads spawned
+};
+LivenessCounters& liveness();
+
 // Runs the original action-bytecode VM for a parsed .o object.
 // Currently supports the common global-initializer opcodes and stubs efun/user
 // calls so that .pak/.o files can be loaded and initialized.

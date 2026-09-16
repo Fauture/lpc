@@ -11908,6 +11908,28 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
+    // Filed/DBA family: log EVERY frame the receiving side actually got.
+    // This is the pair of [send-filed] in builtins.cpp, and it is what tells
+    // "the requester never sent it" from "the peer received it but never
+    // answered" - the exact blind spot of the 2026-09-16 hang, where the gs
+    // sent 7 x 0x3400 (3 retries each) and the dba executed no SQL at all.
+    if (cmdNo == 0x3400 || cmdNo == 0x3411 || cmdNo == 0x4401 || cmdNo == 0x2403 ||
+        cmdNo == 0x2405 || cmdNo == 0x2407 || cmdNo == 0x236F)
+        liveness().filedIn.fetch_add(1, std::memory_order_relaxed);
+    if (std::getenv("LPCVM_TAIL") ||
+        std::getenv("LPCVM_DBGLINK")) {
+        if (cmdNo == 0x3400 || cmdNo == 0x3411 || cmdNo == 0x4401 || cmdNo == 0x2403 ||
+            cmdNo == 0x2405 || cmdNo == 0x2407 || cmdNo == 0x236F) {
+            std::string hex;
+            static const char* hx = "0123456789ABCDEF";
+            size_t c = len < 24 ? len : 24;
+            for (size_t i = 0; i < c; ++i) { hex += hx[body[i] >> 4]; hex += hx[body[i] & 15]; }
+            std::cerr << "[recv-filed] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
+                      << " cmd=0x" << std::hex << cmdNo << std::dec << " attrib=" << cl.attrib
+                      << " len=" << len << " body=" << hex << "\n";
+            std::cerr.flush();
+        }
+    }
     if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
         std::string hex;
         static const char* hx = "0123456789ABCDEF";
@@ -12891,6 +12913,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
 // 4=WAIT_BODY.  The receiver reads the 12-byte header (Code/checkSum/tickCount/
 // msgLen/cmdNo), then msgLen-12 body bytes, then dispatches.
 void feedClient(GameClient& cl, const char* data, size_t n) {
+    liveness().pktsIn.fetch_add(1, std::memory_order_relaxed);
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[game] feed client=" << cl.clientNo << " n=" << n
                   << " status=" << static_cast<int>(cl.status) << "\n";
@@ -13013,6 +13036,41 @@ int startGameService(int port) {
     }
     std::thread([s, port]() {
         std::cout << "Service started on port " << port << "\n";
+        std::cout.flush();
+        // ---- [hb] liveness heartbeat -------------------------------------
+        // One line a minute with the counters that a hang stops advancing.
+        // 2026-09-16: the dba silently stopped dispatching filed requests; the
+        // process stayed alive with the socket ESTABLISHED and no log line at
+        // all, so the only symptom was "cannot log in (9030)".  With this, the
+        // frozen counter names the layer.
+        std::thread([port]() {
+            uint64_t pIn = 0, pOut = 0, fIn = 0, fOut = 0, si = 0, sf = 0;
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(60));
+                LivenessCounters& c = liveness();
+                uint64_t nIn = c.pktsIn.load(std::memory_order_relaxed);
+                uint64_t nOut = c.pktsOut.load(std::memory_order_relaxed);
+                uint64_t nFIn = c.filedIn.load(std::memory_order_relaxed);
+                uint64_t nFOut = c.filedOut.load(std::memory_order_relaxed);
+                uint64_t nSi = c.schedIters.load(std::memory_order_relaxed);
+                uint64_t nSf = c.sendFail.load(std::memory_order_relaxed);
+                int clients = 0;
+                {
+                    std::lock_guard<std::mutex> lk(gameMutex());
+                    clients = static_cast<int>(gameClients().size());
+                }
+                std::cerr << "[hb] port=" << port << " t=" << lpc::msSinceStart() << "ms"
+                          << " pktsIn=" << nIn << "(+" << (nIn - pIn) << ")"
+                          << " pktsOut=" << nOut << "(+" << (nOut - pOut) << ")"
+                          << " filedIn=" << nFIn << "(+" << (nFIn - fIn) << ")"
+                          << " filedOut=" << nFOut << "(+" << (nFOut - fOut) << ")"
+                          << " schedIters=" << nSi << "(+" << (nSi - si) << ")"
+                          << " sendFail=" << nSf << "(+" << (nSf - sf) << ")"
+                          << " clients=" << clients << "\n";
+                std::cerr.flush();
+                pIn = nIn; pOut = nOut; fIn = nFIn; fOut = nFOut; si = nSi; sf = nSf;
+            }
+        }).detach();
         while (true) {
             SOCKET c = accept(s, nullptr, nullptr);
             if (c == INVALID_SOCKET) {
@@ -13219,14 +13277,42 @@ void gameServiceSetAttrib(int clientNo, uint32_t attribOrMask, int maxBodySize, 
 bool gameServiceSend(int clientNo, const std::string& data) {
     // vm_sendFullPacket: write the complete wire frame to the client socket.
     // A partial write counts as failure (vm_writeDataToSocket returning -3).
+    liveness().pktsOut.fetch_add(1, std::memory_order_relaxed);
+    // The frame is 'M','Z', checksum(2), tick(4), msgLen(2), cmd(2), body -
+    // so the command sits at offset 8, NOT 0 (checking bytes 0..1 only ever
+    // matched the "MZ" magic and the filedOut counter stayed at 0).
+    if (data.size() >= 10) {
+        uint16_t m2 = static_cast<uint16_t>((static_cast<unsigned char>(data[8]) << 8) |
+                                            static_cast<unsigned char>(data[9]));
+        if (m2 == 0x3400 || m2 == 0x3411 || m2 == 0x4401 || m2 == 0x2403 ||
+            m2 == 0x2405 || m2 == 0x2407 || m2 == 0x236F) {
+            liveness().filedOut.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     int fd = -1;
     {
         std::lock_guard<std::mutex> lk(gameMutex());
         auto it = gameClients().find(clientNo);
-        if (it == gameClients().end()) { if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n"; return false; }
+        if (it == gameClients().end()) {
+            // LPC callers IGNORE send_to_client's result, so a vanished client
+            // slot silently swallows the request (this is how a dead dba link
+            // turns into a 20s operate timeout and then into a stunned
+            // account).  Log it unconditionally.
+            liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
+            std::cerr << "[send-fail] cno=" << clientNo << " not-found t="
+                      << lpc::msSinceStart() << "ms\n";
+            if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n";
+            return false;
+        }
         fd = it->second.fd;
     }
-    if (fd < 0) { if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " bad-fd\n"; return false; }
+    if (fd < 0) {
+        liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
+        std::cerr << "[send-fail] cno=" << clientNo << " bad-fd t="
+                  << lpc::msSinceStart() << "ms\n";
+        if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " bad-fd\n";
+        return false;
+    }
     int sent = 0;
     while (sent < static_cast<int>(data.size())) {
         int n = send(static_cast<SOCKET>(fd), data.data() + sent,
@@ -13237,6 +13323,10 @@ bool gameServiceSend(int clientNo, const std::string& data) {
                 Sleep(1);
                 continue;
             }
+            liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
+            std::cerr << "[send-fail] cno=" << clientNo << " fd=" << fd << " n=" << n
+                      << " err=" << err << " len=" << data.size()
+                      << " t=" << lpc::msSinceStart() << "ms\n";
             if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " fail n=" << n << " err=" << err << "\n";
             return false;
         }

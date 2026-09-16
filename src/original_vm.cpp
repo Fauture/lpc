@@ -77,8 +77,10 @@ void dynProbeStartWatcher() {
 }
 }  // namespace
 
-const std::atomic<bool>& dynProbeFlag(const char* name) {
-    static std::mutex reg;
+// ---- liveness counters (see original_vm.h) -------------------------------
+LivenessCounters& liveness() { static LivenessCounters c; return c; }
+
+const std::atomic<bool>& dynProbeFlag(const char* name) {    static std::mutex reg;
     std::lock_guard<std::mutex> lk(reg);
     for (DynProbeSlot* s : dynProbeSlots())
         if (std::strcmp(s->name, name) == 0) return s->on;
@@ -13352,6 +13354,7 @@ void Scheduler::run() {
     });
     schedThreadId_ = std::this_thread::get_id();
     while (true) {
+        liveness().schedIters.fetch_add(1, std::memory_order_relaxed);
         // Wall-clock waiter dump (LPCVM_STUCK_TRACE): runs even while the
         // ready queue is busy, unlike the idle dump below.
         dumpWaiters();
