@@ -1,0 +1,11 @@
+docs/tests: HANDOVER §6.0 运行时探针开关；心跳存活测试与登录包差异脚本
+
+- HANDOVER §6.0：说明 `_probe_on\<LPCVM_*>` 文件开关（每秒重读，不用重启服务）。
+- `_echo_survive.py`：按**真实客户端节奏**（每 10s 一个 0x20D2）跑 N 秒，统计 0xF9C3 与掉线。
+  实测 404s 不断线（> 扫描 socketd 的 300s 死链阈值），`[accelerate]` 0 次、服务端
+  `close_client`/`dead_echo` 0 次；`Got bad ECHO` 只出现在我们自己制造的 <9999ms 间隔上，
+  与 IDA 原版规则一致。
+- `_relogin_diff.py`（加自动重试）：首次登录 vs 重登的 GS→客户端包直方图 + 顺序对比。
+  实测重登包集完整：`0x5103`(build_inventory) 1→1、`0xF05D/0xFA1D` 物品对 5/6 对、
+  `0x39F1`(build_update_me)、`0x3DF3`(视野) 都在 ⇒「重上后物品/任务不显示」在当前构建上复现不出来。
+- `_cell_scan*.py` / `_mkscan3.py`：单格 0xFD72 扫描（被拒会回 0x1155），用于查阻挡几何。

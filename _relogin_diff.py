@@ -51,8 +51,33 @@ a.close()
 time.sleep(2)
 
 print('=== second login ===', flush=True)
-b = ll.Session(ACCT, PWD, CHAR, tag='B')
-b.connect(window=25)
+# The first attempt right after a logout is reset while the character is still
+# being torn down (4 content saves + the runtime delete round trip); retry the
+# same way the real client does.
+b = None
+for attempt in range(1, 7):
+    cand = ll.Session(ACCT, PWD, CHAR, tag='B%d' % attempt)
+    try:
+        cand.connect(window=25)
+    except Exception as e:
+        print('   attempt %d failed: %s' % (attempt, e), flush=True)
+        try:
+            cand.close()
+        except Exception:
+            pass
+        time.sleep(5)
+        continue
+    if cand.uid is not None or cand.pos is not None:
+        b = cand
+        break
+    try:
+        cand.close()
+    except Exception:
+        pass
+    time.sleep(5)
+if b is None:
+    print('   NEVER GOT BACK IN - aborting diff', flush=True)
+    sys.exit(1)
 b.pump(4)
 n2 = len(b.cmds)
 print('   uid=%s pos=%s cmds=%d dialogs=%s' %

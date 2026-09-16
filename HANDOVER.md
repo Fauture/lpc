@@ -1077,6 +1077,23 @@ time(&ti); if (!v5 || cl.tickServer == v5) cl.timeRecvEcho = ti;
 
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
 
+### 6.0 运行时开关（**新**：不用再为重开探针等 11 分钟重启）
+
+`LPCVM_*` 里那些在热路径上被读的开关都是"进程启动读一次并缓存"，所以探针没法在**已经跑起来**的
+服务器上临时打开。现在多了一条**文件开关**，每秒重读一次：
+
+```powershell
+New-Item -ItemType Directory -Force -Path _probe_on | Out-Null
+Set-Content -Path _probe_on\LPCVM_ECHO -Value x -NoNewline   # 打开
+Remove-Item _probe_on\LPCVM_ECHO                             # 关闭
+```
+判据是「env 变量存在 **或** `_probe_on\<名字>` 文件存在」（路径相对于 lpcvm 的工作目录＝工程根）。
+已接到文件开关上的探针：`LPCVM_NEWBIE`、`LPCVM_EVDBG`、`LPCVM_SVC_TRACE`、`LPCVM_QUEUE_TRACE`、
+`LPCVM_ECHO`。实现见 `lpc::dynProbeFlag()`（`src/original_vm.h`/`original_vm.cpp`）：
+一个 watch 线程每秒刷新，调用点只付一次 relaxed atomic load。
+
+**建议做法**：启动时**不要**给这些探针（日志小、启动快），跑测试前 1 秒再 `Set-Content` 打开。
+
 | 探针 | 用途 / 输出 |
 |---|---|
 | `LPCVM_SAMPLE`（新增） | 每 4096 条指令采样，每秒打印 `[sample] n=… \| obj::fn=次数 …`（热点剖析） |
