@@ -1,5 +1,10 @@
 #include "original_vm.h"
 
+// The LPCVM_STACKDBG probe needs the module's own base address to report raw
+// stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
+// deliberately NOT included here - it breaks unrelated LPC code (min/max macros)
+// - so use the MSVC linker-provided module base symbol instead.
+extern "C" char __ImageBase;
 
 #include <algorithm>
 #include <atomic>
@@ -873,6 +878,19 @@ static bool fnObjMatch(const std::string& objName) {
 }
 
 // Loop control block (value type 20 in the original VM).
+// ---- C++ recursion probe (LPCVM_DEPTH) -----------------------------------
+// The VM nests C++ frames for every non-inline LPC call (executeFunctionFromOutside
+// / runDetached / tryCallOtherObject / callFunctionByName).  A recursion here is
+// what overflows the 32MB main-thread stack during boot (0xc00000fd) once the
+// real load graph is walked, so print the depth + LPC chain at every 25th level.
+static thread_local int t_vmNestDepth = 0;
+struct VmNestGuard {
+    int depth;
+    const char* where;
+    VmNestGuard(const char* w) : depth(++t_vmNestDepth), where(w) {}
+    ~VmNestGuard() { --t_vmNestDepth; }
+};
+
 struct Frame {
     const OriginalFunction* fn = nullptr;
     int bp = 0;                       // stack index of arg0 (param0 = top)
@@ -2033,6 +2051,18 @@ public:
     // Whether this VM currently has an active LPC frame chain (used by the
     // scheduler to decide if a resumed process still has work on another VM).
     bool hasActiveFrames() const { return !frames_.empty(); }
+    // Diagnostic (scheduler idle-wait dump): the VM's LPC frame chain,
+    // innermost first, so a parked process is attributable to a function
+    // instead of just an event name.
+    std::string frameChainDump(size_t maxFrames = 6) const {
+        std::string out = objName_;
+        size_t n = 0;
+        for (auto it = frames_.rbegin(); it != frames_.rend() && n < maxFrames; ++it, ++n) {
+            out += " ";
+            out += (it->fn ? it->fn->name : std::string("<ctx>"));
+        }
+        return out;
+    }
     const OriginalFunction* functionByIndex(int index) const {
         auto it = funcsByIndex_.find(index);
         return it == funcsByIndex_.end() ? nullptr : it->second;
@@ -2271,6 +2301,15 @@ public:
     }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
+        {
+            VmNestGuard nestGuardEntry("ENTRY");
+            static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
+            if (depthOn.load(std::memory_order_relaxed) && (nestGuardEntry.depth % 20) == 0) {
+                std::cerr << "[depth] " << nestGuardEntry.depth << " obj=" << objName_
+                          << " entry=" << name << "\n";
+                std::cerr.flush();
+            }
+        }
         if (name == "create_data" && constructDiagOn()) {
             std::string a0;
             if (!args.empty()) {
@@ -2611,6 +2650,7 @@ public:
     // inside create later); a scheduler process + park reproduces that with
     // the single cooperative scheduler.
     Value loadObjectCooperative(const std::string& vpath, const std::vector<Value>& createArgs) {
+        stackDbgCheck("loadObject");
         if (searchRoot_.empty() || vpath.empty()) return make_int(0);
         std::string rel = vpath;
         if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
@@ -2694,6 +2734,7 @@ public:
     // construction must be able to park and resume or the create is truncated
     // right at the read (master NPC rows are never written).
     Value cloneObjectCooperative(const std::string& virtualPath, const std::vector<Value>& createArgs) {
+        stackDbgCheck("cloneObject");
         if (virtualPath.empty()) return make_int(0);
         std::string rel = virtualPath;
         if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
@@ -2779,6 +2820,15 @@ public:
     // Run a specific function pointer on THIS VM (with this VM's object vars).
     // Used by call_fun_ptr to run a closure's captured function on its owner VM.
     Value callFunctionPointer(const OriginalFunction* fn, const std::vector<Value>& args) {
+        {
+            VmNestGuard nestGuardEntry("ENTRY");
+            static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
+            if (depthOn.load(std::memory_order_relaxed) && (nestGuardEntry.depth % 20) == 0) {
+                std::cerr << "[depth] " << nestGuardEntry.depth << " obj=" << objName_
+                          << " entry=" << (fn ? fn->name : std::string("<null>")).c_str() << "\n";
+                std::cerr.flush();
+            }
+        }
         if (!fn) return make_int(0);
         // Same contract as callFunctionByName: the callee must read ITS OWN
         // program's globals.  A cross-object inline call leaves the CALLER's
@@ -2805,6 +2855,15 @@ public:
     }
 
     Value callFunctionByIndex(int index) {
+        {
+            VmNestGuard nestGuardEntry("ENTRY");
+            static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
+            if (depthOn.load(std::memory_order_relaxed) && (nestGuardEntry.depth % 20) == 0) {
+                std::cerr << "[depth] " << nestGuardEntry.depth << " obj=" << objName_
+                          << " entry=" << functionNameByIndex(index).c_str() << "\n";
+                std::cerr.flush();
+            }
+        }
         if (std::getenv("LPCVM_ERR_TRACE")) {
             const OriginalFunction* f = nullptr;
             auto it = funcsByIndex_.find(index);
@@ -3462,6 +3521,24 @@ private:
     // switched) - the callee's return op pushes the result, so the case-6
     // default path must NOT push the efun's return value.
     bool efunInlineStarted_ = false;
+    // ---- efun return continuation (IDA: vm_hookCallbackWhenReturnAt /
+    // vm_hookCallbackWhenNextAction) -----------------------------------------
+    // mapping_array(array, func) is a TRAMPOLINE in the original driver, not a
+    // loop inside the efun:
+    //   vm_f_mapping_array  (0x80d876c) pushes a result array of the SAME size as
+    //                       the source + index 0, then calls vm_f_mapping_array1;
+    //   vm_f_mapping_array1 (0x80d8600) pushes src[i] + func, calls it and
+    //                       installs a return hook (same frame ->
+    //                       vm_hookCallbackWhenNextAction, new frame ->
+    //                       vm_hookCallbackWhenReturnAt);
+    //   vm_f_mapping_array2 (0x80d8870) stores the return value into ret[i] and
+    //                       calls vm_f_mapping_array1 again.
+    // One VM-level call per element, so a large mapping costs no C++ stack.
+    // The hook receives the callee's return value and returns:
+    //   true  -> hv is the efun's result, the VM pushes it;
+    //   false -> the hook started ANOTHER inline call, whose return re-enters
+    //            the installed hook.
+    std::function<bool(Value&)> efunReturnHook_;
     // Value pushed when this parked VM resumes (parkAndSuspend stores it).
     Value resumeValue_ = make_int(0);
 
@@ -3893,6 +3970,61 @@ private:
         --hookDepth;
     }
 
+    // ---- LPCVM_STACKDBG: C stack high-water, LPC chain, native frames -------
+    // 0xc00000fd (STACK_OVERFLOW) destroys the frame list, and the VM's own
+    // cooperative design keeps runLoop activation depth at 1 - so a runaway
+    // recursion is NATIVE (a C++ load/create cycle that never re-enters
+    // runLoop).  Watch the C stack from the choke points that such a cycle must
+    // pass through (runLoop, the efun dispatcher, the loader) and, once the use
+    // passes 4MB, scan the raw stack for return addresses inside lpcvm.exe:
+    // the repeating RVA pattern is the recursion, and lpcvm.map names it.
+    void stackDbgCheck(const char* where) {
+        static const bool on = (std::getenv("LPCVM_STACKDBG") != nullptr);
+        if (!on) return;
+        static thread_local uintptr_t base = 0;
+        static thread_local size_t high = 0;
+        static thread_local int dumps = 0;
+        char here = 0;
+        const uintptr_t sp = reinterpret_cast<uintptr_t>(&here);
+        if (!base || sp > base) base = sp;
+        const size_t used = (base > sp) ? static_cast<size_t>(base - sp) : 0;
+        if (used <= high + 1024 * 1024) return;
+        high = used;
+        std::string chain;
+        if (frames_.empty()) {
+            chain = "<no-frame>";
+        } else {
+            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                if (!chain.empty()) chain += "<-";
+                chain += (it->fn ? it->fn->name : std::string("<ctx>"));
+                if (chain.size() > 300) { chain += "<-..."; break; }
+            }
+        }
+        std::cerr << "[stackdbg] used=" << (used / 1024) << "KB at=" << where
+                  << " frames=" << frames_.size() << " obj=" << objName_ << " chain=" << chain
+                  << "\n";
+        std::cerr.flush();
+        if (used < 4u * 1024 * 1024 || dumps >= 6) return;
+        ++dumps;
+        // Raw stack scan: every word that points into lpcvm.exe is a probable
+        // return address; printing them from SP upward lists the frames from
+        // innermost to outermost.  RVAs match build/Release/lpcvm.map
+        // (map address - 0x400000).
+        const uintptr_t modBase = reinterpret_cast<uintptr_t>(&__ImageBase);
+        const uintptr_t modEnd = modBase + 0x400000;   // image is ~3.1MB
+        std::cerr << "[nstack] used=" << (used / 1024) << "KB at=" << where << " rvas:";
+        int printed = 0;
+        for (uintptr_t p = sp; p + sizeof(uintptr_t) <= base && printed < 40; p += 4) {
+            const uintptr_t v = *reinterpret_cast<const uintptr_t*>(p);
+            if (v >= modBase && v < modEnd) {
+                std::cerr << " " << std::hex << (v - modBase) << std::dec;
+                ++printed;
+            }
+        }
+        std::cerr << "\n";
+        std::cerr.flush();
+    }
+
     // Call an efun by index, popping its arguments from the stack.
     Value callEfun(int efunIndex, int argCount) {
         std::vector<Value> args;
@@ -3916,6 +4048,7 @@ private:
 
     // Call an efun by index with already-collected arguments.
     Value callEfunWithArgs(int efunIndex, const std::vector<Value>& args) {
+        stackDbgCheck("efun");
         static const bool menuDecide = (std::getenv("LPCVM_MENUDECIDE") != nullptr);
         const auto& names = efunNameTable();
         // LPCVM_NEWBIE: dump every element post_enter_world tests with
@@ -4811,6 +4944,177 @@ private:
                 }
                 return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
             }
+            // mapping_array(array, func): apply func to EVERY element, in
+            // order, and return an array of the same size (IDA: vm_f_mapping_array
+            // 0x80d876c -> vm_f_mapping_array1 0x80d8600 -> vm_f_mapping_array2
+            // 0x80d8870).  Implemented as the original's return-hook trampoline.
+            //
+            // Game impact: scand::query_objects ends with
+            //     items = mapping_array(obs_arr, (: find_basic_object_by_import_name :));
+            // so the old "ignore func, return the input" stub handed import-name
+            // STRINGS to callers that need objects.  instruction_1::
+            // query_task_weapon's is_object(basic) then failed and the newbie S11
+            // drama answered "奇怪，怎么找不到了呢？我再找找，你过会儿再来。"
+            // instead of handing over the weapon (armour is looked up by name and
+            // the shop uses dealer.list, so only the weapon step was broken).
+            if (nm == "mapping_array" && args.size() >= 2 && args[0].index() == 5) {
+                auto srcArr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+                auto outArr = std::make_shared<ArrayValue>();
+                // IDA: same size, same order, nothing filtered.
+                outArr->items.assign(srcArr->items.size(), Value{});
+                if (srcArr->items.empty()) return outArr;
+                if (args[1].index() != 8) {
+                    outArr->items = srcArr->items;   // no callable: original raises
+                    return outArr;
+                }
+                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+                // Resolve the callable exactly like every other closure call
+                // site: the captured function pointer first, then the merged
+                // function index, and finally - for a closure that wraps a
+                // BUILTIN EFUN (ClosureValue::efunClosure, e.g. importd's
+                // (: trim :) or (: call_other, path, "fn" :)) - the efun itself.
+                //
+                // The efun case MUST be a direct efun call: re-entering this
+                // dispatcher with the SAME efun index and the SAME arguments
+                // (the first attempt did `return callEfunWithArgs(efunIndex,
+                // args)` when nothing resolved) recursed
+                //     callEfunWithArgs -> mapping_array -> callEfunWithArgs -> ...
+                // with one C++ frame pair per level; the boot died with
+                // 0xc00000fd after ~16k levels, right at
+                // /gs/daemons/import/scroll.o::create -> create_data ->
+                // read_etc_file("scroll.list").
+                const OriginalFunction* mfn = cl->func;
+                if (!mfn && cl->funcIndex >= 0 && !cl->efunClosure) {
+                    auto fit = funcsByIndex_.find(cl->funcIndex);
+                    mfn = (fit != funcsByIndex_.end()) ? fit->second : findMasterFunction(cl->funcIndex);
+                }
+                if (!mfn && !cl->efunClosure) mfn = findFunctionAny(cl->functionName);
+                if (!mfn) {
+                    int eidx = -1;
+                    const auto& efunNames = efunNameTable();
+                    for (size_t i = 0; i < efunNames.size(); ++i) {
+                        if (efunNames[i] == cl->functionName) {
+                            eidx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    if (dynProbeFlag("LPCVM_MAPDBG").load(std::memory_order_relaxed)) {
+                        std::cerr << "[mapdbg] enter obj=" << objName_ << " caller="
+                                  << ((frames_.empty() || !frames_.back().fn)
+                                          ? std::string("<g>") : frames_.back().fn->name)
+                                  << " n=" << srcArr->items.size() << " target=efun:"
+                                  << cl->functionName << " idx=" << eidx << "\n";
+                        std::cerr.flush();
+                    }
+                    if (eidx >= 0) {
+                        // IDA vm_f_mapping_array1 pushes src[i] + the closure's
+                        // function and calls it; for an efun closure that call is
+                        // the native efun, so the whole mapping is a plain loop
+                        // and costs no VM stack at all.
+                        for (size_t i = 0; i < srcArr->items.size(); ++i) {
+                            std::vector<Value> all = cl->boundArgs;
+                            all.push_back(srcArr->items[i]);
+                            outArr->items[i] = callEfunWithArgs(eidx, all);
+                        }
+                        return outArr;
+                    }
+                    // Nothing callable at all: keep the elements (the original
+                    // raises here; returning the input keeps callers alive).
+                    outArr->items = srcArr->items;
+                    return outArr;
+                }
+                // LPCVM_MAPDBG: name the caller, the element count and whether
+                // the trampoline runs inline (no C++ recursion) or falls back to
+                // nested C++ execution - the fallback is what a boot stack
+                // overflow (0xc00000fd) would come from.
+                const bool mapDbg = dynProbeFlag("LPCVM_MAPDBG").load(std::memory_order_relaxed);
+                if (mapDbg) {
+                    std::cerr << "[mapdbg] enter obj=" << objName_ << " caller="
+                              << ((frames_.empty() || !frames_.back().fn)
+                                      ? std::string("<g>") : frames_.back().fn->name)
+                              << " n=" << srcArr->items.size() << " target=" << mfn->name
+                              << " nest=" << t_vmNestDepth << "\n";
+                    std::cerr.flush();
+                }
+                struct MapState {
+                    std::shared_ptr<ArrayValue> src;
+                    std::shared_ptr<ArrayValue> ret;
+                    std::vector<Value> bound;
+                    const OriginalFunction* fn = nullptr;
+                    size_t idx = 0;
+                    std::function<bool(Value&)> outer;   // enclosing mapping's hook
+                };
+                auto st = std::make_shared<MapState>();
+                st->src = srcArr;
+                st->ret = outArr;
+                st->bound = cl->boundArgs;
+                st->fn = mfn;
+                st->outer = std::move(efunReturnHook_);   // LIFO: restore on completion
+                auto hookPtr = std::make_shared<std::function<bool(Value&)>>();
+                *hookPtr = [this, st, hookPtr, mapDbg](Value& hv) -> bool {
+                    st->ret->items[st->idx] = hv;
+                    if (++st->idx >= st->src->items.size()) {
+                        if (mapDbg) {
+                            std::cerr << "[mapdbg] done n=" << st->src->items.size()
+                                      << " nest=" << t_vmNestDepth << "\n";
+                            std::cerr.flush();
+                        }
+                        hv = st->ret;
+                        efunReturnHook_ = std::move(st->outer);
+                        return true;
+                    }
+                    std::vector<Value> all = st->bound;
+                    all.push_back(st->src->items[st->idx]);
+                    bool ph = pushArgsForFunction(*st->fn, all);
+                    if (startInlineFunction(*st->fn, ph, static_cast<int>(all.size()))) {
+                        if (mapDbg && (st->idx % 64) == 0) {
+                            std::cerr << "[mapdbg] elem " << st->idx << " inline ok nest="
+                                      << t_vmNestDepth << "\n";
+                            std::cerr.flush();
+                        }
+                        efunReturnHook_ = *hookPtr;   // this element's return re-enters us
+                        return false;
+                    }
+                    if (mapDbg) {
+                        std::cerr << "[mapdbg] elem " << st->idx
+                                  << " inline FAILED -> nested C++ execution nest="
+                                  << t_vmNestDepth << "\n";
+                        std::cerr.flush();
+                    }
+                    // Shallow stack: run this element and the rest synchronously.
+                    st->ret->items[st->idx] = executeFunctionFromOutside(*st->fn, all);
+                    for (++st->idx; st->idx < st->src->items.size(); ++st->idx) {
+                        std::vector<Value> a2 = st->bound;
+                        a2.push_back(st->src->items[st->idx]);
+                        st->ret->items[st->idx] = executeFunctionFromOutside(*st->fn, a2);
+                    }
+                    hv = st->ret;
+                    efunReturnHook_ = std::move(st->outer);
+                    return true;
+                };
+                efunReturnHook_ = *hookPtr;
+                {
+                    std::vector<Value> all = st->bound;
+                    all.push_back(st->src->items[0]);
+                    bool ph = pushArgsForFunction(*mfn, all);
+                    if (startInlineFunction(*mfn, ph, static_cast<int>(all.size()))) {
+                        efunInlineStarted_ = true;   // the return op pushes/re-enters
+                        return make_int(0);
+                    }
+                }
+                if (mapDbg) {
+                    std::cerr << "[mapdbg] first elem inline FAILED -> synchronous loop nest="
+                              << t_vmNestDepth << "\n";
+                    std::cerr.flush();
+                }
+                for (size_t i = 0; i < st->src->items.size(); ++i) {
+                    std::vector<Value> all = st->bound;
+                    all.push_back(st->src->items[i]);
+                    st->ret->items[i] = executeFunctionFromOutside(*mfn, all);
+                }
+                efunReturnHook_ = std::move(st->outer);
+                return st->ret;
+            }
             if (nm == "is_clone" && args.empty()) {
                 // vm_f_is_clone (0x80f7900) with no argument inspects the
                 // CURRENT object (vm_currentContext->thisObject) and returns
@@ -5574,6 +5878,14 @@ private:
                 } else {
                     path = to_string(args[0], false);
                 }
+                // Master-NPC clones construct cooperatively (scheduler
+                // construction + park): their create() does a blocking filed DB
+                // round trip (the master rows), which the generic synchronous
+                // path cannot survive - it runs runInit() straight through and
+                // the create is truncated at the read.  BISECT NOTE: routing
+                // EVERY clone through the cooperative path (an earlier attempt
+                // at the boot 0xc00000fd) is NOT required by IDA and made the
+                // boot park forever in post_init, so the original scope stands.
                 if (path.find("/clone/npc/master/") != std::string::npos) {
                     std::vector<Value> createArgs;
                     if (args.size() >= 2) createArgs.push_back(args[1]);
@@ -6222,6 +6534,7 @@ private:
     // clobbering the paused caller's.
     template <typename F>
     Value runDetached(F&& fn) {
+        VmNestGuard nestGuardDetached("detached");
         int d = execDepth_;
         // Preserve an outer detached layer (re-entrant runDetached on the same
         // VM) so the inner window doesn't clobber the outer caller's slots.
@@ -6406,6 +6719,21 @@ private:
     }
 
     Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
+        VmNestGuard nestGuard("outside");
+        {
+            static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
+            if (depthOn.load(std::memory_order_relaxed) && (nestGuard.depth % 25) == 0) {
+                std::string chain;
+                for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                    chain += it->fn ? it->fn->name : "<ctx>";
+                    chain += "<-";
+                    if (chain.size() > 160) break;
+                }
+                std::cerr << "[depth] " << nestGuard.depth << " obj=" << objName_
+                          << " fn=" << fn.name << " chain=" << chain << "\n";
+                std::cerr.flush();
+            }
+        }
         // The original VM pushes args in reverse (param0 last, on top).
         // For a zero-arg function the stack top would be -1; reserve one slot
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
@@ -6895,6 +7223,27 @@ private:
     // like the original's vm_apply from inside an efun.
     Value executeFunctionOnStack(const OriginalFunction& fn, bool zeroArgPlaceholder = false,
                                  int passedArgs = -1) {
+        // C++ recursion probe: this is the single choke point for nested VM
+        // execution (callFunctionByName / tryCallOtherObject / closure calls all
+        // land here).  LPCVM_DEPTH prints the depth + LPC chain every 25 levels,
+        // which names the recursion behind the boot stack overflow 0xc00000fd
+        // (chain: safe_load_object -> create -> register_post_init -> ...).
+        VmNestGuard nestGuardStack("onStack");
+        {
+            static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
+            if (depthOn.load(std::memory_order_relaxed) && (nestGuardStack.depth % 25) == 0) {
+                std::string chain;
+                for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                    chain += it->fn ? it->fn->name : "<ctx>";
+                    chain += "<-";
+                    if (chain.size() > 200) break;
+                }
+                std::cerr << "[depth] " << nestGuardStack.depth << " obj=" << objName_
+                          << " fn=" << fn.name << " args=" << passedArgs
+                          << " chain=" << chain << "\n";
+                std::cerr.flush();
+            }
+        }
         ExecGuard lock(execMutex_, execDepth_, "onStack " + objName_ + "/" + fn.name);
         bool probeCd = (fn.name == "create_data") && constructDiagOn();
         if (probeCd)
@@ -7308,6 +7657,31 @@ private:
     // records what to wait for; hook runs on resume before the efun result
     // is pushed; resumeValue is pushed on resume.
     void parkAndSuspend(const ResumeCond& cond, std::function<void()> hook, Value resumeValue) {
+        // LPCVM_LONGPARK: a park with a far-future wake timer stalls the whole
+        // process (and the boot when the master is the one parking).  Print the
+        // park site - object, LPC chain, ip and the delay - so the LPC call that
+        // asks for minutes of sleep is identifiable instead of inferred from a
+        // 27-minute hole in the log.
+        if (std::getenv("LPCVM_LONGPARK") && cond.wakeAtMs > 0) {
+            using namespace std::chrono;
+            const int64_t nowP = duration_cast<milliseconds>(
+                steady_clock::now().time_since_epoch()).count();
+            const int64_t delayMs = cond.wakeAtMs - nowP;
+            if (delayMs > 60000) {
+                std::string chain;
+                for (size_t fi = 0; fi < frames_.size(); ++fi) {
+                    const Frame& fr = frames_[fi];
+                    if (!chain.empty()) chain += "<-";
+                    chain += (fr.fn ? fr.fn->name : std::string("<ctx>"));
+                    if (chain.size() > 220) break;
+                }
+                std::cerr << "[longpark] in=" << (delayMs / 1000) << "s kind=" << cond.kind
+                          << " ev=" << cond.ename << " obj=" << objName_
+                          << " this=" << thisObjectName_ << " ip=" << ip_
+                          << " lastOp=" << lastOp_ << " chain=[" << chain << "]\n";
+                std::cerr.flush();
+            }
+        }
         if (std::getenv("LPCVM_TRACE_CREATE") &&
             cond.kind == 3 && cond.ename.rfind("ev_filed", 0) == 0 &&
             objName_.find("/clone/npc/master") != std::string::npos) {
@@ -7430,8 +7804,20 @@ private:
         static const bool stuckDiagGated =
             (std::getenv("LPCVM_LOCK_TRACE") != nullptr || std::getenv("LPCVM_STUCK_TRACE") != nullptr);
         static const bool traceGated = (vmEnvTrace());
+        // runLoop activation depth on this thread (LPCVM_STACKDBG output).
+        static thread_local int stackDbgActivations = 0;
         if (stepProfOn) ++stepProfActs;
+        // Current nesting depth of runLoop activations on this thread (the
+        // C++-recursion count of the cooperative interpreter).
+        struct StackDbgGuard {
+            int& d;
+            explicit StackDbgGuard(int& x) : d(x) { ++d; }
+            ~StackDbgGuard() { --d; }
+        } stackDbgGuard(stackDbgActivations);
+        stackDbgCheck("runLoop");
+        unsigned stackDbgTick = 0;
         while (code_ && ip_ < code_->size()) {
+            if ((++stackDbgTick & 0xFFF) == 0) stackDbgCheck("loop");
             const OriginalInsn& in = (*code_)[ip_++];
             lastOp_ = in.op;
             lastIp_ = ip_ - 1;
@@ -7940,6 +8326,18 @@ private:
                                   << " ret=" << to_string(returnValue_, false).substr(0, 60) << "\n";
                         std::cerr.flush();
                     }
+                }
+                if (efunReturnHook_) {
+                    // An efun drives a per-element loop through return hooks
+                    // (mapping_array).  The hook stores this return value and
+                    // either asks for the result to be pushed (true) or has
+                    // already started the next inline call (false).
+                    auto hook = std::move(efunReturnHook_);
+                    efunReturnHook_ = nullptr;
+                    Value hv = returnValue_;
+                    bool hookDone = hook(hv);
+                    if (hookDone) pushValue(hv);
+                    break;
                 }
                 pushValue(returnValue_);   // caller sees the return value on top
                 if (gRet) {
@@ -14194,6 +14592,56 @@ void Scheduler::run() {
                 lastMapIns = lpc::g_mapInsertCount.load();
             }
         }
+        // LPCVM_CENSUS: every 20s, list EVERY live process with the LPC chain it
+        // sits in.  The idle-wait dump only fires when the scheduler finds
+        // nothing to run, so a boot that stalls while daemons keep churning
+        // (sched-rate hot=daemon) shows no master at all - this census always
+        // says where each process is, including ready/timer waits.
+        if (std::getenv("LPCVM_CENSUS")) {
+            static int64_t censusLastMs = 0;
+            const int64_t nowC = nowMs();
+            if (nowC - censusLastMs >= 20000) {
+                censusLastMs = nowC;
+                auto chainOf = [](const std::shared_ptr<Process>& w) -> std::string {
+                    if (!w) return std::string();
+                    const std::shared_ptr<OriginalVm>& v = w->parkedVm ? w->parkedVm : w->vm;
+                    if (!v) return std::string();
+                    std::string c = v->frameChainDump();
+                    for (const auto& extra : w->callers_) {
+                        if (!extra) continue;
+                        c += " | ";
+                        c += extra->frameChainDump(4);
+                    }
+                    return c;
+                };
+                std::cerr << "[census] ready=" << ready_.size() << " parked=" << parked_.size()
+                          << " timers=" << timers_.size() << "\n";
+                for (auto& w : ready_)
+                    std::cerr << "[census] READY entry=" << w->entry
+                              << " chain=[" << chainOf(w) << "]\n";
+                for (auto& w : parked_)
+                    std::cerr << "[census] PARKED entry=" << w->entry
+                              << " chain=[" << chainOf(w) << "]\n";
+                for (auto& te : timers_)
+                    if (te.second.p)
+                        std::cerr << "[census] TIMER in=" << (te.first - nowC) << "ms entry="
+                                  << te.second.p->entry << " chain=[" << chainOf(te.second.p)
+                                  << "]\n";
+                for (auto& kv : eventWaiters_)
+                    for (auto& w : kv.second)
+                        std::cerr << "[census] EVENT " << kv.first << " entry=" << w->entry
+                                  << " chain=[" << chainOf(w) << "]\n";
+                for (auto& kv : queueWaiters_)
+                    for (auto& w : kv.second)
+                        std::cerr << "[census] QUEUE " << kv.first << " entry=" << w->entry
+                                  << " chain=[" << chainOf(w) << "]\n";
+                for (auto& kv : sockWaiters_)
+                    for (auto& w : kv.second)
+                        std::cerr << "[census] SOCK " << kv.first << " entry=" << w->entry
+                                  << " chain=[" << chainOf(w) << "]\n";
+                std::cerr.flush();
+            }
+        }
         // LPCVM_MEMSTAT: once per second, census the big allocators.
         if (std::getenv("LPCVM_MEMSTAT")) {
             static thread_local int64_t memLastMs = 0;
@@ -14270,20 +14718,40 @@ void Scheduler::run() {
                 int64_t nd = nowMs();
                 if (nd - lastDump >= 5000) {
                     lastDump = nd;
+                    // Every waiter also reports the LPC chain it parked in:
+                    // "event=X entry=__master__" alone cannot say WHICH read
+                    // stalled (config read, filed operate, construction).
+                    auto chainOf = [](const std::shared_ptr<Process>& w) -> std::string {
+                        if (!w) return std::string();
+                        const std::shared_ptr<OriginalVm>& v =
+                            w->parkedVm ? w->parkedVm : w->vm;
+                        if (!v) return std::string();
+                        std::string c = v->frameChainDump();
+                        for (const auto& extra : w->callers_) {
+                            if (!extra) continue;
+                            c += " | ";
+                            c += extra->frameChainDump(4);
+                        }
+                        return c;
+                    };
                     for (auto& kv : eventWaiters_)
                         for (auto& w : kv.second)
                             std::cerr << "[idle-wait] event=" << kv.first
-                                      << " entry=" << w->entry << "\n";
+                                      << " entry=" << w->entry
+                                      << " chain=[" << chainOf(w) << "]\n";
                     for (auto& kv : queueWaiters_)
                         for (auto& w : kv.second)
                             std::cerr << "[idle-wait] queue=" << kv.first
-                                      << " entry=" << w->entry << "\n";
+                                      << " entry=" << w->entry
+                                      << " chain=[" << chainOf(w) << "]\n";
                     for (auto& kv : sockWaiters_)
                         for (auto& w : kv.second)
                             std::cerr << "[idle-wait] fd=" << kv.first
-                                      << " entry=" << w->entry << "\n";
+                                      << " entry=" << w->entry
+                                      << " chain=[" << chainOf(w) << "]\n";
                     for (auto& w : parked_)
-                        std::cerr << "[idle-wait] parked entry=" << w->entry << "\n";
+                        std::cerr << "[idle-wait] parked entry=" << w->entry
+                                  << " chain=[" << chainOf(w) << "]\n";
                     // Timer waits (kind-1 sleeps / timed event re-parks) are not
                     // otherwise dumped - without them a process parked on a
                     // long/far timer is invisible in the idle snapshot.

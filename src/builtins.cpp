@@ -39,6 +39,16 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+// value-walker depth probe (defined in value.cpp, namespace lpc) ------------
+namespace lpc {
+extern thread_local int t_valWalkDepth;
+struct ValWalkGuard {
+    int depth;
+    ValWalkGuard() : depth(++t_valWalkDepth) {}
+    ~ValWalkGuard() { --t_valWalkDepth; }
+};
+void valWalkProbe(const char* who, int depth, const void* v);
+}  // namespace lpc
 
 namespace fs = std::filesystem;
 
@@ -2215,6 +2225,8 @@ int lpcSscanf(const std::string& input, const std::string& fmt, std::vector<Valu
 //   int -> u16 BE; float -> 4 raw bytes; string -> u8 len + bytes (max 255);
 //   buffer (string containing NUL) -> raw bytes; array -> elements; else 2 zeros.
 void padVariableValue(const Value& v, std::string& out) {
+    ValWalkGuard valGuardPad;
+    valWalkProbe("padVariableValue", valGuardPad.depth, &v);
     lpc::ValueDepthGuard dg("padVariableValue");
     if (!dg.ok) { out.push_back(0); out.push_back(0); return; }
     switch (v.index()) {

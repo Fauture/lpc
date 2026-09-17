@@ -125,7 +125,7 @@
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.lib</ImportLibrary>
       <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/Debug/lpcvm.pdb</ProgramDataBaseFile>
-      <StackReserveSize>0x100000</StackReserveSize>
+      <StackReserveSize>0x2000000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -170,11 +170,13 @@
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:X86 /machine:X86</AdditionalOptions>
       <GenerateDebugInformation>false</GenerateDebugInformation>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>C:/Users/Administrator/Desktop/lpc/build/Release/lpcvm.map</MapFileName>
       <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/Release/lpcvm.lib</ImportLibrary>
       <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/Release/lpcvm.pdb</ProgramDataBaseFile>
-      <StackReserveSize>0x100000</StackReserveSize>
+      <StackReserveSize>0x2000000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -223,7 +225,7 @@
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/MinSizeRel/lpcvm.lib</ImportLibrary>
       <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/MinSizeRel/lpcvm.pdb</ProgramDataBaseFile>
-      <StackReserveSize>0x100000</StackReserveSize>
+      <StackReserveSize>0x2000000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>
@@ -271,7 +273,7 @@
       <ImportLibrary>C:/Users/Administrator/Desktop/lpc/build/RelWithDebInfo/lpcvm.lib</ImportLibrary>
       <LargeAddressAware>true</LargeAddressAware>
       <ProgramDataBaseFile>C:/Users/Administrator/Desktop/lpc/build/RelWithDebInfo/lpcvm.pdb</ProgramDataBaseFile>
-      <StackReserveSize>0x100000</StackReserveSize>
+      <StackReserveSize>0x2000000</StackReserveSize>
       <SubSystem>Console</SubSystem>
     </Link>
     <ProjectReference>

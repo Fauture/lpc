@@ -493,7 +493,27 @@ std::string value_type_name(const Value& v) {
     }
 }
 
+
+// ---- value-walker depth probe ---------------------------------------------
+// A cyclic array/mapping makes these recursive walkers overflow the C++ stack;
+// no LPC frame is pushed, so the boot crash (0xc00000fd) shows nothing useful.
+thread_local int t_valWalkDepth = 0;
+struct ValWalkGuard {
+    int depth;
+    ValWalkGuard() : depth(++t_valWalkDepth) {}
+    ~ValWalkGuard() { --t_valWalkDepth; }
+};
+void valWalkProbe(const char* who, int depth, const void* v) {
+    if ((depth % 40) != 0) return;
+    if (depth > 4000) return;   // keep the log finite while recursing to death
+    std::cerr << "[valdepth] " << who << " depth=" << depth
+              << " v=" << reinterpret_cast<const void*>(v) << "\n";
+    std::cerr.flush();
+}
+
 std::string to_string(const Value& v, bool quote_strings) {
+    ValWalkGuard valGuard;
+    valWalkProbe("to_string", valGuard.depth, &v);
     ValueDepthGuard dg("to_string");
     if (!dg.ok) return "(...)";
     switch (v.index()) {
@@ -609,6 +629,8 @@ bool is_truthy(const Value& v) {
 }
 
 bool value_equal(const Value& a, const Value& b) {
+    ValWalkGuard valGuardEq;
+    valWalkProbe("value_equal", valGuardEq.depth, &a);
     ValueDepthGuard dg("value_equal");
     if (!dg.ok) return a.index() == b.index();   // cyclic: compare by type only
     if (a.index() != b.index()) {

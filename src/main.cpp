@@ -2,6 +2,8 @@
 #include <ws2tcpip.h>
 
 #include <windows.h>
+#include <tlhelp32.h>
+#include <winternl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -16,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "interpreter.h"
@@ -29,6 +32,9 @@
 #include "parser.h"
 
 namespace {
+
+// Main-thread id (a crash report says whether the dying thread is the main one).
+DWORD g_mainTid = 0;
 
 std::string readTextFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -392,6 +398,134 @@ int runPak(const std::string& path) {
     return runPakOriginal(path);
 }
 
+// ---- C stack high-water watchdog (LPCVM_STACKPROBE=1) ----------------------
+// Nested VM execution recurses through C++ (runLoop -> efun -> runLoop), so a
+// runaway load chain eats the thread stack until the guard page raises
+// 0xc00000fd - and by then the crash handler has no room left to walk frames
+// (it prints 4 frames), which makes the recursion invisible.
+//
+// This helper samples EVERY thread's stack pointer from a side thread and prints
+// the used/total KB plus the LPC ring (last entered LPC functions) whenever the
+// deepest stack grows by another 64KB, whenever a thread gets within a quarter
+// of its limit, and as a 5s heartbeat (proof the sampler is alive).  The growth
+// steps name the recursion and the ring names the LPC code driving it.
+static void startStackProbe() {
+    if (std::getenv("LPCVM_STACKPROBE") == nullptr) return;
+    std::thread([] {
+        const DWORD selfTid = GetCurrentThreadId();
+        const DWORD pid = GetCurrentProcessId();
+        // Exact per-thread stack limits: a suspended thread's TEB is readable
+        // in-process and NT_TIB.StackBase/StackLimit are the real bounds
+        // (VirtualQuery only sees the currently committed region).
+        struct ThreadBasicInfo {
+            NTSTATUS ExitStatus;
+            PVOID TebBaseAddress;
+            CLIENT_ID ClientId;
+            KAFFINITY AffinityMask;
+            KPRIORITY Priority;
+            KPRIORITY BasePriority;
+        };
+        typedef NTSTATUS(NTAPI * NtQueryInformationThreadFn)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+        NtQueryInformationThreadFn ntqit = reinterpret_cast<NtQueryInformationThreadFn>(
+            GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationThread"));
+        std::cerr << "[stackprobe] armed tid=" << selfTid << " ntqit=" << (ntqit ? "yes" : "no")
+                  << std::endl;
+        std::unordered_map<DWORD, size_t> reported;
+        int64_t lastBeat = 0;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if (snap == INVALID_HANDLE_VALUE) continue;
+            size_t worst = 0;
+            size_t worstTotal = 0;
+            DWORD worstTid = 0;
+            THREADENTRY32 te{};
+            te.dwSize = sizeof(te);
+            if (Thread32First(snap, &te)) {
+                do {
+                    if (te.th32OwnerProcessID != pid || te.th32ThreadID == selfTid) continue;
+                    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+                                               THREAD_QUERY_INFORMATION,
+                                           FALSE, te.th32ThreadID);
+                    if (!th) continue;
+                    if (SuspendThread(th) != static_cast<DWORD>(-1)) {
+                        CONTEXT ctx{};
+                        ctx.ContextFlags = CONTEXT_CONTROL;
+                        if (GetThreadContext(th, &ctx)) {
+#if defined(_WIN64)
+                            const uintptr_t sp = static_cast<uintptr_t>(ctx.Rsp);
+#else
+                            const uintptr_t sp = static_cast<uintptr_t>(ctx.Esp);
+#endif
+                            uintptr_t top = 0, limit = 0;
+                            if (ntqit) {
+                                ThreadBasicInfo tbi{};
+                                ULONG ret = 0;
+                                // 0 == ThreadBasicInformation
+                                if (ntqit(th, 0, &tbi, sizeof(tbi), &ret) == 0 &&
+                                    tbi.TebBaseAddress) {
+                                    const NT_TIB* tib =
+                                        reinterpret_cast<const NT_TIB*>(tbi.TebBaseAddress);
+                                    top = reinterpret_cast<uintptr_t>(tib->StackBase);
+                                    limit = reinterpret_cast<uintptr_t>(tib->StackLimit);
+                                }
+                            }
+                            if (!top) {
+                                MEMORY_BASIC_INFORMATION mbi{};
+                                if (sp && VirtualQuery(reinterpret_cast<LPCVOID>(sp), &mbi,
+                                                       sizeof(mbi))) {
+                                    top = reinterpret_cast<uintptr_t>(mbi.BaseAddress) +
+                                          mbi.RegionSize;
+                                    limit = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+                                }
+                            }
+                            const size_t used = (sp && top > sp) ? top - sp : 0;
+                            const size_t total = (top > limit) ? top - limit : 0;
+                            if (used > worst) {
+                                worst = used;
+                                worstTotal = total;
+                                worstTid = te.th32ThreadID;
+                            }
+                        }
+                        ResumeThread(th);
+                    }
+                    CloseHandle(th);
+                } while (Thread32Next(snap, &te));
+            }
+            CloseHandle(snap);
+            if (!worst) {
+                // No thread sampled at all: say so once so a silent probe is not
+                // mistaken for "the stack never grew".
+                if (lastBeat == 0) {
+                    lastBeat = 1;
+                    std::cerr << "[stackprobe] no thread sampled (OpenThread?)" << std::endl;
+                }
+                continue;
+            }
+            const int64_t nowMs = static_cast<int64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count());
+            const size_t prev = reported.count(worstTid) ? reported[worstTid] : 0;
+            const bool grew = worst > prev + 64 * 1024;
+            const bool nearlyFull = worstTotal && worst > (worstTotal * 3) / 4;
+            if (grew || nearlyFull || nowMs - lastBeat >= 5000) {
+                if (grew) reported[worstTid] = worst;
+                lastBeat = nowMs;
+                const unsigned pos = lpc::g_lpcRingPos.load();
+                std::cerr << "[stackprobe]" << (grew ? " grow" : (nearlyFull ? " NEAR" : " hb"))
+                          << " tid=" << worstTid << " used=" << (worst / 1024) << "KB/"
+                          << (worstTotal / 1024) << "KB last LPC:";
+                for (unsigned k = 0; k < lpc::kLpcRingSize; ++k) {
+                    const char* nm = lpc::g_lpcRing[(pos + k) % lpc::kLpcRingSize];
+                    if (nm) std::cerr << " " << nm;
+                }
+                std::cerr << std::endl;
+            }
+        }
+    }).detach();
+}
+
 void usage() {
     std::cout << "Usage:\n"
               << "  lpcvm run <file.c|file.o|file.pak>\n"
@@ -403,11 +537,19 @@ void usage() {
 } // namespace
 
 int main(int argc, char** argv) {
+    g_mainTid = GetCurrentThreadId();
     // Unbuffered stdout/stderr: the service logs are redirected to files and
     // must appear line-by-line like the original driver (Load:/printf lines
     // otherwise sit in the C++ stdio buffer for minutes).
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
+    // LPC printf() goes through C stdio, NOT std::cout: with stdout redirected
+    // to a file it is block-buffered, so the LPC boot output ("Load: ... OK",
+    // service start messages) lagged behind the C++ diagnostics by whatever sat
+    // in the 4KB buffer - a stalled boot and a slow one looked identical in the
+    // logs, and the last buffered line before a wait was invisible.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
     // SEH crash catcher: print a backtrace so a segfault inside the VM or a
     // builtin (the current MSVCP140.dll 0xc0000005 crashes) can be located
     // without a debugger attached.
@@ -418,6 +560,21 @@ int main(int argc, char** argv) {
                   << (ep ? ep->ExceptionRecord->ExceptionCode : 0)
                   << " addr=0x" << (ep ? ep->ExceptionRecord->ExceptionAddress : 0)
                   << std::dec << " frames=" << n << "\n";
+        // Which thread died and how deep its stack was.  0xc00000fd
+        // (EXCEPTION_STACK_OVERFLOW) swallows the frame list, so the depth is
+        // the only evidence left: near the full reserve = runaway recursion,
+        // shallow = the thread simply has a small stack (e.g. a receiver).
+        {
+            NT_TIB* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+            char here = 0;
+            const uintptr_t sp = reinterpret_cast<uintptr_t>(&here);
+            const uintptr_t base = reinterpret_cast<uintptr_t>(tib->StackBase);
+            const uintptr_t lim = reinterpret_cast<uintptr_t>(tib->StackLimit);
+            const DWORD tid = GetCurrentThreadId();
+            std::cerr << "[crash] tid=" << tid << (tid == g_mainTid ? " (main)" : "")
+                      << " stack used=" << ((base > sp ? base - sp : 0) / 1024)
+                      << "KB reserve=" << ((base > lim ? base - lim : 0) / 1024) << "KB\n";
+        }
         for (USHORT i = 0; i < n; ++i) {
             HMODULE mod = nullptr;
             char modName[MAX_PATH] = "?";
@@ -450,6 +607,7 @@ int main(int argc, char** argv) {
         std::cerr.flush();
         return EXCEPTION_CONTINUE_SEARCH;   // let the OS generate the dump
     });
+    startStackProbe();
     try {
         // Driver-level telnet options (mirroring the original driver's
         // -w <password> / -p <port>): telnet is only enabled when a port is

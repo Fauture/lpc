@@ -15,6 +15,17 @@
 
 #include "mysql_client.h"
 
+// value-walker depth probe (defined in value.cpp, namespace lpc) ------------
+namespace lpc {
+extern thread_local int t_valWalkDepth;
+struct ValWalkGuard {
+    int depth;
+    ValWalkGuard() : depth(++t_valWalkDepth) {}
+    ~ValWalkGuard() { --t_valWalkDepth; }
+};
+void valWalkProbe(const char* who, int depth, const void* v);
+}  // namespace lpc
+
 namespace lpc {
 
 namespace {
@@ -261,6 +272,8 @@ void saveEscapeString(const std::string& s, std::string& out) {
 } // namespace
 
 std::string saveValueAscii(const Value& v) {
+    ValWalkGuard valGuardSave;
+    valWalkProbe("saveValueAscii", valGuardSave.depth, &v);
     lpc::ValueDepthGuard dg("saveValueAscii");
     if (!dg.ok) return "U";   // cyclic: save as undefined instead of recursing
     switch (v.index()) {
