@@ -60,13 +60,5 @@ if(WIN32)
     # original driver ran on Linux's 8MB default.  "deep chains run on
     # create_thread threads" is no longer true - create_thread goes through
     # scheduler().spawn() (single-threaded) too.
-    # Raised 32MB -> 256MB after making mapping_array actually apply its closure
-    # (scand::query_objects maps import names to objects with
-    # (: find_basic_object_by_import_name :)): the mapping now LOADS every basic
-    # object it maps over, so the boot walks a long load -> create ->
-    # register_post_init -> load chain (measured: crash at 32MB with
-    # [crash] code=0xc00000fd, last LPC: get_config safe_load_object
-    # safe_load_object create register_post_init ...).  Reserve only - it stays
-    # virtual until touched.
-    target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x10000000)
+    target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x2000000)
 endif()
