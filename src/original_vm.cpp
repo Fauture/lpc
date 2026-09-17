@@ -1920,6 +1920,7 @@ public:
         : obj_(obj), searchRoot_(std::move(searchRoot)) {
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj.globalVarCount));
         ownObjVars_ = objVars_;
+        warnIfShortBlock("ctor-ref");
         for (auto& g : *objVars_) g = make_int(0);
         for (const auto& fn : obj_.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
@@ -1935,6 +1936,7 @@ public:
         : obj_(*obj), objKeepAlive_(std::move(obj)), searchRoot_(std::move(searchRoot)) {
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj_.globalVarCount));
         ownObjVars_ = objVars_;
+        warnIfShortBlock("ctor-shared");
         for (auto& g : *objVars_) g = make_int(0);
         for (const auto& fn : obj_.functions) {
             if (fn.index >= 0) funcsByIndex_[fn.index] = &fn;
@@ -1954,6 +1956,7 @@ public:
         : obj_(*obj), objKeepAlive_(std::move(obj)), searchRoot_(tmpl ? tmpl->searchRoot_ : std::string()) {
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj_.globalVarCount));
         ownObjVars_ = objVars_;
+        warnIfShortBlock("ctor-clone");
         for (auto& g : *objVars_) g = make_int(0);
         if (tmpl) {
             funcsByIndex_ = tmpl->funcsByIndex_;
@@ -2018,6 +2021,7 @@ public:
         if (!v) return;
         objVars_ = v;
         ownObjVars_ = v;
+        warnIfShortBlock("adoptObjVars");
     }
     // Whether this VM currently has an active LPC frame chain (used by the
     // scheduler to decide if a resumed process still has work on another VM).
@@ -2042,6 +2046,13 @@ public:
     // The shared object-variable table (cross-object inline calls switch to
     // the target object's table for the duration of the call).
     std::shared_ptr<std::vector<Value>> objVarsShared() const { return objVars_; }
+    // The VM's IDENTITY block (the object's own variables).  THIS - not the
+    // possibly switched active block - is what a cross-object callee must read:
+    // a daemon VM parked inside a template closure keeps that closure's block
+    // active, and handing it to another of its functions made taskd's
+    // query_task_log read the task template's 15-slot table (`all_templates`
+    // undefined -> every task log empty -> blank quest panel).
+    std::shared_ptr<std::vector<Value>> ownObjVarsShared() const { return ownObjVars_; }
     // Mark this VM as the driver's master process (time-sliced startup).
     void setMasterProcess(bool v) { isMasterProcess_ = v; }
     // baseVarOffset of the currently executing function's constitution.
@@ -2055,16 +2066,77 @@ public:
         return it->second->name;
     }
     std::vector<Value>& objVars() { return *objVars_; }
+    // [vmsize] A block that is SMALLER than the object's declared global count
+    // makes every later global read undefined (measured: taskd.o declares
+    // globalVarCount=28 - `lpcvm disasm` - while the live instance's block held
+    // only 15 slots and no mapping with more than 20 entries, so
+    // `all_templates` (1110 registered templates) was unreachable and every
+    // task log came out empty).  Log the moment a short block is installed.
+    void warnIfShortBlock(const char* where) {
+        if (!objVars_) return;
+        const bool shortBlk = objVars_->size() < obj_.globalVarCount;
+        // Always trace taskd.o: its block measured 15 slots while the program
+        // declares 28 globals, and `all_templates` (1110 entries) lived in the
+        // unreachable tail.  Knowing WHICH construction path installs the short
+        // block is the point of this probe.
+        const bool interesting = obj_.sourceName.find("taskd") != std::string::npos;
+        if (shortBlk || interesting)
+            std::cerr << "[vmsize] " << where << " obj=" << obj_.sourceName
+                      << " blk=" << objVars_->size()
+                      << " gvc=" << obj_.globalVarCount
+                      << " short=" << (shortBlk ? 1 : 0)
+                      << " key=" << thisObjectName_ << " vm=" << this << "\n";
+    }
+    // [vs] A VM's ACTIVE variable block can be swapped by cross-object inline
+    // frames (startInlineFunction), by the outside-call fixup and by the
+    // park/resume restore paths.  Log every swap on a taskd-program VM - and
+    // every swap that leaves a block too small for the program's declared
+    // global count - so the site that installs a foreign/short block is
+    // attributable.
+    void noteVars(const char* where, const std::shared_ptr<std::vector<Value>>& oldBlk) {
+        if (!objVars_) return;
+        if (oldBlk.get() == objVars_.get()) return;
+        const bool taskdish = obj_.sourceName.find("taskd") != std::string::npos;
+        const bool shortNow = objVars_->size() < obj_.globalVarCount;
+        const bool shortOld = oldBlk && oldBlk->size() < obj_.globalVarCount;
+        if (!taskdish && !shortNow && !shortOld) return;
+        static std::atomic<int> n{0};
+        if (n.fetch_add(1) > 3000) return;
+        std::cerr << "[vs] " << where << " obj=" << obj_.sourceName
+                  << " gvc=" << obj_.globalVarCount
+                  << " from=" << (oldBlk ? oldBlk->size() : 0) << "@"
+                  << static_cast<const void*>(oldBlk.get())
+                  << " to=" << objVars_->size() << "@"
+                  << static_cast<const void*>(objVars_.get())
+                  << " key=" << thisObjectName_ << " frames=" << frames_.size()
+                  << " parked=" << (parked_ ? 1 : 0) << " vm=" << this << "\n";
+        std::cerr.flush();
+    }
     // Point this VM's instance-variable storage at another VM's (original
     // create_thread semantics: the thread shares the creator's thisObject,
     // so writes to instance vars are visible to other threads/callers).
     void shareObjVars(OriginalVm* other) {
-        objVars_ = other->objVars_;
+        objVars_ = other->ownObjVars_;
         // A shared table IS this VM's object context (create_thread copies
         // share the owner's instance variables); the cross-object entry
         // switch must treat it as "own" or it would always misfire on
         // daemon-process VMs.
         ownObjVars_ = objVars_;
+        // A thread VM must share the block of a VM of the SAME program: the
+        // blocks are per-OBJECT tables, so a mismatch hands the thread another
+        // object's globals (measured: taskd.o's query_task_log ran with the
+        // task template instruction_1.o's 15-slot block).  Name both sides.
+        if (other && (obj_.sourceName.find("taskd") != std::string::npos ||
+                      other->obj_.sourceName.find("taskd") != std::string::npos))
+            std::cerr << "[vmsize] shareObjVars this=" << obj_.sourceName
+                      << " blk=" << (objVars_ ? objVars_->size() : 0)
+                      << " gvc=" << obj_.globalVarCount
+                      << " other=" << other->obj_.sourceName
+                      << " oblk=" << (other->objVars_ ? other->objVars_->size() : 0)
+                      << " ogvc=" << other->obj_.globalVarCount
+                      << " okey=" << other->thisObjectName_
+                      << " tkey=" << thisObjectName_ << "\n";
+        warnIfShortBlock("shareObjVars");
     }
     // Set the object identity this_object() resolves to (clone instances get
     // their "clone:<rel>#<seq>" registry key so cross-object calls and
@@ -2445,12 +2517,12 @@ public:
             std::shared_ptr<std::vector<Value>> savedVars;
             if (objVars_ != ownObjVars_) {
                 savedVars = objVars_;
-                objVars_ = ownObjVars_;
+                { auto _ob = objVars_; objVars_ = ownObjVars_; noteVars("own", _ob); }
                 savedObjVarsForNextCall_ = savedVars;
             }
             Value r = executeFunctionFromOutside(*fn, args);
             if (savedVars && !parked_)
-                objVars_ = savedVars;
+                { auto _ob = objVars_; objVars_ = savedVars; noteVars("saved", _ob); }
             if (name == "create_data" && constructDiagOn()) {
                 std::cerr << "[hprobe] cfn-exit create_data vm=" << this
                           << " obj=" << objName_ << " ret="
@@ -2691,11 +2763,11 @@ public:
         std::shared_ptr<std::vector<Value>> savedVars;
         if (objVars_ != ownObjVars_) {
             savedVars = objVars_;
-            objVars_ = ownObjVars_;
+            { auto _ob = objVars_; objVars_ = ownObjVars_; noteVars("own", _ob); }
             savedObjVarsForNextCall_ = savedVars;
         }
         Value r = executeFunctionFromOutside(*fn, args);
-        if (savedVars && !parked_) objVars_ = savedVars;
+        if (savedVars && !parked_) { auto _ob = objVars_; objVars_ = savedVars; noteVars("saved", _ob); }
         return r;
     }
 
@@ -4552,7 +4624,7 @@ private:
                         pushValue(callArgs[static_cast<size_t>(i)]);
                     if (declared == 0 && callArgs.empty()) {
                         pushValue(Value{});
-                        if (startInlineFunction(fn, true, 0, targetVm->objVarsShared(),
+                        if (startInlineFunction(fn, true, 0, targetVm->ownObjVarsShared(),
                                                 &targetVm->object().strings,
                                                 &targetVm->functionTable())) {
                             efunInlineStarted_ = true;
@@ -4564,7 +4636,7 @@ private:
                         return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                     }
                     bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
-                                                     targetVm->objVarsShared(),
+                                                     targetVm->ownObjVarsShared(),
                                                      &targetVm->object().strings,
                                                      &targetVm->functionTable(),
                                                      pad);
@@ -4645,7 +4717,7 @@ private:
                             pushValue(callArgs[static_cast<size_t>(i)]);
                         if (declared == 0 && callArgs.empty()) {
                             pushValue(Value{});
-                            if (startInlineFunction(fn, true, 0, targetVm->objVarsShared(),
+                            if (startInlineFunction(fn, true, 0, targetVm->ownObjVarsShared(),
                                                     &targetVm->object().strings,
                                                     &targetVm->functionTable())) {
                                 efunInlineStarted_ = true;
@@ -4657,7 +4729,7 @@ private:
                             return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                         }
                         bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
-                                                         targetVm->objVarsShared(),
+                                                         targetVm->ownObjVarsShared(),
                                                          &targetVm->object().strings,
                                                          &targetVm->functionTable(),
                                                          pad);
@@ -6633,16 +6705,29 @@ private:
         // valueType=0 = undefined.)
         if (switchObjVars && !ownedFns_.count(&fn)) {
             const OriginalVm* homeForVars = originalHomeVmOf(&fn);
-            if (homeForVars && homeForVars->objVarsShared().get() != switchObjVars.get())
-                switchObjVars = homeForVars->objVarsShared();
+            if (homeForVars && homeForVars->ownObjVarsShared().get() != switchObjVars.get())
+                switchObjVars = homeForVars->ownObjVarsShared();
         }
         if (!switchObjVars && !ownedFns_.count(&fn)) {
             const OriginalVm* home = originalHomeVmOf(&fn);
             if (home && home != this &&
                 objectRegistry().masterObj != &home->object()) {
-                autoVars = home->objVarsShared();
+                autoVars = home->ownObjVarsShared();
                 autoStrings = &home->object().strings;
                 autoFuncs = &home->functionTable();
+                // LPCVM_AUTOVARS: name the home VM the callee's globals came
+                // from.  A callee whose home VM holds a DIFFERENT program's
+                // block (measured: taskd.o's query_task_log reading the 15-slot
+                // task template instruction_1.o table) makes every global read
+                // undefined, so this prints the exact pair.
+                static const bool avProbe = (std::getenv("LPCVM_AUTOVARS") != nullptr);
+                if (avProbe)
+                    std::cerr << "[autovars] fn=" << fn.name << " caller=" << objName_
+                              << " callerKey=" << thisObjectName_ << " home=" << home->objName()
+                              << " homeKey=" << home->thisObjectName()
+                              << " homeBlk=" << reinterpret_cast<uintptr_t>(autoVars.get())
+                              << " size=" << autoVars->size()
+                              << " homeGvc=" << home->object().globalVarCount << "\n";
             }
         } else if (!switchObjVars && objVars_ != ownObjVars_ &&
                    objectRegistry().masterObj != &object()) {
@@ -6679,7 +6764,7 @@ private:
         // table to the callee's object; restore when the frame pops.
         if (switchObjVars || autoVars) {
             frame.savedObjVars = objVars_;
-            objVars_ = switchObjVars ? std::move(switchObjVars) : std::move(autoVars);
+            { auto _ob = objVars_; objVars_ = switchObjVars ? std::move(switchObjVars) : std::move(autoVars); noteVars("inline", _ob); }
         }
         // ... and the function-index table (the callee's constitution): its
         // internal local-index calls (private do_operate etc.) must resolve in
@@ -6926,7 +7011,7 @@ private:
             meta_ = savedMeta;
             ip_ = savedIp;
             if (!frames_.empty() && frames_.back().fn == &fn) {
-                if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
+                if (frames_.back().savedObjVars) { auto _ob = objVars_; objVars_ = frames_.back().savedObjVars; noteVars("pop-frame", _ob); }
                 if (frames_.back().funcLookupSwitched) funcLookup_ = frames_.back().savedFuncLookup;
                 frames_.pop_back();
             }
@@ -6949,7 +7034,7 @@ private:
                           - padEff;
             if (newSize < 0) newSize = 0;
             stack_.resize(static_cast<size_t>(newSize));
-            if (frames_.back().savedObjVars) objVars_ = frames_.back().savedObjVars;
+            if (frames_.back().savedObjVars) { auto _ob = objVars_; objVars_ = frames_.back().savedObjVars; noteVars("pop-frame", _ob); }
             if (frames_.back().funcLookupSwitched) funcLookup_ = frames_.back().savedFuncLookup;
             frames_.pop_back();
         }
@@ -7742,7 +7827,7 @@ private:
                 size_t retIp = f.retIp;
                 // Cross-object inline call: restore the caller's obj vars and
                 // function-index table (constitution).
-                if (f.savedObjVars) objVars_ = f.savedObjVars;
+                if (f.savedObjVars) { auto _ob = objVars_; objVars_ = f.savedObjVars; noteVars("pop-f", _ob); }
                 if (f.funcLookupSwitched) funcLookup_ = f.savedFuncLookup;
                 frames_.pop_back();
                 stack_.resize(static_cast<size_t>(newSize));
@@ -8528,18 +8613,60 @@ private:
                                         for (auto& kv38 : reg36.vms) {
                                             if (!kv38.second) continue;
                                             const std::string& sn38 = kv38.second->object().sourceName;
-                                            if (sn38.find("taskd") == std::string::npos) continue;
+                                            const std::string& k38 = kv38.first;
+                                            // Registry entries for taskd AND for the task
+                                            // template that shares its block: the entry key,
+                                            // its program and its block identity must agree,
+                                            // otherwise a cross-object call resolves the
+                                            // callee's globals to another object's table.
+                                            if (sn38.find("taskd") == std::string::npos &&
+                                                k38.find("taskd") == std::string::npos) {
+                                                if (k38.find("instruction_1") == std::string::npos ||
+                                                    k38.rfind("clone:", 0) == 0)
+                                                    continue;
+                                            }
+                                            if (all37.size() > 2500) continue;
                                             auto blk38 = kv38.second->objVarsShared();
                                             size_t maxMap = 0;
                                             for (const Value& gv38 : *blk38)
                                                 if (gv38.index() == 6)
                                                     maxMap = std::max(maxMap, std::get<std::shared_ptr<MappingValue>>(gv38)->size());
-                                            all37 += " [" + kv38.first + " blk=" +
+                                            all37 += " [" + k38 + " blk=" +
                                                      std::to_string(reinterpret_cast<uintptr_t>(blk38.get())) +
                                                      " globals=" + std::to_string(blk38->size()) +
+                                                     " ownBlk=" +
+                                                     std::to_string(reinterpret_cast<uintptr_t>(
+                                                         kv38.second->ownObjVarsShared().get())) +
+                                                     " ownSize=" +
+                                                     std::to_string(kv38.second->ownObjVarsShared()->size()) +
+                                                     " gvc=" + std::to_string(kv38.second->object().globalVarCount) +
+                                                     " src=" + sn38 +
+                                                     " this=" + kv38.second->thisObjectName() +
                                                      " maxMap=" + std::to_string(maxMap) + "]";
                                         }
                                         d += " taskdVms{" + all37 + " }";
+                                    }
+                                    // WHO holds the 1110 registered templates?  The
+                                    // taskd.o instance above only has a 20-entry mapping,
+                                    // so the registry that query_all_templates() returned
+                                    // must belong to another VM - name it.
+                                    {
+                                        std::string big37;
+                                        for (auto& kv39 : reg36.vms) {
+                                            if (!kv39.second) continue;
+                                            auto blk39 = kv39.second->objVarsShared();
+                                            size_t maxMap39 = 0;
+                                            for (const Value& gv39 : *blk39)
+                                                if (gv39.index() == 6)
+                                                    maxMap39 = std::max(maxMap39, std::get<std::shared_ptr<MappingValue>>(gv39)->size());
+                                            if (maxMap39 < 500) continue;
+                                            if (big37.size() > 700) break;
+                                            big37 += " [" + kv39.first + " globals=" +
+                                                     std::to_string(blk39->size()) + " gvc=" +
+                                                     std::to_string(kv39.second->object().globalVarCount) +
+                                                     " maxMap=" + std::to_string(maxMap39) + "]";
+                                        }
+                                        d += " bigMaps{" + big37 + " }";
                                     }
                                     for (auto& kv37 : reg36.vms) {
                                         if (!kv37.second || kv37.first != "pak:gs/daemons/taskd.o") continue;
@@ -8597,6 +8724,15 @@ private:
                                             }
                                         }).detach();
                                     }
+                                }
+                                {
+                                    std::string chain;
+                                    for (const auto& fr : frames_) {
+                                        std::string fnm = fr.fn ? fr.fn->name : std::string("<ctx>");
+                                        if (!chain.empty()) chain += "<-";
+                                        chain += fnm;
+                                    }
+                                    d += " frames=[" + chain + "]";
                                 }
                                 std::string cur = frames_.empty() || !frames_.back().fn
                                                       ? "<top>" : frames_.back().fn->name;
@@ -10248,7 +10384,7 @@ private:
                             if (declared == 0 && args.empty()) {
                                 pushValue(Value{});
                                 inlineStarted = startInlineFunction(fn, true, 0,
-                                                                    targetVm->objVarsShared(),
+                                                                    targetVm->ownObjVarsShared(),
                                                                     &targetVm->object().strings,
                                                                     std::getenv("LPCVM_NO_CONST")
                                                                         ? nullptr
@@ -10256,7 +10392,7 @@ private:
                                                                     pad);
                             } else {
                                 inlineStarted = startInlineFunction(fn, false, static_cast<int>(args.size()),
-                                                                    targetVm->objVarsShared(),
+                                                                    targetVm->ownObjVarsShared(),
                                                                     &targetVm->object().strings,
                                                                     std::getenv("LPCVM_NO_CONST")
                                                                         ? nullptr
@@ -10775,7 +10911,7 @@ private:
                         if (!ownedFns_.count(fn)) {
                             fnHome = originalHomeVmOf(fn);
                             if (fnHome && fnHome != this) {
-                                homeVars = fnHome->objVarsShared();
+                                homeVars = fnHome->ownObjVarsShared();
                                 homeStrings = &fnHome->object().strings;
                                 homeFuncs = &fnHome->functionTable();
                             }
@@ -10991,7 +11127,7 @@ private:
                             const std::vector<std::string>* hs = nullptr;
                             const std::map<int, const OriginalFunction*>* hf = nullptr;
                             if (h && h != this) {
-                                hv = h->objVarsShared();
+                                hv = h->ownObjVarsShared();
                                 hs = &h->object().strings;
                                 hf = &h->functionTable();
                             }
@@ -12577,7 +12713,7 @@ private:
                     if (!catches_.empty() && catches_.back().frameCount >= frames_.size())
                         catches_.pop_back();
                     const Frame& fr = frames_.back();
-                    if (fr.savedObjVars) objVars_ = fr.savedObjVars;
+                    if (fr.savedObjVars) { auto _ob = objVars_; objVars_ = fr.savedObjVars; noteVars("pop-fr", _ob); }
                     if (fr.funcLookupSwitched) funcLookup_ = fr.savedFuncLookup;
                     code_ = fr.retCode;
                     meta_ = fr.retMeta;
@@ -12630,7 +12766,7 @@ private:
                         if (!catches_.empty() && catches_.back().frameCount >= frames_.size())
                             catches_.pop_back();
                         const Frame& fr = frames_.back();
-                        if (fr.savedObjVars) objVars_ = fr.savedObjVars;
+                        if (fr.savedObjVars) { auto _ob = objVars_; objVars_ = fr.savedObjVars; noteVars("pop-fr", _ob); }
                         if (fr.funcLookupSwitched) funcLookup_ = fr.savedFuncLookup;
                         code_ = fr.retCode;
                         meta_ = fr.retMeta;
@@ -14569,7 +14705,7 @@ const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {
             if (!kv.second || !kv.second->ownsFunction(fn)) continue;
             if (!hit) { hit = kv.second.get(); bestInit = -1; }
             int inited = 0;
-            auto blk = kv.second->objVarsShared();
+            auto blk = kv.second->ownObjVarsShared();
             for (const Value& gv : *blk) {
                 if (gv.index() != 0 && ++inited > 32) break;
             }
@@ -15749,7 +15885,7 @@ void drainPendingOriginalThreads(const std::string& searchRoot) {
                     std::lock_guard<std::recursive_mutex> rl(registryMutex());
                     for (auto& kv : reg.vms) {
                         if (kv.second && &kv.second->object() == copy.obj) {
-                            vm.adoptObjVars(kv.second->objVarsShared());
+                            vm.adoptObjVars(kv.second->ownObjVarsShared());
                             sharedVars = true;
                             break;
                         }
