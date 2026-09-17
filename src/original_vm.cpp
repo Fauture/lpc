@@ -4811,48 +4811,6 @@ private:
                 }
                 return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
             }
-            // mapping_array(array, func) -> apply func to EVERY element and return
-            // the array of results (original: the mapping_array efun, index 81).
-            //
-            // Implemented HERE, on this VM, because the builtin fallback in
-            // builtins.cpp ignored func and returned the input array unchanged,
-            // and routing the closure through the scheduler (applyClosureOnOwner
-            // -> execOnMain) stalled the boot before the 8162 listener came up.
-            // Consequence of the identity version: scand::query_objects ends with
-            //     items = mapping_array(obs_arr, (: find_basic_object_by_import_name :));
-            // so callers received import-name STRINGS where objects are required:
-            // instruction_1::query_task_weapon's is_object(basic) test failed and
-            // the newbie S11 drama answered "奇怪，怎么找不到了呢？我再找找，你过会儿再来。"
-            // instead of handing over the weapon (the weapon objects themselves
-            // exist - the shop sells them and they can be equipped, because that
-            // path (dealer.list) and the armour path (query_task_equips ->
-            // find_basic_object_by_import_name by name) never touch this efun).
-            if (nm == "mapping_array" && args.size() >= 2 && args[0].index() == 5) {
-                auto srcArr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-                auto outArr = std::make_shared<ArrayValue>();
-                if (args[1].index() != 8) {
-                    // No callable: the original raises; keep the input so a
-                    // non-closure argument cannot turn into an empty array.
-                    outArr->items = srcArr->items;
-                    return outArr;
-                }
-                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
-                const OriginalFunction* fn = cl->func;
-                if (!fn && cl->funcIndex >= 0) {
-                    auto fit = funcsByIndex_.find(cl->funcIndex);
-                    if (fit != funcsByIndex_.end()) fn = fit->second;
-                    else fn = findMasterFunction(cl->funcIndex);
-                }
-                if (!fn) fn = findFunctionAny(cl->functionName);
-                if (!fn) return callEfunWithArgs(efunIndex, args);
-                outArr->items.reserve(srcArr->items.size());
-                for (const Value& item : srcArr->items) {
-                    std::vector<Value> all = cl->boundArgs;
-                    all.push_back(item);
-                    outArr->items.push_back(executeFunctionFromOutside(*fn, all));
-                }
-                return outArr;
-            }
             if (nm == "is_clone" && args.empty()) {
                 // vm_f_is_clone (0x80f7900) with no argument inspects the
                 // CURRENT object (vm_currentContext->thisObject) and returns
