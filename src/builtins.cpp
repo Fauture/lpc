@@ -5628,11 +5628,26 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() < 2 || args[0].index() != 5) return make_array();
         auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
         auto out = std::make_shared<ArrayValue>();
-        // NOTE: applying the closure via applyClosureOnOwner from the builtin
-        // path can crash when the closure's owner VM is mid-load; keep a safe
-        // fallback that returns the input array (mapping_array is used for
-        // trivial transforms like trim; callers tolerate the identity).
-        out->items = src->items;
+        if (args[1].index() != 8) {
+            // No callable: the original errors out; keep the input (callers such
+            // as scand::query_objects tolerate it only when they pass a closure,
+            // so this is the degenerate case).
+            out->items = src->items;
+            return out;
+        }
+        // Apply the closure ELEMENT BY ELEMENT.  The previous stub ignored the
+        // function and returned the input array, which handed raw import-name
+        // STRINGS to callers that require objects: scand::query_objects ends
+        // with
+        //     items = mapping_array(obs_arr, (: find_basic_object_by_import_name :));
+        // so instruction_1::query_task_weapon's is_object(basic) test failed and
+        // the newbie S11 drama answered "奇怪，怎么找不到了呢？我再找找，你过会儿再来。"
+        // instead of handing over the weapon (while the shop, which uses
+        // dealer.list, kept working - the objects themselves were never
+        // missing).
+        out->items.reserve(src->items.size());
+        for (const Value& item : src->items)
+            out->items.push_back(applyClosureOnOwner(args[1], std::vector<Value>{item}));
         return out;
     }
     if (name == "similar_keys") {
