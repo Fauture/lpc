@@ -1,0 +1,117 @@
+### V. 「背包不显示」+「商店没有物品」——两个根因（**已修复，服务端已端到端验证**）
+
+§5.Q 里"背包/商店怀疑与任务同根"的猜测**只对了一半**：商店确实是同一条跨对象链，
+但真正让客户端看到空背包/空商店的是另外两个独立缺陷。
+
+#### V.1 背包：`0x5103` 的物品数量字段一直是 0
+
+`buildmsgd_v37.c:5781 build_inventory()`：
+
+```lpc
+buf = make16_0_buf;                       // 2 字节数量占位
+... buf += (make8(i) + build_item(item)); // 逐个物品
+set_bits(&buf, 0, 16, ret);               // 把数量写回前 2 字节
+```
+
+我们实际发出的包（`_bagtask_probe.py`，112 字节）开头是 `0000 6500 …`：
+**数量字段是 0**，后面挂着完整的物品条目 —— 客户端按 count=0 渲染，背包就是空的；
+换位/使用物品走的是另一条"单格更新"包，所以物品又会冒出来，与用户描述完全一致。
+
+两个缺陷：
+
+1. `OriginalVm::callEfun` 对每个实参取 `pop().value`。左值实参 `&buf` 是 REF 栈项，
+   `.value` 是 **undefined**（这正是 §5.Q 里 `popArgs` 注释写过的现象），
+   于是 `set_bits` 拿到的是 undefined，写回自然失败。
+2. `set_bits` 只实现了"整数位运算"形式，**没有 buffer 写回**形式。
+   原版 `vm_f_set_bits` 的语义是 `set_bits(&buffer, bitno, nbits, value)`：把字段按
+   **MSB 优先（网络序）** 写进 buffer 原地。
+
+修复（`src/original_vm.cpp` + `src/builtins.cpp`）：
+
+- `callEfun` 对 `isRef` 的实参改用 `deref(it)`（容器是 shared_ptr 语义，原地写能回到调用方变量）；
+- `set_bits` 增加 buffer 分支（原地按位写、返回该 buffer），`get_bits` 同样支持 buffer。
+
+验证：`0x5103` 首字节由 `0000 6500 …` 变成 **`0001 6500 …`**（count=1，与包内 1 个物品条目一致），
+首次登录与重登一致。
+
+#### V.2 商店：缺省实参没有生效 → 商品 `goods_amount` 是 undefined
+
+`dealer_v37.c:680 pad_goods_buffer()` 的过滤器是：
+
+```lpc
+if ((!is_object(ob = goods[items[i]][1])) || (!ob->query_temp("goods_amount"))) items[i] = 0;
+items -= ({ 0 });
+```
+
+所以只要有一样商品的 `goods_amount` 取不到，它就被丢掉；**全部丢掉 → 客户端看到空商店**。
+新增探针把注册表里各商店 VM 的 `goods` 映射和"商品对象的 goods_amount"打出来：
+
+```
+# 修复前（mv52/mv53）
+shopItems{ [clone:…/yaodian-laoban.o#5257  item=…/medicine/basic.o#5269 stock=12 goods_amount=(undefined)]
+           [clone:…/buzhuang-laoban.o#4994 item=…/belt/basic.o#5017     stock=23 goods_amount=(undefined)]
+           [clone:…/wuqidian-laoban.o#5019 item=…/weapon/basic.o#5059   stock=40 goods_amount=(undefined)] }
+[ga] set_temp obj=…/medicine/basic.o this=…medicine/basic.o#5269 own=1 blk=7 arg1=(undefined)
+```
+
+即货架**建好了**（12/23/40 件，对象都在），但每件商品的 `goods_amount` 是 undefined。
+`add_goods`（`dealer.o` 索引 39）末尾就是 `obj->set_temp("goods_amount", amount);`，
+而 `amount` 的缺省值 **32767 写在原型上**：
+
+```lpc
+// dealer_v37.c:45（原型）
+mixed add_goods(mixed the_goods = 0, int amount = 32767, int cost_type = 1, int renew = 0, int max = 32767);
+// 定义里没有缺省值 —— 由被调函数的 inline 缺省块补齐
+mixed add_goods(mixed the_goods, int amount, int cost_type, int renew, int max) { ... }
+```
+
+我们的 `check_args_num`（操作码 15）**把操作数当成了实参个数**：
+
+```cpp
+int maxArgNo = skipAll;                       // ← 错
+if (maxArgNo < declared) maxArgNo = declared; // → add_goods 得到 6
+if (passed >= maxArgNo) ip_ += skipAll;
+```
+
+新探针 `LPCVM_ARGDBG=add_goods` 实测（mv54）：
+
+```
+[argdbg] check_args_num fn=add_goods passed=1 declared=5 operand=6 padArgs=4
+         next8= 0 32767 1 0 32767 …        ← 5 个缺省值 push（含 the_goods=0）
+[argdbg] resort_stack  fn=add_goods defaultPushed=5 argNum=1 maxArgNo=6
+```
+
+操作数 **6 = 缺省块长度**（5 个 push + 1 个 resort），不是实参个数。
+把 6 当 maxArgNo 使 `missing = maxArgNo - argNum` 多算 1，`resort_stack` 于是多留一个缺省值，
+**所有带缺省值的形参整体错位一格** → `amount` 变成 undefined（多出来的那个槽是 undefined pad）。
+
+修复（`src/original_vm.cpp`）：
+
+- 操作码 15：`maxArgNo = fn->argCount`（Vm_Fun_T 的 maxArgNo，来自 .o 头），
+  只有"所有声明形参都传了"才 `ip_ += 操作数`（操作数 = 缺省块长度）；
+- 帧清理：缺省块 `resort_stack` 跑过之后，我们预填的 zero pad 仍留在重排后的形参**下面**，
+  所以 `padEff` 不再按 `usedArgs == passedArgs` 判断，直接减 `padArgs`（否则会漏到调用方的栈帧里）。
+
+验证（mv55）：
+
+```
+[argdbg] resort_stack fn=add_goods defaultPushed=5 argNum=1 maxArgNo=5      ← 正确
+[ga] set_temp … arg1=32767  ×1474（修复前：32767 只有 31 次，undefined 1444 次；现在 0 次 undefined）
+shopItems{ [yaodian-laoban.o#5257  stock=12 goods_amount=32767]
+           [buzhuang-laoban.o#4994 stock=23 goods_amount=32767]
+           [wuqidian-laoban.o#5019 stock=40 goods_amount=32767] }
+```
+
+⇒ 药店/布庄（防具）/武器店的商品都能通过 `pad_goods_buffer` 的过滤，`0x2173`（cmd 8563）
+商品列表不再为空（**待真实客户端复测**）。杂货铺同理。
+
+#### V.3 本轮新增探针（都在 §6 里）
+
+| 开关 | 作用 |
+| --- | --- |
+| `LPCVM_AUTOVARS=1` | 内联帧选中的 home VM 及其变量块（`[autovars]`） |
+| `[vs]`（无开关，跟随 `[vmsize]` 采样） | 每次 `objVars_` 交换的 from/to |
+| `LPCVM_ARGDBG=<函数名>` | 操作码 15/71 的 passed/declared/操作数/缺省块中的值 |
+| `_probe_on\LPCVM_GA`（运行时） | 所有触碰 `goods_amount` 的 set_temp/query_temp |
+| `_probe_on\LPCVM_ISFN` | `is_type` 探针；其中新增 `taskdVms{} / shopVms{} / shopItems{}` 注册表转储 |
+

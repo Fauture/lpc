@@ -5638,7 +5638,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "get_bits") {
         // vm_f_get_bits (0x8109910): get_bits(val, bitno, nbits) -> the n-bit
-        // field starting at bitno (0 = LSB).
+        // field starting at bitno.  On a BUFFER the field is read MSB-first (the
+        // protocol's network order); on an int it is the LSB-first scalar form.
+        if (!args.empty() && args[0].index() == 10) {
+            auto buf = std::get<std::shared_ptr<BufferValue>>(args[0]);
+            int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+            int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
+            if (!buf || bitno < 0 || nbits <= 0 ||
+                bitno + nbits > static_cast<int>(buf->data.size()) * 8)
+                return make_int(0);
+            int64_t out = 0;
+            for (int b = 0; b < nbits; ++b) {
+                size_t bit = static_cast<size_t>(bitno + b);
+                unsigned char byte = static_cast<unsigned char>(buf->data[bit >> 3]);
+                int bitInByte = 7 - static_cast<int>(bit & 7);
+                out = (out << 1) | ((byte >> bitInByte) & 1);
+            }
+            return make_int(out);
+        }
         int64_t v = args.empty() ? 0 : as_int(args[0]);
         int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
         int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
@@ -5646,6 +5663,32 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int((v >> bitno) & ((1LL << nbits) - 1));
     }
     if (name == "set_bits") {
+        // vm_f_set_bits: set_bits(&buffer, bitno, nbits, value) writes the field
+        // INTO the buffer (MSB-first, the client's network order) and is how
+        // buildmsgd stamps every message's element count -
+        // build_inventory: `buf = make16_0_buf; ... set_bits(&buf, 0, 16, ret)`
+        // (buildmsgd_v37.c:5817).  The scalar-int form below stays for callers
+        // that use it arithmetically.
+        if (!args.empty() && args[0].index() == 10) {
+            auto buf = std::get<std::shared_ptr<BufferValue>>(args[0]);
+            int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+            int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
+            int64_t field = args.size() >= 4 ? as_int(args[3]) : 0;
+            if (buf && bitno >= 0 && nbits > 0 &&
+                bitno + nbits <= static_cast<int>(buf->data.size()) * 8) {
+                for (int b = 0; b < nbits; ++b) {
+                    size_t bit = static_cast<size_t>(bitno + b);
+                    size_t byteIdx = bit >> 3;
+                    int bitInByte = 7 - static_cast<int>(bit & 7);
+                    bool on = ((field >> (nbits - 1 - b)) & 1) != 0;
+                    unsigned char cur = static_cast<unsigned char>(buf->data[byteIdx]);
+                    if (on) cur = static_cast<unsigned char>(cur | (1u << bitInByte));
+                    else cur = static_cast<unsigned char>(cur & ~(1u << bitInByte));
+                    buf->data[byteIdx] = static_cast<char>(cur);
+                }
+            }
+            return args[0];   // the mutated buffer (the original returns its pointer)
+        }
         int64_t v = args.empty() ? 0 : as_int(args[0]);
         int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
         int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;

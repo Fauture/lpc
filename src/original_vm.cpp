@@ -2447,6 +2447,20 @@ public:
                 std::cerr.flush();
             }
         }
+        static const std::atomic<bool>& gaFlag = dynProbeFlag("LPCVM_GA");
+        if (gaFlag.load(std::memory_order_relaxed) &&
+            (name == "set_temp" || name == "lite_set_temp" || name == "query_temp" ||
+             name == "lite_query_temp" || name == "set" || name == "lite_set") &&
+            !args.empty() && args[0].index() == 4 &&
+            std::get<SharedString>(args[0]).str().find("goods_amount") != std::string::npos) {
+            std::string a1s = args.size() >= 2 ? to_string(args[1], false).substr(0, 24) : "-";
+            std::cerr << "[ga] " << name << " obj=" << objName_
+                      << " this=" << thisObjectName_ << " vm=" << this
+                      << " own=" << (objVars_ == ownObjVars_ ? 1 : 0)
+                      << " blk=" << (objVars_ ? objVars_->size() : 0)
+                      << " arg1=" << a1s << "\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace() && (name == "register_entry" || name == "query_entry"))
             std::cerr << "[reg] callFunctionByName vm=" << this << " obj=" << objName_
                       << " fn=" << name << " args=" << args.size() << " a0=["
@@ -3841,7 +3855,20 @@ private:
     // Call an efun by index, popping its arguments from the stack.
     Value callEfun(int efunIndex, int argCount) {
         std::vector<Value> args;
-        for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
+        // An lvalue argument (`&buf` in set_bits(&buf, 0, 16, count))
+        // arrives as a REF StackItem whose .value is UNDEFINED; taking it
+        // verbatim handed the efun `undefined` instead of the live
+        // container.  build_inventory's set_bits(&buf, 0, 16, ret) then
+        // wrote nothing, so the 0x5103 bag packet kept its 0x0000 count
+        // placeholder while every item entry followed - the client renders
+        // an EMPTY bag from count=0 (an item swap sends per-slot updates,
+        // which is why the items appeared only after moving one).  Deref to
+        // the LIVE value: containers are shared_ptr-backed, so the callee's
+        // in-place writes reach the caller's variable.
+        for (int i = 0; i < argCount && !stack_.empty(); ++i) {
+            StackItem it = pop();
+            args.push_back(it.isRef ? deref(it) : it.value);
+        }
         Value r = callEfunWithArgs(efunIndex, args);
         return r;
     }
@@ -7029,7 +7056,13 @@ private:
             // parameters) and updates argNum to passed + defaults.
             int liveBp = frames_.back().bp;
             int usedArgs = frames_.back().argNum;
-            int padEff = (usedArgs == frames_.back().passedArgs) ? frames_.back().padArgs : 0;
+            // The zero pads pushed for omitted declared parameters must go
+            // away in BOTH cases: without a default block they ARE the
+            // parameters (removed here), and when the default block's
+            // resort_stack ran they were left BELOW the rearranged parameters
+            // (its truncation only drops the real args), so they would leak
+            // into the caller's stack frame.
+            int padEff = frames_.back().padArgs;
             int newSize = liveBp - usedArgs + 1 - (frames_.back().zeroArgPlaceholder ? 1 : 0)
                           - padEff;
             if (newSize < 0) newSize = 0;
@@ -7818,7 +7851,9 @@ private:
                 // moves the frame base and updates argNum.
                 int liveBp = f.bp;
                 int usedArgs = f.argNum;
-                int padEff = (usedArgs == f.passedArgs) ? f.padArgs : 0;
+                // See the note in executeFunctionFromOutside: the pads are stale
+            // once the default block's resort_stack rearranged the parameters.
+            int padEff = f.padArgs;
                 int newSize = liveBp - usedArgs + 1 - (f.zeroArgPlaceholder ? 1 : 0) - padEff;
                 if (newSize < 0) newSize = 0;
                 // Grab the caller context before popping the frame.
@@ -8682,6 +8717,151 @@ private:
                                         }
                                         d += " taskdMaps{" + maps37 + " }";
                                         break;
+                                    }
+                                    // SHOP STOCK: /gs/feature/npc/dealer_v37.c keeps the
+                                    // stock in the GLOBAL `goods` mapping (dealer.c:36) and
+                                    // fills it in create() through add_goods(name).  Dump it
+                                    // for every shop NPC clone: an empty mapping means the
+                                    // server never built the stock ("商店没有物品" is then not
+                                    // a client problem), and a populated one with a first
+                                    // entry whose elements are t4(base)/t7(object)/ints proves
+                                    // add_goods ran.
+                                    {
+                                        std::string sh;
+                                        int shown40 = 0;
+                                        for (auto& kv40 : reg36.vms) {
+                                            if (!kv40.second || shown40 >= 6) continue;
+                                            const std::string& k40 = kv40.first;
+                                            if (k40.find("yaodian") == std::string::npos &&
+                                                k40.find("zahuopu") == std::string::npos &&
+                                                k40.find("wuqidian") == std::string::npos &&
+                                                k40.find("buzhuang") == std::string::npos &&
+                                                k40.find("qianzhuang") == std::string::npos &&
+                                                k40.find("zhengdaodian") == std::string::npos)
+                                                continue;
+                                            ++shown40;
+                                            auto blk40 = kv40.second->ownObjVarsShared();
+                                            std::string ginfo;
+                                            for (size_t gi = 0; gi < blk40->size(); ++gi) {
+                                                const Value& gv40 = (*blk40)[gi];
+                                                if (gv40.index() != 6) continue;
+                                                auto gm40 = std::get<std::shared_ptr<MappingValue>>(gv40);
+                                                if (gm40->size() < 2) continue;
+                                                std::string first40;
+                                                for (auto& it40 : gm40->items()) {
+                                                    first40 = " k=" +
+                                                              to_string(it40.first, false).substr(0, 30) +
+                                                              " vT=" + std::to_string(it40.second.index());
+                                                    if (it40.second.index() == 5) {
+                                                        auto arr40 = std::get<std::shared_ptr<ArrayValue>>(it40.second);
+                                                        first40 += " n=" + std::to_string(arr40->items.size());
+                                                        for (size_t ai = 0;
+                                                             ai < arr40->items.size() && ai < 3; ++ai)
+                                                            first40 += " e" + std::to_string(ai) + "=t" +
+                                                                       std::to_string(arr40->items[ai].index());
+                                                    }
+                                                    break;
+                                                }
+                                                ginfo += " idx" + std::to_string(gi) + "=" +
+                                                         std::to_string(gm40->size()) + first40;
+                                            }
+                                            sh += " [" + k40 + " globals=" +
+                                                  std::to_string(blk40->size()) + ginfo + "]";
+                                        }
+                                        d += " shopVms{" + sh + " }";
+                                    }
+                                    // SHOP ITEM CHECK: for the first stock entry of each
+                                    // shop resolve the ITEM object and read its temp
+                                    // `goods_amount` - the value pad_goods_buffer filters on.
+                                    {
+                                        std::string si;
+                                        int shown41 = 0;
+                                        for (auto& kv41 : reg36.vms) {
+                                            if (!kv41.second || shown41 >= 4) continue;
+                                            const std::string& k41 = kv41.first;
+                                            if (k41.find("yaodian") == std::string::npos &&
+                                                k41.find("zahuopu") == std::string::npos &&
+                                                k41.find("wuqidian") == std::string::npos &&
+                                                k41.find("buzhuang") == std::string::npos)
+                                                continue;
+                                            ++shown41;
+                                            auto blk41 = kv41.second->ownObjVarsShared();
+                                            std::string itemKey;
+                                            size_t bestSz = 0;
+                                            for (const Value& gv41 : *blk41) {
+                                                if (gv41.index() != 6) continue;
+                                                auto gm41 = std::get<std::shared_ptr<MappingValue>>(gv41);
+                                                if (gm41->size() <= bestSz) continue;
+                                                for (auto& it41 : gm41->items()) {
+                                                    if (it41.second.index() != 5) continue;
+                                                    auto arr41 = std::get<std::shared_ptr<ArrayValue>>(it41.second);
+                                                    if (arr41->items.size() < 2) continue;
+                                                    if (arr41->items[1].index() == 7) {
+                                                        itemKey = std::get<std::shared_ptr<ObjectValue>>(
+                                                                      arr41->items[1])->programName;
+                                                        bestSz = gm41->size();
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if (itemKey.empty()) {
+                                                si += " [" + k41 + " noItemObject]";
+                                                continue;
+                                            }
+                                            std::shared_ptr<OriginalVm> ivm;
+                                            for (auto& kv42 : reg36.vms) {
+                                                if (!kv42.second) continue;
+                                                if (kv42.first == itemKey ||
+                                                    (kv42.first.size() >= itemKey.size() &&
+                                                     kv42.first.compare(kv42.first.size() - itemKey.size(),
+                                                                        itemKey.size(), itemKey) == 0)) {
+                                                    ivm = kv42.second;
+                                                    break;
+                                                }
+                                            }
+                                            if (!ivm) {
+                                                si += " [" + k41 + " item=" + itemKey + " VM-MISSING]";
+                                                continue;
+                                            }
+                                            auto scanGA = [](const std::shared_ptr<std::vector<Value>>& blk,
+                                                             std::string& out) {
+                                                for (const Value& gv42 : *blk) {
+                                                    if (gv42.index() != 6) continue;
+                                                    auto m42 = std::get<std::shared_ptr<MappingValue>>(gv42);
+                                                    const Value* hv = m42->find(make_string("goods_amount"));
+                                                    if (hv) { out = to_string(*hv, false).substr(0, 24); return; }
+                                                    for (auto& it42 : m42->items()) {
+                                                        if (it42.second.index() != 6) continue;
+                                                        auto inner = std::get<std::shared_ptr<MappingValue>>(it42.second);
+                                                        const Value* hv2 = inner->find(make_string("goods_amount"));
+                                                        if (hv2) { out = to_string(*hv2, false).substr(0, 24); return; }
+                                                    }
+                                                }
+                                            };
+                                            std::string gaOwn = "<key absent>";
+                                            std::string gaAct = "<key absent>";
+                                            scanGA(ivm->ownObjVarsShared(), gaOwn);
+                                            scanGA(ivm->objVarsShared(), gaAct);
+                                            // EVERY VM of the same item program: which one holds the value?
+                                            std::string progName = ivm->object().sourceName;
+                                            std::string holders;
+                                            int hN = 0;
+                                            for (auto& kv43 : reg36.vms) {
+                                                if (!kv43.second || hN >= 4) continue;
+                                                if (kv43.second->object().sourceName != progName) continue;
+                                                std::string g1 = "<absent>", g2 = "<absent>";
+                                                scanGA(kv43.second->ownObjVarsShared(), g1);
+                                                scanGA(kv43.second->objVarsShared(), g2);
+                                                if (g1 == "<absent>" && g2 == "<absent>") continue;
+                                                ++hN;
+                                                holders += " " + kv43.first + " ownGA=" + g1 + " actGA=" + g2;
+                                            }
+                                            si += " [" + k41 + " item=" + itemKey +
+                                                  " stock=" + std::to_string(bestSz) +
+                                                  " ownGA=" + gaOwn + " actGA=" + gaAct +
+                                                  " holders{" + holders + " }]";
+                                        }
+                                        d += " shopItems{" + si + " }";
                                     }
                                 }
                                 // on a separate thread (the scheduler is the only
@@ -12463,10 +12643,36 @@ private:
                 // 1-arg call MUST run the default block that sets up the
                 // command-registration mapping.
                 int skipAll = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                {
+                    static const char* argDbg = std::getenv("LPCVM_ARGDBG");
+                    if (argDbg && !frames_.empty() && frames_.back().fn &&
+                        frames_.back().fn->name == argDbg)
+                        std::cerr << "[argdbg] check_args_num fn=" << frames_.back().fn->name
+                                  << " passed=" << frames_.back().argNum
+                                  << " declared=" << frames_.back().fn->argCount
+                                  << " operand=" << skipAll
+                                  << " padArgs=" << frames_.back().padArgs
+                                  << " stack=" << stack_.size()
+                                  << " bp=" << frames_.back().bp
+                                  << " locals=" << frames_.back().fn->localCount
+                                  << " next8=";
+                    if (argDbg && !frames_.empty() && frames_.back().fn &&
+                        frames_.back().fn->name == argDbg) {
+                        for (size_t k = ip_; k < ip_ + 8 && k < code_->size(); ++k)
+                            std::cerr << " " << static_cast<int>((*code_)[k].a);
+                        std::cerr << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 int passed = frames_.empty() ? 0 : frames_.back().argNum;
                 int declared = frames_.empty() || !frames_.back().fn ? 0 : frames_.back().fn->argCount;
-                int maxArgNo = skipAll;
-                if (maxArgNo < declared) maxArgNo = declared;
+                // maxArgNo is the FUNCTION's declared maximum (Vm_Fun_T
+                // maxArgNo = fn->argCount).  The operand is the length of the
+                // inline default-value block in INSTRUCTIONS (measured on
+                // dealer.add_goods: 5 default pushes + resort = 6), so using it
+                // as an argument count made `missing = maxArgNo - argNum` one
+                // too large and shifted every defaulted parameter by one slot.
+                int maxArgNo = declared;
                 if (!frames_.empty()) frames_.back().maxArgNo = maxArgNo;
                 if (vmEnvTrace() && frames_.back().fn &&
                     frames_.back().fn->name == "read_etc_file")
@@ -12474,7 +12680,7 @@ private:
                               << " declared=" << declared << " skipAll=" << skipAll
                               << " stack=" << stack_.size() << " bp=" << frames_.back().bp << "\n";
                 // If every declared argument was passed, skip the default-code block.
-                if (passed >= maxArgNo) ip_ += skipAll;
+                if (passed >= maxArgNo) ip_ += skipAll;   // skipAll = block length
                 // otherwise fall through and let the inline defaults + resort_stack run
                 break;
             }
@@ -12500,6 +12706,13 @@ private:
                     // wrote strlen(para)=1 and (buffer)1 = 00 00 00 01 as the
                     // drama header, so the client read list_count = 0 and played
                     // NO story at all (no drama, no story actors).
+                    static const char* argDbg2 = std::getenv("LPCVM_ARGDBG");
+                    if (argDbg2 && f.fn && f.fn->name == argDbg2)
+                        std::cerr << "[argdbg] resort_stack fn=" << f.fn->name
+                                  << " defaultPushed=" << defaultPushed
+                                  << " argNum=" << f.argNum << " maxArgNo=" << f.maxArgNo
+                                  << " bp=" << f.bp << " stack=" << stack_.size() << "\n";
+                    if (argDbg2 && f.fn && f.fn->name == argDbg2) std::cerr.flush();
                     int keep = defaultPushed;
                     if (f.maxArgNo > 0) {
                         int missing = f.maxArgNo - f.argNum;
