@@ -1,8 +1,33 @@
-efun: mapping_array (index 81, original vm_addMappingArray / vm_addMappingArray 0x809effc)
-status: 语义未用 IDA 核对（本会话无 IDA/MCP）。
-current implementation: original_vm.cpp callEfunWithArgs 内联实现 —— 对数组每个元素调用闭包，
-  返回结果数组；非闭包入参原样返回。
-evidence used: 调用点语义（scand::query_objects 用 (: find_basic_object_by_import_name :)
-  把 import_name 数组转成对象数组；importd 用 call_efun(mapping_array, nargs=2)）。
-to verify with IDA: 参数个数/类型检查、非函数入参的行为、返回数组是否保留空洞/顺序、
-  以及是否像 filter_array 一样跳过 0 结果。
+efun: mapping_array (index 81, original call_efun 分发表 / 0x809effc 附近)
+status: 语义未用 IDA 核对（本会话没有 IDA/MCP）；已按调用点证据实现过两次，均因启动期问题回退。
+
+1) 语义（按调用点确定，无反例）
+   mapping_array(array, func) 必须对每个元素调用 func，并返回结果数组。
+   证据 A：tools/importd_disasm.txt 的 importd::create_data
+       [ 9] new_func(141, capture=0)
+       [12] call_efun(explode, nargs=2)        ; explode(str, "\n") 得到每行
+       [13] call_efun(mapping_array, nargs=2)  ; 把每行字符串过一遍 func#141
+   证据 B：gs/daemons/scand.c::query_objects 结尾
+       items = mapping_array(obs_arr, (: find_basic_object_by_import_name :));
+       调用方要求元素是"对象"（instruction_1::query_task_weapon 里 is_object(basic)）。
+   现状错误：builtins.cpp 里是"忽略 func、原样返回入参数组"的近似实现 -> scand 那条链返回
+   import_name 字符串 -> 新手上任务 S11"张老板发武器"走进
+       me->prompt_by(npc, "奇怪，怎么找不到了呢？我再找找，你过会儿再来。");
+   对照：S6 卜老板发防具 = query_task_equips 写死名字 + find_basic_object_by_import_name 直查，
+        商店 = dealer.list，两条都不经过 mapping_array，所以只有武器这一步坏。
+
+2) 两次尝试与失败记录（都已 revert）
+   a. builtins + applyClosureOnOwner（经调度器 execOnMain 嵌套执行）：启动卡死 >20 分钟，
+      gs 内存停在 313MB 不动。
+   b. VM 内 callEfunWithArgs 内联执行（executeFunctionFromOutside）：启动栈溢出
+      [crash] code=0xc00000fd；主线程栈 32MB -> 256MB 仍然溢出。崩溃时 LPC 环：
+      get_config safe_load_object safe_load_object create register_post_init safe_load_object …
+   → 即：mapping_array 一旦真的执行闭包，启动期的装载链（路径 -> safe_load_object -> create ->
+     register_post_init -> …）就会深到撑爆栈；我们目前是"靠 mapping_array 不干活"绕开了这条链，
+     而原版靠的是装载器自身的 in-progress 语义 + 每层调用极小的 C 栈。
+
+3) 待 IDA 核对（必须先做，再动代码）
+   - vm_f_mapping_array（efun 81）：参数检查、非函数入参行为、返回数组是否保序/保留空洞。
+   - vm_f_load_object / safe_load_object：对象"正在装载中"时是返回该对象还是再次进入 create/post_init；
+     以及 load_all_path/create_data 的目录/文件去重保护（避免同一批路径被反复映射装载）。
+   - 判定标准：改完 mapping_array 后，服务端仍能在 20 分钟内启动完成，且 S11 能真机拿到武器。
