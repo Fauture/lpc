@@ -1,0 +1,8 @@
+efun: mapping_array (index 81, original vm_addMappingArray / vm_addMappingArray 0x809effc)
+status: 语义未用 IDA 核对（本会话无 IDA/MCP）。
+current implementation: original_vm.cpp callEfunWithArgs 内联实现 —— 对数组每个元素调用闭包，
+  返回结果数组；非闭包入参原样返回。
+evidence used: 调用点语义（scand::query_objects 用 (: find_basic_object_by_import_name :)
+  把 import_name 数组转成对象数组；importd 用 call_efun(mapping_array, nargs=2)）。
+to verify with IDA: 参数个数/类型检查、非函数入参的行为、返回数组是否保留空洞/顺序、
+  以及是否像 filter_array 一样跳过 0 结果。
