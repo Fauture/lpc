@@ -2835,6 +2835,26 @@ public:
         return executeFunctionOnStack(*it->second);
     }
 
+    // [statue] The map guardian's 守护时长 is displayed as
+    // `time() - npc->query("last_statue_time")` (statued.c::init_menu_content),
+    // and the ONLY writer of that field in the whole game is
+    // statued::do_set_statue_time(), called from statue_template.c:144 when a
+    // party TAKES the statue.  A fresh world (cleared DB) has no value at all,
+    // so the client showed 20713天3小时26分钟 - the entire Unix epoch.  The
+    // intended semantics are "the guardian's timer starts when the statue
+    // appears", so seed it at construction; every later takeover overwrites it
+    // through do_set_statue_time().
+    void seedStatueGuardianTime() {
+        if (obj_.sourceName.find("npc/misc/statue") == std::string::npos) return;
+        Value cur = callFunctionByName("query", {make_string("last_statue_time")});
+        if (cur.index() != 0 && toInt(cur) != 0) return;
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+        callFunctionByName("set", {make_string("last_statue_time"), make_int(now)});
+        std::cerr << "[statue] seeded last_statue_time=" << now
+                  << " on " << obj_.sourceName << "\n";
+        std::cerr.flush();
+    }
+
     int runInit(const std::vector<Value>& createArgs = {}) {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
         if (std::getenv("LPCVM_LOCK_TRACE"))
@@ -2859,6 +2879,7 @@ public:
                 std::cerr << "[runinit] create obj=" << obj_.sourceName
                           << " t=" << std::this_thread::get_id() << "\n";
             callCreate(createArgs);
+            seedStatueGuardianTime();
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
                                      " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
@@ -2990,6 +3011,7 @@ public:
                 // Construction finished: mark the object initialized in the
                 // registry and wake the load_object caller parked on this event.
                 markObjectInitialized();
+                seedStatueGuardianTime();
                 if (constructDiagOn())
                     std::cerr << "[construct-done] " << objName_ << " event=" << initDoneEvent_ << "\n";
                 scheduler().wakeEventFront(initDoneEvent_);

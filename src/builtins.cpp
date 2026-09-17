@@ -3775,9 +3775,34 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(1);
     }
     if (name == "random_attrib") {
-        // vm_f_random_attrib: random_attrib() -> random integer (used for
-        // item attribute rolls).
-        return make_int(sharedRand31());
+        // vm_f_random_attrib: the game's attribute roll -
+        //   random_attrib(min, nominal, max) -> a random value in [min, max]
+        //   centred on `nominal`.
+        // Callers: god_bookd::random_attrib_value (`random_attrib(arr[0],
+        // arr[1], minimum(arr[2], 80))` for 天书 attributes, where
+        // get_attrib_range() returns the list's min/nominal/max), itemd.c:982 /
+        // :2899 (item attribute rolls), child_bookd/child_equipd, and seald.c
+        // (`random_attrib(0.4 * base, base, 2 * base)` - i.e. 0.4x..2x the base
+        // value peaking at the base value).
+        // The old implementation IGNORED the arguments and returned a raw 31-bit
+        // random number, so every rolled attribute came out as a huge nonsense
+        // number (and the nominal/max bounds were never respected).  Use a
+        // triangular distribution with the mode at `nominal`.
+        auto numOf = [](const Value& v) -> double {
+            return v.index() == 3 ? std::get<double>(v) : static_cast<double>(as_int(v));
+        };
+        double mn = args.size() > 0 ? numOf(args[0]) : 0.0;
+        double md = args.size() > 1 ? numOf(args[1]) : mn;
+        double mx = args.size() > 2 ? numOf(args[2]) : md;
+        if (mx < mn) std::swap(mn, mx);
+        if (md < mn) md = mn;
+        if (md > mx) md = mx;
+        if (mx <= mn) return make_int(static_cast<int64_t>(mn + 0.5));
+        double u = static_cast<double>(sharedRand31() % 1000003u) / 1000003.0;
+        double split = (md - mn) / (mx - mn);
+        double v = (u < split) ? mn + std::sqrt(u * (mx - mn) * (md - mn))
+                               : mx - std::sqrt((1.0 - u) * (mx - mn) * (mx - md));
+        return make_int(static_cast<int64_t>(v + 0.5));
     }
     if (name == "ftell") {
         if (!args.empty()) {
