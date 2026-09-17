@@ -8730,11 +8730,13 @@ private:
                                         std::string sh;
                                         int shown40 = 0;
                                         for (auto& kv40 : reg36.vms) {
-                                            if (!kv40.second || shown40 >= 6) continue;
+                                            if (!kv40.second || shown40 >= 10) continue;
                                             const std::string& k40 = kv40.first;
                                             if (k40.find("yaodian") == std::string::npos &&
+                                                k40.find("zahuodian") == std::string::npos &&
                                                 k40.find("zahuopu") == std::string::npos &&
                                                 k40.find("wuqidian") == std::string::npos &&
+                                                k40.find("budian") == std::string::npos &&
                                                 k40.find("buzhuang") == std::string::npos &&
                                                 k40.find("qianzhuang") == std::string::npos &&
                                                 k40.find("zhengdaodian") == std::string::npos)
@@ -8777,11 +8779,13 @@ private:
                                         std::string si;
                                         int shown41 = 0;
                                         for (auto& kv41 : reg36.vms) {
-                                            if (!kv41.second || shown41 >= 4) continue;
+                                            if (!kv41.second || shown41 >= 8) continue;
                                             const std::string& k41 = kv41.first;
                                             if (k41.find("yaodian") == std::string::npos &&
+                                                k41.find("zahuodian") == std::string::npos &&
                                                 k41.find("zahuopu") == std::string::npos &&
                                                 k41.find("wuqidian") == std::string::npos &&
+                                                k41.find("budian") == std::string::npos &&
                                                 k41.find("buzhuang") == std::string::npos)
                                                 continue;
                                             ++shown41;
