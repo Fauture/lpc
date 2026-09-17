@@ -949,6 +949,13 @@ struct Frame {
     // in this interpreter (the prologue of load_comm_desc does); storing the
     // control separately keeps foreach loops from losing their state.
     std::map<int, std::shared_ptr<LoopCtrl>> loops;
+    // LPC identity (this_object()/object_name()) of the object whose function
+    // this frame runs.  A cross-object inline call executes the callee's
+    // bytecode on the CALLER's VM, so without this the callee saw the caller's
+    // identity (the original driver switches constitution AND this_object on
+    // the same process).  Empty = the VM's own identity.
+    std::string thisNameOverride;
+    const OriginalObject* thisObjOverride = nullptr;
 };
 
 // ---------------------------------------------------------------------------
@@ -2143,6 +2150,18 @@ public:
     // set_client_agent store the REAL object, not the "<this>" placeholder).
     void setThisObjectName(const std::string& n) { thisObjectName_ = n; }
     const std::string& thisObjectName() const { return thisObjectName_; }
+    // LPC-visible identity of the frame that is running right now: the callee's
+    // object for a cross-object inline frame, otherwise this VM's own.
+    const std::string& currentThisName() const {
+        if (!frames_.empty() && !frames_.back().thisNameOverride.empty())
+            return frames_.back().thisNameOverride;
+        return thisObjectName_;
+    }
+    const OriginalObject* currentThisObj() const {
+        if (!frames_.empty() && frames_.back().thisObjOverride)
+            return frames_.back().thisObjOverride;
+        return &obj_;
+    }
     // True while this object's LPC destructor (destruct) runs inside
     // destruct_object(), so a destruct_object(this_object()) issued by the
     // destructor itself cannot recurse.
@@ -4574,7 +4593,7 @@ private:
                 //     segment - which also requires the full path.
                 // The earlier "/" + basename form came from a wrong reading of
                 // handler.c; the original driver returns the virtual path.
-                std::string n = thisObjectName_;
+                std::string n = currentThisName();
                 if (n == "<this>" || n.empty()) n = objName_;
                 if (n.compare(0, 4, "pak:") == 0) n = n.substr(4);
                 else if (n.compare(0, 6, "clone:") == 0) {
@@ -4675,7 +4694,7 @@ private:
                         pushValue(Value{});
                         if (startInlineFunction(fn, true, 0, targetVm->ownObjVarsShared(),
                                                 &targetVm->object().strings,
-                                                &targetVm->functionTable())) {
+                                                &targetVm->functionTable(), 0, targetVm.get())) {
                             efunInlineStarted_ = true;
                             return make_int(0);   // callee's return op pushes the result
                         }
@@ -4688,7 +4707,7 @@ private:
                                                      targetVm->ownObjVarsShared(),
                                                      &targetVm->object().strings,
                                                      &targetVm->functionTable(),
-                                                     pad);
+                                                     pad, targetVm.get());
                     if (inlOk) {
                         efunInlineStarted_ = true;
                         return make_int(0);
@@ -4768,7 +4787,7 @@ private:
                             pushValue(Value{});
                             if (startInlineFunction(fn, true, 0, targetVm->ownObjVarsShared(),
                                                     &targetVm->object().strings,
-                                                    &targetVm->functionTable())) {
+                                                    &targetVm->functionTable(), 0, targetVm.get())) {
                                 efunInlineStarted_ = true;
                                 return make_int(0);   // callee's return op pushes the result
                             }
@@ -4781,7 +4800,7 @@ private:
                                                          targetVm->ownObjVarsShared(),
                                                          &targetVm->object().strings,
                                                          &targetVm->functionTable(),
-                                                         pad);
+                                                         pad, targetVm.get());
                         if (inlOk) {
                             efunInlineStarted_ = true;
                             return make_int(0);
@@ -6676,7 +6695,7 @@ private:
                              std::shared_ptr<std::vector<Value>> switchObjVars = nullptr,
                              const std::vector<std::string>* targetStrings = nullptr,
                              const std::map<int, const OriginalFunction*>* switchFuncs = nullptr,
-                             int padArgs = 0) {
+                             int padArgs = 0, const OriginalVm* identityVm = nullptr) {
         // Only the REAL arguments must be on the stack.  Missing declared
         // parameters are filled by the callee's check_args_num default-value
         // block (inline defaults + resort_stack), so requiring fn.argCount
@@ -6686,6 +6705,11 @@ private:
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
         if (static_cast<int>(stack_.size()) < need) return false;
         int bp = static_cast<int>(stack_.size()) - 1;
+        // Cross-object inline call: the LPC-visible identity is the CALLEE's.
+        std::string idOverride;
+        if (identityVm && identityVm != this && !identityVm->thisObjectName().empty() &&
+            identityVm->thisObjectName() != "<this>")
+            idOverride = identityVm->thisObjectName();
         lpcRingPush(fn.name.c_str());
         if (fnTraceMatch(fn.name) && fnObjMatch(objName_)) {
             std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
@@ -6809,6 +6833,10 @@ private:
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
         frame.zeroArgPlaceholder = zeroArgPlaceholder;
+        if (!idOverride.empty()) {
+            frame.thisNameOverride = idOverride;
+            frame.thisObjOverride = &identityVm->object();
+        }
         // Cross-object inline call: temporarily switch the object variable
         // table to the callee's object; restore when the frame pops.
         if (switchObjVars || autoVars) {
@@ -7951,7 +7979,7 @@ private:
                 pushValue(Value{});
                 break;
             case 65: // push_this_object
-                pushValue(make_object_owned(thisObjectName_, &obj_));
+                pushValue(make_object_owned(currentThisName(), currentThisObj()));
                 break;
             case 52: // push_arg_num
                 pushValue(make_int(frames_.empty() ? 0 : frames_.back().argNum));
@@ -10643,7 +10671,7 @@ private:
                                                                     std::getenv("LPCVM_NO_CONST")
                                                                         ? nullptr
                                                                         : &targetVm->functionTable(),
-                                                                    pad);
+                                                                    pad, targetVm.get());
                             } else {
                                 inlineStarted = startInlineFunction(fn, false, static_cast<int>(args.size()),
                                                                     targetVm->ownObjVarsShared(),
@@ -10651,7 +10679,7 @@ private:
                                                                     std::getenv("LPCVM_NO_CONST")
                                                                         ? nullptr
                                                                         : &targetVm->functionTable(),
-                                                                    pad);
+                                                                    pad, targetVm.get());
                             }
                             if (!inlineStarted) {
                                 // Stack too shallow: pop the pushed args back and
