@@ -1581,6 +1581,70 @@ shopItems{ [yaodian-laoban.o#5257  stock=12 goods_amount=32767]
 商店 NPC（能打开商店窗口），说明正常路径没问题 —— 这里只作为"脚本复现商店窗口"的限制记录下来。
 
 
+### W. 「重上后剧情不触发」的**根因**：`replace_owner()` 是返回 int 0 的空桩（**已修复，已实测**）
+
+用户口径：*在线时剧情能一路触发；中途在任意位置下线、再上线后，走到剧情触发点没有任何反应。*
+
+**链路**（都在 LPC 里，已从反编译源 + 字节码确认）：
+
+```
+客户端走进门口 -> cmd_enter_room(0x1026, s8(房间名))
+  -> process_command("enter_room", ({name})) -> /gs/cmds/normal/enter_room.c::main
+  -> "/gs/daemons/moved.c"->enter_room(me, env_dest, x, y, dir)
+  -> me->trap_into(SF_ENTER_ROOM, env)            // shadow.c
+  -> all_shadow_list["sf_enter_room"] 里注册的闭包 (*f)(env)
+  -> instruction_1::sf_enter_room(me, room)      // 状态机，例如 S2 -> 万全药铺
+  -> raise_event_ex("求疗伤药", me, ...)          // 剧本/剧情包 0x20D1
+```
+
+注册侧（`instruction_1::try_create_task` / `task_init`，也就是重上时的恢复路径）：
+
+```lpc
+me->register_interface(this_object(), me,
+    ([ SF_ENTER_ROOM: replace_owner(0, (: call_other, ".../instruction_1.c", "sf_enter_room", me :)) ]));
+```
+
+**根因**：`replace_owner` 在我们引擎里是 `if (name == "replace_owner") return make_int(0);`
+（`src/builtins.cpp`）。于是过滤映射的**值**变成 int 0，`shadow.c::register_interface`
+把它原样塞进 `all_shadow_list`：
+
+```
+[istype] iface1[g17]{ sf_enter_room=arr1[n3 t7 t7 t2] ...}   ← 第三个元素 t2 = int（应该是 t8 闭包）
+[istype] iface1[g17]{ sf_kill=arr1[n3 t7 t4 t8:sf_kill] }     ← 直接写闭包的注册是正常的
+```
+
+`trap_into()` 里 `if (is_function(f = cinfo[2])) ret = (*f)(para); else 删除该条目;`
+⇒ **事件永远不触发**，条目还会被清掉。这就是"重上后剧情触发点没用"，
+同时也解释了其它走 SF_* 接口的功能（部分菜单/剧情/战斗钩子）不动。
+
+**修复**（`src/builtins.cpp`）：真正实现 `replace_owner(ob, closure)`——复制闭包，
+`ob` 是对象时把 `owner/ownerKey` 指到它，否则清空 owner（efun 闭包如
+`(: call_other, ... :)` 本来 owner 为空，原样返回）。非闭包参数按原版返回该值。
+
+**实测**（mv61，账号 2 / 角色 `waesrdt`，任务状态 S2 = "找王老板"）：
+
+```
+# 触发前：状态 S2，人在揽仙镇 (197,186)
+--- sent cmd_enter_room(万全药铺)
+   *** DRAMA 0x20D1 len=499  <<< 剧情触发
+日志：
+  [fn] ENTER trap_into     obj=/gs/clone/char/user.o args=2
+  [fn] ENTER sf_enter_room obj=/gs/clone/char/user.o args=2
+  [fn] ENTER raise_event_ex obj=/gs/clone/char/user.o args=3
+```
+
+**重上线复现**：先让角色在揽仙镇下线（干净 0x3E2A），再上线 →
+`cmd_enter_room(万全药铺)` → **同样收到 `0x20D1 len=499`** ⇒ 用户报的"重上不触发"已修好。
+（修复前同样的操作：只有 `0xE003` exits 包，没有任何剧情包。）
+
+同时回归验证 §5.U/§5.V 的两项：`0x2603` 首次/重登都是 **284 字节**、`0x5103` 首两字节
+`0001`（1 件物品）—— 都没被这次改动影响。
+
+**新增探针**：`[istype]` 行里的 `iface0/iface1{}`，把角色 VM 里 `all_shadow_list` /
+`all_interface_list` 中含 `sf_*` 键的映射连同注册项的形状一起打印
+（`arr{n}[t7 t7 t8:闭包名]`），一眼就能看出"闭包没注册进去"这类问题。
+
+
 ## 6. 探针（全部 env 开关，**不要用 `LPCVM_TRACE`：它会让 gs 启动中途访问违例崩溃**）
 
 ### 6.0 运行时开关（**新**：不用再为重开探针等 11 分钟重启）

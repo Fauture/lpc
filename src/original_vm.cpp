@@ -8918,6 +8918,54 @@ private:
                                     }
                                     d += " frames=[" + chain + "]";
                                 }
+                                {
+                                    // IFACE REGISTRY: shadow.c keeps the SF_* event
+                                    // registry in the char's globals.  Print every
+                                    // mapping global whose keys look like event names
+                                    // ("sf_...") with the registered closures, so a
+                                    // missing "sf_enter_room" registration is visible.
+                                    for (int pass = 0; pass < 2; ++pass) {
+                                        auto blk = pass == 0 ? objVars_ : ownObjVars_;
+                                        if (!blk) continue;
+                                        for (size_t gi = 0; gi < blk->size(); ++gi) {
+                                            const Value& gv = (*blk)[gi];
+                                            if (gv.index() != 6) continue;
+                                            auto gm = std::get<std::shared_ptr<MappingValue>>(gv);
+                                            std::string keys;
+                                            int shown = 0;
+                                            for (auto& it : gm->items()) {
+                                                if (it.first.index() != 4) continue;
+                                                const std::string& k = std::get<SharedString>(it.first).str();
+                                                if (k.size() < 3 || k.compare(0, 3, "sf_") != 0) continue;
+                                                ++shown;
+                                                keys += " " + k + "=";
+                                                if (it.second.index() == 5) {
+                                                    auto arr = std::get<std::shared_ptr<ArrayValue>>(it.second);
+                                                    keys += "arr" + std::to_string(arr->items.size());
+                                                    if (!arr->items.empty() && arr->items[0].index() == 5) {
+                                                        auto c0 = std::get<std::shared_ptr<ArrayValue>>(arr->items[0]);
+                                                        keys += "[n" + std::to_string(c0->items.size());
+                                                        for (size_t ai = 0; ai < c0->items.size() && ai < 3; ++ai) {
+                                                            const Value& ev = c0->items[ai];
+                                                            keys += " t" + std::to_string(ev.index());
+                                                            if (ev.index() == 8) {
+                                                                auto cl = std::get<std::shared_ptr<ClosureValue>>(ev);
+                                                                keys += ":" + (cl ? cl->functionName : std::string("?"));
+                                                            }
+                                                        }
+                                                        keys += "]";
+                                                    }
+                                                } else {
+                                                    keys += "t" + std::to_string(it.second.index());
+                                                }
+                                                if (shown >= 8) break;
+                                            }
+                                            if (shown)
+                                                d += " iface" + std::to_string(pass) + "[g" +
+                                                     std::to_string(gi) + "]{" + keys + " }";
+                                        }
+                                    }
+                                }
                                 std::string cur = frames_.empty() || !frames_.back().fn
                                                       ? "<top>" : frames_.back().fn->name;
                                 std::cerr << "[istype] fn=" << cur << " obj=" << objName_

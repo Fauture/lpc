@@ -6546,7 +6546,37 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
-    if (name == "replace_owner") return make_int(0);
+    if (name == "replace_owner") {
+        // vm_f_replaceOwner: replace_owner(ob, closure) -> the SAME closure with
+        // `ob` as its owner (0/null = no owner).  This is how every SF_*
+        // interface filter is built, e.g.
+        //   me->register_interface(me, path, ([ SF_ENTER_ROOM:
+        //       replace_owner(0, (: call_other, path, "sf_enter_room", me :)) ]))
+        // The int-0 stub stored an INT as the filter value; shadow.c then put
+        // that int into all_shadow_list["sf_enter_room"], and trap_into() (run by
+        // moved::enter_room on every room change) saw !is_function(cinfo[2]) and
+        // dropped the entry without firing - so the newbie story's room trigger
+        // (and every other SF_* hook) silently died.  Measured with the [istype]
+        // iface dump: `sf_enter_room=arr1[n3 t7 t7 t2]` (t2 = int) versus a plain
+        // closure registration `sf_kill=arr1[n3 t7 t4 t8:sf_kill]` (t8 = closure).
+        if (args.size() >= 2 && args[1].index() == 8) {
+            auto srcCl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+            if (!srcCl) return args[1];
+            auto cl = std::make_shared<ClosureValue>(*srcCl);
+            if (args[0].index() == 7) {
+                auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+                cl->owner = ov ? ov->owner : nullptr;
+                cl->ownerKey = (ov && ov->programName != "<this>") ? ov->programName : std::string();
+            } else {
+                cl->owner = nullptr;
+                cl->ownerKey.clear();
+            }
+            return cl;
+        }
+        // Not a closure: the original returns the value unchanged (a 0 owner with
+        // a non-closure first argument is a no-op).
+        return args.size() >= 2 ? args[1] : make_int(0);
+    }
     if (name == "child_objects") {
         // vm_f_child_objects: array of live clones of a template object.  We
         // do not track clone instances here; return an empty array (the game
