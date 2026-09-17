@@ -1,0 +1,1101 @@
+/**********************************************************************
+ * LPC Decompiled Source (v37 - Readability Enhanced)
+ * File: account_transactiond.o
+ * Source: /aaa/daemons/account_transactiond.c
+ * Inherits: (none)
+ * Functions: 19 names, 19 code segments found
+ * Strings: 34, Variables: 7
+ *********************************************************************/
+
+/* ================================================================
+   String Literals Reference
+   ================================================================ */
+   [  0] "create_scheme"
+   [  1] "/aaa/daemons/account_transactiond.c"
+   [  2] "precost_lock_list"
+   [  3] "cost_fail_list"
+   [  4] "sClearPrecostLock"
+   [  5] "/daemons/scheduled.c"
+   [  6] "delete_scheme"
+   [  7] "select * from account where account = ? limit 1"
+   [  8] "calc_account_checksum"
+   [  9] "/aaa/daemons/accountd.c"
+   [ 10] "checksum"
+   [ 11] "update account set "
+   [ 12] "%s = ?, "
+   [ 13] " where account = ?"
+   [ 14] "account"
+   [ 15] "select * from account_coin_trade where account = ? limit 1"
+   [ 16] "gold_coin"
+   [ 17] "%08X"
+   [ 18] "ABCDEF"
+   [ 19] "?"
+   [ 20] ","
+   [ 21] "insert into account_coin_trade(%s) values(%s)"
+   [ 22] "update account_coin_trade set "
+   [ 23] ", update_time = date_format(CURRENT_TIMESTAMP, '%Y%m%d%H%i%s') wher...<trunc>"
+   [ 24] "set autocommit=0"
+   [ 25] "update %s set account = account where account = ?"
+   [ 26] "commit"
+   [ 27] "rollback"
+   [ 28] "set autocommit=1"
+   [ 29] "no_func"
+   [ 30] "start_transaction_failed"
+   [ 31] "query_info_failed"
+   [ 32] "check_info_failed"
+   [ 33] "account_coin_trade"
+
+/* ================================================================
+   Global/Object Variables
+   ================================================================ */
+   mapping check_info_func_map;
+   mapping cost_fail_list;
+   int max_cost_fail_times;
+   int precost_lock_effective_interval;
+   int precost_lock_enabled;
+   mapping precost_lock_list;
+   mapping query_info_func_map;
+
+/* ================================================================
+   FORWARD DECLARATIONS
+   ================================================================ */
+
+int update_account_info(int cno, mapping info, mixed fields);
+void delete_precost_lock(string account);
+int insert_account_coin_trade_info(int cno, mapping info);
+string calc_account_coin_trade_checksum(mapping coin_trade_info);
+void unregister_cost_fail(string account);
+private void clear_timeout_precost_lock();
+private void destruct();
+void set_precost_lock(string account, mixed lock);
+int is_precost_locked(string account);
+mixed query_account_info(int cno, string account);
+void register_cost_fail(string account);
+int update_account_coin_trade_info(int cno, mapping info, mixed fields);
+int end_account_transaction(int cno, int ret);
+private void create();
+int is_cost_fail_times_full(string account);
+int start_account_transaction(int cno, string account, string table = "account");
+mixed query_account_coin_trade_info(int cno, string account);
+mixed do_account_transaction(int cno, string account, string table, function proc_func, mixed fields);
+int query_cost_fail(string account);
+
+/* ================================================================
+   GLOBAL VARIABLE INITIALIZATIONS (from init code segment)
+   ================================================================ */
+
+   precost_lock_enabled = 1;  // /aaa/daemons/account_transactiond.c:28
+   precost_lock_effective_interval = 60;  // /aaa/daemons/account_transactiond.c:59
+   precost_lock_list = ([ ]);  // /aaa/daemons/account_transactiond.c:66
+   max_cost_fail_times = 2;
+   cost_fail_list = ([ ]);
+   query_info_func_map = ([ "account" : (: query_account_info :), "account_coin_trade" : (: query_account_coin_trade_info :) ]);
+   check_info_func_map = ([ "account" : (: call_other, "/aaa/daemons/accountd.c", "calc_account_checksum" :), "account_coin_trade" : (: calc_account_coin_trade_checksum :) ]);
+
+/* ================================================================
+   FUNCTION DEFINITIONS
+   ================================================================ */
+
+// --------------------------------------------------------------------
+// @brief  interaction: calls other objects
+// @code  nc=118, nargs=3, insts=118
+// --------------------------------------------------------------------
+int update_account_info(int cno, mapping info, mixed fields) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(info)
+    [  3] push_s(#8: "calc_account_checksum")
+    [  4] push_s(#9: "/aaa/daemons/accountd.c")
+    [  5] call_other(flags=4, nargs=1)
+    [  6] push_local_ptr(checksum)
+    [  7] assign
+    [  8] pop
+    [  9] push_local(checksum)
+    [ 10] push_local_ptr(info)
+    [ 11] push_s(#10: "checksum")
+    [ 12] member_ptr[0]
+    [ 13] assign
+    [ 14] pop
+    [ 15] push_s(#11: "update account set ")
+    [ 16] push_local_ptr(str)
+    [ 17] assign
+    [ 18] pop
+    [ 19] new_array(elems=0)
+    [ 20] push_local_ptr(arr)
+    [ 21] assign
+    [ 22] pop
+    [ 23] push_local(fields)
+    [ 24] is_array
+    [ 25] if_jnz(if_false), pop -> L0059
+    [ 26] push_local_ptr(mks)
+    [ 27] push_local(info)
+    [ 28] push_i(997)
+    [ 29] for_init(65530)
+    [ 30] for_cond: if_false goto L0057
+  L0031:
+    [ 31] push_local(fields)
+    [ 32] push_local(mks)
+    [ 33] push_i(0)
+    [ 34] member[0]
+    [ 35] call_efun(member_array, nargs=2)  ; index
+    [ 36] push_i(65535)
+    [ 37] gt
+    [ 38] if_jnz(if_false), pop -> L0055
+    [ 39] push_local_ptr(str)
+    [ 40] push_local(mks)
+    [ 41] push_i(0)
+    [ 42] member[0]
+    [ 43] push_s(#12: "%s = ?, ")
+    [ 44] call_efun(sprintf, nargs=2)  ; fmt()
+    [ 45] op_eq(+=)
+    [ 46] pop
+    [ 47] push_local_ptr(arr)
+    [ 48] push_local(mks)
+    [ 49] push_i(1)
+    [ 50] member[0]
+    [ 51] new_array(elems=1)
+    [ 52] op_eq(+=)
+    [ 53] pop
+    [ 54] nop
+  L0055:
+    [ 55] nop
+    [ 56] for_step: goto L0031
+  L0057:
+    [ 57] nop
+    [ 58] goto L0082
+  L0059:
+    [ 59] push_local_ptr(mks)
+    [ 60] push_local(info)
+    [ 61] push_i(997)
+    [ 62] for_init(65530)
+    [ 63] for_cond: if_false goto L0081
+  L0064:
+    [ 64] push_local_ptr(str)
+    [ 65] push_local(mks)
+    [ 66] push_i(0)
+    [ 67] member[0]
+    [ 68] push_s(#12: "%s = ?, ")
+    [ 69] call_efun(sprintf, nargs=2)  ; fmt()
+    [ 70] op_eq(+=)
+    [ 71] pop
+    [ 72] push_local_ptr(arr)
+    [ 73] push_local(mks)
+    [ 74] push_i(1)
+    [ 75] member[0]
+    [ 76] new_array(elems=1)
+    [ 77] op_eq(+=)
+    [ 78] pop
+    [ 79] nop
+    [ 80] for_step: goto L0064
+  L0081:
+    [ 81] nop
+  L0082:
+    [ 82] push_local(str)
+    [ 83] push_i(0)
+    [ 84] push_i(3)
+    [ 85] range[1]
+    [ 86] push_s(#13: " where account = ?")
+    [ 87] add
+    [ 88] push_local_ptr(str)
+    [ 89] assign
+    [ 90] pop
+    [ 91] push_local_ptr(arr)
+    [ 92] push_local(info)
+    [ 93] push_s(#14: "account")
+    [ 94] member[0]
+    [ 95] new_array(elems=1)
+    [ 96] op_eq(+=)
+    [ 97] pop
+    [ 98] push_local(arr)
+    [ 99] push_local(str)
+    [100] call_efun(mysql_bind_parameters_arr, nargs=2)  ; sql:bind_parameters_arr
+    [101] push_local_ptr(sql_cmd)
+    [102] assign
+    [103] pop
+    [104] push_local(sql_cmd)
+    [105] push_local(cno)
+    [106] push_global(#14)
+    [107] call_ptr(nargs=3)
+    [108] push_i(1)
+    [109] lt
+    [110] if_jnz(if_false), pop -> L0114
+    [111] push_i(0)
+    [112] ret
+    [113] nop
+  L0114:
+    [114] push_i(1)
+    [115] ret
+    [116] nop
+    [117] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
+void delete_precost_lock(string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(account)
+    [  3] push_ovar(precost_lock_list)
+    [  4] call_efun(map_delete, nargs=2)
+    [  5] pop
+    [  6] nop
+    [  7] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=53, nargs=2, insts=53
+// --------------------------------------------------------------------
+int insert_account_coin_trade_info(int cno, mapping info) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(info)
+    [  3] call_user_fn(#0, nargs=1)
+    [  4] push_local_ptr(checksum)
+    [  5] assign
+    [  6] pop
+    [  7] push_local(checksum)
+    [  8] push_local_ptr(info)
+    [  9] push_s(#10: "checksum")
+    [ 10] member_ptr[0]
+    [ 11] assign
+    [ 12] pop
+    [ 13] push_s(#19: "?")
+    [ 14] push_local(info)
+    [ 15] sizeof
+    [ 16] call_efun(allocate_array, nargs=2)
+    [ 17] push_local_ptr(arr)
+    [ 18] assign
+    [ 19] pop
+    [ 20] push_s(#20: ",")
+    [ 21] push_local(arr)
+    [ 22] call_efun(implode, nargs=2)  ; join()
+    [ 23] push_s(#20: ",")
+    [ 24] push_local(info)
+    [ 25] call_efun(keys, nargs=1)  ; keys()
+    [ 26] call_efun(implode, nargs=2)  ; join()
+    [ 27] push_s(#21: "insert into account_coin_trade(%s) value...<trunc>")
+    [ 28] call_efun(sprintf, nargs=3)  ; fmt()
+    [ 29] push_local_ptr(sql_cmd)
+    [ 30] assign
+    [ 31] pop
+    [ 32] push_local(info)
+    [ 33] call_efun(values, nargs=1)  ; vals()
+    [ 34] push_local(sql_cmd)
+    [ 35] call_efun(mysql_bind_parameters_arr, nargs=2)  ; sql:bind_parameters_arr
+    [ 36] push_local_ptr(sql_cmd)
+    [ 37] assign
+    [ 38] pop
+    [ 39] push_local(sql_cmd)
+    [ 40] push_local(cno)
+    [ 41] push_global(#14)
+    [ 42] call_ptr(nargs=3)
+    [ 43] push_i(1)
+    [ 44] lt
+    [ 45] if_jnz(if_false), pop -> L0049
+    [ 46] push_i(0)
+    [ 47] ret
+    [ 48] nop
+  L0049:
+    [ 49] push_i(1)
+    [ 50] ret
+    [ 51] nop
+    [ 52] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=35, nargs=1, insts=35
+// --------------------------------------------------------------------
+string calc_account_coin_trade_checksum(mapping coin_trade_info) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(coin_trade_info)
+    [  3] push_s(#14: "account")
+    [  4] member[0]
+    [  5] push_local_ptr(account)
+    [  6] assign
+    [  7] pop
+    [  8] push_local(coin_trade_info)
+    [  9] push_s(#16: "gold_coin")
+    [ 10] member[0]
+    [ 11] call_efun(atoi, nargs=1)  ; str->int
+    [ 12] push_s(#17: "%08X")
+    [ 13] call_efun(sprintf, nargs=2)  ; fmt()
+    [ 14] push_local_ptr(gold_coin)
+    [ 15] assign
+    [ 16] pop
+    [ 17] push_local(account)
+    [ 18] push_local(gold_coin)
+    [ 19] add
+    [ 20] push_s(#18: "ABCDEF")
+    [ 21] add
+    [ 22] push_local_ptr(str)
+    [ 23] assign
+    [ 24] pop
+    [ 25] push_local(str)
+    [ 26] call_efun(md5, nargs=1)  ; MD5
+    [ 27] call_efun(save_string, nargs=1)  ; intern_str
+    [ 28] nop
+    [ 29] push_i(1)
+    [ 30] push_i(2)
+    [ 31] range[1]
+    [ 32] ret
+    [ 33] nop
+    [ 34] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=8, nargs=1, insts=8
+// --------------------------------------------------------------------
+void unregister_cost_fail(string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(account)
+    [  3] push_ovar(cost_fail_list)
+    [  4] call_efun(map_delete, nargs=2)
+    [  5] pop
+    [  6] nop
+    [  7] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=58, nargs=0, insts=58
+// --------------------------------------------------------------------
+private void clear_timeout_precost_lock() {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local_ptr(mks)
+    [  3] push_ovar(precost_lock_list)
+    [  4] push_i(997)
+    [  5] for_init(65532)
+    [  6] for_cond: if_false goto L0052
+  L0007:
+    [  7] push_local(mks)
+    [  8] push_i(0)
+    [  9] member[0]
+    [ 10] push_local_ptr(account)
+    [ 11] assign
+    [ 12] is_string
+    [ 13] not
+    [ 14] if_jnz(if_false), pop -> L0023
+    [ 15] push_0
+    [ 16] push_ovar_ptr(precost_lock_list)
+    [ 17] push_local(account)
+    [ 18] member_ptr[0]
+    [ 19] assign
+    [ 20] pop
+    [ 21] goto L0051
+    [ 22] nop
+  L0023:
+    [ 23] push_local(mks)
+    [ 24] push_i(1)
+    [ 25] member[0]
+    [ 26] push_local_ptr(lock)
+    [ 27] assign
+    [ 28] is_int
+    [ 29] not
+    [ 30] if_jnz(if_false), pop -> L0032
+    [ 31] goto L0051
+  L0032:
+    [ 32] push_local(lock)
+    [ 33] push_i(65535)
+    [ 34] eq
+    [ 35] if_jnz(if_false), pop -> L0037
+    [ 36] goto L0051
+  L0037:
+    [ 37] call_efun(time, nargs=0)  ; now()
+    [ 38] push_local(lock)
+    [ 39] push_ovar(precost_lock_effective_interval)
+    [ 40] add
+    [ 41] le
+    [ 42] if_jnz(if_false), pop -> L0044
+    [ 43] goto L0051
+  L0044:
+    [ 44] push_0
+    [ 45] push_ovar_ptr(precost_lock_list)
+    [ 46] push_local(account)
+    [ 47] member_ptr[0]
+    [ 48] assign
+    [ 49] pop
+    [ 50] nop
+  L0051:
+    [ 51] for_step: goto L0007
+  L0052:
+    [ 52] push_i(2)
+    [ 53] push_ovar(precost_lock_list)
+    [ 54] call_efun(clean_mapping_by_value, nargs=2)
+    [ 55] pop
+    [ 56] nop
+    [ 57] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  destructor: cleanup before object removal
+// @code  nc=25, nargs=0, insts=25
+// --------------------------------------------------------------------
+private void destruct() {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_s(#4: "sClearPrecostLock")
+    [  3] push_s(#6: "delete_scheme")
+    [  4] push_s(#5: "/daemons/scheduled.c")
+    [  5] call_other(flags=4, nargs=1)
+    [  6] pop
+    [  7] push_ovar(precost_lock_list)
+    [  8] sizeof
+    [  9] if_jnz(if_false), pop -> L0015
+    [ 10] push_ovar(precost_lock_list)
+    [ 11] push_s(#2: "precost_lock_list")
+    [ 12] push_s(#1: "/aaa/daemons/account_transactiond.c")
+    [ 13] call_global_fn(#641, nargs=3)
+    [ 14] pop
+  L0015:
+    [ 15] push_ovar(cost_fail_list)
+    [ 16] sizeof
+    [ 17] if_jnz(if_false), pop -> L0023
+    [ 18] push_ovar(cost_fail_list)
+    [ 19] push_s(#3: "cost_fail_list")
+    [ 20] push_s(#1: "/aaa/daemons/account_transactiond.c")
+    [ 21] call_global_fn(#641, nargs=3)
+    [ 22] pop
+  L0023:
+    [ 23] nop
+    [ 24] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  mutator: set property
+// @code  nc=10, nargs=2, insts=10
+// --------------------------------------------------------------------
+void set_precost_lock(string account, mixed lock) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(lock)
+    [  3] push_ovar_ptr(precost_lock_list)
+    [  4] push_local(account)
+    [  5] member_ptr[0]
+    [  6] assign
+    [  7] pop
+    [  8] nop
+    [  9] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  predicate: boolean check
+// @code  nc=37, nargs=1, insts=37
+// --------------------------------------------------------------------
+int is_precost_locked(string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_ovar(precost_lock_enabled)
+    [  3] not
+    [  4] if_jnz(if_false), pop -> L0007
+    [  5] push_i(0)
+    [  6] ret
+  L0007:
+    [  7] push_ovar(precost_lock_list)
+    [  8] push_local(account)
+    [  9] member[0]
+    [ 10] is_int
+    [ 11] not
+    [ 12] if_jnz(if_false), pop -> L0015
+    [ 13] push_i(0)
+    [ 14] ret
+  L0015:
+    [ 15] push_ovar(precost_lock_list)
+    [ 16] push_local(account)
+    [ 17] member[0]
+    [ 18] push_i(65535)
+    [ 19] eq
+    [ 20] if_jnz(if_false), pop -> L0023
+    [ 21] push_i(1)
+    [ 22] ret
+  L0023:
+    [ 23] call_efun(time, nargs=0)  ; now()
+    [ 24] push_ovar(precost_lock_list)
+    [ 25] push_local(account)
+    [ 26] member[0]
+    [ 27] push_ovar(precost_lock_effective_interval)
+    [ 28] add
+    [ 29] le
+    [ 30] if_jnz(if_false), pop -> L0033
+    [ 31] push_i(1)
+    [ 32] ret
+  L0033:
+    [ 33] push_i(0)
+    [ 34] ret
+    [ 35] nop
+    [ 36] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=14, nargs=2, insts=14
+// --------------------------------------------------------------------
+mixed query_account_info(int cno, string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(account)
+    [  3] push_s(#7: "select * from account where account = ? ...<trunc>")
+    [  4] call_efun(mysql_bind_parameters, nargs=2)  ; sql_bind
+    [  5] push_local_ptr(sql_cmd)
+    [  6] assign
+    [  7] pop
+    [  8] push_local(sql_cmd)
+    [  9] push_local(cno)
+    [ 10] call_global_fn(#813, nargs=2)
+    [ 11] ret
+    [ 12] nop
+    [ 13] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=22, nargs=1, insts=22
+// --------------------------------------------------------------------
+void register_cost_fail(string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_ovar(cost_fail_list)
+    [  3] push_local(account)
+    [  4] member[0]
+    [  5] is_int
+    [  6] if_jnz(if_false), pop -> L0014
+    [  7] push_ovar_ptr(cost_fail_list)
+    [  8] push_local(account)
+    [  9] member_ptr[0]
+    [ 10] push_i(1)
+    [ 11] op_eq(+=)
+    [ 12] pop
+    [ 13] goto L0020
+  L0014:
+    [ 14] push_i(1)
+    [ 15] push_ovar_ptr(cost_fail_list)
+    [ 16] push_local(account)
+    [ 17] member_ptr[0]
+    [ 18] assign
+    [ 19] pop
+  L0020:
+    [ 20] nop
+    [ 21] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=116, nargs=3, insts=116
+// --------------------------------------------------------------------
+int update_account_coin_trade_info(int cno, mapping info, mixed fields) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(info)
+    [  3] call_user_fn(#0, nargs=1)
+    [  4] push_local_ptr(checksum)
+    [  5] assign
+    [  6] pop
+    [  7] push_local(checksum)
+    [  8] push_local_ptr(info)
+    [  9] push_s(#10: "checksum")
+    [ 10] member_ptr[0]
+    [ 11] assign
+    [ 12] pop
+    [ 13] push_s(#22: "update account_coin_trade set ")
+    [ 14] push_local_ptr(str)
+    [ 15] assign
+    [ 16] pop
+    [ 17] new_array(elems=0)
+    [ 18] push_local_ptr(arr)
+    [ 19] assign
+    [ 20] pop
+    [ 21] push_local(fields)
+    [ 22] is_array
+    [ 23] if_jnz(if_false), pop -> L0057
+    [ 24] push_local_ptr(mks)
+    [ 25] push_local(info)
+    [ 26] push_i(997)
+    [ 27] for_init(65530)
+    [ 28] for_cond: if_false goto L0055
+  L0029:
+    [ 29] push_local(fields)
+    [ 30] push_local(mks)
+    [ 31] push_i(0)
+    [ 32] member[0]
+    [ 33] call_efun(member_array, nargs=2)  ; index
+    [ 34] push_i(65535)
+    [ 35] gt
+    [ 36] if_jnz(if_false), pop -> L0053
+    [ 37] push_local_ptr(str)
+    [ 38] push_local(mks)
+    [ 39] push_i(0)
+    [ 40] member[0]
+    [ 41] push_s(#12: "%s = ?, ")
+    [ 42] call_efun(sprintf, nargs=2)  ; fmt()
+    [ 43] op_eq(+=)
+    [ 44] pop
+    [ 45] push_local_ptr(arr)
+    [ 46] push_local(mks)
+    [ 47] push_i(1)
+    [ 48] member[0]
+    [ 49] new_array(elems=1)
+    [ 50] op_eq(+=)
+    [ 51] pop
+    [ 52] nop
+  L0053:
+    [ 53] nop
+    [ 54] for_step: goto L0029
+  L0055:
+    [ 55] nop
+    [ 56] goto L0080
+  L0057:
+    [ 57] push_local_ptr(mks)
+    [ 58] push_local(info)
+    [ 59] push_i(997)
+    [ 60] for_init(65530)
+    [ 61] for_cond: if_false goto L0079
+  L0062:
+    [ 62] push_local_ptr(str)
+    [ 63] push_local(mks)
+    [ 64] push_i(0)
+    [ 65] member[0]
+    [ 66] push_s(#12: "%s = ?, ")
+    [ 67] call_efun(sprintf, nargs=2)  ; fmt()
+    [ 68] op_eq(+=)
+    [ 69] pop
+    [ 70] push_local_ptr(arr)
+    [ 71] push_local(mks)
+    [ 72] push_i(1)
+    [ 73] member[0]
+    [ 74] new_array(elems=1)
+    [ 75] op_eq(+=)
+    [ 76] pop
+    [ 77] nop
+    [ 78] for_step: goto L0062
+  L0079:
+    [ 79] nop
+  L0080:
+    [ 80] push_local(str)
+    [ 81] push_i(0)
+    [ 82] push_i(3)
+    [ 83] range[1]
+    [ 84] push_s(#23: ", update_time = date_format(CURRENT_TIME...<trunc>")
+    [ 85] add
+    [ 86] push_local_ptr(str)
+    [ 87] assign
+    [ 88] pop
+    [ 89] push_local_ptr(arr)
+    [ 90] push_local(info)
+    [ 91] push_s(#14: "account")
+    [ 92] member[0]
+    [ 93] new_array(elems=1)
+    [ 94] op_eq(+=)
+    [ 95] pop
+    [ 96] push_local(arr)
+    [ 97] push_local(str)
+    [ 98] call_efun(mysql_bind_parameters_arr, nargs=2)  ; sql:bind_parameters_arr
+    [ 99] push_local_ptr(sql_cmd)
+    [100] assign
+    [101] pop
+    [102] push_local(sql_cmd)
+    [103] push_local(cno)
+    [104] push_global(#14)
+    [105] call_ptr(nargs=3)
+    [106] push_i(1)
+    [107] lt
+    [108] if_jnz(if_false), pop -> L0112
+    [109] push_i(0)
+    [110] ret
+    [111] nop
+  L0112:
+    [112] push_i(1)
+    [113] ret
+    [114] nop
+    [115] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=28, nargs=2, insts=28
+// --------------------------------------------------------------------
+int end_account_transaction(int cno, int ret) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(ret)
+    [  3] if_jnz(if_false), pop -> L0006
+    [  4] push_s(#26: "commit")
+    [  5] goto L0007
+  L0006:
+    [  6] push_s(#27: "rollback")
+  L0007:
+    [  7] push_local(cno)
+    [  8] push_global(#14)
+    [  9] call_ptr(nargs=3)
+    [ 10] push_i(0)
+    [ 11] ne
+    [ 12] if_jnz(if_false), pop -> L0015
+    [ 13] push_i(0)
+    [ 14] ret
+  L0015:
+    [ 15] push_s(#28: "set autocommit=1")
+    [ 16] push_local(cno)
+    [ 17] push_global(#14)
+    [ 18] call_ptr(nargs=3)
+    [ 19] push_i(0)
+    [ 20] ne
+    [ 21] if_jnz(if_false), pop -> L0024
+    [ 22] push_i(0)
+    [ 23] ret
+  L0024:
+    [ 24] push_i(1)
+    [ 25] ret
+    [ 26] nop
+    [ 27] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  constructor: initialize object state
+// @code  nc=52, nargs=0, insts=52
+// --------------------------------------------------------------------
+private void create() {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_s(#1: "/aaa/daemons/account_transactiond.c")
+    [  3] call_global_fn(#642, nargs=1)
+    [  4] push_local_ptr(m)
+    [  5] assign
+    [  6] is_mapping
+    [  7] if_jnz(if_false), pop -> L0041
+    [  8] push_local(m)
+    [  9] push_s(#2: "precost_lock_list")
+    [ 10] member[0]
+    [ 11] is_mapping
+    [ 12] if_jnz(if_false), pop -> L0024
+    [ 13] push_local(m)
+    [ 14] push_s(#2: "precost_lock_list")
+    [ 15] member[0]
+    [ 16] push_ovar_ptr(precost_lock_list)
+    [ 17] assign
+    [ 18] pop
+    [ 19] push_s(#2: "precost_lock_list")
+    [ 20] push_s(#1: "/aaa/daemons/account_transactiond.c")
+    [ 21] call_global_fn(#643, nargs=2)
+    [ 22] pop
+    [ 23] nop
+  L0024:
+    [ 24] push_local(m)
+    [ 25] push_s(#3: "cost_fail_list")
+    [ 26] member[0]
+    [ 27] is_mapping
+    [ 28] if_jnz(if_false), pop -> L0040
+    [ 29] push_local(m)
+    [ 30] push_s(#3: "cost_fail_list")
+    [ 31] member[0]
+    [ 32] push_ovar_ptr(cost_fail_list)
+    [ 33] assign
+    [ 34] pop
+    [ 35] push_s(#3: "cost_fail_list")
+    [ 36] push_s(#1: "/aaa/daemons/account_transactiond.c")
+    [ 37] call_global_fn(#643, nargs=2)
+    [ 38] pop
+    [ 39] nop
+  L0040:
+    [ 40] nop
+  L0041:
+    [ 41] push_i(1)
+    [ 42] push_i(300)
+    [ 43] call_efun(time, nargs=0)  ; now()
+    [ 44] new_func(9, capture=0)
+    [ 45] push_s(#4: "sClearPrecostLock")
+    [ 46] push_s(#0: "create_scheme")
+    [ 47] push_s(#5: "/daemons/scheduled.c")
+    [ 48] call_other(flags=4, nargs=5)
+    [ 49] pop
+    [ 50] nop
+    [ 51] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  predicate: boolean check
+// @code  nc=11, nargs=1, insts=11
+// --------------------------------------------------------------------
+int is_cost_fail_times_full(string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_ovar(cost_fail_list)
+    [  3] push_local(account)
+    [  4] member[0]
+    [  5] cast(int)
+    [  6] push_ovar(max_cost_fail_times)
+    [  7] ge
+    [  8] ret
+    [  9] nop
+    [ 10] ret
+
+}
+
+// --------------------------------------------------------------------
+// @code  nc=38, nargs=3, insts=38
+// --------------------------------------------------------------------
+int start_account_transaction(int cno, string account, string table) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=2)
+    [  1] push_s(#14: "account")
+    [  2] resort
+    [  3] enter
+    [  4] push_s(#24: "set autocommit=0")
+    [  5] push_local(cno)
+    [  6] push_global(#14)
+    [  7] call_ptr(nargs=3)
+    [  8] push_i(0)
+    [  9] ne
+    [ 10] if_jnz(if_false), pop -> L0013
+    [ 11] push_i(0)
+    [ 12] ret
+  L0013:
+    [ 13] push_local(table)
+    [ 14] push_s(#25: "update %s set account = account where ac...<trunc>")
+    [ 15] call_efun(sprintf, nargs=2)  ; fmt()
+    [ 16] push_local_ptr(sql_cmd)
+    [ 17] assign
+    [ 18] pop
+    [ 19] push_local(account)
+    [ 20] push_local(sql_cmd)
+    [ 21] call_efun(mysql_bind_parameters, nargs=2)  ; sql_bind
+    [ 22] push_local_ptr(sql_cmd)
+    [ 23] assign
+    [ 24] pop
+    [ 25] push_local(sql_cmd)
+    [ 26] push_local(cno)
+    [ 27] push_global(#14)
+    [ 28] call_ptr(nargs=3)
+    [ 29] push_i(0)
+    [ 30] lt
+    [ 31] if_jnz(if_false), pop -> L0034
+    [ 32] push_i(0)
+    [ 33] ret
+  L0034:
+    [ 34] push_i(1)
+    [ 35] ret
+    [ 36] nop
+    [ 37] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=14, nargs=2, insts=14
+// --------------------------------------------------------------------
+mixed query_account_coin_trade_info(int cno, string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_local(account)
+    [  3] push_s(#15: "select * from account_coin_trade where a...<trunc>")
+    [  4] call_efun(mysql_bind_parameters, nargs=2)  ; sql_bind
+    [  5] push_local_ptr(sql_cmd)
+    [  6] assign
+    [  7] pop
+    [  8] push_local(sql_cmd)
+    [  9] push_local(cno)
+    [ 10] call_global_fn(#813, nargs=2)
+    [ 11] ret
+    [ 12] nop
+    [ 13] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  action handler: process request
+// @code  nc=105, nargs=5, insts=105
+// --------------------------------------------------------------------
+mixed do_account_transaction(int cno, string account, string table, function proc_func, mixed fields) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_ovar(query_info_func_map)
+    [  3] push_local(table)
+    [  4] member[0]
+    [  5] push_local_ptr(query_info_func)
+    [  6] assign
+    [  7] pop
+    [  8] push_ovar(check_info_func_map)
+    [  9] push_local(table)
+    [ 10] member[0]
+    [ 11] push_local_ptr(check_info_func)
+    [ 12] assign
+    [ 13] pop
+    [ 14] push_local(query_info_func)
+    [ 15] is_function
+    [ 16] not
+    [ 17] if_jz(if_true) -> L0022
+    [ 18] pop
+    [ 19] push_local(check_info_func)
+    [ 20] is_function
+    [ 21] not
+  L0022:
+    [ 22] if_jnz(if_false), pop -> L0025
+    [ 23] push_s(#29: "no_func")
+    [ 24] ret
+  L0025:
+    [ 25] push_i(0)
+    [ 26] push_local_ptr(ret)
+    [ 27] assign
+    [ 28] pop
+  L0029:
+    [ 29] push_local(account)
+    [ 30] push_local(cno)
+    [ 31] call_user_fn(#6, nargs=2)
+    [ 32] not
+    [ 33] if_jnz(if_false), pop -> L0040
+    [ 34] push_s(#30: "start_transaction_failed")
+    [ 35] push_local_ptr(failed_reason)
+    [ 36] assign
+    [ 37] pop
+    [ 38] goto L0092
+    [ 39] nop
+  L0040:
+    [ 40] try: catch->L0087
+    [ 41] push_local(account)
+    [ 42] push_local(cno)
+    [ 43] push_local(query_info_func)
+    [ 44] call_ptr(nargs=3)
+    [ 45] push_local_ptr(info)
+    [ 46] assign
+    [ 47] is_mapping
+    [ 48] not
+    [ 49] if_jnz(if_false), pop -> L0056
+    [ 50] push_s(#31: "query_info_failed")
+    [ 51] push_local_ptr(failed_reason)
+    [ 52] assign
+    [ 53] pop
+    [ 54] goto L0092
+    [ 55] nop
+  L0056:
+    [ 56] push_local(info)
+    [ 57] push_s(#10: "checksum")
+    [ 58] member[0]
+    [ 59] push_local(info)
+    [ 60] push_local(check_info_func)
+    [ 61] call_ptr(nargs=2)
+    [ 62] ne
+    [ 63] if_jnz(if_false), pop -> L0070
+    [ 64] push_s(#32: "check_info_failed")
+    [ 65] push_local_ptr(failed_reason)
+    [ 66] assign
+    [ 67] pop
+    [ 68] goto L0092
+    [ 69] nop
+  L0070:
+    [ 70] push_local(fields)
+    [ 71] push_local(info)
+    [ 72] push_local_ptr(m)
+    [ 73] push_local(proc_func)
+    [ 74] call_ptr(nargs=4)
+    [ 75] not
+    [ 76] if_jnz(if_false), pop -> L0079
+    [ 77] goto L0092
+    [ 78] nop
+  L0079:
+    [ 79] push_i(1)
+    [ 80] push_local_ptr(ret)
+    [ 81] assign
+    [ 82] pop
+    [ 83] nop
+    [ 84] push_i(0)
+    [ 85] end_catch
+    [ 86] goto L0088
+  L0087:
+    [ 87] catch
+  L0088:
+    [ 88] pop
+    [ 89] nop
+    [ 90] push_i(0)
+    [ 91] if_jz(if_true), pop -> L0029
+  L0092:
+    [ 92] push_local(ret)
+    [ 93] push_local(cno)
+    [ 94] call_user_fn(#2, nargs=2)
+    [ 95] pop
+    [ 96] push_local(failed_reason)
+    [ 97] is_string
+    [ 98] if_jnz(if_false), pop -> L0101
+    [ 99] push_local(failed_reason)
+    [100] ret
+  L0101:
+    [101] push_local(m)
+    [102] ret
+    [103] nop
+    [104] ret
+
+}
+
+// --------------------------------------------------------------------
+// @brief  accessor: read property
+// @code  nc=9, nargs=1, insts=9
+// --------------------------------------------------------------------
+int query_cost_fail(string account) {
+
+    /* ---- Bytecode Disassembly ---- */
+    [  0] checkargs(offset=0)
+    [  1] enter
+    [  2] push_ovar(cost_fail_list)
+    [  3] push_local(account)
+    [  4] member[0]
+    [  5] cast(int)
+    [  6] ret
+    [  7] nop
+    [  8] ret
+
+}
+
+/* ================================================================
+   DECOMPILATION SUMMARY
+   ================================================================
+   Total function names:        19
+   Code segments found:         19
+   Successfully decoded:        19
+   Unresolved/minimal:          0
+   Functions without code:      0
+   ================================================================ */
