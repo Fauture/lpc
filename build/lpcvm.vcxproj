@@ -86,7 +86,8 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\Administrator\Desktop\lpc\src;C:\Users\Administrator\Desktop\lpc\third_party\sqlite;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><AdditionalIncludeDirectories>C:\Users\Administrator\Desktop\lpc\src;C:\Users\Administrator\Desktop\lpc\third_party\sqlite;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>

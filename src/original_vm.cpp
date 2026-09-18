@@ -1,4 +1,4 @@
-#include "original_vm.h"
+﻿#include "original_vm.h"
 
 // The LPCVM_STACKDBG probe needs the module's own base address to report raw
 // stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
@@ -2649,6 +2649,63 @@ public:
     // create()'s blocking/yielding efuns park the whole process and it resumes
     // inside create later); a scheduler process + park reproduces that with
     // the single cooperative scheduler.
+    Value loadObjectFromImage(const std::string& vpath, const std::string& progImage,
+                              const std::vector<Value>& createArgs) {
+        if (searchRoot_.empty() || vpath.empty() || progImage.empty()) return make_int(0);
+        // Key must be suffix-matchable by tryCallOtherObject's rel lookup.
+        std::string key = "dyn:" + vpath;
+        auto& reg = objectRegistry();
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            if (reg.vms.find(key) == reg.vms.end()) {
+                std::vector<uint8_t> bytes(progImage.begin(), progImage.end());
+                std::shared_ptr<OriginalObject> objPtr;
+                try {
+                    objPtr = std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
+                } catch (const std::exception& e) {
+                    std::cerr << "[dyn-load] " << vpath << " parse failed: " << e.what() << "\n";
+                    std::cerr.flush();
+                    return make_int(0);
+                }
+                auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot_);
+                vmPtr->setThisObjectName(key);
+                reg.objects[key] = objPtr;
+                reg.vms[key] = vmPtr;
+                reg.constructing.insert(key);
+                std::cerr << "[dyn-load] " << vpath << " key=" << key
+                          << " bytes=" << bytes.size() << " funcs=" << objPtr->functions.size()
+                          << "\n";
+                std::cerr.flush();
+            }
+        }
+        std::shared_ptr<OriginalVm> vm;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            auto it = reg.vms.find(key);
+            if (it != reg.vms.end()) vm = it->second;
+            auto itI = reg.initialized.find(key);
+            if (it != reg.vms.end() && itI != reg.initialized.end() && itI->second)
+                return make_object(key);
+        }
+        if (!vm) return make_int(0);
+        scheduler().spawnConstruction(vm, createArgs, "obj-init:" + key);
+        ResumeCond cond;
+        cond.kind = 3;
+        cond.ename = "obj-init:" + key;
+        auto hook = [this, key]() {
+            bool ok = false;
+            {
+                auto& reg2 = objectRegistry();
+                std::lock_guard<std::recursive_mutex> rl2(registryMutex());
+                auto it2 = reg2.initialized.find(key);
+                ok = (it2 != reg2.initialized.end() && it2->second);
+            }
+            resumeValue_ = ok ? make_object(key) : make_int(0);
+        };
+        parkAndSuspend(cond, std::move(hook), make_int(0));
+        return make_int(0);   // unreachable (SuspendSignal thrown)
+    }
+
     Value loadObjectCooperative(const std::string& vpath, const std::vector<Value>& createArgs) {
         stackDbgCheck("loadObject");
         if (searchRoot_.empty() || vpath.empty()) return make_int(0);
@@ -5929,6 +5986,22 @@ private:
                 else vpath = to_string(args[0], false);
                 std::vector<Value> createArgs;
                 if (args.size() >= 2) createArgs.push_back(args[1]);
+                // Third argument = the object's PROGRAM CONTENT (IDA
+                // vm_f_load_object 0x80f8cbc: vm_getArgument(2) accepts
+                // "string | buffer" and hands it to vm_loadObject(path,
+                // content, len)).  anticheaterd's dynamic /challenge.dynamic
+                // comes through here; dropping it made every anti-cheat
+                // challenge fail -> close_client every 300s.
+                if (args.size() >= 3 && (args[2].index() == 10 || args[2].index() == 4)) {
+                    std::string progImage;
+                    if (args[2].index() == 10) {
+                        auto bv = std::get<std::shared_ptr<BufferValue>>(args[2]);
+                        if (bv) progImage = bv->data;
+                    } else {
+                        progImage = std::get<SharedString>(args[2]).str();
+                    }
+                    return loadObjectFromImage(vpath, progImage, createArgs);
+                }
                 return loadObjectCooperative(vpath, createArgs);
             }
             // exit / exit_thread / clear_env all call vm_returnToBackend in the
