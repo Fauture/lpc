@@ -6285,13 +6285,41 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "allocate_id") {
         // vm_f_allocate_id: allocate an id from the pool for the given object.
-        return lpc::mapModule().allocateId(args.empty() ? Value{} : args[0]);
+        Value r = lpc::mapModule().allocateId(args.empty() ? Value{} : args[0]);
+        // LPCVM_IDDBG: which KEY the id pool stored.  The pool remembers the
+        // object's programName and get_object_by_id() rebuilds the object from
+        // it, so storing the "<this>" placeholder (this_object() of a VM whose
+        // identity was never set) makes every later lookup resolve to the wrong
+        // object - observed as get_name() -> 0 ("你使用了0"), env_object() ->
+        // 0 and get_pos() -> (0,0) ("距离NPC过远"), empty NPC name/portrait in
+        // menus and pets created without their level.
+        if (std::getenv("LPCVM_IDDBG")) {
+            std::string key;
+            if (!args.empty() && args[0].index() == 7)
+                key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+            std::cerr << "[iddbg] allocate_id key=[" << key << "] caller="
+                      << stubCallCtx().obj << "::" << stubCallCtx().fn
+                      << " callerKey=[" << stubCallCtx().key << "] -> id="
+                      << (r.index() == 2 ? std::to_string(std::get<int64_t>(r)) : std::string("?"))
+                      << "\n";
+            std::cerr.flush();
+        }
+        return r;
     }
     if (name == "free_id") {
         return lpc::mapModule().freeId(args.empty() ? Value{} : args[0]);
     }
     if (name == "get_object_by_id") {
         Value r = lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
+        if (std::getenv("LPCVM_IDDBG")) {
+            std::string key;
+            if (r.index() == 7) key = std::get<std::shared_ptr<ObjectValue>>(r)->programName;
+            std::cerr << "[iddbg] get_object_by_id id="
+                      << (args.empty() ? -1 : as_int(args[0])) << " -> key=[" << key << "] caller="
+                      << stubCallCtx().obj << "::" << stubCallCtx().fn
+                      << " callerKey=[" << stubCallCtx().key << "]\n";
+            std::cerr.flush();
+        }
         if (std::getenv("LPCVM_NEAR") &&
             (stubCallCtx().obj.find("open_menu") != std::string::npos ||
              stubCallCtx().fn == "main")) {

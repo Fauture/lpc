@@ -4219,8 +4219,15 @@ private:
                     // move_object(container) - self is the moved object.  The VM
                     // knows its own registry key; scanning reg.vms here cost O(N)
                     // per call (N ~ tens of thousands of clones during boot).
-                    if (!thisObjectName_.empty()) {
-                        movedKey = thisObjectName_;
+                    //
+                    // Use currentThisName(), NOT thisObjectName_: a cross-object
+                    // call that runs INLINE on this VM (me->is_visible(ob) from a
+                    // command object, i.e. do_select_item_menu) overrides
+                    // this_object() per frame, and thisObjectName_ still names
+                    // the CALLER's instance.  Reading it made "self" mean the
+                    // command object, whose environment is not registered.
+                    if (!currentThisName().empty()) {
+                        movedKey = currentThisName();
                     } else {
                         auto& reg = objectRegistry();
                         std::lock_guard<std::recursive_mutex> rl(registryMutex());
@@ -4244,7 +4251,17 @@ private:
             if (h == 0x858C9F2913C1E90ull) {
                 std::string obKey;
                 if (args.empty()) {
-                    obKey = thisObjectName_;   // no O(N) registry scan
+                    // env_object() - the environment of THIS object.  Must be
+                    // currentThisName(): when a cross-object call runs INLINE on
+                    // this VM, this_object() is the frame's overridden object
+                    // while thisObjectName_ is still the VM's own (caller)
+                    // instance.  char.c's is_visible(ob) does
+                    //     if (!is_object(env_object()) || env_object() != env_object(ob)) return 0;
+                    // so the wrong key made EVERY distance check fail for
+                    // non-reserved ids: selecting a dialog menu answered
+                    // "距离NPC过远，无法进行此操作。" (reproduced with the
+                    // character's own id, 25740).
+                    obKey = currentThisName();   // no O(N) registry scan
                     if (obKey.empty()) {
                         auto& reg = objectRegistry();
                         std::lock_guard<std::recursive_mutex> rl(registryMutex());
