@@ -1,4 +1,4 @@
-﻿#include "original_vm.h"
+#include "original_vm.h"
 
 // The LPCVM_STACKDBG probe needs the module's own base address to report raw
 // stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
@@ -16481,13 +16481,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // �ػ�����@��ܭ��.  Re-run the template's import on the clone (it is
         // idempotent: re-sets my_import_name, file_id and the npc.list
         // attributes including name).
-        //
-        // Runs for EVERY clone whose template carries an import identity, not
-        // just npc/basic: the charge/item clones (修为丹, 材料箱, 百变盒 ...) get
-        // their name/dbase the same way, and without it `get_name()` returned
-        // undefined and the use message read "你使用了0。" instead of the item
-        // name (they also came out with an empty dbase: mall pets at level 0).
-        if (tmplVm) {
+        if (tmplVm && rel.find("npc/basic") != std::string::npos) {
             Value tmplImp = tmplVm->callFunctionByName("get_import_name", {});
             if (vmEnvTrace())
                 std::cerr << "[clone-imp] " << cloneKey << " tmpl=" << tmplVm->objName()
@@ -16495,22 +16489,6 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
             if (tmplImp.index() == 4 && !std::get<SharedString>(tmplImp).empty()) {
                 vmPtr->setPreviousObjectName(tmplVm->objName());
                 vmPtr->callFunctionByName("import", {tmplImp});
-                // import() sets temp "basic_object"; a CLONE must not inherit
-                // temp variables (only dbase), otherwise its destruct()
-                // unregisters the real basic object by name.
-                vmPtr->callFunctionByName("set_temp",
-                                          {make_string("basic_object"), make_int(0)});
-                // ... and restore the NAME TABLE entry to the real template:
-                // import() also called register_basic_object(name, clone), and the
-                // packs destroy those clones, leaving global_basic_object pointing
-                // at dead objects ("无效的商品名字" for every mall item).
-                if (tmplVm && !tmplVm->thisObjectName().empty()) {
-                    Value tmplKey = make_string(tmplVm->thisObjectName());
-                    tmplVm->callFunctionByName(
-                        "register_basic_object",
-                        {tmplImp, make_object_owned(tmplVm->thisObjectName(), &tmplVm->object())});
-                    (void)tmplKey;
-                }
                 if (std::getenv("LPCVM_TAIL")) {
                     Value fid = vmPtr->callFunctionByName("query", {make_string("file_id")});
                     Value nm = vmPtr->callFunctionByName("query", {make_string("name")});

@@ -1,4 +1,4 @@
-﻿#include "builtins.h"
+#include "builtins.h"
 #include "efun_table.h"
 #include "map_module.h"
 
@@ -719,16 +719,6 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
                 }
                 out += " ";
                 for (unsigned char c : s) out += (c >= 32 && c < 127) ? static_cast<char>(c) : '.';
-            } else if (v.index() == 7) {
-                // %O of an OBJECT: the original prints the object's name (the
-                // registry key).  Without this branch objects fell through to
-                // as_int() and printed "0", which is what made
-                // basic_object.c:130's printf("%O", this_object()) read
-                // "basic_object = 0" during the visual_packs load.
-                auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
-                std::string nm = ov ? ov->programName : std::string();
-                if (nm.empty()) nm = "(object)";
-                out += nm;
             } else if (v.index() == 3) {
                 snprintf(buf, sizeof(buf), "%g", std::get<double>(v));
                 out += buf;
