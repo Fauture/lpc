@@ -1,4 +1,4 @@
-# LPC VM for Windows (C++17)
+﻿# LPC VM for Windows (C++17)
 
 ## ⛔ 数据库红线（最高优先级，任何对话 / 任何工具 / 任何脚本都必须遵守）
 
@@ -148,3 +148,17 @@ Then connect with telnet/PowerShell to `127.0.0.1:4000` and send:
 - `src/o_loader.*` – original `.o` binary parser
 
 > IDA MCP 的用法见 `docs/ida_mcp_使用.md`（连接 127.0.0.1:13337、`_idamcp.py`、efun 地址表 `_efun_table.txt`、反编译流程与示例）。
+
+
+## ⛔ 禁止写入 / 添加 comm_desc.txt（重要，先读这条）
+
+**不要在 `linux/gs/**`（或任何服务目录）里创建、复制、打包 `comm_desc.txt`，也不要往数据库写它。**
+
+* 原版 gs **没有**这个文件，**也不需要**它；
+* 接口/指令表内容的解析在 **gs 内部**（`gs/start_gs.c` 的 `load_comm_desc` 等）自行完成，
+  即 gs 侧自己解析，不依赖该 txt 文件；
+* 原版 gs 日志里出现 `Etc file comm_desc.txt not found.` 是**正常**输出，
+  出现它说明“文件不存在”这一事实被正确处理，**不是**要你去补文件；
+* 因此：遇到“接口没注册 / `[pkt] analyse cmd=0x2473 NO INTERFACE`”这类现象，
+  只能去修 VM/协议的解析与派发（例如宏展开、命令表按名反查 id、回执派发），
+  **绝对不允许**通过新增/复制 `comm_desc.txt` 来绕过（已犯过一次，务必不要再犯）。
