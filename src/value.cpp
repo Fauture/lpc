@@ -227,7 +227,8 @@ MappingValue::MappingValue(uint32_t sizeHint) {
 
 // Hash of a key exactly like vm_safeFindForInsert:
 //   string -> whashstr / whashstrc, int -> number >> 4,
-//   float -> low 32 bits of the double >> 4, everything else -> identity >> 4.
+//   float -> low 32 bits of the double >> 4, buffer -> FNV-1a over the bytes,
+//   everything else -> identity >> 4.
 uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
     switch (key.index()) {
     case 0: return 0;
@@ -244,6 +245,27 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
     case 4: {
         const std::string& s = std::get<SharedString>(key);
         return caseSensitive ? whashstr(s.c_str(), 32) : whashstrc(s.c_str(), 32);
+    }
+    case 10: {
+        // BUFFER keys hash by CONTENT.  iid_map (game_util.c:11) is keyed by
+        // the 10-byte iid buffer make_iid() returns, and every item lookup goes
+        // through it:
+        //     find_object_by_iid(iid) -> iid_map[iid]
+        //     iid_map[iid] = ob        (start_gs_v37.c:42828)
+        // Falling through to the identity hash (the old behaviour) put every
+        // buffer in one bucket while mapKeyEqual returned false for them, so a
+        // lookup could NEVER hit - no item was ever found by iid: the S8/S9/S10/
+        // S11 "equip this item" guide glow never appeared (do_interface_guide
+        // needs is_object(find_object_by_iid(item_info["boot"]))), item-use
+        // messages degraded to "你使用了0", mall pets came out level 0 and the
+        // 特级八卦 teleport could not find its destination map.
+        const auto& b = std::get<std::shared_ptr<BufferValue>>(key);
+        uint32_t h = 2166136261u;
+        for (unsigned char c : b->data) {
+            h ^= c;
+            h *= 16777619u;
+        }
+        return h;
     }
     default: {
         // identity hash on the shared_ptr payload (or the variant index for
@@ -262,9 +284,72 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
     }
 }
 
+// LPCVM_IIDDBG: how many BUFFER-keyed mapping lookups hit / miss.  Buffer keys
+// are the iid_map (find_object_by_iid) family; before the content hash/compare
+// fix every such lookup was a guaranteed miss, so a non-zero "found" count is
+// the direct proof that item-by-iid resolution works again.
+void iidProbeCount(bool found) {
+    static const bool on = (std::getenv("LPCVM_IIDDBG") != nullptr);
+    if (!on) return;
+    static std::atomic<int64_t> hits{0};
+    static std::atomic<int64_t> miss{0};
+    int64_t h = found ? hits.fetch_add(1) + 1 : hits.load();
+    int64_t m = found ? miss.load() : miss.fetch_add(1) + 1;
+    if (((h + m) % 500) == 0) {
+        std::cerr << "[iiddbg] buffer-key mapping lookups: found=" << h << " miss=" << m << "\n";
+        std::cerr.flush();
+    }
+}
+
+// LPCVM_IIDDBG (detail): the first buffer-keyed mapping operations with enough
+// context to see WHY an iid lookup misses - the key type/bytes, the map size,
+// how many stored keys are buffers, and the outcome.  A map that reports
+// bufKeys=0 means the iid_map WRITE never happened; a map with buffered keys
+// that still misses means the key contents differ.
+void iidProbeOp(const char* what, const Value& key, const MappingValue& m, bool found, bool haveKey) {
+    static const bool on = (std::getenv("LPCVM_IIDDBG") != nullptr);
+    if (!on) return;
+    static std::atomic<int64_t> ops{0};
+    static std::atomic<int64_t> hits{0};
+    static std::atomic<int64_t> susp{0};
+    int64_t n = ops.fetch_add(1) + 1;
+    if (found) hits.fetch_add(1);
+    size_t bufKeys = 0;
+    for (const auto& nd : m.nodes)
+        if (nd.key.index() == 10) ++bufKeys;
+    // A lookup that misses in a map which DOES hold buffer keys is the smoking
+    // gun (the map is populated but the key is not found); registration
+    // lookups against an empty map are ordinary insert-misses and stay quiet.
+    if (!found && haveKey && bufKeys > 0 && susp.fetch_add(1) < 6) {
+        std::string kb;
+        if (key.index() == 10) {
+            const std::string& d = std::get<std::shared_ptr<BufferValue>>(key)->data;
+            for (size_t i = 0; i < d.size() && i < 10; ++i) {
+                char buf[4];
+                std::snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned char>(d[i]));
+                kb += buf;
+            }
+        } else {
+            kb = "t" + std::to_string(key.index());
+        }
+        std::cerr << "[iiddbg] SUSPECT " << what << " key=" << kb << " mapsz=" << m.size()
+                  << " bufKeys=" << bufKeys << " -> miss\n";
+        std::cerr.flush();
+    }
+    if (found && hits.load() <= 3) {
+        std::cerr << "[iiddbg] HIT " << what << " mapsz=" << m.size() << " bufKeys=" << bufKeys
+                  << "\n";
+        std::cerr.flush();
+    }
+    if ((n % 2000) == 0) {
+        std::cerr << "[iiddbg] buffer-key ops=" << n << " hits=" << hits.load()
+                  << " suspectMiss=" << susp.load() << "\n";
+        std::cerr.flush();
+    }
+}
+
 namespace {
-bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {
-    if (a.index() != b.index()) return false;
+bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {    if (a.index() != b.index()) return false;
     switch (a.index()) {
     case 0: case 1: return true;
     case 2: return std::get<int64_t>(a) == std::get<int64_t>(b);
@@ -277,6 +362,12 @@ bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {
     case 7: return std::get<std::shared_ptr<ObjectValue>>(a).get() == std::get<std::shared_ptr<ObjectValue>>(b).get();
     case 8: return std::get<std::shared_ptr<ClosureValue>>(a).get() == std::get<std::shared_ptr<ClosureValue>>(b).get();
     case 9: return std::get<std::shared_ptr<LoopCtrl>>(a).get() == std::get<std::shared_ptr<LoopCtrl>>(b).get();
+    case 10:
+        // BUFFER keys compare by CONTENT (mirrors value_equal's case 10 and the
+        // content hash above).  Returning false here made iid_map lookups
+        // impossible even for the very same buffer instance.
+        return std::get<std::shared_ptr<BufferValue>>(a)->data ==
+               std::get<std::shared_ptr<BufferValue>>(b)->data;
     default: return false;
     }
 }
@@ -285,7 +376,11 @@ bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {
 const Value* MappingValue::find(const Value& key) const {
     uint32_t h = MappingValue_hashKey(key, caseSensitive);
     for (int32_t ni = table[h & tableSize]; ni != -1; ni = nodes[ni].next)
-        if (mapKeyEqual(nodes[ni].key, key, caseSensitive)) return &nodes[ni].value;
+        if (mapKeyEqual(nodes[ni].key, key, caseSensitive)) {
+            if (key.index() == 10) { iidProbeCount(true); iidProbeOp("find", key, *this, true, true); }
+            return &nodes[ni].value;
+        }
+    if (key.index() == 10) { iidProbeCount(false); iidProbeOp("find", key, *this, false, true); }
     return nullptr;
 }
 
@@ -360,9 +455,11 @@ Value& MappingValue::insert(const Value& key, const Value& value) {
     nd.value = value;
     nd.next = table[bucket];
     ++g_liveMapEntries;
+    bool bufKey = (key.index() == 10);
     nodes.push_back(std::move(nd));
     table[bucket] = static_cast<int32_t>(nodes.size() - 1);
     ++cnt;
+    if (bufKey) iidProbeOp("insert", key, *this, true, true);
     return nodes.back().value;
 }
 
