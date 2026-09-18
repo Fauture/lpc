@@ -8429,6 +8429,19 @@ private:
                               << " type=" << ((vi >= 0 && static_cast<size_t>(vi) < objVars_->size()) ? (*objVars_)[vi].index() : -1)
                               << "\n";
                 }
+                if (std::getenv("LPCVM_NEAR") && !frames_.empty() && frames_.back().fn) {
+                    const std::string fnn2 = frames_.back().fn->name;
+                    if (fnn2 == "is_visible" || fnn2 == "is_near") {
+                        std::string val = "<oob>";
+                        if (vi >= 0 && static_cast<size_t>(vi) < objVars_->size())
+                            val = to_string((*objVars_)[vi], false);
+                        std::cerr << "[near-var] fn=" << fnn2 << " vi=" << vi
+                                  << " off=" << currentVarOffset() << " obj=" << objName_
+                                  << " this=" << currentThisName()
+                                  << " vars=" << objVars_->size() << " val=" << val << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 if (static_cast<size_t>(vi) < objVars_->size()) pushValue((*objVars_)[vi]);
                 else pushValue(make_int(0));
                 break;
@@ -11224,7 +11237,9 @@ private:
                         // the by-ref writes are lost (content was created at an
                         // empty path/name).  Fall back to the detached call
                         // when the callee is not resolvable in this VM.
-                        bool selfRef = (ov->owner != nullptr) && (ov->owner == &obj_);
+                        bool selfRef = ((ov->owner != nullptr) && (ov->owner == &obj_)) ||
+                                       (!path.empty() &&
+                                        (path == currentThisName() || path == thisObjectName_));
                         bool hasRefArg = false;
                         if (selfRef) {
                             for (int i = 0; i < argn && !stack_.empty(); ++i)
