@@ -1,4 +1,4 @@
-#include "original_vm.h"
+﻿#include "original_vm.h"
 
 // The LPCVM_STACKDBG probe needs the module's own base address to report raw
 // stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
@@ -1997,6 +1997,18 @@ public:
     }
 
     const OriginalObject& object() const { return obj_; }
+
+    // Call ONE specific function object: LPC's ::fn() semantics (invoke a parent
+    // constitution's implementation rather than the most-derived override).
+    // Args are pushed so param0 ends on top, exactly like executeFunctionOnStack
+    // expects.  Used by the clone path to run the ROOT parent's import() only -
+    // basic_object.c's override additionally registers the clone in the global
+    // basic-object name table, which halted the gs boot after visual_packs.
+    Value callSpecificFunction(const OriginalFunction& fn, const std::vector<Value>& args) {
+        for (auto it = args.rbegin(); it != args.rend(); ++it) pushValue(*it);
+        return executeFunctionOnStack(fn, false, static_cast<int>(args.size()));
+    }
+
     // The shared program backing this VM.  Clones reuse the template's
     // read-only program instead of deep-copying it (saves ~1.5GB with
     // thousands of NPC clones).  VMs constructed from a reference keep their
@@ -16488,7 +16500,24 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                           << " import=[" << to_string(tmplImp, false).substr(0, 40) << "]\n";
             if (tmplImp.index() == 4 && !std::get<SharedString>(tmplImp).empty()) {
                 vmPtr->setPreviousObjectName(tmplVm->objName());
-                vmPtr->callFunctionByName("import", {tmplImp});
+                // Run the ROOT parent's import (LPC ::import semantics) instead of
+                // the most-derived one.  basic_object.c overrides import() and
+                // additionally does set_temp("basic_object", 1) +
+                // register_basic_object(name, this_object()); that filled the
+                // global basic-object name table with short-lived clones and
+                // halted the gs boot right after visual_packs (bisect: a12602c).
+                // The root import still sets my_import_name + the dbase, which is
+                // what get_name() needs (the "你使用了0" bug).
+                const OriginalFunction* baseImport = nullptr;
+                for (const auto& f : tmplVm->object().functions) {
+                    if (f.name != "import") continue;
+                    if (!baseImport || f.varOffset < baseImport->varOffset)
+                        baseImport = &f;
+                }
+                if (baseImport) {
+                    vmPtr->setPreviousObjectName(tmplVm->objName());
+                    vmPtr->callSpecificFunction(*baseImport, {tmplImp});
+                }
                 if (std::getenv("LPCVM_TAIL")) {
                     Value fid = vmPtr->callFunctionByName("query", {make_string("file_id")});
                     Value nm = vmPtr->callFunctionByName("query", {make_string("name")});
