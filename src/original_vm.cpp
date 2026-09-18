@@ -16481,7 +16481,13 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // �ػ�����@��ܭ��.  Re-run the template's import on the clone (it is
         // idempotent: re-sets my_import_name, file_id and the npc.list
         // attributes including name).
-        if (tmplVm && rel.find("npc/basic") != std::string::npos) {
+        //
+        // Runs for EVERY clone whose template carries an import identity, not
+        // just npc/basic: the charge/item clones (修为丹, 材料箱, 百变盒 ...) get
+        // their name/dbase the same way, and without it `get_name()` returned
+        // undefined and the use message read "你使用了0。" instead of the item
+        // name (they also came out with an empty dbase: mall pets at level 0).
+        if (tmplVm) {
             Value tmplImp = tmplVm->callFunctionByName("get_import_name", {});
             if (vmEnvTrace())
                 std::cerr << "[clone-imp] " << cloneKey << " tmpl=" << tmplVm->objName()
