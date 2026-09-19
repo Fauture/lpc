@@ -12029,6 +12029,16 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
+    // LPCVM_RECV2: one line per inbound command (no body) - enough to see which
+    // client request the server never answers.
+    {
+        static const std::atomic<bool>& r2 = dynProbeFlag("LPCVM_RECV2");
+        if (r2.load(std::memory_order_relaxed)) {
+            std::cerr << "[rx] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
+                      << " cmd=0x" << std::hex << cmdNo << std::dec << " len=" << len << "\n";
+            std::cerr.flush();
+        }
+    }
     // LPCVM_RECV: log EVERY inbound packet (cmd + length + head bytes + wall
     // clock).  Paired with the [send] audit from builtins.cpp this shows exactly
     // which client request the server never answered - the blind spot behind

@@ -1,4 +1,4 @@
-#include "original_vm.h"
+﻿#include "original_vm.h"
 
 // The LPCVM_STACKDBG probe needs the module's own base address to report raw
 // stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
@@ -17217,637 +17217,910 @@ size_t envCountObjKeys() {
 // verifies the answer and, when it never arrives, logs itself out after a few
 // minutes (the reported 3-5 minute disconnect).  This class parses that subset
 // and evaluates it - no compiler needed.
+// ---------------------------------------------------------------------------
+// Minimal LPC interpreter for the anti-cheat challenge script the CLIENT sends.
+//
+// The payload of 0x5108 decodes to LPC SOURCE (not a compiled .o), e.g.:
+//
+//   override mixed fm(int x = 6622, int y = 6817) { return ((sort(({ x, x*2,
+//     x*3, x*4 }), (: sprintf, "%d" :))[2] + x) * 2 - y) & 0xFFFF; }
+//   int challenge_server(int x, int y) { mixed i, mks, mask, result;
+//     mixed m, a, s; mask = 0x7F; m = allocate_mapping(16);
+//     loop (i = 0 upto 1 + ((x * y) & 3)) m[mask & (y + x + i + 50)] = ...;
+//     a = ({ }); loop (i = 0 upto 1 + ((y + x) & 3)) a += ({ ... });
+//     s = "6015"; x = (x + (int) this_object()->fm(x + 7816, y + 8)) & mask;
+//     result = 0; loop (mks in m) result += mks[0] + mks[1];
+//     result += count_total(a); result += x + y; result += strlen(s);
+//     result &= mask; return result; }
+//   int get_x(){ return 9170;} int get_y(){ return 8140;}
+//
+// The server must answer me->send(8625, x, y, answer) (0x21B1); without it the
+// client walks itself back to the login screen after a few minutes - the
+// reported 3-5 minute disconnect.  check_server.c pushes this source through
+// load_object("/challenge.c", 0, src), which our dynamic-object path cannot
+// execute, so the script is interpreted here instead.
+//
+// Ported from _ac_eval.py, which was validated against every challenge script
+// captured from the live client (21/21).
 class AntiCheatScript {
 public:
-    using Arr = std::vector<int64_t>;
+    struct Tok {
+        char kind;          // 'n' number, 's' string, 'i' ident, 'o' operator, 'e' eof
+        std::string text;
+        int64_t num = 0;
+    };
+    struct Val {
+        char kind = 'i';          // 'i' int, 's' string, 'a' array, 'm' mapping
+        int64_t num = 0;
+        std::string s;
+        std::vector<Val> items;   // array
+        std::vector<std::pair<Val, Val>> pairs;   // mapping (insertion order)
+        int64_t asInt() const {
+            if (kind == 'i') return num;
+            if (kind == 's') return static_cast<int64_t>(s.size());
+            if (kind == 'a') return static_cast<int64_t>(items.size());
+            if (kind == 'm') return static_cast<int64_t>(pairs.size());
+            return 0;
+        }
+    };
 
     bool parse(const std::string& src) {
-        i_ = 0;
-        s_ = src;
-        // Split into "name -> body" for every `... name(...) { ... }`.
-        while (true) {
-            size_t brace = findTopLevelOpenBrace();
-            if (brace == std::string::npos) break;
-            size_t close = matchBrace(brace);
-            if (close == std::string::npos) return false;
-            std::string head = s_.substr(parsed_, brace - parsed_);
-            size_t paren = head.rfind('(');
-            if (paren == std::string::npos) { parsed_ = close + 1; continue; }
-            size_t p = paren;
-            while (p > 0 && std::isspace(static_cast<unsigned char>(head[p - 1]))) --p;
-            size_t e = p;
-            while (p > 0 && (std::isalnum(static_cast<unsigned char>(head[p - 1])) ||
-                             head[p - 1] == '_')) --p;
-            std::string name = head.substr(p, e - p);
-            std::string params = head.substr(paren + 1);
-            size_t rp = params.find(')');
-            if (rp != std::string::npos) params = params.substr(0, rp);
-            std::vector<std::string> pnames;
-            std::vector<int64_t> pdefs;
-            for (auto& piece : splitTop(params, ',')) {
-                std::string t = trim(piece);
-                if (t.empty()) continue;
-                size_t eq = t.find('=');
-                std::string decl = (eq == std::string::npos) ? t : t.substr(0, eq);
-                int64_t def = 0;
-                if (eq != std::string::npos) def = toInt(trim(t.substr(eq + 1)));
-                // last identifier in the declaration is the parameter name
-                size_t q = decl.size();
-                while (q > 0 && std::isspace(static_cast<unsigned char>(decl[q - 1]))) --q;
-                size_t q0 = q;
-                while (q0 > 0 && (std::isalnum(static_cast<unsigned char>(decl[q0 - 1])) ||
-                                  decl[q0 - 1] == '_')) --q0;
-                pnames.push_back(decl.substr(q0, q - q0));
-                pdefs.push_back(def);
-            }
-            Func f;
-            f.params = pnames;
-            f.defs = pdefs;
-            f.body = s_.substr(brace, close - brace + 1);
-            funcs_[name] = f;
-            parsed_ = close + 1;
-        }
-        return !funcs_.empty();
+        toks_ = lex(src);
+        return parseProgram();
     }
 
     bool eval(const std::string& fn, const std::vector<int64_t>& args, int& out) {
-        auto it = funcs_.find(fn);
+        std::map<std::string, Func>::iterator it = funcs_.find(fn);
         if (it == funcs_.end()) return false;
-        std::map<std::string, Var> env;
+        std::map<std::string, Val> env;
         for (size_t i = 0; i < it->second.params.size(); ++i)
-            env[it->second.params[i]] = Var{args.size() > i ? args[i] : it->second.defs[i], {}};
-        cur_ = &it->second;
-        p_ = 0;
-        b_ = it->second.body;
-        Var r;
-        if (!execBlock(env, r)) return false;
-        out = static_cast<int>(r.num & 0xFFFFFFFFLL);
+            env[it->second.params[i]] = V(args.size() > i ? args[i] : it->second.defs[i]);
+        Exec ex(this, env);
+        Val r = ex.runBody(it->second.body);
+        out = static_cast<int>(static_cast<uint32_t>(r.asInt()));
         return true;
     }
 
 private:
-    struct Var {
-        int64_t num = 0;
-        Arr arr;
-        bool isArr = false;
-        bool isMap = false;
-        std::string str;     // when the value is a string (`s = "174"`)
-        bool isStr = false;
-    };
     struct Func {
         std::vector<std::string> params;
         std::vector<int64_t> defs;
-        std::string body;
+        std::vector<Tok> body;
+    };
+    struct Parser {
+        std::vector<Tok> t;
+        size_t i = 0;
+        const Tok& peek(size_t k = 0) const {
+            size_t idx = i + k;
+            if (idx >= t.size()) idx = t.size() ? t.size() - 1 : 0;
+            return t[idx];
+        }
+        bool at(const std::string& s) const {
+            const Tok& tk = peek();
+            return (tk.kind == 'o' || tk.kind == 'i') && tk.text == s;
+        }
+        bool eat(const std::string& s) {
+            if (!at(s)) return false;
+            ++i;
+            return true;
+        }
+        void next() { if (i + 1 < t.size()) ++i; }
     };
 
-    std::string s_;
-    size_t i_ = 0;
-    size_t parsed_ = 0;
-    std::string b_;
-    size_t p_ = 0;
-    const Func* cur_ = nullptr;
+    std::vector<Tok> toks_;
     std::map<std::string, Func> funcs_;
 
-    static std::string trim(const std::string& v) {
-        size_t a = 0, z = v.size();
-        while (a < z && std::isspace(static_cast<unsigned char>(v[a]))) ++a;
-        while (z > a && std::isspace(static_cast<unsigned char>(v[z - 1]))) --z;
-        return v.substr(a, z - a);
-    }
-    static std::vector<std::string> splitTop(const std::string& v, char sep) {
-        std::vector<std::string> out;
-        int depth = 0;
-        std::string cur;
-        for (char c : v) {
-            if (c == '(' || c == '{' || c == '[') ++depth;
-            else if (c == ')' || c == '}' || c == ']') --depth;
-            if (c == sep && depth == 0) { out.push_back(cur); cur.clear(); continue; }
-            cur += c;
+    // ---------------------------------------------------------------- lexer
+    static bool isIdStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
+    static bool isIdChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
+    static std::vector<Tok> lex(const std::string& src) {
+        std::vector<Tok> out;
+        size_t i = 0;
+        const size_t n = src.size();
+        while (i < n) {
+            char c = src[i];
+            if (std::isspace(static_cast<unsigned char>(c))) { ++i; continue; }
+            if (std::isdigit(static_cast<unsigned char>(c))) {
+                size_t a = i;
+                if (c == '0' && i + 1 < n && (src[i + 1] == 'x' || src[i + 1] == 'X')) {
+                    i += 2;
+                    while (i < n && std::isxdigit(static_cast<unsigned char>(src[i]))) ++i;
+                } else {
+                    while (i < n && std::isdigit(static_cast<unsigned char>(src[i]))) ++i;
+                }
+                Tok tk; tk.kind = 'n'; tk.text = src.substr(a, i - a);
+                tk.num = static_cast<int64_t>(std::strtoll(tk.text.c_str(), nullptr, 0));
+                out.push_back(tk);
+                continue;
+            }
+            if (c == '"') {
+                ++i;
+                std::string lit;
+                while (i < n && src[i] != '"') {
+                    if (src[i] == '\\' && i + 1 < n) {
+                        ++i;
+                        lit += (src[i] == 'n') ? '\n' : (src[i] == 'r' ? '\r' : src[i]);
+                        ++i;
+                        continue;
+                    }
+                    lit += src[i++];
+                }
+                if (i < n) ++i;
+                Tok tk; tk.kind = 's'; tk.text = lit;
+                out.push_back(tk);
+                continue;
+            }
+            if (isIdStart(c)) {
+                size_t a = i;
+                while (i < n && isIdChar(src[i])) ++i;
+                Tok tk; tk.kind = 'i'; tk.text = src.substr(a, i - a);
+                out.push_back(tk);
+                continue;
+            }
+            // closures first: (: ... :)
+            if (c == '(' && i + 1 < n && src[i + 1] == ':') {
+                Tok tk; tk.kind = 'o'; tk.text = "(:";
+                out.push_back(tk);
+                i += 2;
+                continue;
+            }
+            if (c == ':' && i + 1 < n && src[i + 1] == ')') {
+                Tok tk; tk.kind = 'o'; tk.text = ":)";
+                out.push_back(tk);
+                i += 2;
+                continue;
+            }
+            static const char* three[] = {"<<=", ">>="};
+            bool matched = false;
+            for (const char* op : three) {
+                if (src.compare(i, 3, op) == 0) {
+                    Tok tk; tk.kind = 'o'; tk.text = op;
+                    out.push_back(tk);
+                    i += 3;
+                    matched = true;
+                    break;
+                }
+            }
+            if (matched) continue;
+            static const char* two[] = {"+=", "-=", "*=", "/=", "%=", "==", "!=", "<=", ">=",
+                                        "&&", "||", "<<", ">>", "++", "--", "->", "&=", "|=", "^="};
+            for (const char* op : two) {
+                if (src.compare(i, 2, op) == 0) {
+                    Tok tk; tk.kind = 'o'; tk.text = op;
+                    out.push_back(tk);
+                    i += 2;
+                    matched = true;
+                    break;
+                }
+            }
+            if (matched) continue;
+            {
+                Tok tk; tk.kind = 'o'; tk.text = std::string(1, c);
+                out.push_back(tk);
+                ++i;
+            }
         }
-        out.push_back(cur);
+        Tok eof; eof.kind = 'e'; eof.text = "";
+        out.push_back(eof);
         return out;
     }
-    static int64_t toInt(const std::string& v) {
-        std::string t = trim(v);
-        if (t.empty()) return 0;
-        const char* c = t.c_str();
-        return static_cast<int64_t>(std::strtoll(c, nullptr, 0));
+
+    // ---------------------------------------------------------------- parse
+    bool parseProgram() {
+        Parser p;
+        p.t = toks_;
+        while (p.peek().kind != 'e') {
+            if (p.at("override")) p.next();
+            std::vector<Tok> head;
+            while (!p.at("{") && p.peek().kind != 'e') head.push_back(p.t[p.i]), p.next();
+            if (p.peek().kind == 'e') break;
+            std::vector<Tok> body = skipBlock(p);
+            // function name = last ident before '('
+            size_t paren = std::string::npos;
+            for (size_t k = 0; k < head.size(); ++k)
+                if (head[k].kind == 'o' && head[k].text == "(") { paren = k; break; }
+            if (paren == std::string::npos) continue;
+            std::string fname;
+            for (size_t k = paren; k-- > 0;) {
+                if (head[k].kind == 'i') { fname = head[k].text; break; }
+                if (k == 0) break;
+            }
+            std::vector<Tok> paramToks(head.begin() + static_cast<long>(paren) + 1, head.end());
+            Func f;
+            parseParams(paramToks, f);
+            f.body = body;
+            if (!fname.empty()) funcs_[fname] = f;
+        }
+        return !funcs_.empty();
     }
-    size_t findTopLevelOpenBrace() {
-        for (size_t k = parsed_; k < s_.size(); ++k)
-            if (s_[k] == '{') return k;
-        return std::string::npos;
-    }
-    size_t matchBrace(size_t open) {
+
+    std::vector<Tok> skipBlock(Parser& p) {
+        std::vector<Tok> out;
+        if (!p.at("{")) return out;
+        p.next();                       // consume '{'
         int depth = 0;
-        for (size_t k = open; k < s_.size(); ++k) {
-            if (s_[k] == '{') ++depth;
-            else if (s_[k] == '}') { if (--depth == 0) return k; }
+        while (p.peek().kind != 'e') {
+            Tok tk = p.peek();
+            if (tk.kind == 'o' && tk.text == "{") ++depth;
+            if (tk.kind == 'o' && tk.text == "}") {
+                if (depth == 0) { p.next(); break; }
+                --depth;
+            }
+            out.push_back(tk);
+            p.next();
         }
-        return std::string::npos;
+        return out;
     }
 
-    // ---- lexer over the function body ----
-    void skipWs() { while (p_ < b_.size() && std::isspace(static_cast<unsigned char>(b_[p_]))) ++p_; }
-    bool peek(const char* tok) {
-        skipWs();
-        size_t n = std::strlen(tok);
-        return b_.compare(p_, n, tok) == 0;
-    }
-    bool eat(const char* tok) {
-        if (!peek(tok)) return false;
-        p_ += std::strlen(tok);
-        return true;
-    }
-    std::string ident() {
-        skipWs();
-        size_t a = p_;
-        while (p_ < b_.size() && (std::isalnum(static_cast<unsigned char>(b_[p_])) || b_[p_] == '_')) ++p_;
-        return b_.substr(a, p_ - a);
-    }
-    bool number(int64_t& v) {
-        skipWs();
-        if (p_ >= b_.size() || !std::isdigit(static_cast<unsigned char>(b_[p_]))) return false;
-        size_t a = p_;
-        while (p_ < b_.size() && (std::isalnum(static_cast<unsigned char>(b_[p_])))) ++p_;
-        v = toInt(b_.substr(a, p_ - a));
-        return true;
-    }
-    bool stringLit(std::string& v) {
-        skipWs();
-        if (p_ >= b_.size() || b_[p_] != '"') return false;
-        ++p_;
-        v.clear();
-        while (p_ < b_.size() && b_[p_] != '"') {
-            if (b_[p_] == '\\' && p_ + 1 < b_.size()) { ++p_; v += b_[p_]; ++p_; continue; }
-            v += b_[p_++];
+    static void parseParams(const std::vector<Tok>& toks, Func& f) {
+        // stop at the ')' closing our '('
+        std::vector<Tok> inner;
+        int depth = 1;
+        for (size_t k = 0; k < toks.size(); ++k) {
+            const Tok& tk = toks[k];
+            if (tk.kind == 'o' && tk.text == "(") ++depth;
+            else if (tk.kind == 'o' && tk.text == ")") {
+                if (--depth == 0) break;
+            } else if (tk.kind == 'o' && (tk.text == "{" || tk.text == "[")) ++depth;
+            else if (tk.kind == 'o' && (tk.text == "}" || tk.text == "]")) --depth;
+            inner.push_back(tk);
         }
-        if (p_ < b_.size()) ++p_;
-        return true;
+        std::vector<std::vector<Tok>> groups;
+        std::vector<Tok> cur;
+        int d2 = 0;
+        for (size_t k = 0; k < inner.size(); ++k) {
+            const Tok& tk = inner[k];
+            if (tk.kind == 'o' && (tk.text == "(" || tk.text == "[" || tk.text == "{")) ++d2;
+            if (tk.kind == 'o' && (tk.text == ")" || tk.text == "]" || tk.text == "}")) --d2;
+            if (tk.kind == 'o' && tk.text == "," && d2 == 0) {
+                groups.push_back(cur);
+                cur.clear();
+                continue;
+            }
+            cur.push_back(tk);
+        }
+        groups.push_back(cur);
+        for (size_t g = 0; g < groups.size(); ++g) {
+            const std::vector<Tok>& grp = groups[g];
+            if (grp.empty()) continue;
+            size_t eq = grp.size();
+            for (size_t k = 0; k < grp.size(); ++k)
+                if (grp[k].kind == 'o' && grp[k].text == "=") { eq = k; break; }
+            int64_t dflt = 0;
+            if (eq != grp.size() && eq + 1 < grp.size() && grp[eq + 1].kind == 'n')
+                dflt = grp[eq + 1].num;
+            std::string name;
+            for (size_t k = 0; k < eq && k < grp.size(); ++k)
+                if (grp[k].kind == 'i') name = grp[k].text;
+            if (!name.empty()) {
+                f.params.push_back(name);
+                f.defs.push_back(dflt);
+            }
+        }
     }
 
-    // ---- statements ----
-    bool execBlock(std::map<std::string, Var>& env, Var& result) {
-        if (!eat("{")) return false;
-        result = Var{};
-        while (true) {
-            skipWs();
-            if (eat("}")) return true;
-            if (p_ >= b_.size()) return false;
-            if (!execStatement(env, result)) return false;
-        }
+    // ------------------------------------------------------------ execution
+    static Val V(int64_t n) { Val v; v.kind = 'i'; v.num = n; return v; }
+    static Val VS(const std::string& s) {
+        Val v; v.kind = 's'; v.s = s; v.num = static_cast<int64_t>(s.size()); return v;
     }
-    bool execStatement(std::map<std::string, Var>& env, Var& result) {
-        skipWs();
-        if (peek("{")) {
-            std::map<std::string, Var> inner = env;
-            return execBlock(inner, result);
+    static Val VARR(std::vector<Val> items) { Val v; v.kind = 'a'; v.items = std::move(items); return v; }
+    static Val VMAP() { Val v; v.kind = 'm'; return v; }
+
+    class Exec {
+    public:
+        Exec(AntiCheatScript* it, const std::map<std::string, Val>& env) : it_(it), env_(env) {}
+
+        Val runBody(const std::vector<Tok>& body) {
+            Parser p;
+            p.t = body;
+            Tok eof; eof.kind = 'e'; eof.text = "";
+            p.t.push_back(eof);
+            Val result = V(0);
+            while (p.peek().kind != 'e') {
+                Val r;
+                if (stmt(p, r)) result = r;
+                else break;
+            }
+            return result;
         }
-        if (peek("loop")) {
-            p_ += 4;
-            if (!eat("(")) return false;
-            std::string var = ident();
-            if (!eat("=")) return false;
-            int64_t from = 0;
-            if (!exprNum(env, from)) return false;
-            int64_t to = 0;
-            if (eat("upto")) {
-                if (!exprNum(env, to)) return false;
-                if (!eat(")")) return false;
-                if (!peek("{")) return false;
-                std::map<std::string, Var> inner = env;
-                for (int64_t v = from; v <= to; ++v) {
-                    inner[var] = Var{v, {}};
-                    std::map<std::string, Var> it = inner;
-                    Var r;
-                    size_t save = p_;
-                    if (!execBlock(it, r)) return false;
-                    p_ = save;
+
+    private:
+        AntiCheatScript* it_;
+        std::map<std::string, Val> env_;
+        // Name of the variable the LAST primary() read - `x++` needs it to know
+        // which counter to bump (cleared by every other literal/list access).
+        std::string lastIdent_;
+
+        static bool isType(const std::string& s) {
+            return s == "mixed" || s == "int" || s == "string" || s == "array" ||
+                   s == "mapping" || s == "float" || s == "object" || s == "buffer";
+        }
+
+        void mapPut(Val& m, const Val& key, const Val& val) {
+            for (size_t k = 0; k < m.pairs.size(); ++k)
+                if (m.pairs[k].first.asInt() == key.asInt() && m.pairs[k].first.kind == key.kind) {
+                    m.pairs[k].second = val;
+                    return;
                 }
-                skipWs();
-                if (!eat("}")) return false;
+            m.pairs.push_back(std::make_pair(key, val));
+        }
+        Val mapGet(const Val& m, const Val& key) {
+            for (size_t k = 0; k < m.pairs.size(); ++k)
+                if (m.pairs[k].first.asInt() == key.asInt() && m.pairs[k].first.kind == key.kind)
+                    return m.pairs[k].second;
+            return V(0);
+        }
+
+        // one loop body: either `{ ... }` or a single statement (the generated
+        // loops have NO braces - `loop (...) stmt;`)
+        struct LoopBody {
+            std::vector<Tok> toks;
+            bool isBlock = false;
+        };
+        LoopBody oneOrBlock(Parser& p) {
+            LoopBody lb;
+            if (p.at("{")) {
+                lb.toks = it_->skipBlock(p);
+                lb.isBlock = true;
+                return lb;
+            }
+            size_t start = p.i;
+            size_t end = scanStmt(p);
+            lb.toks.assign(p.t.begin() + static_cast<long>(start), p.t.begin() + static_cast<long>(end));
+            p.i = end;
+            return lb;
+        }
+        void runLoopBody(const LoopBody& lb, const std::map<std::string, Val>& extra) {
+            std::map<std::string, Val> env = extra;
+            Exec ex(it_, env);
+            if (lb.isBlock) {
+                ex.runBody(lb.toks);
+                return;
+            }
+            Parser p;
+            p.t = lb.toks;
+            Tok eof; eof.kind = 'e'; eof.text = "";
+            p.t.push_back(eof);
+            Val r;
+            ex.stmt(p, r);
+        }
+        size_t scanStmt(Parser& p) {
+            int depth = 0;
+            while (p.peek().kind != 'e') {
+                Tok tk = p.peek();
+                if (tk.kind == 'o' && tk.text == "{") {
+                    it_->skipBlock(p);
+                    if (depth == 0) return p.i;
+                    continue;
+                }
+                if (tk.kind == 'o' && (tk.text == "(" || tk.text == "[")) { ++depth; p.next(); continue; }
+                if (tk.kind == 'o' && (tk.text == ")" || tk.text == "]")) {
+                    if (depth == 0) return p.i;
+                    --depth;
+                    p.next();
+                    continue;
+                }
+                p.next();
+                if (tk.kind == 'o' && tk.text == ";" && depth <= 0) return p.i;
+            }
+            return p.i;
+        }
+
+        bool stmt(Parser& p, Val& result) {
+            const Tok& tk = p.peek();
+            if (tk.kind == 'i' && tk.text == "loop") {
+                p.next();
+                if (!p.eat("(")) return false;
+                std::string var = p.peek().text;
+                p.next();
+                if (p.eat("in")) {
+                    std::string coll = p.peek().text;
+                    p.next();
+                    if (!p.eat(")")) return false;
+                    LoopBody lb = oneOrBlock(p);
+                    std::map<std::string, Val>::iterator cit = env_.find(coll);
+                    std::vector<std::pair<Val, Val>> pairs;
+                    if (cit != env_.end() && cit->second.kind == 'm') pairs = cit->second.pairs;
+                    for (size_t k = 0; k < pairs.size(); ++k) {
+                        std::map<std::string, Val> extra = env_;
+                        std::vector<Val> pairItems;
+                        pairItems.push_back(pairs[k].first);
+                        pairItems.push_back(pairs[k].second);
+                        extra[var] = VARR(pairItems);
+                        runLoopBody(lb, extra);
+                    }
+                    return true;
+                }
+                if (!p.eat("=")) return false;
+                int64_t a = 0;
+                if (!ternary(p, a)) return false;
+                if (!p.eat("upto")) return false;
+                int64_t b = 0;
+                if (!ternary(p, b)) return false;
+                if (!p.eat(")")) return false;
+                LoopBody lb = oneOrBlock(p);
+                for (int64_t v = a; v <= b; ++v) {
+                    std::map<std::string, Val> extra = env_;
+                    extra[var] = V(v);
+                    runLoopBody(lb, extra);
+                }
                 return true;
             }
-            if (eat("in")) {
-                std::string coll = ident();
-                if (!eat(")")) return false;
-                if (!peek("{")) return false;
-                size_t save = p_;
-                auto cit = env.find(coll);
-                size_t count = (cit != env.end()) ? cit->second.arr.size() : 0;
-                for (size_t idx = 0; idx < count; ++idx) {
-                    std::map<std::string, Var> inner = env;
-                    if (cit != env.end() && cit->second.isMap) {
-                        Arr pair{cit->second.arr[idx * 2], cit->second.arr[idx * 2 + 1]};
-                        Var pv;
-                        pv.isArr = true;
-                        pv.arr = pair;
-                        inner["mks"] = pv;   // the generated loops always name pairs "mks"
+            if (tk.kind == 'i' && tk.text == "return") {
+                p.next();
+                if (!expr(p, result)) return false;
+                p.eat(";");
+                return true;
+            }
+            if (tk.kind == 'i' && (tk.text == "break" || tk.text == "continue")) {
+                p.next();
+                p.eat(";");
+                return true;
+            }
+            if (tk.kind == 'i' && isType(tk.text)) {
+                p.next();
+                for (;;) {
+                    // `mixed i, mks, mask;` are ALL declarators; a following
+                    // TYPE keyword (`array a; mixed i;`) starts a new statement.
+                    if (p.peek().kind != 'i' || isType(p.peek().text)) break;
+                    std::string nm = p.peek().text;
+                    p.next();
+                    Val v = V(0);
+                    if (p.eat("=")) {
+                        if (!expr(p, v)) return false;
                     }
-                    Var r;
-                    p_ = save;
-                    if (!execBlock(inner, r)) return false;
+                    env_[nm] = v;
+                    if (p.eat(",")) continue;
+                    break;
                 }
-                p_ = save;
-                skipWs();
-                if (!eat("}")) return false;
+                p.eat(";");
+                return true;
+            }
+            // assignment / indexed assignment / expression
+            if (tk.kind == 'i') {
+                const Tok& nx = p.peek(1);
+                if (nx.kind == 'o' && (nx.text == "=" || nx.text == "+=" || nx.text == "-=" ||
+                                       nx.text == "&=" || nx.text == "|=" || nx.text == "[" ||
+                                       nx.text == "++" || nx.text == "--")) {
+                    std::string nm = tk.text;
+                    p.next();
+                    if (p.at("[")) {
+                        p.next();
+                        Val key;
+                        if (!expr(p, key)) return false;
+                        if (!p.eat("]")) return false;
+                        Val& dst = env_[nm];
+                        if (dst.kind != 'm') { dst = VMAP(); }
+                        if (p.eat("=")) {
+                            Val val;
+                            if (!expr(p, val)) return false;
+                            mapPut(dst, key, val);
+                        } else if (p.eat("+=")) {
+                            Val val;
+                            if (!expr(p, val)) return false;
+                            mapPut(dst, key, V(mapGet(dst, key).asInt() + val.asInt()));
+                        }
+                        p.eat(";");
+                        return true;
+                    }
+                    if (p.eat("=")) {
+                        Val v;
+                        if (!expr(p, v)) return false;
+                        env_[nm] = v;
+                        p.eat(";");
+                        return true;
+                    }
+                    if (p.eat("+=")) {
+                        Val rhs;
+                        if (!expr(p, rhs)) return false;
+                        Val& cur = env_[nm];
+                        if (cur.kind == 'a' && rhs.kind == 'a') {
+                            for (size_t k = 0; k < rhs.items.size(); ++k) cur.items.push_back(rhs.items[k]);
+                        } else if (cur.kind == 's' || rhs.kind == 's') {
+                            std::string text = (cur.kind == 's' ? cur.s : std::to_string(cur.num)) +
+                                               (rhs.kind == 's' ? rhs.s : std::to_string(rhs.num));
+                            cur = VS(text);
+                        } else {
+                            cur = V(cur.asInt() + rhs.asInt());
+                        }
+                        p.eat(";");
+                        return true;
+                    }
+                    if (p.eat("&=")) {
+                        Val rhs; if (!expr(p, rhs)) return false;
+                        env_[nm] = V(env_[nm].asInt() & rhs.asInt());
+                        p.eat(";");
+                        return true;
+                    }
+                    if (p.eat("|=")) {
+                        Val rhs; if (!expr(p, rhs)) return false;
+                        env_[nm] = V(env_[nm].asInt() | rhs.asInt());
+                        p.eat(";");
+                        return true;
+                    }
+                }
+            }
+            if (tk.kind == 'o' && tk.text == "{") {
+                std::vector<Tok> body = it_->skipBlock(p);
+                std::map<std::string, Val> env = env_;
+                Exec ex(it_, env);
+                result = ex.runBody(body);
+                return true;
+            }
+            if (!expr(p, result)) return false;
+            p.eat(";");
+            return true;
+        }
+
+        // ---- expressions ----
+        struct Level { const char* ops[6]; };
+        bool expr(Parser& p, Val& out) { return assign(p, out); }
+        bool assign(Parser& p, Val& out) {
+            if (!ternaryVal(p, out)) return false;
+            if (p.eat("=")) {
+                Val rhs;
+                if (!assign(p, rhs)) return false;
+                out = rhs;
+            }
+            return true;
+        }
+        // NOTE: this must stay Val-valued.  An int64-only variant silently
+        // turned `s[x % strlen(s)]` into V(0) (the string was reduced to its
+        // length before the index was taken), so every script that indexes its
+        // digit string produced a wrong answer.
+        bool ternaryVal(Parser& p, Val& out) {
+            if (!binary(p, 0, out)) return false;
+            if (p.eat("?")) {
+                Val a, b;
+                if (!ternaryVal(p, a)) return false;
+                if (!p.eat(":")) return false;
+                if (!ternaryVal(p, b)) return false;
+                out = out.asInt() ? a : b;
+            }
+            return true;
+        }
+        bool ternary(Parser& p, int64_t& out) {
+            Val v;
+            if (!ternaryVal(p, v)) return false;
+            out = v.asInt();
+            return true;
+        }
+        static const std::vector<std::vector<std::string>>& levels() {
+            static const std::vector<std::vector<std::string>> lv = {
+                {"||"}, {"&&"}, {"|"}, {"^"}, {"&"},
+                {"==", "!="}, {"<", ">", "<=", ">="}, {"<<", ">>"},
+                {"+", "-"}, {"*", "/", "%"}
+            };
+            return lv;
+        }
+        bool binary(Parser& p, size_t level, Val& out) {
+            if (level >= levels().size()) return unary(p, out);
+            if (!binary(p, level + 1, out)) return false;
+            for (;;) {
+                const std::vector<std::string>& ops = levels()[level];
+                bool hit = false;
+                for (size_t k = 0; k < ops.size(); ++k) {
+                    if (p.at(ops[k])) {
+                        std::string op = ops[k];
+                        p.next();
+                        Val rhs;
+                        if (!binary(p, level + 1, rhs)) return false;
+                        out = applyBin(op, out, rhs);
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) return true;
+            }
+        }
+        static Val applyBin(const std::string& op, const Val& a, const Val& b) {
+            if (op == "+") {
+                if (a.kind == 's' || b.kind == 's')
+                    return VS((a.kind == 's' ? a.s : std::to_string(a.num)) +
+                              (b.kind == 's' ? b.s : std::to_string(b.num)));
+                if (a.kind == 'a' && b.kind == 'a') {
+                    std::vector<Val> items = a.items;
+                    for (size_t k = 0; k < b.items.size(); ++k) items.push_back(b.items[k]);
+                    return VARR(items);
+                }
+                return V(a.asInt() + b.asInt());
+            }
+            int64_t x = a.asInt(), y = b.asInt();
+            if (op == "-") return V(x - y);
+            if (op == "*") return V(x * y);
+            if (op == "/") return V(y ? x / y : 0);
+            if (op == "%") return V(y ? x % y : 0);
+            if (op == "&") return V(x & y);
+            if (op == "|") return V(x | y);
+            if (op == "^") return V(x ^ y);
+            if (op == "<<") return V(x << y);
+            if (op == ">>") return V(x >> y);
+            if (op == "==") return V(x == y);
+            if (op == "!=") return V(x != y);
+            if (op == "<") return V(x < y);
+            if (op == ">") return V(x > y);
+            if (op == "<=") return V(x <= y);
+            if (op == ">=") return V(x >= y);
+            if (op == "&&") return V(x && y);
+            if (op == "||") return V(x || y);
+            return V(0);
+        }
+        bool unary(Parser& p, Val& out) {
+            if (p.eat("-")) {
+                if (!unary(p, out)) return false;
+                out = V(-out.asInt());
+                return true;
+            }
+            if (p.eat("!")) {
+                if (!unary(p, out)) return false;
+                out = V(out.asInt() ? 0 : 1);
+                return true;
+            }
+            if (p.eat("++")) return unary(p, out);
+            if (p.at("(")) {
+                // cast?  (int) expr
+                const Tok& t1 = p.peek(1);
+                const Tok& t2 = p.peek(2);
+                if (t1.kind == 'i' && isType(t1.text) && t2.kind == 'o' && t2.text == ")") {
+                    p.next(); p.next(); p.next();
+                    return unary(p, out);
+                }
+            }
+            return postfix(p, out);
+        }
+        bool postfix(Parser& p, Val& out) {
+            if (!primary(p, out)) return false;
+            for (;;) {
+                if (p.at("++") || p.at("--")) {
+                    // `s[i++ % sizeof(s)]` - the generated scripts bump a loop
+                    // counter INSIDE an expression.  Remember which variable was
+                    // read and apply the side effect now.
+                    bool inc = p.at("++");
+                    p.next();
+                    if (!lastIdent_.empty()) {
+                        std::map<std::string, Val>::iterator vit = env_.find(lastIdent_);
+                        if (vit != env_.end()) vit->second = V(vit->second.asInt() + (inc ? 1 : -1));
+                    }
+                    lastIdent_.clear();
+                    return true;
+                }
+                if (p.at("[")) {
+                    p.next();
+                    Val idx;
+                    if (!expr(p, idx)) return false;
+                    if (!p.eat("]")) return false;
+                    out = index(out, idx);
+                    continue;
+                }
+                if (p.at("->")) {
+                    p.next();
+                    std::string fn = p.peek().text;
+                    p.next();
+                    if (!p.eat("(")) return false;
+                    std::vector<Val> args;
+                    if (!p.at(")")) {
+                        for (;;) {
+                            Val a;
+                            if (!expr(p, a)) return false;
+                            args.push_back(a);
+                            if (p.eat(",")) continue;
+                            break;
+                        }
+                    }
+                    p.eat(")");
+                    out = callFn(fn, args);
+                    continue;
+                }
+                if (p.at("(")) {           // builtin call reached through an ident
+                    p.next();
+                    std::vector<Val> args;
+                    if (!p.at(")")) {
+                        for (;;) {
+                            Val a;
+                            if (!expr(p, a)) return false;
+                            args.push_back(a);
+                            if (p.eat(",")) continue;
+                            break;
+                        }
+                    }
+                    p.eat(")");
+                    continue;
+                }
+                return true;
+            }
+        }
+        Val index(const Val& v, const Val& idx) const {
+            int64_t i = idx.asInt();
+            if (std::getenv("ACDBG"))
+                std::fprintf(stderr, "[idx] kind=%c num=%lld slen=%zu idx=%lld\n",
+                             v.kind, static_cast<long long>(v.num), v.s.size(),
+                             static_cast<long long>(i));
+            if (v.kind == 'a') return (i >= 0 && static_cast<size_t>(i) < v.items.size()) ? v.items[static_cast<size_t>(i)] : V(0);
+            if (v.kind == 's') return (i >= 0 && static_cast<size_t>(i) < v.s.size())
+                                         ? V(static_cast<unsigned char>(v.s[static_cast<size_t>(i)])) : V(0);
+            if (v.kind == 'm') {
+                for (size_t k = 0; k < v.pairs.size(); ++k)
+                    if (v.pairs[k].first.asInt() == i && v.pairs[k].first.kind == idx.kind)
+                        return v.pairs[k].second;
+                return V(0);
+            }
+            return V(0);
+        }
+        Val callFn(const std::string& fn, const std::vector<Val>& args) {
+            std::map<std::string, Func>::iterator it = it_->funcs_.find(fn);
+            if (it == it_->funcs_.end()) return V(0);
+            std::map<std::string, Val> env;
+            for (size_t k = 0; k < it->second.params.size(); ++k)
+                env[it->second.params[k]] = (k < args.size()) ? args[k] : V(it->second.defs[k]);
+            Exec ex(it_, env);
+            return ex.runBody(it->second.body);
+        }
+        Val builtin(const std::string& nm, const std::vector<Val>& args) {
+            if (nm == "allocate_mapping") return VMAP();
+            if (nm == "count_total") {
+                int64_t total = 0;
+                for (size_t k = 0; k < args.size(); ++k) {
+                    if (args[k].kind == 'a') {
+                        for (size_t j = 0; j < args[k].items.size(); ++j) total += args[k].items[j].asInt();
+                    } else {
+                        total += args[k].asInt();
+                    }
+                }
+                return V(total);
+            }
+            if (nm == "sizeof") return V(args.empty() ? 0 : args[0].asInt());
+            if (nm == "strlen") {
+                if (args.empty()) return V(0);
+                return V(args[0].kind == 's' ? static_cast<int64_t>(args[0].s.size()) : args[0].asInt());
+            }
+            if (nm == "keys" || nm == "values") {
+                std::vector<Val> items;
+                if (!args.empty() && args[0].kind == 'm')
+                    for (size_t k = 0; k < args[0].pairs.size(); ++k)
+                        items.push_back(nm == "keys" ? args[0].pairs[k].first : args[0].pairs[k].second);
+                return VARR(items);
+            }
+            if (nm == "sort") {
+                std::vector<Val> items;
+                if (!args.empty() && args[0].kind == 'a') items = args[0].items;
+                std::sort(items.begin(), items.end(), [](const Val& a, const Val& b) {
+                    return a.asInt() < b.asInt();
+                });
+                return VARR(items);
+            }
+            if (nm == "sprintf") {
+                std::string fmt = (!args.empty() && args[0].kind == 's') ? args[0].s : std::string();
+                std::string text;
+                size_t argi = 1;
+                for (size_t k = 0; k < fmt.size(); ++k) {
+                    if (fmt[k] != '%' || k + 1 >= fmt.size()) { text += fmt[k]; continue; }
+                    size_t j = k + 1;
+                    std::string spec = "%";
+                    while (j < fmt.size() && std::strchr("-+ #0", fmt[j])) spec += fmt[j++];
+                    while (j < fmt.size() && std::isdigit(static_cast<unsigned char>(fmt[j]))) spec += fmt[j++];
+                    if (j < fmt.size() && fmt[j] == '.') {
+                        spec += fmt[j++];
+                        while (j < fmt.size() && std::isdigit(static_cast<unsigned char>(fmt[j]))) spec += fmt[j++];
+                    }
+                    if (j >= fmt.size()) break;
+                    char type = fmt[j];
+                    spec += type;
+                    k = j;
+                    int64_t v = (argi < args.size()) ? args[argi++].asInt() : 0;
+                    char buf[256];
+                    if (type == 's') {
+                        snprintf(buf, sizeof(buf), "%s", std::to_string(v).c_str());
+                    } else if (type == 'c') {
+                        snprintf(buf, sizeof(buf), spec.c_str(), static_cast<int>(v & 0xFF));
+                    } else {
+                        snprintf(buf, sizeof(buf), spec.c_str(), static_cast<long long>(v));
+                    }
+                    text += buf;
+                }
+                return VS(text);
+            }
+            if (nm == "toupper" || nm == "tolower") {
+                std::string s = (!args.empty() && args[0].kind == 's') ? args[0].s : std::string();
+                for (size_t k = 0; k < s.size(); ++k)
+                    s[k] = static_cast<char>(nm == "toupper" ? std::toupper(static_cast<unsigned char>(s[k]))
+                                                            : std::tolower(static_cast<unsigned char>(s[k])));
+                return VS(s);
+            }
+            if (nm == "copy_value") return args.empty() ? V(0) : args[0];
+            if (nm == "member_array") return V(-1);
+            if (it_->funcs_.find(nm) != it_->funcs_.end()) return callFn(nm, args);
+            return V(0);
+        }
+        bool primary(Parser& p, Val& out) {
+            const Tok& tk = p.peek();
+            if (tk.kind == 'n') { p.next(); out = V(tk.num); return true; }
+            if (tk.kind == 's') { p.next(); out = VS(tk.text); return true; }
+            if (tk.kind == 'o' && tk.text == "(:") {     // closure literal
+                while (!(p.peek().kind == 'o' && p.peek().text == ":)") && p.peek().kind != 'e') p.next();
+                p.eat(":)");
+                out = VARR(std::vector<Val>());
+                return true;
+            }
+            if (tk.kind == 'o' && tk.text == "(") {
+                p.next();
+                if (p.at("{")) {                        // ({ ... }) array literal
+                    p.next();
+                    std::vector<Val> items;
+                    while (!p.at("}") && p.peek().kind != 'e') {
+                        Val v;
+                        if (!expr(p, v)) return false;
+                        if (v.kind == 'a') {
+                            for (size_t k = 0; k < v.items.size(); ++k) items.push_back(v.items[k]);
+                        } else {
+                            items.push_back(v);
+                        }
+                        if (p.eat(",")) continue;
+                        break;
+                    }
+                    p.eat("}");
+                    p.eat(")");
+                    out = VARR(items);
+                    return true;
+                }
+                if (p.at(":")) {                        // (: name, args :)
+                    p.next();
+                    while (!p.at(":") && p.peek().kind != 'e') p.next();
+                    p.eat(":");
+                    p.eat(")");
+                    out = VARR(std::vector<Val>());
+                    return true;
+                }
+                if (!expr(p, out)) return false;
+                p.eat(")");
+                return true;
+            }
+            if (tk.kind == 'o' && tk.text == "{") {     // ({ ... } reached bare
+                p.next();
+                std::vector<Val> items;
+                while (!p.at("}") && p.peek().kind != 'e') {
+                    Val v;
+                    if (!expr(p, v)) return false;
+                    items.push_back(v);
+                    if (p.eat(",")) continue;
+                    break;
+                }
+                p.eat("}");
+                p.eat(")");
+                out = VARR(items);
+                return true;
+            }
+            if (tk.kind == 'i') {
+                p.next();
+                std::string nm = tk.text;
+                if (p.at("(")) {
+                    p.next();
+                    std::vector<Val> args;
+                    if (!p.at(")")) {
+                        for (;;) {
+                            Val a;
+                            if (!expr(p, a)) return false;
+                            args.push_back(a);
+                            if (p.eat(",")) continue;
+                            break;
+                        }
+                    }
+                    p.eat(")");
+                    out = builtin(nm, args);
+                    return true;
+                }
+                std::map<std::string, Val>::iterator it = env_.find(nm);
+                lastIdent_ = nm;
+                if (it != env_.end()) { out = it->second; return true; }
+                out = V(0);
                 return true;
             }
             return false;
         }
-        // type keywords + declarations
-        static const char* types[] = {"mixed", "int", "string", "array", "mapping", "float", "object", "buffer"};
-        for (const char* t : types) {
-            if (peek(t) && (b_[p_ + std::strlen(t)] == ' ' || b_[p_ + std::strlen(t)] == '\t')) {
-                p_ += std::strlen(t);
-                while (true) {
-                    std::string nm = ident();
-                    if (nm.empty()) {   // e.g. `mixed &ref` / unnamed declarator
-                        Var dummy;
-                        if (!expr(env, dummy)) return false;
-                        eat(";");
-                        return true;
-                    }
-                    Var v;
-                    if (eat("=")) {
-                        if (!expr(env, v)) return false;
-                    }
-                    env[nm] = v;
-                    if (eat(",")) {
-                        // `mixed i, mks, mask;` - the ", name" pieces are more
-                        // declarators, not expressions.  A further `=` belongs
-                        // to the declarator.
-                        continue;
-                    }
-                    break;
-                }
-                eat(";");
-                return true;
-            }
-        }
-        // assignment `name = expr;` / `name += ...;` / `a[i] = expr;`
-        {
-            size_t save = p_;
-            std::string nm = ident();
-            if (!nm.empty()) {
-                skipWs();
-                // m[expr] = expr;   (the generated scripts fill mappings this way)
-                if (peek("[")) {
-                    p_ += 1;
-                    int64_t idx = 0;
-                    if (!exprNum(env, idx)) return false;
-                    if (!eat("]")) return false;
-                    skipWs();
-                    if (eat("=")) {
-                        Var rhs;
-                        if (!expr(env, rhs)) return false;
-                        eat(";");
-                        Var& dst = env[nm];
-                        dst.isMap = true;
-                        bool replaced = false;
-                        for (size_t k = 0; k + 1 < dst.arr.size(); k += 2)
-                            if (dst.arr[k] == idx) { dst.arr[k + 1] = rhs.num; replaced = true; break; }
-                        if (!replaced) { dst.arr.push_back(idx); dst.arr.push_back(rhs.num); }
-                        return true;
-                    }
-                    if (eat("+=")) {
-                        Var rhs;
-                        if (!expr(env, rhs)) return false;
-                        eat(";");
-                        Var& dst = env[nm];
-                        dst.isMap = true;
-                        bool replaced = false;
-                        for (size_t k = 0; k + 1 < dst.arr.size(); k += 2)
-                            if (dst.arr[k] == idx) { dst.arr[k + 1] += rhs.num; replaced = true; break; }
-                        if (!replaced) { dst.arr.push_back(idx); dst.arr.push_back(rhs.num); }
-                        return true;
-                    }
-                    p_ = save;
-                } else if (eat("+=")) {
-                    Var rhs;
-                    if (!expr(env, rhs)) return false;
-                    eat(";");
-                    Var& dst = env[nm];
-                    if (dst.isStr || rhs.isStr) {
-                        // string concatenation: s += sprintf("%02X", ...)
-                        dst.isStr = true;
-                        dst.str += (rhs.isStr ? rhs.str : std::to_string(rhs.num));
-                        dst.num = static_cast<int64_t>(dst.str.size());
-                        return true;
-                    }
-                    if (rhs.isArr) {
-                        dst.isArr = true;
-                        for (int64_t x : rhs.arr) dst.arr.push_back(x);
-                    } else {
-                        dst.num += rhs.num;
-                    }
-                    return true;
-                } else if (eat("=")) {
-                    Var rhs;
-                    if (!expr(env, rhs)) return false;
-                    eat(";");
-                    env[nm] = rhs;
-                    return true;
-                }
-                p_ = save;
-            }
-        }
-        // expression / return
-        if (eat("return")) {
-            if (!expr(env, result)) return false;
-            eat(";");
-            return true;
-        }
-        if (peek("break") || peek("continue")) { ident(); eat(";"); return true; }
-        return expr(env, result);
-    }
-
-    // ---- expressions ----
-    bool exprNum(std::map<std::string, Var>& env, int64_t& out) {
-        Var v;
-        if (!expr(env, v)) return false;
-        out = v.num;
-        return true;
-    }
-    bool expr(std::map<std::string, Var>& env, Var& out) { return ternary(env, out); }
-    bool ternary(std::map<std::string, Var>& env, Var& out) {
-        if (!orExpr(env, out)) return false;
-        if (eat("?")) {
-            Var a, b;
-            if (!ternary(env, a)) return false;
-            if (!eat(":")) return false;
-            if (!ternary(env, b)) return false;
-            out = (out.num != 0) ? a : b;
-        }
-        return true;
-    }
-    bool orExpr(std::map<std::string, Var>& env, Var& out) {
-        if (!andExpr(env, out)) return false;
-        while (peek("||")) { p_ += 2; Var r; if (!andExpr(env, r)) return false; out.num = (out.num || r.num); }
-        return true;
-    }
-    bool andExpr(std::map<std::string, Var>& env, Var& out) {
-        if (!bitOr(env, out)) return false;
-        while (peek("&&")) { p_ += 2; Var r; if (!bitOr(env, r)) return false; out.num = (out.num && r.num); }
-        return true;
-    }
-    bool bitOr(std::map<std::string, Var>& env, Var& out) {
-        if (!bitXor(env, out)) return false;
-        while (peek("|") && !peek("||")) { p_ += 1; Var r; if (!bitXor(env, r)) return false; out.num |= r.num; }
-        return true;
-    }
-    bool bitXor(std::map<std::string, Var>& env, Var& out) {
-        if (!bitAnd(env, out)) return false;
-        while (peek("^")) { p_ += 1; Var r; if (!bitAnd(env, r)) return false; out.num ^= r.num; }
-        return true;
-    }
-    bool bitAnd(std::map<std::string, Var>& env, Var& out) {
-        if (!equality(env, out)) return false;
-        while (peek("&") && !peek("&=")) { p_ += 1; Var r; if (!equality(env, r)) return false; out.num &= r.num; }
-        return true;
-    }
-    bool equality(std::map<std::string, Var>& env, Var& out) {
-        if (!relational(env, out)) return false;
-        for (;;) {
-            if (peek("==")) { p_ += 2; Var r; if (!relational(env, r)) return false; out.num = (out.num == r.num); }
-            else if (peek("!=")) { p_ += 2; Var r; if (!relational(env, r)) return false; out.num = (out.num != r.num); }
-            else return true;
-        }
-    }
-    bool relational(std::map<std::string, Var>& env, Var& out) {
-        if (!additive(env, out)) return false;
-        for (;;) {
-            if (peek("<=")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num <= r.num); }
-            else if (peek(">=")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num >= r.num); }
-            else if (peek("<<")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num << r.num); }
-            else if (peek(">>")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num >> r.num); }
-            else if (peek("<") && !peek("<=")) { p_ += 1; Var r; if (!additive(env, r)) return false; out.num = (out.num < r.num); }
-            else if (peek(">") && !peek(">=")) { p_ += 1; Var r; if (!additive(env, r)) return false; out.num = (out.num > r.num); }
-            else return true;
-        }
-    }
-    bool additive(std::map<std::string, Var>& env, Var& out) {
-        if (!multiplicative(env, out)) return false;
-        for (;;) {
-            if (peek("+") && !peek("++")) { p_ += 1; Var r; if (!multiplicative(env, r)) return false; out.num += r.num; }
-            else if (peek("-") && !peek("--")) { p_ += 1; Var r; if (!multiplicative(env, r)) return false; out.num -= r.num; }
-            else return true;
-        }
-    }
-    bool multiplicative(std::map<std::string, Var>& env, Var& out) {
-        if (!unary(env, out)) return false;
-        for (;;) {
-            if (peek("*")) { p_ += 1; Var r; if (!unary(env, r)) return false; out.num *= r.num; }
-            else if (peek("/")) { p_ += 1; Var r; if (!unary(env, r)) return false; if (r.num) out.num /= r.num; }
-            else if (peek("%")) { p_ += 1; Var r; if (!unary(env, r)) return false; if (r.num) out.num %= r.num; }
-            else return true;
-        }
-    }
-    bool unary(std::map<std::string, Var>& env, Var& out) {
-        skipWs();
-        if (peek("!")) { p_ += 1; if (!unary(env, out)) return false; out.num = !out.num; return true; }
-        if (peek("-")) { p_ += 1; if (!unary(env, out)) return false; out.num = -out.num; return true; }
-        if (peek("(int)")) { p_ += 5; return unary(env, out); }
-        if (peek("(mixed)")) { p_ += 7; return unary(env, out); }
-        return postfix(env, out);
-    }
-    bool postfix(std::map<std::string, Var>& env, Var& out) {
-        if (!primary(env, out)) return false;
-        for (;;) {
-            if (peek("[") ) {
-                p_ += 1;
-                int64_t idx = 0;
-                if (!exprNum(env, idx)) return false;
-                if (!eat("]")) return false;
-                if (out.isArr && idx >= 0 && static_cast<size_t>(idx) < out.arr.size()) {
-                    int64_t v = out.arr[static_cast<size_t>(idx)];
-                    out = Var{v, {}};
-                } else if (out.isStr && idx >= 0 && static_cast<size_t>(idx) < out.str.size()) {
-                    out = Var{static_cast<unsigned char>(out.str[static_cast<size_t>(idx)]), {}};
-                } else if (out.isMap && idx >= 0) {
-                    int64_t v = 0;
-                    for (size_t k = 0; k + 1 < out.arr.size(); k += 2)
-                        if (out.arr[k] == idx) { v = out.arr[k + 1]; break; }
-                    out = Var{v, {}};
-                } else {
-                    out = Var{};
-                }
-                continue;
-            }
-            if (peek("->")) {
-                // this_object()->name(args) : evaluate the named function
-                p_ += 2;
-                std::string fn = ident();
-                if (!eat("(")) return false;
-                std::vector<int64_t> args;
-                skipWs();
-                if (!peek(")")) {
-                    while (true) {
-                        int64_t v = 0;
-                        if (!exprNum(env, v)) return false;
-                        args.push_back(v);
-                        if (eat(",")) continue;
-                        break;
-                    }
-                }
-                if (!eat(")")) return false;
-                Var r;
-                if (!callFn(fn, args, r)) return false;
-                out = r;
-                continue;
-            }
-            return true;
-        }
-    }
-    bool callFn(const std::string& fn, const std::vector<int64_t>& args, Var& out) {
-        if (fn == "sizeof") { out = Var{static_cast<int64_t>(args.size()), {}}; return true; }
-        auto it = funcs_.find(fn);
-        if (it == funcs_.end()) return false;
-        const Func* saveF = cur_;
-        std::string saveB = b_;
-        size_t saveP = p_;
-        std::map<std::string, Var> env;
-        for (size_t i = 0; i < it->second.params.size(); ++i)
-            env[it->second.params[i]] = Var{args.size() > i ? args[i] : it->second.defs[i], {}};
-        cur_ = &it->second;
-        p_ = 0;
-        b_ = it->second.body;
-        Var r;
-        bool ok = execBlock(env, r);
-        cur_ = saveF;
-        b_ = saveB;
-        p_ = saveP;
-        if (!ok) return false;
-        out = r;
-        return true;
-    }
-    bool primary(std::map<std::string, Var>& env, Var& out) {
-        skipWs();
-        if (eat("(")) {
-            // ({ ... }) array literal
-            if (peek("{")) {
-                p_ += 1;
-                Arr items;
-                skipWs();
-                if (!peek("}")) {
-                    while (true) {
-                        Var v;
-                        if (!expr(env, v)) return false;
-                        if (v.isArr) for (int64_t x : v.arr) items.push_back(x);
-                        else items.push_back(v.num);
-                        if (eat(",")) continue;
-                        break;
-                    }
-                }
-                if (!eat("}")) return false;
-                if (!eat(")")) return false;
-                out.isArr = true;
-                out.arr = items;
-                return true;
-            }
-            Var v;
-            if (!expr(env, v)) return false;
-            if (!eat(")")) return false;
-            out = v;
-            return true;
-        }
-        std::string lit;
-        if (stringLit(lit)) {
-            out = Var{};
-            out.isStr = true;
-            out.str = lit;
-            out.num = static_cast<int64_t>(lit.size());
-            return true;
-        }
-        int64_t n = 0;
-        if (number(n)) { out = Var{n, {}}; return true; }
-        std::string nm = ident();
-        if (nm.empty()) return false;
-        if (eat("(")) {
-            // builtin call
-            std::vector<int64_t> a1;
-            Arr litArr;
-            bool hasArr = false;
-            int64_t arrSize = 0;
-            skipWs();
-            if (!peek(")")) {
-                while (true) {
-                    Var v;
-                    if (!expr(env, v)) return false;
-                    if (v.isArr) {
-                        hasArr = true;
-                        arrSize = static_cast<int64_t>(v.arr.size());
-                        for (int64_t x : v.arr) litArr.push_back(x);
-                    } else {
-                        a1.push_back(v.num);
-                    }
-                    if (eat(",")) continue;
-                    break;
-                }
-            }
-            if (!eat(")")) return false;
-            if (nm == "sizeof") {
-                // sizeof(array/mapping/string) - the generated scripts use it
-                // as the array length.
-                out = Var{hasArr ? arrSize : (a1.empty() ? 0 : a1[0]), {}};
-                return true;
-            }
-            if (nm == "count_total") {
-                int64_t s = 0;
-                for (int64_t x : (hasArr ? litArr : Arr{})) s += x;
-                for (int64_t x : a1) s += x;
-                out = Var{s, {}};
-                return true;
-            }
-            if (nm == "strlen") {
-                if (litArr.empty() && a1.empty()) { out = Var{0, {}}; return true; }
-                out = Var{a1.empty() ? static_cast<int64_t>(litArr.size()) : a1[0], {}};
-                return true;
-            }
-            if (nm == "keys") {
-                // keys(mapping) - the generated scripts use
-                // sort(keys(m))[k] and then only its length.
-                out = Var{};
-                out.isArr = true;
-                for (size_t k = 0; k + 1 < litArr.size(); k += 2) out.arr.push_back(litArr[k]);
-                return true;
-            }
-            if (nm == "sort") {
-                // sort(array): the challenge only uses [i] plus, for keys(m),
-                // the LENGTH of the resulting string - keep the values sorted
-                // numerically which is enough for both uses.
-                out = Var{};
-                out.isArr = true;
-                out.arr = litArr;
-                std::sort(out.arr.begin(), out.arr.end());
-                return true;
-            }
-            if (nm == "allocate_mapping") { out.isMap = true; return true; }
-            if (nm == "sprintf") {
-                // sprintf("%02X", value) - the generated scripts append the
-                // result to a string, so return the formatted length.
-                size_t len = 0;
-                char buf[64];
-                if (!a1.empty()) {
-                    snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned>(a1[0]));
-                    len = std::strlen(buf);
-                }
-                out = Var{static_cast<int64_t>(len), {}};
-                out.isStr = true;
-                out.str.assign(len, '0');
-                return true;
-            }
-            Var r;
-            if (callFn(nm, a1, r)) { out = r; return true; }
-            out = Var{};
-            return true;
-        }
-        auto it = env.find(nm);
-        if (it != env.end()) { out = it->second; return true; }
-        out = Var{};
-        return true;
-    }
+    };
 };
+
 
 // Driver-side anti-cheat "check_server" challenge
 // (vm_cmdCheckServer 0x5108 -> start_gs::cmd_check_server ->

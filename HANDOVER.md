@@ -2001,6 +2001,80 @@ python -X utf8 _bagtask_probe.py <账号> <密码> <角色> <秒>           # �
   动态对象装载、接口注册），不要归因到客户端按键操作。
 
 
+## ✅ 2026-09-20 「3–5 分钟掉线」的**直接原因已定位并修好回包链路**：0x5108 → 0x21B1
+
+**根因（真机取证 + 逐包审计，非推测）**
+
+客户端每 ~15 秒发一次 `0x5108 (CMD_CHECK_SERVER)`，服务端**必须回 `0x21B1`**：
+
+```lpc
+// /gs/cmds/normal/check_server.c（原版反外挂挑战）
+me->send(8625, make32(x), make32(y), make32(answer));   // 8625 = 0x21B1
+```
+
+* **8 个历史日志目录里 `0x21B1` 的发送次数全是 0** —— 这个回包从来没发出去过；
+* 客户端连发十几次收不到应答，就自己登出回登录界面（= 用户报的 3-5 分钟掉线）。
+  实测掉线时刻：进游戏后 **160~213 秒**，服务端日志里客户端发 `0x3E2A`(登出) 或
+  直接断 socket；
+* 服务端侧**没有踢人**：这段会话里 `[echo]` 每 10 秒正常回 `0xF9C3`，
+  `[accelerate]` / `cmd_close_client` 都没有命中该连接。
+
+**为什么以前发不出去（三个叠加的真 bug）**
+
+1. `load_object` 第三参数（程序内容）的实现 `loadObjectFromImage` **在 469fc15 被误删**
+   （那个提交本意只改 clone/temp），于是 `load_object("/challenge.c", 0, 内容)` 建不出对象；
+2. 0x5108 的载荷解密后是 **LPC 源码**（不是 `.o` 字节码），所以就算修好动态载入器也
+   不能用字节码解析器去装载它；解密算法见 `check_server.c::decrypt`
+   （`lzss_decompress` + 滚动异或 `code=102; code=((code*2)+7)^71 & 255`）；
+3. 我们的 LPC 路径（`check_server.o::main`）实际跑到 `_fob->get_x()` 就抛异常，
+   回包永远发不出去（`[ac] cmd_check_server returned (undefined)`）。
+
+**修复（driver 侧直接算 + 回包，不再依赖 LPC 动态对象）**
+
+* `src/original_vm.cpp`：新增 `lpc::antiCheatCheckServer(cryptedBuf, x, y, answer)`
+  1. 解码 0x5108 载荷（LZSS + 滚动异或，语义照 `check_server.c::decrypt`）；
+  2. 用 `AntiCheatScript` **解释执行客户端发来的挑战源码**（该源码是 `generate_function()`
+     生成的、形态固定的受限 LPC 子集：`loop (i = A upto B) stmt;`（**无大括号**）、
+     `loop (mks in m) stmt;`、`m[k]=v`、`a[i]=expr`、`a += ({...})`、`s += sprintf(...)`、
+     `count_total/sizeof/strlen/keys/values/sort/sprintf`、`this_object()->f?(..)`）；
+  3. 先取 `get_x()/get_y()`，再算 `challenge_server(x, y)` 得到 answer；
+* `src/game_service.cpp`：`handle_vm_cmdCheckServer` 在 LPC 没回包时调用它，
+  并用 `sendGamePacket(cno, 0x21B1, x|y|answer)` 把回包发出去（求值失败也必发一个，
+  绝不让客户端收不到应答）；
+* `load_object` 第三参数的动态载入路径已恢复（按 IDA `vm_f_load_object 0x80f8cbc` 语义）。
+
+**实测（真机）**
+
+```
+[ac] t=1043965ms cno=12 0x5108 blen=497 ...
+[ac] challenge script 763 bytes head=206F76657272696465206D69
+[ac] x=4101 y=9363 answer=13468
+[ac] sent 0x21B1 cno=12 x=4101 y=9363 answer=13468      ← 以前从来没有这一行
+```
+
+**校验工具（本轮新增，可离线跑，不用等 15 分钟启动）**
+
+* `_ac_script.py`：把 gs 日志里的 `[ac]` head hex 解密成明文源码；
+* `_ac_eval.py`：挑战源码的 **Python 参考解释器**（`python -X utf8 _ac_eval.py < 脚本`）；
+* `_ac_check.py`：把**所有真机抓到的挑战脚本**跑一遍参考解释器（当前 **21/21 通过**）；
+* `_ac_cxx_check.py`：把 `src/original_vm.cpp` 里的 `AntiCheatScript` 单独编译出来，
+  与参考解释器逐条比对（当前 **19/21 一致**，剩余 2 例差 2~3）；
+* `_ac_probe.py` / `_ac_probe2.py`：单条表达式形态的对照探针（字符串下标、拼接、
+  `sizeof`/`count_total`、无大括号循环、`this_object()->f()` 等）。
+
+**仍差一步**：`0x21B1` 现在每次都发出去了，但真机仍在 **~160 秒**自己登出 ⇒
+**answer 还没完全算对**（客户端会自己校验）。两个已知不一致的脚本形态：
+
+* `loop (i = 0 upto (sizeof(a) - 1) & 3) a[i] = (a[i] * s[i++ % sizeof(s)]) & mask;`
+  —— `i++` 作为**值**使用（后置自增语义：取值后变量再加一）；C++ 与 Python 参考
+  在这条上差 3；
+* `s += sprintf("%02X", sort(keys(m))[strlen(s) % sizeof(m)]);` —— `keys(m)` 的
+  排序与取下标（C++/Python 差 2）。
+
+下一步：把这两处语义按原版 LPC（后置自增 + `sort(keys())` 的排序规则，必要时查 IDA）
+对齐，让 21/21 一致；若仍掉线，用 `LPCVM_RECV2=1`（每个入站包一行 `[rx]`）确认
+客户端是否还在等别的包。
+
 ## 🔴 2026-09-19 真机复现 + 逐包审计（本轮实测，仍未修好）
 
 **现象（用户确认）**：进游戏后**动不动都会在 3-5 分钟掉线**（站着不动也会掉），
