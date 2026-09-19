@@ -1,4 +1,4 @@
-﻿# LPC 引擎复刻 — 交接文档（给下一个对话）
+# LPC 引擎复刻 — 交接文档（给下一个对话）
 
 ## ⛔ 数据库红线（最高优先级，任何对话 / 任何工具 / 任何脚本都必须遵守）
 
@@ -1999,3 +1999,74 @@ python -X utf8 _bagtask_probe.py <账号> <密码> <角色> <秒>           # �
   （`comm_desc.txt` 由 gs 内部 `start_gs.c` 解析，缺接口会导致回包被当“无接口”丢弃）；
 * 因此排查掉线要查**服务端有没有把该回的回包发出去**（filed/aaa/ccs 的应答、
   动态对象装载、接口注册），不要归因到客户端按键操作。
+
+
+## 🔴 2026-09-19 真机复现 + 逐包审计（本轮实测，仍未修好）
+
+**现象（用户确认）**：进游戏后**动不动都会在 3-5 分钟掉线**（站着不动也会掉），
+掉线后客户端自己回到登录界面。**只有真机客户端能复现**，模拟脚本不会掉 ——
+所有结论必须用真机客户端验证。
+
+**实测数据（真机客户端 = `E:\bf\BaiduNetdiskDownload\asktao1.60\asktao.mod`）**
+
+| 记录 | 服务端日志 | 进游戏 | 掉线 | 时长 | 客户端是否发登出 |
+|---|---|---|---|---|---|
+| fixrun cno=112 | `fixrun/live_gs.txt` | t=1657929 | t=1855600 | 162s | 是（`0x3E2A`） |
+| fixrun cno=72 | 同上 | t=1260784 | t=1458539 | 198s | 是 |
+| audit2 cno=19 | `audit2/live_gs.txt` | t=1033900 | t=1206841 | 173s | 是 |
+| hbrun cno=16 | `hbrun/live_gs.txt` | t=969416 | t≈1136000 | 165s | 是 |
+
+**证据链（本轮新工具，别再靠猜）**
+
+1. 服务端 `[recv] cmd=0x3e2a` = **客户端主动登出**（`start_gs.c:14479 cmd_logout`），
+   随后 socket 关闭、服务端 `[send] cmd=0xf101`（MSG_LOGOUT）与
+   `[send-fail] err=10038`。**服务端没有踢**：整段会话 `[echo]` 每 10 秒正常回
+   `0xF9C3`，`[accelerate]` 与 `cmd_close_client` 均未命中该连接
+   （历史上 `[accelerate]` 只命中内部服务连接 cno=1/2/3/4，不是真机）。
+2. 客户端自己的日志 `E:\bf\BaiduNetdiskDownload\asktao1.60\log\20260919.txt`
+   每次掉线写：`服务器连接中断` + `[GConnectMgr::OnMsgClientDisconnected][501][6][0]`
+   + `[CRSSocket::Close][437][192.168.200.1][0][10053]`（10053 = 本端中止）。
+3. 逐包审计（本轮新增探针）：
+   * `LPCVM_RECV=1` → `dispatchCommand` 打印**每个**入站包
+     （`[recv] t=… cno=… cmd=0x… len=… body=…`）；
+   * `LPCVM_SEND=1` → 既有 `[send]`（出站全审计，含发送方 LPC 函数）；
+   * `_audit_diff.py` 把两者按 cno 对齐 → 看哪些入站请求**在窗口内没有任何回包**。
+   结论：**登录突发包之后（约进游戏后 12-13 秒）服务端对客户端再无任何主动游戏包**，
+   只有 ECHO 心跳；客户端在静默约 150~190 秒后自己登出。
+4. 已排除：服务端崩溃（4 个进程全程在）、accelerate 误判（该连接 0 条）、
+   echo 超时（掉线前 2-3 秒刚收到 0xF9C3）、`0x3E2A` 由服务端触发
+   （服务端只在收到客户端登出后才回 `0xF101`）。
+
+**本轮已改（commit `5da5892`）**
+
+* **move 包按 IDA 原版语义解析**：`vm_cmdMoveTo 0x805561c`、
+  `vm_cmdAccelerateMoveTo 0x805573c`、`vm_cmdMultiMoveTo 0x8055964` 的包体都是
+  `[u32 tickClient][u32 id][u32 mapId]…`。旧实现把 `tickClient` 当成 id/map_id，
+  于是 `start_gs::cmd_move_to` 里 `me->get_id() != id` 必然 return ——
+  移动包实际从未生效，LPC 收到的 id 是计时器。同时把这三个包接回
+  `vm_checkClientAccelerate(clientNo, tickCurrent)`（原版正是在这四处建立 tick 基线，
+  我们只在 ECHO 上建立，会让基线晚 7-12 秒并误判"客户端跑太快"）。
+  **注**：真机 `0xFD72` 包体实测为
+  `[u32 0x0000694C][u32 0x000007D0][u16 2][x1 y1][x2 y2][u16 dir][u32 tick]`，
+  与 IDA 布局一致（`id=0x694C`、`mapId=0x7D0`）。
+* **驱动 `post_heart_beat` 遍历**：原版主循环每秒调 master 的 `post_heart_beat(me)`
+  （`start_gs.c:38638`，回调由 `register_post_heart_beat` 注册：
+  `login.c::do_keep_alive`、`anticheaterd.c::do_heart_beat`、
+  `apexd.c::do_when_user_heart_beat` 等）。我们此前**完全没有这一步**，
+  现每秒执行一次：`lpc::postHeartBeatAll()`（`original_vm.cpp`，由
+  `startGameService` 里的线程驱动；`LPCVM_NO_HB` 关、`LPCVM_HB` 打点
+  `[hb-pass]`）。实测 `[hb-pass]` 每秒一条，回调确实在跑。
+
+**仍未修好**：加了 `post_heart_beat` 之后真机依旧 165 秒自登出 ⇒
+**客户端等的那个周期性包还没找到**。下一步建议（按优先级）：
+
+1. 在客户端侧定位触发点：`E:\...\asktao1.60\asktao_dump.exe.i64`（IDA 已载入）里
+   搜 `gfLogout` / `OnMsgClientDisconnected` 的调用者，看是哪个计时器/断言触发；
+   注意该 IDB 的字符串是 GBK，`find type=string` 搜 UTF-8 中文搜不到。
+2. 对照原版 gs 抓一次包（若有条件），看登录后 3 分钟内服务端**周期性**发什么
+   （重点怀疑：`0x20D2` 主动 echo、`MSG_SYNC_MESSAGE 0x1A29`、
+   `anticheaterd::send_challenge` 的 `0xF0B1` 二连、`apexd::apex_send` 的 `0x1B02`）。
+3. 复现/取证脚本（本轮新增，直接用真机）：
+   `python -X utf8 _active.py awesrd 6`（挂机+点击，只看窗口标题是否掉回登录界面）、
+   `python -X utf8 _watch.py <logdir> awesrd 12`（盯标题 + 掉线瞬间抓 gs 日志尾）、
+   `python -X utf8 _audit_diff.py <logdir> <cno> 2000`（入站/出站对齐，找漏回的包）。
