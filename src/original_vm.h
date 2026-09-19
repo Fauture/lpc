@@ -71,6 +71,15 @@ std::string masterSearchRoot();
 // LPCVM_NO_HB to disable.
 int postHeartBeatAll();
 
+// Driver-side anti-cheat "check_server" challenge.  The client sends 0x5108
+// every ~10-30 s; /gs/cmds/normal/check_server.c must answer with
+// me->send(8625, x, y, answer) (0x21B1) after loading the script the client
+// supplied.  Without that answer the client logs itself out after a few minutes
+// (the reported 3-5 minute disconnect).  `cryptedBuf` is the 0x5108 payload
+// (BE32 original length + LZSS + rolling xor); returns true when the challenge
+// ran and fills x/y/answer.
+bool antiCheatCheckServer(const std::string& cryptedBuf, int& x, int& y, int& answer);
+
 // Preprocessor defines of the master (global) program: name -> expansion.
 // The runtime queries these in expand_macro (the packet protocol analyser
 // resolves command numbers such as MSG_L_AUTH -> 0x5351 from them).

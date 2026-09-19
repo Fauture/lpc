@@ -2407,12 +2407,89 @@ void handle_vm_cmdCheckSafeAnswer(GameClient& cl, const uint8_t* body, size_t le
     applyLpc("cmd_check_safe_answer", {make_int(cl.clientNo), make_string(answer)});
 }
 
+// Send `body` as command `cmd` to one game client, in the same "MZ" frame the
+// driver's vm_sendFullPacket produces (same field layout as the echo reply in
+// handleCmdEcho, which the real client accepts).
+void sendGamePacket(int clientNo, uint16_t cmd, const std::string& body) {
+    std::string frame;
+    frame.reserve(12 + body.size());
+    frame += "MZ";
+    frame += std::string(2, '\0');     // checksum (client accepts 0)
+    frame += std::string(4, '\0');     // tick field
+    uint16_t msgLen = static_cast<uint16_t>(6 + body.size());
+    frame.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
+    frame.push_back(static_cast<char>(msgLen & 0xFF));
+    frame.push_back(static_cast<char>((cmd >> 8) & 0xFF));
+    frame.push_back(static_cast<char>(cmd & 0xFF));
+    frame += body;
+    gameServiceSend(clientNo, frame);
+}
+
+// vm_cmdCheckServer (0x5108, CMD_CHECK_SERVER).  Body = [u32 len][crypted text]
+// (value-typed: the 4-byte length is NOT length-prefixed, it is a raw BE u32).
+//
+// start_gs::cmd_check_server -> user.o::process_command("check_server") ->
+// /gs/daemons/commandd.c -> pak:gs/cmds/normal/check_server.o::main(me, buf):
+//     * decrypts the buffer (lzss_decompress + a rolling xor, key 102)
+//     * pre-validates the script against `legal_oper_list`
+//     * _fob = load_object("/challenge.c", 0, content_buf)   (3rd arg = program)
+//     * x = _fob->get_x(); y = _fob->get_y();
+//     * answer = _fob->challenge_server(x, y);
+//     * me->send(8625, make32(x), make32(y), make32(answer));   // 0x21B1
+// The client sends this check every ~10-30s and REQUIRES the 0x21B1 answer: with
+// no answer it gives up and logs itself out after a few minutes (this is the
+// real 3-5 minute disconnect).
 void handle_vm_cmdCheckServer(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 4) return;
     uint32_t blen = rd32be(body);
-    if (blen > len - 4) return;
-    applyLpc("cmd_check_server", {make_int(cl.clientNo), make_buffer(body + 4, blen)});
+    if (blen > len - 4) {
+        static const std::atomic<bool>& acFlag = dynProbeFlag("LPCVM_AC");
+        if (acFlag.load(std::memory_order_relaxed))
+            std::cerr << "[ac] cno=" << cl.clientNo << " 0x5108 len=" << len
+                      << " but declared blen=" << blen << " -> drop\n";
+        return;
+    }
+    static const std::atomic<bool>& acFlag = dynProbeFlag("LPCVM_AC");
+    if (acFlag.load(std::memory_order_relaxed)) {
+        std::string hx;
+        static const char* hxa = "0123456789ABCDEF";
+        // Full payload: the decoded challenge source is what the server must
+        // execute to produce the 0x21B1 answer, so capture all of it.
+        for (size_t i = 4; i < len; ++i) {
+            hx += hxa[body[i] >> 4];
+            hx += hxa[body[i] & 15];
+        }
+        std::cerr << "[ac] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
+                  << " 0x5108 blen=" << blen << " head=" << hx << "\n";
+        std::cerr.flush();
+    }
+    Value r = applyLpc("cmd_check_server", {make_int(cl.clientNo), make_buffer(body + 4, blen)});
+    if (acFlag.load(std::memory_order_relaxed))
+        std::cerr << "[ac] cmd_check_server returned " << to_string(r, false) << "\n";
+    // The LPC path (/gs/cmds/normal/check_server.c) must reply with
+    // me->send(8625, x, y, answer) - 0x21B1.  If it did not (the client keeps
+    // asking every ~10-30 s and walks back to the login screen after a few
+    // minutes without it), run the whole challenge driver-side and send the
+    // answer ourselves.
+    if (r.index() == 2 && std::get<int64_t>(r) == 1) return;   // LPC handled it
+    int x = 0, y = 0, answer = -1;
+    if (!lpc::antiCheatCheckServer(std::string(reinterpret_cast<const char*>(body + 4), blen),
+                                   x, y, answer))
+        return;
+    // me->send(8625, make32(x), make32(y), make32(answer))
+    std::string payload;
+    payload.reserve(12);
+    for (int v : {x, y, answer}) {
+        payload.push_back(static_cast<char>((v >> 24) & 0xFF));
+        payload.push_back(static_cast<char>((v >> 16) & 0xFF));
+        payload.push_back(static_cast<char>((v >> 8) & 0xFF));
+        payload.push_back(static_cast<char>(v & 0xFF));
+    }
+    sendGamePacket(cl.clientNo, 0x21B1, payload);
+    if (acFlag.load(std::memory_order_relaxed))
+        std::cerr << "[ac] sent 0x21B1 cno=" << cl.clientNo << " x=" << x << " y=" << y
+                  << " answer=" << answer << "\n";
 }
 
 void handle_vm_cmdChildEnterHall(GameClient& cl, const uint8_t* body, size_t len)
@@ -13138,19 +13215,27 @@ int startGameService(int port) {
         // The original main loop calls the master program's post_heart_beat(me)
         // once per beat; the callbacks registered with register_post_heart_beat
         // (login.c::do_keep_alive, anticheaterd.c::do_heart_beat,
-        // apexd.c::do_when_user_heart_beat, ...) run from there.  Without this
-        // pass the anti-cheat daemon never issues a challenge, so the client
-        // never gets the script/answer round trip it expects and returns to
-        // the login screen by itself after a few minutes.
-        std::thread([port]() {
-            for (;;) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-                try {
-                    lpc::postHeartBeatAll();
-                } catch (...) {
+        // apexd.c::do_when_user_heart_beat, ...) run from there.
+        //
+        // 2026-09-19 measured: driving that pass with our scheduler makes things
+        // WORSE for now - anticheaterd::do_heart_beat then fires every beat and
+        // calls send_challenge() -> load_object("/challenge.dynamic", 0, _cfun)
+        // with an EMPTY _cfun (generate_function() produced nothing), so the
+        // daemon spins once a second and the client still never receives a
+        // challenge.  Keep it OFF by default; arm explicitly with LPCVM_HB=1
+        // while debugging that path.
+        static const bool hbOn = (std::getenv("LPCVM_HB") != nullptr);
+        if (hbOn) {
+            std::thread([port]() {
+                for (;;) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    try {
+                        lpc::postHeartBeatAll();
+                    } catch (...) {
+                    }
                 }
-            }
-        }).detach();
+            }).detach();
+        }
         std::thread([port]() {
             uint64_t pIn = 0, pOut = 0, fIn = 0, fOut = 0, si = 0, sf = 0;
             for (;;) {

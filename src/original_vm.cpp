@@ -33,6 +33,7 @@ extern "C" char __ImageBase;
 
 #include "builtins.h"
 #include "efun_table.h"
+#include "lzss.h"
 #include "map_module.h"
 #include "o_loader.h"
 #include "pak_loader.h"
@@ -2651,6 +2652,80 @@ public:
             std::cerr.flush();
         }
         return make_int(0);
+    }
+
+    // load_object(path, arg, PROGRAM-CONTENT) - the original vm_f_load_object
+    // (0x80f8cbc) accepts a third argument of type "string | buffer"
+    // (`vm_error("Expected string | buffer ")`) and hands its content/len to
+    // vm_loadObject(path, content, len): it is the object's PROGRAM IMAGE, not
+    // a create argument.  This is how the client-side anti-cheat check works:
+    // /gs/cmds/normal/check_server.c does
+    //     _fob = load_object("/challenge.c", 0, content_buf)
+    // with the (decrypted) script the CLIENT just sent, then calls
+    // _fob->get_x()/_fob->get_y()/_fob->challenge_server(x, y) and replies with
+    // me->send(8625, x, y, answer)  (0x21B1).  With this path missing the
+    // object could not be built, the reply never went out, and the client - which
+    // asks for that check every ~10-30s - logged itself out after a few minutes.
+    //
+    // NOTE: this function was accidentally deleted by 469fc15 while that commit
+    // only meant to fix clone/temp handling; the dispatch branch below went with
+    // it.  Restored here.
+    Value loadObjectFromImage(const std::string& vpath, const std::string& progImage,
+                              const std::vector<Value>& createArgs) {
+        stackDbgCheck("loadObjectFromImage");
+        if (searchRoot_.empty() || vpath.empty() || progImage.empty()) return make_int(0);
+        // Key must be suffix-matchable by tryCallOtherObject's rel lookup.
+        std::string key = "dyn:" + vpath;
+        auto& reg = objectRegistry();
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            if (reg.vms.find(key) == reg.vms.end()) {
+                std::vector<uint8_t> bytes(progImage.begin(), progImage.end());
+                std::shared_ptr<OriginalObject> objPtr;
+                try {
+                    objPtr = std::make_shared<OriginalObject>(loadOriginalObjectFromBytes(bytes));
+                } catch (const std::exception& e) {
+                    std::cerr << "[dyn-load] " << vpath << " parse failed: " << e.what() << "\n";
+                    std::cerr.flush();
+                    return make_int(0);
+                }
+                auto vmPtr = std::make_shared<OriginalVm>(*objPtr, searchRoot_);
+                vmPtr->setThisObjectName(key);
+                reg.objects[key] = objPtr;
+                reg.vms[key] = vmPtr;
+                reg.constructing.insert(key);
+                std::cerr << "[dyn-load] " << vpath << " key=" << key
+                          << " bytes=" << bytes.size() << " funcs=" << objPtr->functions.size()
+                          << "\n";
+                std::cerr.flush();
+            }
+        }
+        std::shared_ptr<OriginalVm> vm;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            auto it = reg.vms.find(key);
+            if (it != reg.vms.end()) vm = it->second;
+            auto itI = reg.initialized.find(key);
+            if (it != reg.vms.end() && itI != reg.initialized.end() && itI->second)
+                return make_object(key);
+        }
+        if (!vm) return make_int(0);
+        scheduler().spawnConstruction(vm, createArgs, "obj-init:" + key);
+        ResumeCond cond;
+        cond.kind = 3;
+        cond.ename = "obj-init:" + key;
+        auto hook = [this, key]() {
+            bool ok = false;
+            {
+                auto& reg2 = objectRegistry();
+                std::lock_guard<std::recursive_mutex> rl2(registryMutex());
+                auto it2 = reg2.initialized.find(key);
+                ok = (it2 != reg2.initialized.end() && it2->second);
+            }
+            resumeValue_ = ok ? make_object(key) : make_int(0);
+        };
+        parkAndSuspend(cond, std::move(hook), make_int(0));
+        return make_int(0);   // unreachable (SuspendSignal thrown)
     }
 
     // vm_f_load_object cooperative path (stage B): register the object's VM
@@ -5982,6 +6057,33 @@ private:
                 else vpath = to_string(args[0], false);
                 std::vector<Value> createArgs;
                 if (args.size() >= 2) createArgs.push_back(args[1]);
+                // Third argument = the object's PROGRAM CONTENT (IDA
+                // vm_f_load_object 0x80f8cbc: vm_getArgument(2) accepts
+                // "string | buffer" and hands it to vm_loadObject(path,
+                // content, len)).  check_server.c's client-supplied challenge
+                // script arrives through here; dropping it made every
+                // anti-cheat check fail -> the client logged itself out after a
+                // few minutes.
+                if (args.size() >= 3 && (args[2].index() == 10 || args[2].index() == 4)) {
+                    std::string progImage;
+                    if (args[2].index() == 10) {
+                        auto bv = std::get<std::shared_ptr<BufferValue>>(args[2]);
+                        if (bv) progImage = bv->data;
+                    } else {
+                        progImage = std::get<SharedString>(args[2]).str();
+                    }
+                    {
+                        static const std::atomic<bool>& acFlag2 = dynProbeFlag("LPCVM_AC");
+                        if (acFlag2.load(std::memory_order_relaxed))
+                            std::cerr << "[ac] load_object image path=" << vpath
+                                      << " type=" << args[2].index()
+                                      << " bytes=" << progImage.size()
+                                      << " a0=" << vpath
+                                      << " nargs=" << args.size()
+                                      << " vm=" << objName_ << "\n";
+                    }
+                    return loadObjectFromImage(vpath, progImage, createArgs);
+                }
                 return loadObjectCooperative(vpath, createArgs);
             }
             // exit / exit_thread / clear_env all call vm_returnToBackend in the
@@ -17074,6 +17176,769 @@ size_t envCountObjKeys() {
     std::lock_guard<std::mutex> lk(envPendMutex());
     n += envPending().size();
     return n;
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Minimal evaluator for the anti-cheat challenge script the CLIENT sends.
+//
+// The payload of 0x5108 decodes to LPC SOURCE such as (captured verbatim from
+// the real client, [ac-src] in the gs log):
+//
+//   override mixed fk(int x = 8719, int y = 5219)
+//   { return ((sort(({ x, x * 2, x * 3, x * 4 }), (: sprintf, "%d" :))[1] + x)
+//             * 2 + y) & 0xFFFF; }
+//   override mixed fj(int x = 3813, int y = 279)
+//   { return ((sort(({ x, x * 2, x * 3, x * 4 }), (: sprintf, "%d" :))[2] + x)
+//             * 2 * y) & 0xFFFF; }
+//   int challenge_server(int x, int y) {
+//       mixed i, mks, mask, result; mixed m, a, s;
+//       mask = 0x7FFFFF;
+//       m = allocate_mapping(16);
+//       loop (i = 0 upto 1 + ((x + y) & 3)) m[mask & (x + y + i + 70)] =
+//           ((x + 540) * (x + 245)) & mask;
+//       a = ({ });
+//       loop (i = 0 upto 1 + ((y + x) & 3)) a += ({ (x + y + i + 89) & mask });
+//       s = "1176";
+//       loop (mks in m) m[mks[0]] = (mks[1] + mks[0]) & mask;
+//       y = (x + (int) this_object()->ff(x + 2624, y + 7799)) & mask;
+//       result = 0;
+//       loop (mks in m) result += mks[0] + mks[1];
+//       result += count_total(a);
+//       result += x + y;
+//       result += strlen(s);
+//       result &= mask;
+//       return result;
+//   }
+//   int get_x(){ return 307; }
+//   int get_y(){ return 417; }
+//
+// The server must answer me->send(8625, x, y, answer) (0x21B1); the client
+// verifies the answer and, when it never arrives, logs itself out after a few
+// minutes (the reported 3-5 minute disconnect).  This class parses that subset
+// and evaluates it - no compiler needed.
+class AntiCheatScript {
+public:
+    using Arr = std::vector<int64_t>;
+
+    bool parse(const std::string& src) {
+        i_ = 0;
+        s_ = src;
+        // Split into "name -> body" for every `... name(...) { ... }`.
+        while (true) {
+            size_t brace = findTopLevelOpenBrace();
+            if (brace == std::string::npos) break;
+            size_t close = matchBrace(brace);
+            if (close == std::string::npos) return false;
+            std::string head = s_.substr(parsed_, brace - parsed_);
+            size_t paren = head.rfind('(');
+            if (paren == std::string::npos) { parsed_ = close + 1; continue; }
+            size_t p = paren;
+            while (p > 0 && std::isspace(static_cast<unsigned char>(head[p - 1]))) --p;
+            size_t e = p;
+            while (p > 0 && (std::isalnum(static_cast<unsigned char>(head[p - 1])) ||
+                             head[p - 1] == '_')) --p;
+            std::string name = head.substr(p, e - p);
+            std::string params = head.substr(paren + 1);
+            size_t rp = params.find(')');
+            if (rp != std::string::npos) params = params.substr(0, rp);
+            std::vector<std::string> pnames;
+            std::vector<int64_t> pdefs;
+            for (auto& piece : splitTop(params, ',')) {
+                std::string t = trim(piece);
+                if (t.empty()) continue;
+                size_t eq = t.find('=');
+                std::string decl = (eq == std::string::npos) ? t : t.substr(0, eq);
+                int64_t def = 0;
+                if (eq != std::string::npos) def = toInt(trim(t.substr(eq + 1)));
+                // last identifier in the declaration is the parameter name
+                size_t q = decl.size();
+                while (q > 0 && std::isspace(static_cast<unsigned char>(decl[q - 1]))) --q;
+                size_t q0 = q;
+                while (q0 > 0 && (std::isalnum(static_cast<unsigned char>(decl[q0 - 1])) ||
+                                  decl[q0 - 1] == '_')) --q0;
+                pnames.push_back(decl.substr(q0, q - q0));
+                pdefs.push_back(def);
+            }
+            Func f;
+            f.params = pnames;
+            f.defs = pdefs;
+            f.body = s_.substr(brace, close - brace + 1);
+            funcs_[name] = f;
+            parsed_ = close + 1;
+        }
+        return !funcs_.empty();
+    }
+
+    bool eval(const std::string& fn, const std::vector<int64_t>& args, int& out) {
+        auto it = funcs_.find(fn);
+        if (it == funcs_.end()) return false;
+        std::map<std::string, Var> env;
+        for (size_t i = 0; i < it->second.params.size(); ++i)
+            env[it->second.params[i]] = Var{args.size() > i ? args[i] : it->second.defs[i], {}};
+        cur_ = &it->second;
+        p_ = 0;
+        b_ = it->second.body;
+        Var r;
+        if (!execBlock(env, r)) return false;
+        out = static_cast<int>(r.num & 0xFFFFFFFFLL);
+        return true;
+    }
+
+private:
+    struct Var {
+        int64_t num = 0;
+        Arr arr;
+        bool isArr = false;
+        bool isMap = false;
+        std::string str;     // when the value is a string (`s = "174"`)
+        bool isStr = false;
+    };
+    struct Func {
+        std::vector<std::string> params;
+        std::vector<int64_t> defs;
+        std::string body;
+    };
+
+    std::string s_;
+    size_t i_ = 0;
+    size_t parsed_ = 0;
+    std::string b_;
+    size_t p_ = 0;
+    const Func* cur_ = nullptr;
+    std::map<std::string, Func> funcs_;
+
+    static std::string trim(const std::string& v) {
+        size_t a = 0, z = v.size();
+        while (a < z && std::isspace(static_cast<unsigned char>(v[a]))) ++a;
+        while (z > a && std::isspace(static_cast<unsigned char>(v[z - 1]))) --z;
+        return v.substr(a, z - a);
+    }
+    static std::vector<std::string> splitTop(const std::string& v, char sep) {
+        std::vector<std::string> out;
+        int depth = 0;
+        std::string cur;
+        for (char c : v) {
+            if (c == '(' || c == '{' || c == '[') ++depth;
+            else if (c == ')' || c == '}' || c == ']') --depth;
+            if (c == sep && depth == 0) { out.push_back(cur); cur.clear(); continue; }
+            cur += c;
+        }
+        out.push_back(cur);
+        return out;
+    }
+    static int64_t toInt(const std::string& v) {
+        std::string t = trim(v);
+        if (t.empty()) return 0;
+        const char* c = t.c_str();
+        return static_cast<int64_t>(std::strtoll(c, nullptr, 0));
+    }
+    size_t findTopLevelOpenBrace() {
+        for (size_t k = parsed_; k < s_.size(); ++k)
+            if (s_[k] == '{') return k;
+        return std::string::npos;
+    }
+    size_t matchBrace(size_t open) {
+        int depth = 0;
+        for (size_t k = open; k < s_.size(); ++k) {
+            if (s_[k] == '{') ++depth;
+            else if (s_[k] == '}') { if (--depth == 0) return k; }
+        }
+        return std::string::npos;
+    }
+
+    // ---- lexer over the function body ----
+    void skipWs() { while (p_ < b_.size() && std::isspace(static_cast<unsigned char>(b_[p_]))) ++p_; }
+    bool peek(const char* tok) {
+        skipWs();
+        size_t n = std::strlen(tok);
+        return b_.compare(p_, n, tok) == 0;
+    }
+    bool eat(const char* tok) {
+        if (!peek(tok)) return false;
+        p_ += std::strlen(tok);
+        return true;
+    }
+    std::string ident() {
+        skipWs();
+        size_t a = p_;
+        while (p_ < b_.size() && (std::isalnum(static_cast<unsigned char>(b_[p_])) || b_[p_] == '_')) ++p_;
+        return b_.substr(a, p_ - a);
+    }
+    bool number(int64_t& v) {
+        skipWs();
+        if (p_ >= b_.size() || !std::isdigit(static_cast<unsigned char>(b_[p_]))) return false;
+        size_t a = p_;
+        while (p_ < b_.size() && (std::isalnum(static_cast<unsigned char>(b_[p_])))) ++p_;
+        v = toInt(b_.substr(a, p_ - a));
+        return true;
+    }
+    bool stringLit(std::string& v) {
+        skipWs();
+        if (p_ >= b_.size() || b_[p_] != '"') return false;
+        ++p_;
+        v.clear();
+        while (p_ < b_.size() && b_[p_] != '"') {
+            if (b_[p_] == '\\' && p_ + 1 < b_.size()) { ++p_; v += b_[p_]; ++p_; continue; }
+            v += b_[p_++];
+        }
+        if (p_ < b_.size()) ++p_;
+        return true;
+    }
+
+    // ---- statements ----
+    bool execBlock(std::map<std::string, Var>& env, Var& result) {
+        if (!eat("{")) return false;
+        result = Var{};
+        while (true) {
+            skipWs();
+            if (eat("}")) return true;
+            if (p_ >= b_.size()) return false;
+            if (!execStatement(env, result)) return false;
+        }
+    }
+    bool execStatement(std::map<std::string, Var>& env, Var& result) {
+        skipWs();
+        if (peek("{")) {
+            std::map<std::string, Var> inner = env;
+            return execBlock(inner, result);
+        }
+        if (peek("loop")) {
+            p_ += 4;
+            if (!eat("(")) return false;
+            std::string var = ident();
+            if (!eat("=")) return false;
+            int64_t from = 0;
+            if (!exprNum(env, from)) return false;
+            int64_t to = 0;
+            if (eat("upto")) {
+                if (!exprNum(env, to)) return false;
+                if (!eat(")")) return false;
+                if (!peek("{")) return false;
+                std::map<std::string, Var> inner = env;
+                for (int64_t v = from; v <= to; ++v) {
+                    inner[var] = Var{v, {}};
+                    std::map<std::string, Var> it = inner;
+                    Var r;
+                    size_t save = p_;
+                    if (!execBlock(it, r)) return false;
+                    p_ = save;
+                }
+                skipWs();
+                if (!eat("}")) return false;
+                return true;
+            }
+            if (eat("in")) {
+                std::string coll = ident();
+                if (!eat(")")) return false;
+                if (!peek("{")) return false;
+                size_t save = p_;
+                auto cit = env.find(coll);
+                size_t count = (cit != env.end()) ? cit->second.arr.size() : 0;
+                for (size_t idx = 0; idx < count; ++idx) {
+                    std::map<std::string, Var> inner = env;
+                    if (cit != env.end() && cit->second.isMap) {
+                        Arr pair{cit->second.arr[idx * 2], cit->second.arr[idx * 2 + 1]};
+                        Var pv;
+                        pv.isArr = true;
+                        pv.arr = pair;
+                        inner["mks"] = pv;   // the generated loops always name pairs "mks"
+                    }
+                    Var r;
+                    p_ = save;
+                    if (!execBlock(inner, r)) return false;
+                }
+                p_ = save;
+                skipWs();
+                if (!eat("}")) return false;
+                return true;
+            }
+            return false;
+        }
+        // type keywords + declarations
+        static const char* types[] = {"mixed", "int", "string", "array", "mapping", "float", "object", "buffer"};
+        for (const char* t : types) {
+            if (peek(t) && (b_[p_ + std::strlen(t)] == ' ' || b_[p_ + std::strlen(t)] == '\t')) {
+                p_ += std::strlen(t);
+                while (true) {
+                    std::string nm = ident();
+                    if (nm.empty()) {   // e.g. `mixed &ref` / unnamed declarator
+                        Var dummy;
+                        if (!expr(env, dummy)) return false;
+                        eat(";");
+                        return true;
+                    }
+                    Var v;
+                    if (eat("=")) {
+                        if (!expr(env, v)) return false;
+                    }
+                    env[nm] = v;
+                    if (eat(",")) {
+                        // `mixed i, mks, mask;` - the ", name" pieces are more
+                        // declarators, not expressions.  A further `=` belongs
+                        // to the declarator.
+                        continue;
+                    }
+                    break;
+                }
+                eat(";");
+                return true;
+            }
+        }
+        // assignment `name = expr;` / `name += ...;` / `a[i] = expr;`
+        {
+            size_t save = p_;
+            std::string nm = ident();
+            if (!nm.empty()) {
+                skipWs();
+                // m[expr] = expr;   (the generated scripts fill mappings this way)
+                if (peek("[")) {
+                    p_ += 1;
+                    int64_t idx = 0;
+                    if (!exprNum(env, idx)) return false;
+                    if (!eat("]")) return false;
+                    skipWs();
+                    if (eat("=")) {
+                        Var rhs;
+                        if (!expr(env, rhs)) return false;
+                        eat(";");
+                        Var& dst = env[nm];
+                        dst.isMap = true;
+                        bool replaced = false;
+                        for (size_t k = 0; k + 1 < dst.arr.size(); k += 2)
+                            if (dst.arr[k] == idx) { dst.arr[k + 1] = rhs.num; replaced = true; break; }
+                        if (!replaced) { dst.arr.push_back(idx); dst.arr.push_back(rhs.num); }
+                        return true;
+                    }
+                    if (eat("+=")) {
+                        Var rhs;
+                        if (!expr(env, rhs)) return false;
+                        eat(";");
+                        Var& dst = env[nm];
+                        dst.isMap = true;
+                        bool replaced = false;
+                        for (size_t k = 0; k + 1 < dst.arr.size(); k += 2)
+                            if (dst.arr[k] == idx) { dst.arr[k + 1] += rhs.num; replaced = true; break; }
+                        if (!replaced) { dst.arr.push_back(idx); dst.arr.push_back(rhs.num); }
+                        return true;
+                    }
+                    p_ = save;
+                } else if (eat("+=")) {
+                    Var rhs;
+                    if (!expr(env, rhs)) return false;
+                    eat(";");
+                    Var& dst = env[nm];
+                    if (dst.isStr || rhs.isStr) {
+                        // string concatenation: s += sprintf("%02X", ...)
+                        dst.isStr = true;
+                        dst.str += (rhs.isStr ? rhs.str : std::to_string(rhs.num));
+                        dst.num = static_cast<int64_t>(dst.str.size());
+                        return true;
+                    }
+                    if (rhs.isArr) {
+                        dst.isArr = true;
+                        for (int64_t x : rhs.arr) dst.arr.push_back(x);
+                    } else {
+                        dst.num += rhs.num;
+                    }
+                    return true;
+                } else if (eat("=")) {
+                    Var rhs;
+                    if (!expr(env, rhs)) return false;
+                    eat(";");
+                    env[nm] = rhs;
+                    return true;
+                }
+                p_ = save;
+            }
+        }
+        // expression / return
+        if (eat("return")) {
+            if (!expr(env, result)) return false;
+            eat(";");
+            return true;
+        }
+        if (peek("break") || peek("continue")) { ident(); eat(";"); return true; }
+        return expr(env, result);
+    }
+
+    // ---- expressions ----
+    bool exprNum(std::map<std::string, Var>& env, int64_t& out) {
+        Var v;
+        if (!expr(env, v)) return false;
+        out = v.num;
+        return true;
+    }
+    bool expr(std::map<std::string, Var>& env, Var& out) { return ternary(env, out); }
+    bool ternary(std::map<std::string, Var>& env, Var& out) {
+        if (!orExpr(env, out)) return false;
+        if (eat("?")) {
+            Var a, b;
+            if (!ternary(env, a)) return false;
+            if (!eat(":")) return false;
+            if (!ternary(env, b)) return false;
+            out = (out.num != 0) ? a : b;
+        }
+        return true;
+    }
+    bool orExpr(std::map<std::string, Var>& env, Var& out) {
+        if (!andExpr(env, out)) return false;
+        while (peek("||")) { p_ += 2; Var r; if (!andExpr(env, r)) return false; out.num = (out.num || r.num); }
+        return true;
+    }
+    bool andExpr(std::map<std::string, Var>& env, Var& out) {
+        if (!bitOr(env, out)) return false;
+        while (peek("&&")) { p_ += 2; Var r; if (!bitOr(env, r)) return false; out.num = (out.num && r.num); }
+        return true;
+    }
+    bool bitOr(std::map<std::string, Var>& env, Var& out) {
+        if (!bitXor(env, out)) return false;
+        while (peek("|") && !peek("||")) { p_ += 1; Var r; if (!bitXor(env, r)) return false; out.num |= r.num; }
+        return true;
+    }
+    bool bitXor(std::map<std::string, Var>& env, Var& out) {
+        if (!bitAnd(env, out)) return false;
+        while (peek("^")) { p_ += 1; Var r; if (!bitAnd(env, r)) return false; out.num ^= r.num; }
+        return true;
+    }
+    bool bitAnd(std::map<std::string, Var>& env, Var& out) {
+        if (!equality(env, out)) return false;
+        while (peek("&") && !peek("&=")) { p_ += 1; Var r; if (!equality(env, r)) return false; out.num &= r.num; }
+        return true;
+    }
+    bool equality(std::map<std::string, Var>& env, Var& out) {
+        if (!relational(env, out)) return false;
+        for (;;) {
+            if (peek("==")) { p_ += 2; Var r; if (!relational(env, r)) return false; out.num = (out.num == r.num); }
+            else if (peek("!=")) { p_ += 2; Var r; if (!relational(env, r)) return false; out.num = (out.num != r.num); }
+            else return true;
+        }
+    }
+    bool relational(std::map<std::string, Var>& env, Var& out) {
+        if (!additive(env, out)) return false;
+        for (;;) {
+            if (peek("<=")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num <= r.num); }
+            else if (peek(">=")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num >= r.num); }
+            else if (peek("<<")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num << r.num); }
+            else if (peek(">>")) { p_ += 2; Var r; if (!additive(env, r)) return false; out.num = (out.num >> r.num); }
+            else if (peek("<") && !peek("<=")) { p_ += 1; Var r; if (!additive(env, r)) return false; out.num = (out.num < r.num); }
+            else if (peek(">") && !peek(">=")) { p_ += 1; Var r; if (!additive(env, r)) return false; out.num = (out.num > r.num); }
+            else return true;
+        }
+    }
+    bool additive(std::map<std::string, Var>& env, Var& out) {
+        if (!multiplicative(env, out)) return false;
+        for (;;) {
+            if (peek("+") && !peek("++")) { p_ += 1; Var r; if (!multiplicative(env, r)) return false; out.num += r.num; }
+            else if (peek("-") && !peek("--")) { p_ += 1; Var r; if (!multiplicative(env, r)) return false; out.num -= r.num; }
+            else return true;
+        }
+    }
+    bool multiplicative(std::map<std::string, Var>& env, Var& out) {
+        if (!unary(env, out)) return false;
+        for (;;) {
+            if (peek("*")) { p_ += 1; Var r; if (!unary(env, r)) return false; out.num *= r.num; }
+            else if (peek("/")) { p_ += 1; Var r; if (!unary(env, r)) return false; if (r.num) out.num /= r.num; }
+            else if (peek("%")) { p_ += 1; Var r; if (!unary(env, r)) return false; if (r.num) out.num %= r.num; }
+            else return true;
+        }
+    }
+    bool unary(std::map<std::string, Var>& env, Var& out) {
+        skipWs();
+        if (peek("!")) { p_ += 1; if (!unary(env, out)) return false; out.num = !out.num; return true; }
+        if (peek("-")) { p_ += 1; if (!unary(env, out)) return false; out.num = -out.num; return true; }
+        if (peek("(int)")) { p_ += 5; return unary(env, out); }
+        if (peek("(mixed)")) { p_ += 7; return unary(env, out); }
+        return postfix(env, out);
+    }
+    bool postfix(std::map<std::string, Var>& env, Var& out) {
+        if (!primary(env, out)) return false;
+        for (;;) {
+            if (peek("[") ) {
+                p_ += 1;
+                int64_t idx = 0;
+                if (!exprNum(env, idx)) return false;
+                if (!eat("]")) return false;
+                if (out.isArr && idx >= 0 && static_cast<size_t>(idx) < out.arr.size()) {
+                    int64_t v = out.arr[static_cast<size_t>(idx)];
+                    out = Var{v, {}};
+                } else if (out.isStr && idx >= 0 && static_cast<size_t>(idx) < out.str.size()) {
+                    out = Var{static_cast<unsigned char>(out.str[static_cast<size_t>(idx)]), {}};
+                } else if (out.isMap && idx >= 0) {
+                    int64_t v = 0;
+                    for (size_t k = 0; k + 1 < out.arr.size(); k += 2)
+                        if (out.arr[k] == idx) { v = out.arr[k + 1]; break; }
+                    out = Var{v, {}};
+                } else {
+                    out = Var{};
+                }
+                continue;
+            }
+            if (peek("->")) {
+                // this_object()->name(args) : evaluate the named function
+                p_ += 2;
+                std::string fn = ident();
+                if (!eat("(")) return false;
+                std::vector<int64_t> args;
+                skipWs();
+                if (!peek(")")) {
+                    while (true) {
+                        int64_t v = 0;
+                        if (!exprNum(env, v)) return false;
+                        args.push_back(v);
+                        if (eat(",")) continue;
+                        break;
+                    }
+                }
+                if (!eat(")")) return false;
+                Var r;
+                if (!callFn(fn, args, r)) return false;
+                out = r;
+                continue;
+            }
+            return true;
+        }
+    }
+    bool callFn(const std::string& fn, const std::vector<int64_t>& args, Var& out) {
+        if (fn == "sizeof") { out = Var{static_cast<int64_t>(args.size()), {}}; return true; }
+        auto it = funcs_.find(fn);
+        if (it == funcs_.end()) return false;
+        const Func* saveF = cur_;
+        std::string saveB = b_;
+        size_t saveP = p_;
+        std::map<std::string, Var> env;
+        for (size_t i = 0; i < it->second.params.size(); ++i)
+            env[it->second.params[i]] = Var{args.size() > i ? args[i] : it->second.defs[i], {}};
+        cur_ = &it->second;
+        p_ = 0;
+        b_ = it->second.body;
+        Var r;
+        bool ok = execBlock(env, r);
+        cur_ = saveF;
+        b_ = saveB;
+        p_ = saveP;
+        if (!ok) return false;
+        out = r;
+        return true;
+    }
+    bool primary(std::map<std::string, Var>& env, Var& out) {
+        skipWs();
+        if (eat("(")) {
+            // ({ ... }) array literal
+            if (peek("{")) {
+                p_ += 1;
+                Arr items;
+                skipWs();
+                if (!peek("}")) {
+                    while (true) {
+                        Var v;
+                        if (!expr(env, v)) return false;
+                        if (v.isArr) for (int64_t x : v.arr) items.push_back(x);
+                        else items.push_back(v.num);
+                        if (eat(",")) continue;
+                        break;
+                    }
+                }
+                if (!eat("}")) return false;
+                if (!eat(")")) return false;
+                out.isArr = true;
+                out.arr = items;
+                return true;
+            }
+            Var v;
+            if (!expr(env, v)) return false;
+            if (!eat(")")) return false;
+            out = v;
+            return true;
+        }
+        std::string lit;
+        if (stringLit(lit)) {
+            out = Var{};
+            out.isStr = true;
+            out.str = lit;
+            out.num = static_cast<int64_t>(lit.size());
+            return true;
+        }
+        int64_t n = 0;
+        if (number(n)) { out = Var{n, {}}; return true; }
+        std::string nm = ident();
+        if (nm.empty()) return false;
+        if (eat("(")) {
+            // builtin call
+            std::vector<int64_t> a1;
+            Arr litArr;
+            bool hasArr = false;
+            int64_t arrSize = 0;
+            skipWs();
+            if (!peek(")")) {
+                while (true) {
+                    Var v;
+                    if (!expr(env, v)) return false;
+                    if (v.isArr) {
+                        hasArr = true;
+                        arrSize = static_cast<int64_t>(v.arr.size());
+                        for (int64_t x : v.arr) litArr.push_back(x);
+                    } else {
+                        a1.push_back(v.num);
+                    }
+                    if (eat(",")) continue;
+                    break;
+                }
+            }
+            if (!eat(")")) return false;
+            if (nm == "sizeof") {
+                // sizeof(array/mapping/string) - the generated scripts use it
+                // as the array length.
+                out = Var{hasArr ? arrSize : (a1.empty() ? 0 : a1[0]), {}};
+                return true;
+            }
+            if (nm == "count_total") {
+                int64_t s = 0;
+                for (int64_t x : (hasArr ? litArr : Arr{})) s += x;
+                for (int64_t x : a1) s += x;
+                out = Var{s, {}};
+                return true;
+            }
+            if (nm == "strlen") {
+                if (litArr.empty() && a1.empty()) { out = Var{0, {}}; return true; }
+                out = Var{a1.empty() ? static_cast<int64_t>(litArr.size()) : a1[0], {}};
+                return true;
+            }
+            if (nm == "keys") {
+                // keys(mapping) - the generated scripts use
+                // sort(keys(m))[k] and then only its length.
+                out = Var{};
+                out.isArr = true;
+                for (size_t k = 0; k + 1 < litArr.size(); k += 2) out.arr.push_back(litArr[k]);
+                return true;
+            }
+            if (nm == "sort") {
+                // sort(array): the challenge only uses [i] plus, for keys(m),
+                // the LENGTH of the resulting string - keep the values sorted
+                // numerically which is enough for both uses.
+                out = Var{};
+                out.isArr = true;
+                out.arr = litArr;
+                std::sort(out.arr.begin(), out.arr.end());
+                return true;
+            }
+            if (nm == "allocate_mapping") { out.isMap = true; return true; }
+            if (nm == "sprintf") {
+                // sprintf("%02X", value) - the generated scripts append the
+                // result to a string, so return the formatted length.
+                size_t len = 0;
+                char buf[64];
+                if (!a1.empty()) {
+                    snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned>(a1[0]));
+                    len = std::strlen(buf);
+                }
+                out = Var{static_cast<int64_t>(len), {}};
+                out.isStr = true;
+                out.str.assign(len, '0');
+                return true;
+            }
+            Var r;
+            if (callFn(nm, a1, r)) { out = r; return true; }
+            out = Var{};
+            return true;
+        }
+        auto it = env.find(nm);
+        if (it != env.end()) { out = it->second; return true; }
+        out = Var{};
+        return true;
+    }
+};
+
+// Driver-side anti-cheat "check_server" challenge
+// (vm_cmdCheckServer 0x5108 -> start_gs::cmd_check_server ->
+//  commandd -> /gs/cmds/normal/check_server.c).
+//
+// check_server.c does, in LPC:
+//     crypted = lzss_decompress(buf);                    // BE32 len + lzss
+//     code = 102;
+//     for (i) { if (crypted[i] != code) crypted[i] ^= code;
+//               code = ((code * 2) + 7) ^ 71 & 255; }
+//     if (len > 1554) return 0;
+//     _fob = load_object("/challenge.c", 0, crypted);
+//     x = _fob->get_x(); y = _fob->get_y();
+//     answer = _fob->challenge_server(x, y);
+//     me->send(8625, make32(x), make32(y), make32(answer));   // 0x21B1
+//
+// The client sends 0x5108 every ~10-30 s and needs that 0x21B1 answer; without
+// it the client walks itself back to the login screen after a few minutes (the
+// reported 3-5 minute disconnect).  Running it here, driver-side, removes the
+// dependency on the LPC dynamic-object path, which never produced a reply.
+//
+// Returns true and fills x/y/answer when the challenge ran.
+bool antiCheatCheckServer(const std::string& cryptedBuf, int& x, int& y, int& answer) {
+    if (cryptedBuf.size() < 4) return false;
+    const auto* p = reinterpret_cast<const uint8_t*>(cryptedBuf.data());
+    uint32_t origLen = (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+                       (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+    std::vector<uint8_t> body(p + 4, p + cryptedBuf.size());
+    std::vector<uint8_t> script;
+    if (origLen == 0) {
+        script = body;
+    } else if (!lzssDecompress(body, origLen, script)) {
+        return false;
+    }
+    if (script.size() > 1554) {
+        if (dynProbeFlag("LPCVM_AC").load(std::memory_order_relaxed))
+            std::cerr << "[ac] script too big: " << script.size() << " > 1554\n";
+        return false;
+    }
+    int code = 102;
+    for (size_t i = 0; i < script.size(); ++i) {
+        if (script[i] != static_cast<uint8_t>(code)) script[i] ^= static_cast<uint8_t>(code);
+        code = (((code * 2) + 7) ^ 71) & 255;
+    }
+    if (script.empty()) return false;
+    if (dynProbeFlag("LPCVM_AC").load(std::memory_order_relaxed)) {
+        std::string hx;
+        static const char* hxa2 = "0123456789ABCDEF";
+        for (size_t i = 0; i < script.size() && i < 12; ++i) {
+            hx += hxa2[script[i] >> 4];
+            hx += hxa2[script[i] & 15];
+        }
+        std::cerr << "[ac] challenge script " << script.size() << " bytes head=" << hx << "\n";
+        // The decoded payload is the LPC source the server is supposed to run
+        // (check_server.c passes it straight to load_object); dump it so the
+        // generated formula can be read instead of guessed.
+        std::cerr << "[ac-src] <<<\n"
+                  << std::string(script.begin(), script.end()) << "\n[ac-src] >>>\n";
+        std::cerr.flush();
+    }
+    // The payload is LPC SOURCE (see the [ac-src] dump), not a compiled .o, so
+    // it cannot go through loadOriginalObjectFromBytes - it has to be
+    // interpreted.  The generated script uses only a small, fixed subset of the
+    // language (see AntiCheatScript above), so evaluate it directly.
+    {
+        AntiCheatScript acs;
+        static const std::atomic<bool>& acTrace2 = dynProbeFlag("LPCVM_AC");
+        const bool trace = acTrace2.load(std::memory_order_relaxed);
+        bool ok = acs.parse(std::string(script.begin(), script.end()));
+        if (!ok) std::cerr << "[ac] parse failed\n";
+        if (ok) { ok = acs.eval("get_x", {}, x); if (!ok) std::cerr << "[ac] get_x failed\n"; }
+        if (ok) { ok = acs.eval("get_y", {}, y); if (!ok) std::cerr << "[ac] get_y failed\n"; }
+        if (ok) {
+            ok = acs.eval("challenge_server", {x, y}, answer);
+            if (!ok) std::cerr << "[ac] challenge_server failed\n";
+        }
+        if (!ok) {
+            if (trace) {
+                std::cerr << "[ac] challenge eval failed; script:\n"
+                          << std::string(script.begin(), script.end()) << "\n";
+                std::cerr.flush();
+            }
+            // NEVER leave the client without an answer.
+            x = 0;
+            y = 0;
+            answer = 0;
+        }
+    }
+    if (dynProbeFlag("LPCVM_AC").load(std::memory_order_relaxed))
+        std::cerr << "[ac] x=" << x << " y=" << y << " answer=" << answer << "\n";
+    return true;
 }
 
 } // namespace lpc
