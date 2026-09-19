@@ -1494,16 +1494,25 @@ void handle_vm_cmd_StartMultibonus(GameClient& cl, const uint8_t* body, size_t l
     applyLpc("cmd_start_multi_bonus", {make_int(cl.clientNo)});
 }
 
+// vm_cmdAccelerateMoveTo (0x805573c).  Body layout from the original:
+//   [u32 tickClient][u32 id][u32 mapId][u16 n](n * [u16 x][u16 y])[u16 dir][u32 tickCurrent]
+//   (n must be 1..16); then vm_checkClientAccelerate(clientNo, tickCurrent) and
+//   vm_apply("cmd_accelerate_move_to", clientNo, id, mapId, array, dir), which
+//   start_gs implements as (client_no, id, map_id, array steps, int dir) and
+//   guards with `me->get_id() != id`.
+// Our old parser started at offset 0, so it read tickClient as the LPC `time`
+// argument and shifted every following field by 4 bytes.
 void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
-    if (len < 10) return;
-    uint32_t time = rd32be(body);
-    uint32_t mapId = rd32be(body + 4);
-    uint16_t n = rd16be(body + 8);
+    if (len < 18) return;
+    uint32_t tick_client = rd32be(body);
+    uint32_t id = rd32be(body + 4);
+    uint32_t mapId = rd32be(body + 8);
+    uint16_t n = rd16be(body + 12);
     if (n == 0 || n > 16) return;
-    if (len < 10u + 4u * n + 2u) return;
+    if (len < 14u + 4u * n + 2u + 4u) return;
     auto arr = std::make_shared<ArrayValue>();
-    const uint8_t* p = body + 10;
+    const uint8_t* p = body + 14;
     for (uint16_t i = 0; i < n; ++i)
     {
         arr->items.push_back(make_int(rd16be(p)));
@@ -1511,7 +1520,11 @@ void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t l
         p += 4;
     }
     int dir = rd16be(p);
-    applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)time), make_int((int)mapId), arr, make_int(dir)});
+    p += 2;
+    uint32_t tick_current = rd32be(p);   // the accelerate sample
+    (void)tick_client;
+    if (!checkClientAccelerate(cl, tick_current)) return;
+    applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)id), make_int((int)mapId), arr, make_int(dir)});
 }
 
 void handle_vm_cmdAccept(GameClient& cl, const uint8_t* body, size_t len)
@@ -4479,20 +4492,39 @@ void handle_vm_cmdMoveOnCarpet(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_move_on_carpet", {make_int(cl.clientNo), make_int(carpet_id)});
 }
 
+// vm_cmdMoveTo (0x805561c).  Body layout taken from the original disassembly
+// (the decompiler's local names `id`/`mapId` are swapped relative to the LPC
+// signature - `id` is the FIRST 4 bytes, `mapId` the second):
+//   [u32 tickClient][u32 id][u16 x][u16 y][u16 dir][u32 tickCurrent]
+// start_gs::cmd_move_to(client_no, id, map_id, x, y, dir) checks
+// `me->get_id() != id` and then calls `me->move_to(map_id, x, y, dir)`, so the
+// two 32-bit words are (id, map_id) in that order.
+// The original, in this order:
+//   * needs len > 3 / > 7 / > 9 / > 11 / > 13 / > 17;
+//   * vm_checkClientAccelerate(clientNo, tickCurrent) - a rejected packet is
+//     dropped WITHOUT dispatching (so this packet also feeds the client's
+//     tick sync and the accelerate accounting);
+//   * vm_apply("cmd_move_to", clientNo, id, mapId, x, y, dir).
 void handle_vm_cmdMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
     if (off + 4 > len) return;
-    uint32_t map_id = rd32be(body, off); off += 4;
+    uint32_t tick_client = rd32be(body, off); off += 4;   // tickClient (not passed to LPC)
     if (off + 4 > len) return;
-    uint32_t target_id = rd32be(body, off); off += 4;
+    uint32_t id = rd32be(body, off); off += 4;            // id = me->get_id()
+    if (off + 4 > len) return;
+    uint32_t map_id = rd32be(body, off); off += 4;        // map_id = me->move_to arg
     if (off + 2 > len) return;
     uint16_t x = rd16be(body, off); off += 2;
     if (off + 2 > len) return;
     uint16_t y = rd16be(body, off); off += 2;
     if (off + 2 > len) return;
     uint16_t dir = rd16be(body, off); off += 2;
-    applyLpc("cmd_move_to", {make_int(cl.clientNo), make_int(map_id), make_int(target_id), make_int(x), make_int(y), make_int(dir)});
+    if (off + 4 > len) return;
+    uint32_t tick_current = rd32be(body, off); off += 4;  // tickCurrent = the accelerate sample
+    (void)tick_client;
+    if (!checkClientAccelerate(cl, tick_current)) return;
+    applyLpc("cmd_move_to", {make_int(cl.clientNo), make_int(id), make_int(map_id), make_int(x), make_int(y), make_int(dir)});
 }
 
 void handle_vm_cmdMovFromQiankundai(GameClient& cl, const uint8_t* body, size_t len)
@@ -4558,11 +4590,19 @@ void handle_vm_cmdMulGoodsBuy(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_mul_goods_buy", {make_int(cl.clientNo), make_int(id), make_int(count), arr});
 }
 
+// vm_cmdMultiMoveTo (0x8055964).  Body layout from the original:
+//   [u32 tickClient][u32 id][u32 mapId][u16 n](n * [u16 x][u16 y])[u16 dir][u32 tickCurrent]
+//   (n must be 1..13); then vm_checkClientAccelerate(clientNo, tickCurrent) and
+//   vm_apply("cmd_multi_move_to", clientNo, id, mapId, array, dir), which
+//   start_gs implements as (client_no, id, map_id, array steps, int dir) with
+//   the same `me->get_id() != id` guard.
 void handle_vm_cmdMultiMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
     if (off + 4 > len) return;
-    uint32_t v = rd32be(body, off); off += 4;
+    uint32_t tick_client = rd32be(body, off); off += 4;   // tickClient (not passed to LPC)
+    if (off + 4 > len) return;
+    uint32_t id = rd32be(body, off); off += 4;
     if (off + 4 > len) return;
     uint32_t mapId = rd32be(body, off); off += 4;
     if (off + 2 > len) return;
@@ -4576,7 +4616,11 @@ void handle_vm_cmdMultiMoveTo(GameClient& cl, const uint8_t* body, size_t len)
     }
     if (off + 2 > len) return;
     uint16_t dir = rd16be(body, off); off += 2;
-    applyLpc("cmd_multi_move_to", {make_int(cl.clientNo), make_int(v), make_int(mapId), arr, make_int(dir)});
+    if (off + 4 > len) return;
+    uint32_t tick_current = rd32be(body, off); off += 4;  // tickCurrent = the accelerate sample
+    (void)tick_client;
+    if (!checkClientAccelerate(cl, tick_current)) return;
+    applyLpc("cmd_multi_move_to", {make_int(cl.clientNo), make_int((int)id), make_int((int)mapId), arr, make_int(dir)});
 }
 
 void handle_vm_cmdMusicList(GameClient& cl, const uint8_t* body, size_t len)
@@ -11908,6 +11952,34 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
+    // LPCVM_RECV: log EVERY inbound packet (cmd + length + head bytes + wall
+    // clock).  Paired with the [send] audit from builtins.cpp this shows exactly
+    // which client request the server never answered - the blind spot behind
+    // "the client goes back to the login screen by itself after a few minutes".
+    {
+        static const std::atomic<bool>& recvFlag = dynProbeFlag("LPCVM_RECV");
+        if (recvFlag.load(std::memory_order_relaxed)) {
+            static int rN = 0;
+            static const int rMax = [] {
+                const char* v = std::getenv("LPCVM_RECV_MAX");
+                return v ? std::atoi(v) : 60000;
+            }();
+            if (rN++ < rMax) {
+                std::string hx;
+                static const char* hxr = "0123456789ABCDEF";
+                size_t c = len < 48 ? len : 48;
+                for (size_t i = 0; i < c; ++i) {
+                    hx += hxr[body[i] >> 4];
+                    hx += hxr[body[i] & 15];
+                }
+                time_t now = time(nullptr);
+                std::cerr << "[recv] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
+                          << " cmd=0x" << std::hex << cmdNo << std::dec
+                          << " len=" << len << " wall=" << now << " body=" << hx << "\n";
+                std::cerr.flush();
+            }
+        }
+    }
     // Filed/DBA family: log EVERY frame the receiving side actually got.
     // This is the pair of [send-filed] in builtins.cpp, and it is what tells
     // "the requester never sent it" from "the peer received it but never
@@ -11982,6 +12054,25 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
                   << " client=" << cl.clientNo << " attrib=" << cl.attrib
                   << " type=" << e->type << " OK\n";
     switch (cmdNo) {
+    // LPCVM_MOVEPKT diagnostic (temporary): dump the exact bytes of the
+    // movement/echo packets, whose bodies begin with the client's tick
+    // (vm_cmdMoveTo 0x805561c / vm_cmdAccelerateMoveTo 0x805573c /
+    // vm_cmdMultiMoveTo 0x8055964 all read it before anything else).
+    if (cmdNo == 0x4130 || cmdNo == 0x2242 || cmdNo == 0xFD72 || cmdNo == 0x20D2) {
+        static const std::atomic<bool>& mp = dynProbeFlag("LPCVM_MOVEPKT");
+        if (mp.load(std::memory_order_relaxed)) {
+            std::string hex;
+            static const char* hx2 = "0123456789ABCDEF";
+            for (size_t i = 0; i < len && i < 64; ++i) {
+                hex += hx2[body[i] >> 4];
+                hex += hx2[body[i] & 15];
+            }
+            std::cerr << "[movepkt] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
+                      << " cmd=0x" << std::hex << cmdNo << std::dec
+                      << " len=" << len << " body=" << hex << "\n";
+            std::cerr.flush();
+        }
+    }
     case 0x5351: handleMsgLAuth(cl, body, len); break;
     case 0x20D2: handleCmdEcho(cl, body, len); break;
     case 0xF9C3: handleMsgReplyEcho(cl, body, len); break;
@@ -13043,6 +13134,23 @@ int startGameService(int port) {
         // process stayed alive with the socket ESTABLISHED and no log line at
         // all, so the only symptom was "cannot log in (9030)".  With this, the
         // frozen counter names the layer.
+        // ---- driver "post heart beat" pass -------------------------------
+        // The original main loop calls the master program's post_heart_beat(me)
+        // once per beat; the callbacks registered with register_post_heart_beat
+        // (login.c::do_keep_alive, anticheaterd.c::do_heart_beat,
+        // apexd.c::do_when_user_heart_beat, ...) run from there.  Without this
+        // pass the anti-cheat daemon never issues a challenge, so the client
+        // never gets the script/answer round trip it expects and returns to
+        // the login screen by itself after a few minutes.
+        std::thread([port]() {
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                try {
+                    lpc::postHeartBeatAll();
+                } catch (...) {
+                }
+            }
+        }).detach();
         std::thread([port]() {
             uint64_t pIn = 0, pOut = 0, fIn = 0, fOut = 0, si = 0, sf = 0;
             for (;;) {

@@ -64,6 +64,13 @@ Value callMasterProgramFunction(const std::string& funName, const std::vector<Va
 // The search root under which the master program ("<main>") is registered.
 std::string masterSearchRoot();
 
+// Driver-side "post heart beat" pass (the original main loop calls
+// start_gs.o's post_heart_beat(me) once per beat; the callbacks registered
+// through register_post_heart_beat drive e.g. the anti-cheat challenge and the
+// CCS keep-alive).  Returns the number of passes performed (0/1).  Set
+// LPCVM_NO_HB to disable.
+int postHeartBeatAll();
+
 // Preprocessor defines of the master (global) program: name -> expansion.
 // The runtime queries these in expand_macro (the packet protocol analyser
 // resolves command numbers such as MSG_L_AUTH -> 0x5351 from them).

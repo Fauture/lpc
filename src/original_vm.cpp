@@ -1,4 +1,4 @@
-﻿#include "original_vm.h"
+#include "original_vm.h"
 
 // The LPCVM_STACKDBG probe needs the module's own base address to report raw
 // stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
@@ -16628,8 +16628,56 @@ Value callOriginalObjectFunction(const std::string& oPath, const std::string& fu
 }
 
 
-std::string masterSearchRoot() {
-    auto& reg = objectRegistry();
+// Driver-side "post heart beat" pass, mirroring the original main loop.
+//
+// start_gs.o defines the driver-side registration (start_gs.c):
+//     _heart_beat_funcs += ({ f });            // register_post_heart_beat
+//     void post_heart_beat(object me) {        // called BY THE DRIVER
+//         loop (f in _heart_beat_funcs) (*f)(me);
+//         clean_array(_heart_beat_funcs, 9);
+//     }
+// and a dozen daemons register into it (login.c::do_keep_alive,
+// apexd.c::do_when_user_heart_beat, anticheaterd.c::do_heart_beat, ...).
+// Without this pass those callbacks never run: e.g. the anti-cheat daemon can
+// never call send_challenge(), so the client never gets the script/answer
+// round trip it expects and hangs up by itself after a few minutes.
+//
+// Returns the number of callbacks that ran.
+int postHeartBeatAll() {
+    static const bool hbOn = (std::getenv("LPCVM_NO_HB") == nullptr);
+    if (!hbOn) return 0;
+    static const std::atomic<bool>& hbTrace = dynProbeFlag("LPCVM_HB");
+    std::shared_ptr<OriginalVm> mainVm;
+    std::string mainKey;
+    {
+        auto& reg = objectRegistry();
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        for (auto& kv : reg.vms) {
+            if (kv.first.find("<main>") != std::string::npos) {
+                mainVm = kv.second;
+                mainKey = kv.first;
+                break;
+            }
+        }
+    }
+    if (!mainVm) return 0;
+    if (!mainVm->findFunctionAny("post_heart_beat")) {
+        if (hbTrace.load(std::memory_order_relaxed))
+            std::cerr << "[hb-pass] no post_heart_beat on " << mainKey << "\n";
+        return 0;
+    }
+    if (hbTrace.load(std::memory_order_relaxed))
+        std::cerr << "[hb-pass] t=" << msSinceStart() << "ms key=" << mainKey << "\n";
+    // Pass the master object as `me`, exactly like the original driver's
+    // vm_apply(master, "post_heart_beat", thisObject).  execOnMain marshals the
+    // call onto the scheduler thread and the shadow VM it may build shares the
+    // object-variable table, so register_post_heart_beat's `_heart_beat_funcs +=`
+    // lands in the real block.
+    scheduler().execOnMain(mainVm, "post_heart_beat", {make_object(mainKey)});
+    return 1;
+}
+
+std::string masterSearchRoot() {    auto& reg = objectRegistry();
     std::lock_guard<std::recursive_mutex> rl(registryMutex());
     for (auto& kv : reg.vms)
         if (kv.first.find("<main>") != std::string::npos) {
