@@ -94,7 +94,10 @@ def save_jpeg(img, out, maxw=1280, quality=55):
 
 
 def main():
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    try:
+        sys.stdout.write('')
+    except Exception:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     out = sys.argv[1] if len(sys.argv) > 1 else 'shot.jpg'
     maxw = int(sys.argv[2]) if len(sys.argv) > 2 else 1280
     quality = int(sys.argv[3]) if len(sys.argv) > 3 else 55

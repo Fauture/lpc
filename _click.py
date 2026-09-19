@@ -13,7 +13,10 @@ import io
 import sys
 import time
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+try:
+    sys.stdout.write('')
+except Exception:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 user32 = ctypes.windll.user32
 INPUT_MOUSE = 0
 MOUSEEVENTF_MOVE = 0x0001

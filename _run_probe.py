@@ -16,6 +16,7 @@ can be measured independently.
   TAIL=1      -> the tail/forensic probe set
   MEM2=1      -> the per-file [heap] census + [filed-rtt]/[pkt-filed] traffic
 """
+import os
 import subprocess, time, os, sys, io, shutil, socket
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -72,7 +73,8 @@ procs = []
 for name in ['aaa', 'dba', 'ccs', 'gs']:
     fn = os.path.join(LOG_DIR, 'live_%s.txt' % name)
     f = open(fn, 'wb', buffering=0)
-    p = subprocess.Popen(['build/Release/lpcvm.exe', 'run', 'linux/%s/pack_data/lib_%s32.pak' % (name, name)],
+    _exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build', 'Release', 'lpcvm.exe')
+    p = subprocess.Popen([_exe, 'run', 'linux/%s/pack_data/lib_%s32.pak' % (name, name)],
                          stdout=f, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
     procs.append((name, p, f))
     time.sleep(3)

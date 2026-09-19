@@ -23,7 +23,10 @@ import subprocess
 import sys
 import time
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+try:
+    sys.stdout.write('')
+except Exception:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 CLIENT_DIR = r'E:\bf\BaiduNetdiskDownload\asktao1.60'
 CLIENT_TITLE = '问道(1.60'   # stable client prefix; the VMware window is '问道1.63 - ...'
@@ -32,6 +35,8 @@ kernel32 = ctypes.windll.kernel32
 
 # relative coordinates (fraction of the client window), measured from screenshots
 BTN_SERVER_OK = (0.419, 0.812)
+# 选服/区组界面必须点【取消】（点“确定”会又回到区组列表）
+BTN_SERVER_CANCEL = (0.579, 0.903)
 BTN_VERIFY_OK = (0.500, 0.478)      # 选服界面的"确定"
 LOGIN_ACCOUNT = (0.500, 0.325)      # 登录界面账号输入框
 LOGIN_PASSWORD = (0.500, 0.396)     # 密码输入框
@@ -298,6 +303,16 @@ def auto(acct, pwd, name, tag='auto'):
     focus()
     k, d = screen_kind()
     print('start state=%s(%d)' % (k, int(d)))
+    if k == 'dialog':
+        click_frac(*BTN_VERIFY_OK)
+        time.sleep(0.8)
+        k, d = screen_kind()
+        print('  cleared verify dialog -> %s(%d)' % (k, int(d)))
+    if k == 'serversel':
+        click_frac(*BTN_SERVER_CANCEL)
+        time.sleep(1.0)
+        k, d = screen_kind()
+        print('  cancelled server-select -> %s(%d)' % (k, int(d)))
     if k is None or k == 'login':
         # server-select / login screens: ENTER clears dialogs, then type creds
         for _ in range(3):
@@ -366,9 +381,9 @@ def fastlogin(acct, pwd, tag='f'):
     wait_gs()
     focus()
     k, d = screen_kind()
-    if k == 'dialog':                 # leftover 安全验证 box: ENTER clears it
-        keys('{ENTER}')
-        time.sleep(0.6)
+    if k == 'dialog':                 # 安全验证弹窗：按用户确认点【确定】
+        click_frac(*BTN_VERIFY_OK)
+        time.sleep(0.8)
     click_frac(*LOGIN_ACCOUNT)
     keys('%s{TAB}%s{ENTER}' % (acct, pwd))   # type both fields, submit
     time.sleep(1.6)
