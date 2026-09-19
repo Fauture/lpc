@@ -4770,6 +4770,47 @@ private:
                               << " -> " << n << "\n";
                 return make_string(n);
             }
+            if (nm == "object_name" && !args.empty()) {
+                // object_name(ob, flag): the argument object's full virtual
+                // path.  flag != 0 strips the "#<seq>" instance suffix, i.e. it
+                // yields the PROGRAM path - feature/common/dbase.c's clone
+                // fallback does
+                //     (object_name(this_object(), 1))->query_entire_dbase()
+                // to read the template's dbase, which is where an item clone's
+                // name comes from (without this, get_name() was undefined and
+                // the client showed "你使用了0").
+                std::string key;
+                const Value& av = args[0];
+                if (av.index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(av);
+                    if (ov) {
+                        key = ov->programName;
+                        if ((key.empty() || key == "<this>" || key == ".") && ov->owner)
+                            key = regKeyOfObjectPtr(ov->owner);
+                    }
+                } else if (av.index() == 4) {
+                    key = std::get<SharedString>(av).str();
+                } else if (av.index() == 2) {
+                    key = "oid:" + std::to_string(std::get<int64_t>(av));
+                }
+                if (key.empty() || key == "<this>" || key == ".") key = currentThisName();
+                if (key.rfind("clone:", 0) == 0) key = key.substr(6);
+                else if (key.rfind("pak:", 0) == 0) key = key.substr(4);
+                if (key.rfind("oid:", 0) == 0) key.clear();
+                if (args.size() >= 2 && toInt(args[1]) != 0) {
+                    size_t h = key.find('#');
+                    if (h != std::string::npos) key = key.substr(0, h);
+                }
+                if (!key.empty() && key.front() != '/') key = "/" + key;
+                if (hasSuffix(key, ".o")) key.replace(key.size() - 2, 2, ".c");
+                if (vmEnvTrace())
+                    std::cerr << "[obj-name-arg] arg0=" << to_string(args[0], false).substr(0, 50)
+                              << " -> " << key << "\n";
+                return make_string(key);
+            }
+
+
+
             if (nm == "call_other" && args.size() >= 2) {
                 // vm_f_call_other (0x80f5aa0): call_other(ob, fun, a1..aN) -
                 // the extra args are DIRECT arguments (vm_callInOtherFunEx
