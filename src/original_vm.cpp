@@ -1,4 +1,4 @@
-﻿#include "original_vm.h"
+#include "original_vm.h"
 
 // The LPCVM_STACKDBG probe needs the module's own base address to report raw
 // stack words as RVAs (named by build/Release/lpcvm.map).  <windows.h> is
@@ -17510,7 +17510,10 @@ private:
 
     class Exec {
     public:
-        Exec(AntiCheatScript* it, const std::map<std::string, Val>& env) : it_(it), env_(env) {}
+        // The environment MUST be held BY REFERENCE.  A value member made
+        // every loop-body mutation vanish (arrays never grew), which is why
+        // the anti-cheat answer was wrong even though 0x21B1 was sent.
+        Exec(AntiCheatScript* it, std::map<std::string, Val>& env) : it_(it), env_(env) {}
 
         Val runBody(const std::vector<Tok>& body) {
             Parser p;
@@ -17528,7 +17531,7 @@ private:
 
     private:
         AntiCheatScript* it_;
-        std::map<std::string, Val> env_;
+        std::map<std::string, Val>& env_;
         // Name of the variable the LAST primary() read - `x++` needs it to know
         // which counter to bump (cleared by every other literal/list access).
         std::string lastIdent_;
@@ -17552,6 +17555,21 @@ private:
                     return m.pairs[k].second;
             return V(0);
         }
+        // `cur += rhs` exactly as the driver's operator does it (array append,
+        // string concat, int add).
+        static Val addValue(const Val& cur, const Val& rhs) {
+            if (cur.kind == 'a' && rhs.kind == 'a') {
+                std::vector<Val> items = cur.items;      // rhs may alias cur
+                for (size_t k = 0; k < rhs.items.size(); ++k) items.push_back(rhs.items[k]);
+                return VARR(items);
+            }
+            if (cur.kind == 's' || rhs.kind == 's') {
+                std::string text = (cur.kind == 's' ? cur.s : std::to_string(cur.num)) +
+                                   (rhs.kind == 's' ? rhs.s : std::to_string(rhs.num));
+                return VS(text);
+            }
+            return V(cur.num + rhs.asInt());
+        }
 
         // one loop body: either `{ ... }` or a single statement (the generated
         // loops have NO braces - `loop (...) stmt;`)
@@ -17572,9 +17590,11 @@ private:
             p.i = end;
             return lb;
         }
-        void runLoopBody(const LoopBody& lb, const std::map<std::string, Val>& extra) {
-            std::map<std::string, Val> env = extra;
-            Exec ex(it_, env);
+        // The body MUST run against the caller's environment.  Building a copy
+        // (`std::map env = extra;`) discarded every write the body made, so
+        // `loop (...) a += ({...});` appended nothing and the answer was wrong.
+        void runLoopBody(const LoopBody& lb) {
+            Exec ex(it_, env_);
             if (lb.isBlock) {
                 ex.runBody(lb.toks);
                 return;
@@ -17624,13 +17644,14 @@ private:
                     std::vector<std::pair<Val, Val>> pairs;
                     if (cit != env_.end() && cit->second.kind == 'm') pairs = cit->second.pairs;
                     for (size_t k = 0; k < pairs.size(); ++k) {
-                        std::map<std::string, Val> extra = env_;
                         std::vector<Val> pairItems;
                         pairItems.push_back(pairs[k].first);
                         pairItems.push_back(pairs[k].second);
-                        extra[var] = VARR(pairItems);
-                        runLoopBody(lb, extra);
+                        env_[var] = VARR(pairItems);
+                        runLoopBody(lb);
                     }
+                    // The loop variable keeps its last value after the loop,
+                    // exactly like vm_cmpAndJmpInLoop's final setVar.
                     return true;
                 }
                 if (!p.eat("=")) return false;
@@ -17641,11 +17662,16 @@ private:
                 if (!ternary(p, b)) return false;
                 if (!p.eat(")")) return false;
                 LoopBody lb = oneOrBlock(p);
+                // `loop (i = A upto B)`: the compiled form (init_for_loop /
+                // cond_jmp_for_loop / step_jmp_for_loop, vm_cmpAndJmpInLoop)
+                // keeps its own counter and ASSIGNS the variable on every step
+                // (inclusive of B), so a body-side `i++` is overwritten by the
+                // next step; the variable is left at B + 1 when the loop exits.
                 for (int64_t v = a; v <= b; ++v) {
-                    std::map<std::string, Val> extra = env_;
-                    extra[var] = V(v);
-                    runLoopBody(lb, extra);
+                    env_[var] = V(v);
+                    runLoopBody(lb);
                 }
+                env_[var] = V(b + 1);
                 return true;
             }
             if (tk.kind == 'i' && tk.text == "return") {
@@ -17691,7 +17717,30 @@ private:
                         Val key;
                         if (!expr(p, key)) return false;
                         if (!p.eat("]")) return false;
+                        // `a[i] = ...` on an ARRAY assigns the ELEMENT.  The old
+                        // code replaced any non-mapping with a fresh mapping, so
+                        // `a[i] = (a[i] - ...) & mask` threw the store away and
+                        // every generated answer came out wrong.
                         Val& dst = env_[nm];
+                        if (dst.kind == 'a') {
+                            int64_t ix = key.asInt();
+                            if (p.eat("=")) {
+                                Val val;
+                                if (!expr(p, val)) return false;
+                                if (ix >= 0 && static_cast<size_t>(ix) < dst.items.size())
+                                    dst.items[static_cast<size_t>(ix)] = val;
+                                else if (ix == static_cast<int64_t>(dst.items.size()))
+                                    dst.items.push_back(val);
+                            } else if (p.eat("+=")) {
+                                Val val;
+                                if (!expr(p, val)) return false;
+                                if (ix >= 0 && static_cast<size_t>(ix) < dst.items.size())
+                                    dst.items[static_cast<size_t>(ix)] =
+                                        addValue(dst.items[static_cast<size_t>(ix)], val);
+                            }
+                            p.eat(";");
+                            return true;
+                        }
                         if (dst.kind != 'm') { dst = VMAP(); }
                         if (p.eat("=")) {
                             Val val;
@@ -17716,14 +17765,21 @@ private:
                         Val rhs;
                         if (!expr(p, rhs)) return false;
                         Val& cur = env_[nm];
+                        // MUTATE in place.  Rebinding `cur` (cur = VS(...) /
+                        // cur = V(...)) threw the update away whenever the body
+                        // ran on a copied map, so `loop (...) a += ({...});`
+                        // appended nothing and the anti-cheat answer was wrong.
                         if (cur.kind == 'a' && rhs.kind == 'a') {
-                            for (size_t k = 0; k < rhs.items.size(); ++k) cur.items.push_back(rhs.items[k]);
+                            // copy first: rhs may alias cur
+                            std::vector<Val> add = rhs.items;
+                            for (size_t k = 0; k < add.size(); ++k) cur.items.push_back(add[k]);
                         } else if (cur.kind == 's' || rhs.kind == 's') {
-                            std::string text = (cur.kind == 's' ? cur.s : std::to_string(cur.num)) +
-                                               (rhs.kind == 's' ? rhs.s : std::to_string(rhs.num));
-                            cur = VS(text);
+                            std::string add = (rhs.kind == 's') ? rhs.s : std::to_string(rhs.num);
+                            cur.s = (cur.kind == 's' ? cur.s : std::to_string(cur.num)) + add;
+                            cur.num = static_cast<int64_t>(cur.s.size());
+                            cur.kind = 's';
                         } else {
-                            cur = V(cur.asInt() + rhs.asInt());
+                            cur.num += rhs.asInt();
                         }
                         p.eat(";");
                         return true;
@@ -17744,8 +17800,9 @@ private:
             }
             if (tk.kind == 'o' && tk.text == "{") {
                 std::vector<Tok> body = it_->skipBlock(p);
-                std::map<std::string, Val> env = env_;
-                Exec ex(it_, env);
+                // Braces must NOT isolate writes: LPC blocks share the enclosing
+                // scope, and the generated scripts rely on that.
+                Exec ex(it_, env_);
                 result = ex.runBody(body);
                 return true;
             }
@@ -17933,10 +17990,6 @@ private:
         }
         Val index(const Val& v, const Val& idx) const {
             int64_t i = idx.asInt();
-            if (std::getenv("ACDBG"))
-                std::fprintf(stderr, "[idx] kind=%c num=%lld slen=%zu idx=%lld\n",
-                             v.kind, static_cast<long long>(v.num), v.s.size(),
-                             static_cast<long long>(i));
             if (v.kind == 'a') return (i >= 0 && static_cast<size_t>(i) < v.items.size()) ? v.items[static_cast<size_t>(i)] : V(0);
             if (v.kind == 's') return (i >= 0 && static_cast<size_t>(i) < v.s.size())
                                          ? V(static_cast<unsigned char>(v.s[static_cast<size_t>(i)])) : V(0);
