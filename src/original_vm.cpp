@@ -6864,13 +6864,21 @@ private:
         }
         int pushCount = (passed > n) ? passed : n;
         for (int i = pushCount - 1; i >= 0; --i) {
-            // The original zero-initializes every declared local/param slot on
-            // frame allocation, so a trailing parameter the caller omitted is
-            // int 0, NOT "undefined".  Filling it with undefined made
-            // is_int(is_level_up) fail inside update_child.c's formula 79
-            // ("It is not a integer!") when childd calls update_child(child)
-            // with one argument, aborting the master NPC clone's create().
-            Value a = (i < static_cast<int>(args.size())) ? args[i] : make_int(0);
+            // A declared parameter the caller omitted stays UNDEFINED (type 0) -
+            // that is what the reference driver does, and the game depends on it:
+            // gs::prompt_by(ob, content, portrait, pic_no) is called with two
+            // arguments, and build_menu_buffer branches on
+            //     is_undefined(portrait)  -> actor_name = ob->get_name(),
+            //                                portrait_used = ob->query("portrait")
+            //     else (portrait == 0)    -> portrait_used = -1, actor_name = ""
+            // so padding with int 0 sent the 二级菜单 (e.g. 莲花姑娘 -> 提高宠物忠诚
+            // -> "你还没有宠物。") with portrait = 0xFFFFFFFF and an EMPTY name -
+            // exactly the missing portrait/name a real client showed.
+            // Parameters that declare a default are filled by the callee's own
+            // inline default block (check_args_num/resort_stack), so they are not
+            // affected by this padding (e.g. childd's update_child(child,
+            // is_level_up = 0)).
+            Value a = (i < static_cast<int>(args.size())) ? args[i] : Value{};
             pushValue(a);
         }
         return placeholder;
