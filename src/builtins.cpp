@@ -784,8 +784,21 @@ std::mutex& mysqlStateMutex() {
 // serialized internally, so concurrent LPC threads are safe.
 struct MysqlHandle {
     std::shared_ptr<MysqlClient> client;  // null when offline (fallback)
-    std::string db;
+    std::string db;                       // "host:port:user:db" reuse key
     std::shared_ptr<std::mutex> mu = std::make_shared<std::mutex>();  // per-connection lock
+    // ---- long-uptime hardening -------------------------------------------
+    // MySQL drops an idle connection (wait_timeout = 28800 s by default, and a
+    // server restart or a network blip does it instantly).  The original driver
+    // survives that because dbd::assure_connection pings every 60 s and calls
+    // mysql_connect again; our port had NO reconnect at all, so once the socket
+    // died every later query returned 0 forever (character load / save silently
+    // produced empty results -> the client could no longer enter the game).
+    // Keep everything needed to reopen the connection, plus the idle time.
+    std::string host, user, pass, database;
+    int port = 3306;
+    std::chrono::steady_clock::time_point lastUse{};
+    int reconnects = 0;
+    bool hadUse = false;
 };
 std::map<int, MysqlHandle>& mysqlHandles() {
     static std::map<int, MysqlHandle> m;
@@ -804,6 +817,11 @@ int nextMysqlCno() {
 // Execute a query against the live MySQL server.  Returns true and fills
 // out on success (result set or affected rows); false when the server
 // rejected the statement (error filled) or the connection is unusable.
+//
+// Long-uptime behaviour (see MysqlHandle): a connection that MySQL closed
+// while it sat idle is transparently reopened and the statement retried once,
+// and a connection idle for more than 120 s is proved alive with a cheap
+// "SELECT 1" first (which also resets MySQL's own idle timer).
 bool mysqlExecReal(int cno, const std::string& sql, MysqlClient::Result& out, std::string& error) {
     std::shared_ptr<MysqlClient> client;
     std::shared_ptr<std::mutex> mu;
@@ -815,12 +833,96 @@ bool mysqlExecReal(int cno, const std::string& sql, MysqlClient::Result& out, st
             mu = it->second.mu;
         }
     }
-    if (!client || !client->isConnected()) {
+    if (!mu) {
         error = "no live connection for cno " + std::to_string(cno);
         return false;
     }
     std::lock_guard<std::mutex> lk(*mu);
-    return client->execute(sql, out, error);
+    const auto now = std::chrono::steady_clock::now();
+    // ---- keepalive: an idle socket may already be gone -------------------
+    if (client && client->isConnected()) {
+        long idleS = 0;
+        {
+            std::lock_guard<std::mutex> g(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(cno);
+            if (it != mysqlHandles().end() && it->second.hadUse)
+                idleS = static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(
+                           now - it->second.lastUse).count());
+        }
+        if (idleS > 120) {
+            MysqlClient::Result ping;
+            std::string perr;
+            if (!client->execute("SELECT 1", ping, perr)) {
+                std::cerr << "[mysql] keepalive cno=" << cno << " idle=" << idleS
+                          << "s failed (" << perr << ") -> reconnect\n";
+                client = nullptr;   // forces the reopen path below
+            }
+        }
+    }
+    // ---- reopen a dead / offline connection ------------------------------
+    if (!client || !client->isConnected()) {
+        std::lock_guard<std::mutex> g(mysqlHandlesMutex());
+        auto it = mysqlHandles().find(cno);
+        if (it == mysqlHandles().end()) {
+            error = "no live connection for cno " + std::to_string(cno);
+            return false;
+        }
+        MysqlHandle& h = it->second;
+        if (!h.host.empty()) {
+            std::string cerr2;
+            auto fresh = std::make_shared<MysqlClient>();
+            if (fresh->connect(h.host, h.port, h.user, h.pass, h.database, cerr2)) {
+                h.client = fresh;
+                ++h.reconnects;
+                std::cerr << "[mysql] reconnected cno=" << cno << " " << h.db
+                          << " (reconnects=" << h.reconnects << ")\n";
+            } else {
+                std::cerr << "[mysql] reconnect cno=" << cno << " " << h.db
+                          << " failed: " << cerr2 << "\n";
+            }
+        }
+        client = h.client;
+    }
+    if (!client || !client->isConnected()) {
+        error = "no live connection for cno " + std::to_string(cno);
+        return false;
+    }
+    bool ok = client->execute(sql, out, error);
+    if (!ok && !client->isConnected()) {
+        // The statement killed the socket (server restart, net_write_timeout):
+        // reopen and retry ONCE so a single dead socket cannot disable the
+        // handle for the rest of the process lifetime.
+        std::shared_ptr<MysqlClient> fresh;
+        {
+            std::lock_guard<std::mutex> g(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(cno);
+            if (it != mysqlHandles().end() && !it->second.host.empty()) {
+                std::string cerr2;
+                auto c2 = std::make_shared<MysqlClient>();
+                if (c2->connect(it->second.host, it->second.port, it->second.user,
+                                it->second.pass, it->second.database, cerr2)) {
+                    it->second.client = c2;
+                    ++it->second.reconnects;
+                    fresh = c2;
+                    std::cerr << "[mysql] reconnected after failed statement cno=" << cno
+                              << " " << it->second.db << "\n";
+                }
+            }
+        }
+        if (fresh) {
+            ok = fresh->execute(sql, out, error);
+            client = fresh;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> g(mysqlHandlesMutex());
+        auto it = mysqlHandles().find(cno);
+        if (it != mysqlHandles().end()) {
+            it->second.lastUse = std::chrono::steady_clock::now();
+            it->second.hadUse = true;
+        }
+    }
+    return ok;
 }
 
 std::string vfsRoot() {
@@ -3904,7 +4006,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             }
             {
                 std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
-                mysqlHandles()[cno] = MysqlHandle{ok ? client : nullptr, key};
+                MysqlHandle h;
+                h.client = ok ? client : nullptr;
+                h.db = key;
+                h.host = host;
+                h.port = port;
+                h.user = user;
+                h.pass = pass;
+                h.database = db;
+                mysqlHandles()[cno] = std::move(h);
             }
             return make_int(cno);
         }

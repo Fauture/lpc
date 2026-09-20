@@ -140,18 +140,29 @@ def attempt(n):
     r = run([sys.executable, '-X', 'utf8', '_rdp.py', 'auto', ACCT, PWD, CHAR, tag], timeout=420)
     tail = [l for l in (r.stdout or '').splitlines() if 'after' in l or 'state=' in l or 'WARN' not in l]
     log('   auto: %s' % ' | '.join(x.strip() for x in tail[-4:]))
-    time.sleep(10)
-    titles = client_titles()
-    title = titles[0][1] if titles else '<no client window>'
-    ingame = ('[%s]' % CHAR) in title
+    # Wait for the game world: entering the game can be slow (the reported
+    # failure is 通讯错误 right after the line/char choice), so poll the window
+    # title and record HOW LONG the entry took - a rising latency is the
+    # degradation that precedes the failure.
+    t_enter = time.time()
+    ingame = False
+    title = ''
+    while time.time() - t_enter < 60:
+        titles = client_titles()
+        title = titles[0][1] if titles else '<no client window>'
+        if ('[%s]' % CHAR) in title:
+            ingame = True
+            break
+        time.sleep(3)
+    enter_s = time.time() - t_enter
     newlog = read_new(clog, off) if clog else ''
     bad = [w for w in FAIL_WORDS if w in newlog]
     shot = os.path.join(ROOT, '_login_%s.jpg' % tag)
     run([sys.executable, '-X', 'utf8', '_shot.py', shot, '700', '55', 'client'], timeout=120)
     up = gs_uptime_min()
     verdict = 'OK  ' if (ingame and not bad) else 'FAIL'
-    log('[%s] attempt %d uptime=%.1fmin -> %s ingame=%s title=%s bad=%s shot=%s'
-        % (time.strftime('%H:%M:%S'), n, up, verdict, ingame, title.strip(), bad,
+    log('[%s] attempt %d uptime=%.1fmin -> %s ingame=%s enter=%.1fs title=%s bad=%s shot=%s'
+        % (time.strftime('%H:%M:%S'), n, up, verdict, ingame, enter_s, title.strip(), bad,
            os.path.basename(shot)))
     if newlog.strip():
         interesting = [l for l in newlog.splitlines()
