@@ -14908,7 +14908,17 @@ void Scheduler::run() {
             // nothing can run, print every waiter's condition every 5s so a
             // deadlock/forever-wait is attributable (which event/queue/fd the
             // master or a daemon is stuck on).
-            {
+            //
+            // Runtime-armed only (env LPCVM_IDLE_DUMP or the marker file
+            // _probe_on\LPCVM_IDLE_DUMP, refreshed once a second).  It used to run
+            // UNCONDITIONALLY with a function-local `static lastDump`, i.e. once per
+            // 5s PER SCHEDULER THREAD: a boot logged 5137 dumps in ~20 minutes
+            // (4.3/s) and 5112 of them had zero work between them - every dump walks
+            // all waiters AND builds a full LPC frame chain string for each one, so
+            // the diagnostic was burning CPU in exactly the idle loop it was meant
+            // to observe.
+            static const std::atomic<bool>& idleDumpFlag = dynProbeFlag("LPCVM_IDLE_DUMP");
+            if (idleDumpFlag.load(std::memory_order_relaxed)) {
                 static int64_t lastDump = 0;
                 int64_t nd = nowMs();
                 if (nd - lastDump >= 5000) {
