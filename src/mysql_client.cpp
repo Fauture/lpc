@@ -254,6 +254,24 @@ bool MysqlClient::connect(const std::string& host, int port, const std::string& 
     sock_ = static_cast<uintptr_t>(s);
     seq_ = 0;
 
+    // ---- long-uptime hardening: socket read/write timeouts ----------------
+    // Every query ran on a BLOCKING socket with no timeout.  After hours of
+    // uptime a connection can go half-open (MySQL's own net_read_timeout=30 /
+    // net_write_timeout=60 killing the session mid-statement, a NAT/firewall
+    // drop, a server restart): recv() then never returns, the DBA's single ddb
+    // service thread blocks FOREVER, and every later filed command is
+    // dispatched but never executed or answered - which is exactly the
+    // "gs 长时间运行后客户端选线路提示通讯错误(9030)" failure (_login10.py caught
+    // it at gs uptime 529 min: the DBA received the runtime read 3x, dispatched
+    // it, and sent no reply; its last reply to the gs was at 337 min).
+    // A timeout turns that into a normal error, and mysqlExecReal's reconnect
+    // then reopens the connection.
+    {
+        DWORD tv = 20000;   // 20 s
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
+    }
+
     if (!handshake(user, password, database, error)) {
         close();
         return false;
@@ -275,7 +293,17 @@ bool MysqlClient::readPacket(std::vector<uint8_t>& body, std::string& error) {
     size_t got = 0;
     while (got < 4) {
         int n = recv(s, reinterpret_cast<char*>(hdr) + got, 4 - static_cast<int>(got), 0);
-        if (n <= 0) { error = "connection closed during packet header"; return false; }
+        if (n <= 0) {
+            // n == 0 -> closed; SOCKET_ERROR with a timeout -> the peer is gone
+            // (see the SO_RCVTIMEO note in connect()).  Either way the socket is
+            // dead, so drop it: isConnected() then reports false and the caller
+            // reconnects instead of blocking this service thread forever.
+            error = (n == 0) ? "connection closed during packet header"
+                             : ("read timeout/error during packet header (wsa=" +
+                                std::to_string(WSAGetLastError()) + ")");
+            close();
+            return false;
+        }
         got += static_cast<size_t>(n);
     }
     uint32_t len = static_cast<uint32_t>(hdr[0]) | (static_cast<uint32_t>(hdr[1]) << 8) | (static_cast<uint32_t>(hdr[2]) << 16);
@@ -284,7 +312,13 @@ bool MysqlClient::readPacket(std::vector<uint8_t>& body, std::string& error) {
     got = 0;
     while (got < len) {
         int n = recv(s, reinterpret_cast<char*>(body.data()) + got, len - static_cast<int>(got), 0);
-        if (n <= 0) { error = "connection closed during packet body"; return false; }
+        if (n <= 0) {
+            error = (n == 0) ? "connection closed during packet body"
+                             : ("read timeout/error during packet body (wsa=" +
+                                std::to_string(WSAGetLastError()) + ")");
+            close();
+            return false;
+        }
         got += static_cast<size_t>(n);
     }
     return true;
@@ -303,7 +337,11 @@ bool MysqlClient::writePacket(const std::vector<uint8_t>& body, std::string& err
     size_t sent = 0;
     while (sent < packet.size()) {
         int n = send(s, reinterpret_cast<const char*>(packet.data()) + sent, static_cast<int>(packet.size() - sent), 0);
-        if (n <= 0) { error = "send failed"; return false; }
+        if (n <= 0) {
+            error = "send failed (wsa=" + std::to_string(WSAGetLastError()) + ")";
+            close();   // dead socket: let the caller reconnect
+            return false;
+        }
         sent += static_cast<size_t>(n);
     }
     return true;

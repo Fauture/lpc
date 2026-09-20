@@ -42,7 +42,8 @@ CHAR = sys.argv[5] if len(sys.argv) > 5 else 'awesrd'
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CLIENT_LOG_DIR = r'E:\bf\BaiduNetdiskDownload\asktao1.60\log'
-GS_LOG = os.path.join(ROOT, 'errfix1', 'live_gs.txt')   # set by the boot job
+# log dir of the boot under watch (override with LOGIN10_LOGDIR)
+GS_LOG = os.path.join(ROOT, os.environ.get('LOGIN10_LOGDIR', 'errfix1'), 'live_gs.txt')
 user32 = ctypes.windll.user32
 
 FAIL_WORDS = ('通讯错误', '服务器连接中断', '无法连接', '连接服务器失败')
