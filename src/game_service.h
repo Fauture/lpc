@@ -69,6 +69,11 @@ struct GameClient {
     uint32_t tickClientSendLastPacket = 0;  // client tick of the last accepted packet
     int totalReceive = 0;                 // packets the accelerate check has seen
     int failedCount = 0;                  // accumulated abnormalities (3 => close)
+    // vm_checkClientMoveTo (0x804f0a8): the per-step move rate gate.  A step
+    // costs >= 110 ms, and the same field is what vm_cmdAccelerateMoveTo
+    // compares against (>= 87 ms per step).  The original updates it on every
+    // accepted move, so a missing update also breaks the accelerate path.
+    uint32_t tickLastRecvLastMoveTo = 0;  // client tick of the last accepted move
 };
 
 // Start the game client service on `port` (start_service_on).  Returns 0 on

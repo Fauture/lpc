@@ -1157,6 +1157,31 @@ bool checkClientAccelerate(GameClient& cl, uint32_t clientTick) {
     return false;
 }
 
+// vm_checkClientMoveTo (0x804f0a8): the per-step movement rate gate.  Called by
+// vm_cmdMoveTo (steps = 1) and vm_cmdMultiMoveTo (steps = n) with the client's
+// tick from the packet:
+//     if (tickLastRecvLastMoveTo && clientTick - tickLastRecvLastMoveTo < 110 * steps)
+//         -> "Got bad MOVE_TO from client %d, time period = %dms."  return 0
+//     else tickLastRecvLastMoveTo = clientTick; return 1
+// It was missing entirely in our port (only the accelerate check was wired), and
+// because vm_cmdAccelerateMoveTo compares against the SAME field, the walk/run
+// rate accounting was wrong in both directions.
+bool checkClientMoveTo(GameClient& cl, int steps, uint32_t clientTick) {
+    if (steps < 1) steps = 1;
+    if (cl.tickLastRecvLastMoveTo != 0) {
+        const int64_t delta = static_cast<int32_t>(clientTick - cl.tickLastRecvLastMoveTo);
+        if (delta < static_cast<int64_t>(110) * steps) {
+            static const std::atomic<bool>& mvFlag = dynProbeFlag("LPCVM_ECHO");
+            if (mvFlag.load(std::memory_order_relaxed))
+                std::cerr << "[move] cno=" << cl.clientNo << " rejected: period=" << delta
+                          << "ms steps=" << steps << " t=" << lpc::msSinceStart() << "ms\n";
+            return false;
+        }
+    }
+    cl.tickLastRecvLastMoveTo = clientTick;
+    return true;
+}
+
 // vm_cmdEcho (0x8053178): echo/heartbeat (CMD_ECHO 0x20D2).  body = client
 // tick (be:u32) [+ optional echoed server tick].  Replies MSG_REPLY_ECHO
 // (0xF9C3) carrying the server's current tick.  Refreshes timeRecvEcho on an
@@ -1494,25 +1519,30 @@ void handle_vm_cmd_StartMultibonus(GameClient& cl, const uint8_t* body, size_t l
     applyLpc("cmd_start_multi_bonus", {make_int(cl.clientNo)});
 }
 
-// vm_cmdAccelerateMoveTo (0x805573c).  Body layout from the original:
-//   [u32 tickClient][u32 id][u32 mapId][u16 n](n * [u16 x][u16 y])[u16 dir][u32 tickCurrent]
+// vm_cmdAccelerateMoveTo (0x805573c).  Body layout from the disassembly:
+//   [u32 id][u32 mapId][u16 n](n * [u16 x][u16 y])[u16 dir][u32 tickCurrent]
 //   (n must be 1..16); then vm_checkClientAccelerate(clientNo, tickCurrent) and
-//   vm_apply("cmd_accelerate_move_to", clientNo, id, mapId, array, dir), which
-//   start_gs implements as (client_no, id, map_id, array steps, int dir) and
-//   guards with `me->get_id() != id`.
-// Our old parser started at offset 0, so it read tickClient as the LPC `time`
-// argument and shifted every following field by 4 bytes.
+//   the accelerate-specific period gate the original does INLINE (not through
+//   vm_checkClientMoveTo):
+//       if (tickLastRecvLastMoveTo && tickCurrent - tickLastRecvLastMoveTo < 87 * n)
+//           -> "Got bad ACCELERATE_MOVE_TO from client %d, time period = %dms."
+//       else tickLastRecvLastMoveTo = tickCurrent;
+//   and only then vm_apply("cmd_accelerate_move_to", clientNo, id, mapId, array,
+//   dir), which start_gs implements as (client_no, id, map_id, array steps, int
+//   dir) with the `me->get_id() != id` guard.
+// There is NO leading tickClient: the earlier parser read one, which shifted
+// every field by 4 bytes (the LPC `time` argument got the id, `id` got the map
+// id, ...), so accelerated movement was dispatched with garbage.
 void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 18) return;
-    uint32_t tick_client = rd32be(body);
-    uint32_t id = rd32be(body + 4);
-    uint32_t mapId = rd32be(body + 8);
-    uint16_t n = rd16be(body + 12);
+    uint32_t id = rd32be(body);
+    uint32_t mapId = rd32be(body + 4);
+    uint16_t n = rd16be(body + 8);
     if (n == 0 || n > 16) return;
-    if (len < 14u + 4u * n + 2u + 4u) return;
+    if (len < 10u + 4u * n + 2u + 4u) return;
     auto arr = std::make_shared<ArrayValue>();
-    const uint8_t* p = body + 14;
+    const uint8_t* p = body + 10;
     for (uint16_t i = 0; i < n; ++i)
     {
         arr->items.push_back(make_int(rd16be(p)));
@@ -1522,8 +1552,18 @@ void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t l
     int dir = rd16be(p);
     p += 2;
     uint32_t tick_current = rd32be(p);   // the accelerate sample
-    (void)tick_client;
     if (!checkClientAccelerate(cl, tick_current)) return;
+    if (cl.tickLastRecvLastMoveTo != 0) {
+        const int64_t delta = static_cast<int32_t>(tick_current - cl.tickLastRecvLastMoveTo);
+        if (delta < static_cast<int64_t>(87) * n) {
+            static const std::atomic<bool>& mvFlag = dynProbeFlag("LPCVM_ECHO");
+            if (mvFlag.load(std::memory_order_relaxed))
+                std::cerr << "[move] cno=" << cl.clientNo << " bad ACCELERATE_MOVE_TO period="
+                          << delta << "ms steps=" << n << " t=" << lpc::msSinceStart() << "ms\n";
+            return;
+        }
+    }
+    cl.tickLastRecvLastMoveTo = tick_current;
     applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)id), make_int((int)mapId), arr, make_int(dir)});
 }
 
@@ -4569,24 +4609,25 @@ void handle_vm_cmdMoveOnCarpet(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_move_on_carpet", {make_int(cl.clientNo), make_int(carpet_id)});
 }
 
-// vm_cmdMoveTo (0x805561c).  Body layout taken from the original disassembly
-// (the decompiler's local names `id`/`mapId` are swapped relative to the LPC
-// signature - `id` is the FIRST 4 bytes, `mapId` the second):
-//   [u32 tickClient][u32 id][u16 x][u16 y][u16 dir][u32 tickCurrent]
-// start_gs::cmd_move_to(client_no, id, map_id, x, y, dir) checks
-// `me->get_id() != id` and then calls `me->move_to(map_id, x, y, dir)`, so the
-// two 32-bit words are (id, map_id) in that order.
+// vm_cmdMoveTo (0x805561c).  Body layout taken from the disassembly AND verified
+// against the real client's packets:
+//   [u32 id][u32 mapId][u16 x][u16 y][u16 dir][u32 tickCurrent]      (18 bytes)
+// be32(+0)=id, be32(+4)=mapId, be16(+8)=x, be16(+10)=y, be16(+12)=dir,
+// be32(+14)=tickCurrent; the length gates are >3 / >7 / >9 / >11 / >13 / >17.
+// There is NO leading tickClient: an earlier "fix" added one and shifted every
+// field by 4 bytes, which made the server read x/y as the map id and drop the
+// packet - the character then never moved (and its position was never saved).
+// start_gs::cmd_move_to(client_no, id, map_id, x, y, dir) guards with
+// `me->get_id() != id` before `me->move_to(map_id, x, y, dir)`.
 // The original, in this order:
-//   * needs len > 3 / > 7 / > 9 / > 11 / > 13 / > 17;
 //   * vm_checkClientAccelerate(clientNo, tickCurrent) - a rejected packet is
 //     dropped WITHOUT dispatching (so this packet also feeds the client's
 //     tick sync and the accelerate accounting);
+//   * vm_checkClientMoveTo(clientNo, 1, tickCurrent) - the 110 ms/step gate;
 //   * vm_apply("cmd_move_to", clientNo, id, mapId, x, y, dir).
 void handle_vm_cmdMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
-    if (off + 4 > len) return;
-    uint32_t tick_client = rd32be(body, off); off += 4;   // tickClient (not passed to LPC)
     if (off + 4 > len) return;
     uint32_t id = rd32be(body, off); off += 4;            // id = me->get_id()
     if (off + 4 > len) return;
@@ -4599,8 +4640,8 @@ void handle_vm_cmdMoveTo(GameClient& cl, const uint8_t* body, size_t len)
     uint16_t dir = rd16be(body, off); off += 2;
     if (off + 4 > len) return;
     uint32_t tick_current = rd32be(body, off); off += 4;  // tickCurrent = the accelerate sample
-    (void)tick_client;
     if (!checkClientAccelerate(cl, tick_current)) return;
+    if (!checkClientMoveTo(cl, 1, tick_current)) return;
     applyLpc("cmd_move_to", {make_int(cl.clientNo), make_int(id), make_int(map_id), make_int(x), make_int(y), make_int(dir)});
 }
 
@@ -4667,36 +4708,44 @@ void handle_vm_cmdMulGoodsBuy(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_mul_goods_buy", {make_int(cl.clientNo), make_int(id), make_int(count), arr});
 }
 
-// vm_cmdMultiMoveTo (0x8055964).  Body layout from the original:
-//   [u32 tickClient][u32 id][u32 mapId][u16 n](n * [u16 x][u16 y])[u16 dir][u32 tickCurrent]
-//   (n must be 1..13); then vm_checkClientAccelerate(clientNo, tickCurrent) and
-//   vm_apply("cmd_multi_move_to", clientNo, id, mapId, array, dir), which
-//   start_gs implements as (client_no, id, map_id, array steps, int dir) with
-//   the same `me->get_id() != id` guard.
+// vm_cmdMultiMoveTo (0x8055964).  Body layout from the disassembly AND verified
+// against the real client's packets, e.g. the 20-byte walk
+//   00006876 000007D0 0001 0067 009D 0004 11D13D3F
+//   = id=0x6876 mapId=0x7D0 steps=1 (x=103,y=157) dir=4 tick=0x11D13D3F:
+//   [u32 id][u32 mapId][u16 n](n * [u16 x][u16 y])[u16 dir][u32 tickCurrent]
+// (n must be 1..13).  There is NO leading tickClient - an earlier "fix" read one,
+// so `n` came out of the coordinates bytes (e.g. 157) and every real move packet
+// was rejected with "Got bad Multi_Move_To" -> the character never moved, its
+// position was never saved, and no surrounding objects/NPCs were sent.
+//   * vm_checkClientAccelerate(clientNo, tickCurrent);
+//   * vm_checkClientMoveTo(clientNo, n, tickCurrent) - 110 ms per step;
+//   * vm_apply("cmd_multi_move_to", clientNo, id, mapId, array, dir).
 void handle_vm_cmdMultiMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
-    if (off + 4 > len) return;
-    uint32_t tick_client = rd32be(body, off); off += 4;   // tickClient (not passed to LPC)
     if (off + 4 > len) return;
     uint32_t id = rd32be(body, off); off += 4;
     if (off + 4 > len) return;
     uint32_t mapId = rd32be(body, off); off += 4;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    if (count == 0 || count > 13 || off + (size_t)count * 4 > len) return;
+    if (count == 0 || count > 13 || off + (size_t)count * 4 + 2 + 4 > len) {
+        static const std::atomic<bool>& mvFlag = dynProbeFlag("LPCVM_ECHO");
+        if (mvFlag.load(std::memory_order_relaxed))
+            std::cerr << "[move] cno=" << cl.clientNo << " bad Multi_Move_To steps=" << count
+                      << " len=" << len << " t=" << lpc::msSinceStart() << "ms\n";
+        return;
+    }
     auto arr = std::make_shared<ArrayValue>();
     for (uint16_t i = 0; i < count; ++i)
     {
         arr->items.push_back(make_int(rd16be(body, off))); off += 2;
         arr->items.push_back(make_int(rd16be(body, off))); off += 2;
     }
-    if (off + 2 > len) return;
     uint16_t dir = rd16be(body, off); off += 2;
-    if (off + 4 > len) return;
     uint32_t tick_current = rd32be(body, off); off += 4;  // tickCurrent = the accelerate sample
-    (void)tick_client;
     if (!checkClientAccelerate(cl, tick_current)) return;
+    if (!checkClientMoveTo(cl, count, tick_current)) return;
     applyLpc("cmd_multi_move_to", {make_int(cl.clientNo), make_int((int)id), make_int((int)mapId), arr, make_int(dir)});
 }
 
