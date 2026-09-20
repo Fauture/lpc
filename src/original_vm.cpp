@@ -14279,14 +14279,15 @@ void Scheduler::wakeQueue(const std::string& qkey) {
             if (it->second.empty()) queueWaiters_.erase(it);
         }
     }
+    static const bool qTraceWake = (std::getenv("LPCVM_QUEUE_TRACE") != nullptr);
     if (hit) {
         if (vmEnvTrace())
             std::cerr << "[wq] " << qkey << " wake1\n";
-        if (std::getenv("LPCVM_QUEUE_TRACE"))
+        if (qTraceWake)
             std::cerr << "[q-wake] " << qkey << " entry=" << hit->entry
                       << " tid=" << hit->tid << "\n";
         wake(std::move(hit));
-    } else if (std::getenv("LPCVM_QUEUE_TRACE")) {
+    } else if (qTraceWake) {
         std::cerr << "[q-wake] " << qkey << " NO WAITER\n";
     }
 }
@@ -14300,7 +14301,10 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
         auto it = eventWaiters_.find(ename);
         static int evDumpN = 0;
         bool cfgArmed = lpc::cfgLedgerArmed();
-        bool wantDump = std::getenv("LPCVM_TAIL") &&
+        // Cached: raiseEvent runs on every filed RPC (ev_filed*), so a raw getenv
+        // here is an environment scan per event raise.
+        static const bool tailArmed = (std::getenv("LPCVM_TAIL") != nullptr);
+        bool wantDump = tailArmed &&
                         (ename.rfind("ev_filed", 0) == 0 ||
                          (ename.rfind("ev_readetcd", 0) == 0 && cfgArmed) ||
                          (cfgArmed && (ename == "ev_config" || ename.find("cfg") != std::string::npos)));
