@@ -809,6 +809,77 @@ std::mutex& mysqlHandlesMutex() {
     return m;
 }
 
+// ---------------------------------------------------------------------------
+// MySQL-side heartbeat (the missing piece behind the 9030 failure).
+//
+// The DBA's GAME link has a 10 s echo, but its MySQL socket (3306) had NO
+// heartbeat at all: the original driver pings every connection every 60 s
+// inside dbd::assure_connection
+//     if ((time() - m["ping"]) > 60) { if (!is_connected(cno)) reconnect; m["ping"] = time(); }
+// and we had nothing.  Measured on the failing run (errfix1): the DBA stopped
+// replying to filed commands at 342.1 min, and the dl_ddb_1_test MySQL session
+// had been idle 185 min when it was inspected - i.e. that socket went silent at
+// ~340.6 min and was never usable again, while the 10 s game heartbeat kept
+// flowing (529 [hb] lines, 6395 echo replies).  An idle TCP session that is
+// dropped in between (NAT/firewall idle timeout, MySQL net_read_timeout=30 /
+// net_write_timeout=60 killing a session, a restart) leaves our blocking recv()
+// waiting forever -> the DBA's single ddb service thread wedges -> every later
+// filed command is received, dispatched and never answered -> the login flow
+// never gets the character data -> the real client reports 通讯错误 (9030).
+//
+// This thread pings every connection once a minute (cheap "SELECT 1") and
+// reconnects it when the ping fails, which both keeps the socket warm and
+// repairs it proactively instead of on the next real query.
+void mysqlKeepAliveStart() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::thread([] {
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(60));
+                struct Item { int cno; std::shared_ptr<MysqlClient> client; std::shared_ptr<std::mutex> mu; };
+                std::vector<Item> items;
+                {
+                    std::lock_guard<std::mutex> g(mysqlHandlesMutex());
+                    for (auto& kv : mysqlHandles()) {
+                        if (kv.second.client && kv.second.client->isConnected())
+                            items.push_back(Item{kv.first, kv.second.client, kv.second.mu});
+                    }
+                }
+                for (auto& it : items) {
+                    bool ok = false;
+                    {
+                        std::lock_guard<std::mutex> lk(*it.mu);
+                        if (it.client->isConnected()) {
+                            MysqlClient::Result r;
+                            std::string err;
+                            ok = it.client->execute("SELECT 1", r, err);
+                            if (!ok && std::getenv("LPCVM_SQL_TRACE"))
+                                std::cerr << "[mysql] ping cno=" << it.cno << " err=" << err << "\n";
+                        }
+                    }
+                    if (ok) continue;
+                    // Ping failed (or the socket was already dropped): reopen.
+                    std::lock_guard<std::mutex> g(mysqlHandlesMutex());
+                    auto hit = mysqlHandles().find(it.cno);
+                    if (hit == mysqlHandles().end() || hit->second.host.empty()) continue;
+                    MysqlHandle& h = hit->second;
+                    std::string cerr2;
+                    auto fresh = std::make_shared<MysqlClient>();
+                    if (fresh->connect(h.host, h.port, h.user, h.pass, h.database, cerr2)) {
+                        h.client = fresh;
+                        ++h.reconnects;
+                        std::cerr << "[mysql] ping-reconnected cno=" << it.cno << " " << h.db
+                                  << " (reconnects=" << h.reconnects << ")\n";
+                    } else {
+                        std::cerr << "[mysql] ping-reconnect cno=" << it.cno << " " << h.db
+                                  << " failed: " << cerr2 << "\n";
+                    }
+                }
+            }
+        }).detach();
+    });
+}
+
 int nextMysqlCno() {
     static std::atomic<int> n{1};
     return n++;
@@ -3968,6 +4039,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // mysql_connect(host, user, password, database) -> cno (>=1) or -1.
         // The game (dbd's assure_connection) passes host from aaa.ini, which
         // load_db_config rewrites to "port : host" when the port is set.
+        mysqlKeepAliveStart();   // 60 s ping per connection (see above)
         if (args.size() >= 4) {
             std::string hostArg = as_string(args[0]);
             std::string user = as_string(args[1]);
