@@ -1157,31 +1157,6 @@ bool checkClientAccelerate(GameClient& cl, uint32_t clientTick) {
     return false;
 }
 
-// vm_checkClientMoveTo (0x804f0a8): the per-step movement rate gate.  Called by
-// vm_cmdMoveTo (steps = 1) and vm_cmdMultiMoveTo (steps = n) with the client's
-// tick from the packet:
-//     if (tickLastRecvLastMoveTo && clientTick - tickLastRecvLastMoveTo < 110 * steps)
-//         -> "Got bad MOVE_TO from client %d, time period = %dms."  return 0
-//     else tickLastRecvLastMoveTo = clientTick; return 1
-// It was missing entirely in our port (only the accelerate check was wired), and
-// because vm_cmdAccelerateMoveTo compares against the SAME field, the walk/run
-// rate accounting was wrong in both directions.
-bool checkClientMoveTo(GameClient& cl, int steps, uint32_t clientTick) {
-    if (steps < 1) steps = 1;
-    if (cl.tickLastRecvLastMoveTo != 0) {
-        const int64_t delta = static_cast<int32_t>(clientTick - cl.tickLastRecvLastMoveTo);
-        if (delta < static_cast<int64_t>(110) * steps) {
-            static const std::atomic<bool>& mvFlag = dynProbeFlag("LPCVM_ECHO");
-            if (mvFlag.load(std::memory_order_relaxed))
-                std::cerr << "[move] cno=" << cl.clientNo << " rejected: period=" << delta
-                          << "ms steps=" << steps << " t=" << lpc::msSinceStart() << "ms\n";
-            return false;
-        }
-    }
-    cl.tickLastRecvLastMoveTo = clientTick;
-    return true;
-}
-
 // vm_cmdEcho (0x8053178): echo/heartbeat (CMD_ECHO 0x20D2).  body = client
 // tick (be:u32) [+ optional echoed server tick].  Replies MSG_REPLY_ECHO
 // (0xF9C3) carrying the server's current tick.  Refreshes timeRecvEcho on an
@@ -1535,12 +1510,12 @@ void handle_vm_cmd_StartMultibonus(GameClient& cl, const uint8_t* body, size_t l
 // id, ...), so accelerated movement was dispatched with garbage.
 void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
-    if (len < 18) return;
-    uint32_t id = rd32be(body);
+    if (len < 10) return;
+    uint32_t time = rd32be(body);
     uint32_t mapId = rd32be(body + 4);
     uint16_t n = rd16be(body + 8);
     if (n == 0 || n > 16) return;
-    if (len < 10u + 4u * n + 2u + 4u) return;
+    if (len < 10u + 4u * n + 2u) return;
     auto arr = std::make_shared<ArrayValue>();
     const uint8_t* p = body + 10;
     for (uint16_t i = 0; i < n; ++i)
@@ -1550,22 +1525,9 @@ void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t l
         p += 4;
     }
     int dir = rd16be(p);
-    p += 2;
-    uint32_t tick_current = rd32be(p);   // the accelerate sample
-    if (!checkClientAccelerate(cl, tick_current)) return;
-    if (cl.tickLastRecvLastMoveTo != 0) {
-        const int64_t delta = static_cast<int32_t>(tick_current - cl.tickLastRecvLastMoveTo);
-        if (delta < static_cast<int64_t>(87) * n) {
-            static const std::atomic<bool>& mvFlag = dynProbeFlag("LPCVM_ECHO");
-            if (mvFlag.load(std::memory_order_relaxed))
-                std::cerr << "[move] cno=" << cl.clientNo << " bad ACCELERATE_MOVE_TO period="
-                          << delta << "ms steps=" << n << " t=" << lpc::msSinceStart() << "ms\n";
-            return;
-        }
-    }
-    cl.tickLastRecvLastMoveTo = tick_current;
-    applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)id), make_int((int)mapId), arr, make_int(dir)});
+    applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)time), make_int((int)mapId), arr, make_int(dir)});
 }
+
 
 void handle_vm_cmdAccept(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -4629,21 +4591,18 @@ void handle_vm_cmdMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
     if (off + 4 > len) return;
-    uint32_t id = rd32be(body, off); off += 4;            // id = me->get_id()
+    uint32_t map_id = rd32be(body, off); off += 4;
     if (off + 4 > len) return;
-    uint32_t map_id = rd32be(body, off); off += 4;        // map_id = me->move_to arg
+    uint32_t target_id = rd32be(body, off); off += 4;
     if (off + 2 > len) return;
     uint16_t x = rd16be(body, off); off += 2;
     if (off + 2 > len) return;
     uint16_t y = rd16be(body, off); off += 2;
     if (off + 2 > len) return;
     uint16_t dir = rd16be(body, off); off += 2;
-    if (off + 4 > len) return;
-    uint32_t tick_current = rd32be(body, off); off += 4;  // tickCurrent = the accelerate sample
-    if (!checkClientAccelerate(cl, tick_current)) return;
-    if (!checkClientMoveTo(cl, 1, tick_current)) return;
-    applyLpc("cmd_move_to", {make_int(cl.clientNo), make_int(id), make_int(map_id), make_int(x), make_int(y), make_int(dir)});
+    applyLpc("cmd_move_to", {make_int(cl.clientNo), make_int(map_id), make_int(target_id), make_int(x), make_int(y), make_int(dir)});
 }
+
 
 void handle_vm_cmdMovFromQiankundai(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -4724,30 +4683,23 @@ void handle_vm_cmdMultiMoveTo(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
     if (off + 4 > len) return;
-    uint32_t id = rd32be(body, off); off += 4;
+    uint32_t v = rd32be(body, off); off += 4;
     if (off + 4 > len) return;
     uint32_t mapId = rd32be(body, off); off += 4;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    if (count == 0 || count > 13 || off + (size_t)count * 4 + 2 + 4 > len) {
-        static const std::atomic<bool>& mvFlag = dynProbeFlag("LPCVM_ECHO");
-        if (mvFlag.load(std::memory_order_relaxed))
-            std::cerr << "[move] cno=" << cl.clientNo << " bad Multi_Move_To steps=" << count
-                      << " len=" << len << " t=" << lpc::msSinceStart() << "ms\n";
-        return;
-    }
+    if (count == 0 || count > 13 || off + (size_t)count * 4 > len) return;
     auto arr = std::make_shared<ArrayValue>();
     for (uint16_t i = 0; i < count; ++i)
     {
         arr->items.push_back(make_int(rd16be(body, off))); off += 2;
         arr->items.push_back(make_int(rd16be(body, off))); off += 2;
     }
+    if (off + 2 > len) return;
     uint16_t dir = rd16be(body, off); off += 2;
-    uint32_t tick_current = rd32be(body, off); off += 4;  // tickCurrent = the accelerate sample
-    if (!checkClientAccelerate(cl, tick_current)) return;
-    if (!checkClientMoveTo(cl, count, tick_current)) return;
-    applyLpc("cmd_multi_move_to", {make_int(cl.clientNo), make_int((int)id), make_int((int)mapId), arr, make_int(dir)});
+    applyLpc("cmd_multi_move_to", {make_int(cl.clientNo), make_int(v), make_int(mapId), arr, make_int(dir)});
 }
+
 
 void handle_vm_cmdMusicList(GameClient& cl, const uint8_t* body, size_t len)
 {
