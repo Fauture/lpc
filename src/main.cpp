@@ -718,6 +718,37 @@ int main(int argc, char** argv) {
             std::vector<lpc::Value> out7;
             int m7 = lpc::lpcSscanf(gbk7, fmt5, out7, 3);
             std::cout << "case7(CR) match=" << m7 << "\n";
+            // case8/9: the newbie-welfare bonus item string that
+            // sbonusd::get_bonus_item_info parses:
+            //   功能卷轴·报效师门(100)#非卖品
+            //   sscanf(text, "%s#非卖品", &t) -> t = 功能卷轴·报效师门(100)
+            //   sscanf(t,    "%s(%s)", &name, &extra) -> name, extra="100"
+            // If either parse is wrong, explode(extra,"*") has a size the switch
+            // rejects, every entry is dropped and a gathered 石头 grants nothing.
+            std::string itemText = "\xb9\xa6\xc4\xdc\xbe\xed\xd6\xe1\xa1\xa4\xb1\xa8\xd0\xa7\xca\xa6\xc3\xc5"
+                                   "(100)#\xb7\xc7\xc2\xf4\xc6\xb7";
+            std::vector<lpc::Value> outA;
+            int mA = lpc::lpcSscanf(itemText, "%s#\xb7\xc7\xc2\xf4\xc6\xb7", outA, 1);
+            std::cout << "case8 sscanf(%s#非卖品) match=" << mA << " out=" << outA.size();
+            if (!outA.empty() && outA[0].index() == 4)
+                std::cout << " len=" << std::get<lpc::SharedString>(outA[0]).size();
+            std::cout << "\n";
+            std::string itemText2 = "\xb9\xa6\xc4\xdc\xbe\xed\xd6\xe1\xa1\xa4\xb1\xa8\xd0\xa7\xca\xa6\xc3\xc5"
+                                    "(100)";
+            std::vector<lpc::Value> outB;
+            int mB = lpc::lpcSscanf(itemText2, "%s(%s)", outB, 2);
+            std::cout << "case9 sscanf(%s(%s)) match=" << mB << " out=" << outB.size();
+            for (size_t i = 0; i < outB.size(); ++i) {
+                if (outB[i].index() == 4)
+                    std::cout << " [" << i << "]=" << std::get<lpc::SharedString>(outB[i]).str();
+            }
+            std::cout << "\n";
+            // case10: the failing durability probe must NOT clobber its output.
+            std::string keep = itemText2;
+            std::vector<lpc::Value> outC;
+            int mC = lpc::lpcSscanf(itemText2, "%s#\xd7\xee\xb4\xf3\xc4\xcd\xbe\xc3(%d)", outC, 2);
+            std::cout << "case10 sscanf(%s#最大耐久(%d)) match=" << mC << " out=" << outC.size() << "\n";
+            (void)keep;
             return 0;
         }
         if (cmd == "server") {

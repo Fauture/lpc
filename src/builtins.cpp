@@ -6024,23 +6024,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             }
             return vt == type;
         };
-        if (couponCall) {
-            size_t w = 0;
-            for (size_t r = 0; r < src->items.size(); ++r) {
-                const Value& e = src->items[r];
-                if (keepOf(e)) {
-                    if (w != r) src->items[w] = e;
-                    ++w;
-                }
+        // ALWAYS compact in place and return the same array - that is what the
+        // reference driver does (vm_cleanArray compacts the caller's array and
+        // vm_f_clean_array hands the very same array back), and the game relies
+        // on it: the statement form `clean_array(arr, type);` is used all over
+        // the LPC (sbonusd::get_bonus_item_info, move.c::get_gm_ids, mmd.c,
+        // filed.c, start_gs.c ...) to drop the slots the caller did not fill.
+        // Returning a filtered COPY made every one of those calls a no-op: the
+        // unfilled undefined slots survived, random_select() then picked one and
+        // get_bonus_item_info returned undefined - which is why a gathered 石头
+        // granted nothing at all (do_item_bonus had no item info).
+        (void)couponCall;
+        size_t w = 0;
+        for (size_t r = 0; r < src->items.size(); ++r) {
+            const Value& e = src->items[r];
+            if (keepOf(e)) {
+                if (w != r) src->items[w] = e;
+                ++w;
             }
-            src->items.resize(w);
-            return args[0];   // same (mutated) array, mirroring the reference ABI
         }
-        auto out = std::make_shared<ArrayValue>();
-        for (auto& e : src->items) {
-            if (keepOf(e)) out->items.push_back(e);
-        }
-        return out;
+        src->items.resize(w);
+        return args[0];   // same (mutated) array, mirroring the reference ABI
     }
     if (name == "get_args") {
         // vm_f_get_args (0x80f57d0): get_args() -> array of the calling
@@ -6185,11 +6189,75 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "is_real") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
     if (name == "is_void") return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
     if (name == "random_select") {
-        // vm_f_random_select: random_select(array) -> one random element.
-        if (args.empty() || args[0].index() != 5) return make_int(0);
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-        if (arr->items.empty()) return make_int(0);
-        return arr->items[static_cast<size_t>(sharedRand31() % arr->items.size())];
+        // vm_f_random_select (0x807ceec): weighted pick that returns the INDEX
+        // of the chosen element (or -1 when nothing can be chosen), NOT the
+        // element itself:
+        //   * every argument is an array of rates; a trailing INT argument is
+        //     the random range instead (randomRange),
+        //   * a rate element is an int, or mapping["rate"], or object
+        //     dbase["rate"],
+        //   * the winner is picked over the rate total and its index pushed.
+        // get_bonus_item_info relies on the index: it does
+        //   index = random_select(results); return results[index];
+        // and results holds MAPPINGS - with the element (a mapping) used as an
+        // index the lookup yielded undefined, so every 石头/精致宝箱 item bonus
+        // granted nothing at all.  Callers like
+        //   switch (random_select(({ 50, 35, 15 }))) { case 0: ... }
+        // need the index as well.
+        if (args.empty()) return make_int(-1);
+        size_t arrCount = args.size();
+        int64_t randomRange = 0;
+        if (args.back().index() == 2) {          // trailing int = range
+            randomRange = std::get<int64_t>(args.back());
+            arrCount = args.size() - 1;
+            if (randomRange <= 0) return make_int(-1);
+        }
+        std::vector<int64_t> rates;
+        auto rateOf = [&](const Value& e, int64_t& out) -> bool {
+            if (e.index() == 2) { out = std::get<int64_t>(e); return true; }
+            if (e.index() == 6) {                 // mapping with "rate"
+                auto mp = std::get<std::shared_ptr<MappingValue>>(e);
+                if (!mp) return false;
+                const Value* rv = mp->find(make_string("rate"));
+                if (!rv) return false;
+                out = as_int(*rv);
+                return true;
+            }
+            if (e.index() == 7) {                 // object: dbase["rate"]
+                auto ov = std::get<std::shared_ptr<ObjectValue>>(e);
+                if (!ov) return false;
+                auto it = ov->variables.find("dbase");
+                if (it == ov->variables.end() || it->second.index() != 6) return false;
+                auto mp = std::get<std::shared_ptr<MappingValue>>(it->second);
+                if (!mp) return false;
+                const Value* rv = mp->find(make_string("rate"));
+                if (!rv) return false;
+                out = as_int(*rv);
+                return true;
+            }
+            return false;
+        };
+        for (size_t a = 0; a < arrCount; ++a) {
+            if (args[a].index() != 5) continue;
+            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[a]);
+            for (auto& e : arr->items) {
+                int64_t r = 0;
+                if (rateOf(e, r) && r >= 0) rates.push_back(r);
+                else rates.push_back(0);
+            }
+        }
+        int64_t total = 0;
+        for (int64_t r : rates) total += r;
+        if (rates.empty() || total <= 0) return make_int(-1);
+        if (randomRange) total = randomRange;
+        int64_t pick = static_cast<int64_t>(
+            static_cast<double>(total) * static_cast<double>(sharedRand31()) / 2147483647.0);
+        if (pick >= total) pick = total - 1;
+        for (size_t i = 0; i < rates.size(); ++i) {
+            if (rates[i] > pick) return make_int(static_cast<int64_t>(i));
+            pick -= rates[i];
+        }
+        return make_int(-1);
     }
     if (name == "random_from_m_to_n") {
         int64_t m = args.size() > 0 ? as_int(args[0]) : 0;
