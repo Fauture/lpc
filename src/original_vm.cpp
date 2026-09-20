@@ -8567,9 +8567,17 @@ private:
                 break;
             case 61: { // push_obj_var
                 int vi = static_cast<int>(in.a) + currentVarOffset();
-                bool isQed = !frames_.empty() && frames_.back().fn &&
-                             frames_.back().fn->name == "query_entire_dbase";
-                if (std::getenv("LPCVM_TRACE_OPERMAP") && objName_.find("filed.o") != std::string::npos &&
+                // Everything below is diagnostic.  `isQed` used to be computed
+                // UNCONDITIONALLY - a std::string compare of the current function
+                // name on every object-variable read - and the map trace called
+                // std::getenv per instruction (a linear scan of the environment).
+                // push_obj_var is one of the hottest opcodes (185k calls per 5s in
+                // LPCVM_OP_PROF), and this is the boot's hot path, so both are now
+                // behind cached/runtime switches and evaluated only when needed.
+                static const std::atomic<bool>& opMapTraceFlag =
+                    dynProbeFlag("LPCVM_TRACE_OPERMAP");
+                if (opMapTraceFlag.load(std::memory_order_relaxed) &&
+                    objName_.find("filed.o") != std::string::npos &&
                     !frames_.empty() && frames_.back().fn) {
                     const std::string& fnn = frames_.back().fn->name;
                     if (fnn == "do_operate" || fnn == "msg_operate_done" || fnn == "operate_done" ||
@@ -8584,7 +8592,9 @@ private:
                     }
                 }
                 if (vmEnvDbgObjVar() &&
-                    ((objName_.find("/zone/") != std::string::npos && vi < 2) || isQed)) {
+                    ((objName_.find("/zone/") != std::string::npos && vi < 2) ||
+                     (!frames_.empty() && frames_.back().fn &&
+                      frames_.back().fn->name == "query_entire_dbase"))) {
                     std::cerr << "[zvar] obj=" << objName_ << " fn="
                               << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
                               << " varOff=" << currentVarOffset()
