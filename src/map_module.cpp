@@ -331,13 +331,26 @@ Value MapModule::removeFromMap(const std::vector<Value>& args) {
     int y = static_cast<int>(valToInt(args[2]));
     int64_t id = valToInt(args[3]);
     if (x < 0 || y < 0 || x >= m->width || y >= m->height) return make_int(0);
+    // Match by id first (the caller's position may have drifted from the cell we
+    // stored), then fall back to scanning the whole map so a destroyed object
+    // cannot stay behind as a phantom sight entry.
     MapObj** pp = &m->cells[(x >> 3) * m->yblocks + (y >> 3)];
     while (*pp) {
-        if ((*pp)->id == id && (*pp)->x == x && (*pp)->y == y) {
+        if ((*pp)->id == id) {
             MapObj* d = *pp; *pp = d->next; delete d;
             return make_int(1);
         }
         pp = &(*pp)->next;
+    }
+    for (size_t bi = 0; bi < m->cells.size(); ++bi) {
+        MapObj** q = &m->cells[bi];
+        while (*q) {
+            if ((*q)->id == id) {
+                MapObj* d = *q; *q = d->next; delete d;
+                return make_int(1);
+            }
+            q = &(*q)->next;
+        }
     }
     return make_int(0);
 }
@@ -356,22 +369,44 @@ Value MapModule::moveInMap(const std::vector<Value>& args) {
     // find in source cell
     if (ox < 0 || oy < 0 || ox >= m->width || oy >= m->height) return make_int(0);
     if (nx < 0 || ny < 0 || nx >= m->width || ny >= m->height) return make_int(0);
-    MapObj** pp = &m->cells[(ox >> 3) * m->yblocks + (oy >> 3)];
+    const size_t srcCell = static_cast<size_t>((ox >> 3) * m->yblocks + (oy >> 3));
+    const size_t dstCell = static_cast<size_t>((nx >> 3) * m->yblocks + (ny >> 3));
+    MapObj** pp = &m->cells[srcCell];
     MapObj* ob = nullptr;
     while (*pp) {
-        if ((*pp)->id == id && (*pp)->x == ox && (*pp)->y == oy) {
+        if ((*pp)->id == id) {
             ob = *pp; *pp = ob->next; break;
         }
         pp = &(*pp)->next;
     }
-    if (!ob) return make_int(0);
+    if (!ob) {
+        // The LPC's old position can drift from the cell we stored (the caller
+        // passes its own my_x/my_y), so fall back to finding the entry anywhere
+        // in the map.  Giving up here used to leave the object out of every
+        // later get_in_sight() permanently.
+        for (size_t bi = 0; bi < m->cells.size() && !ob; ++bi) {
+            MapObj** q = &m->cells[bi];
+            while (*q) {
+                if ((*q)->id == id) { ob = *q; *q = ob->next; break; }
+                q = &(*q)->next;
+            }
+        }
+    }
+    if (!ob) {
+        // Never registered (entered the map through a path that skipped
+        // put_in_map): register it at the new position instead of dropping it.
+        ob = new MapObj();
+        ob->id = id;
+    }
     ob->x = nx;
     ob->y = ny;
-    if (((ox >> 3) * m->yblocks + (oy >> 3)) != ((nx >> 3) * m->yblocks + (ny >> 3))) {
-        MapObj*& head = m->cells[(nx >> 3) * m->yblocks + (ny >> 3)];
-        ob->next = head;
-        head = ob;
-    }
+    // MUST re-link even when dstCell == srcCell: the entry was unlinked above,
+    // and leaving it out removed the object from the map's cell lists on every
+    // within-block step, so no get_in_sight() could ever see it again - the
+    // client was then never told that a gathered 宝箱/石头 disappeared.
+    MapObj*& head = m->cells[dstCell];
+    ob->next = head;
+    head = ob;
     return make_int(1);
 }
 
