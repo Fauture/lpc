@@ -16514,8 +16514,28 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
     std::shared_ptr<OriginalVm> tmplVm;
     bool relIsClone = rel.find('#') != std::string::npos;
     {
+        // Template lookup cache.  These scans walk EVERY registered object (up to
+        // three times) while holding the global registry mutex, and the boot clones
+        // thousands of objects (basic/npc/item rows) into a registry that already
+        // holds thousands - LPCVM_CLONE_PROF was written for exactly this "lookup"
+        // cost, which is the dominant per-file startup CPU (~7159 objects loaded,
+        // ~120ms each).  The cache stores the KEY the scan picked, and a hit is only
+        // used when that key is STILL registered: the object chosen is therefore
+        // always the same one the scan would have returned (the scan order is an
+        // unordered_map's, so re-scanning can pick the same key only by luck - which
+        // is why the cache is keyed on what was actually chosen instead of
+        // re-deriving it).  A vanished key simply falls back to the scan.
+        static std::unordered_map<std::string, std::string> tplKeyCache;
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        if (relIsClone) {
+        auto cached = tplKeyCache.find(rel);
+        if (cached != tplKeyCache.end()) {
+            auto vit = reg.vms.find(cached->second);
+            if (vit != reg.vms.end()) {
+                bool usable = relIsClone || cached->second.compare(0, 6, "clone:") != 0;
+                if (usable) tmplVm = vit->second;
+            }
+        }
+        if (!tmplVm && relIsClone) {
             // Cloning an EXISTING clone instance (place_char clones the basic
             // object: clone_object(find_basic_object_by_import_name(...)) with
             // a "clone:...basic.o#410" object value): the template is that
@@ -16524,22 +16544,22 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                 std::string key = kv.first;
                 size_t hash = key.find('#');
                 if (hash != std::string::npos) key.resize(hash);  // strip #seq
-                if (key == rel) { tmplVm = kv.second; break; }    // exact instance
+                if (key == rel) { tmplVm = kv.second; tplKeyCache[rel] = kv.first; break; }    // exact instance
             }
             if (!tmplVm) {
                 for (auto& kv : reg.vms) {
                     std::string key = kv.first;
                     size_t hash = key.find('#');
                     if (hash != std::string::npos) key.resize(hash);  // strip #seq
-                    if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+                    if (hasSuffix(key, rel)) { tmplVm = kv.second; tplKeyCache[rel] = kv.first; break; }
                 }
             }
             if (!tmplVm) {
                 // exact clone-key match (shouldn't normally be needed)
                 for (auto& kv : reg.vms)
-                    if (hasSuffix(kv.first, rel)) { tmplVm = kv.second; break; }
+                    if (hasSuffix(kv.first, rel)) { tmplVm = kv.second; tplKeyCache[rel] = kv.first; break; }
             }
-        } else {
+        } else if (!tmplVm) {
             // Cloning a bare program (basic_objectd clones the npc/basic.c
             // template for each row): the template must be the REAL registered
             // object, never a previous "clone:" instance - matching one of
@@ -16550,7 +16570,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
                 if (key.compare(0, 6, "clone:") == 0) continue;   // skip instances
                 size_t hash = key.find('#');
                 if (hash != std::string::npos) key.resize(hash);
-                if (hasSuffix(key, rel)) { tmplVm = kv.second; break; }
+                if (hasSuffix(key, rel)) { tmplVm = kv.second; tplKeyCache[rel] = kv.first; break; }
             }
         }
     }
