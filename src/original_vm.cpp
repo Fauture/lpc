@@ -8602,7 +8602,8 @@ private:
                               << " type=" << ((vi >= 0 && static_cast<size_t>(vi) < objVars_->size()) ? (*objVars_)[vi].index() : -1)
                               << "\n";
                 }
-                if (std::getenv("LPCVM_NEAR") && !frames_.empty() && frames_.back().fn) {
+                static const bool nearOn61 = (std::getenv("LPCVM_NEAR") != nullptr);
+                if (nearOn61 && !frames_.empty() && frames_.back().fn) {
                     const std::string fnn2 = frames_.back().fn->name;
                     if (fnn2 == "is_visible" || fnn2 == "is_near") {
                         std::string val = "<oob>";
@@ -10610,7 +10611,12 @@ private:
                 break;
             }
             case 7: { // call_in_user_fun
-                if (std::getenv("LPCVM_NAMECHAIN")) {
+                // Diagnostic switches are read ONCE (see the vmEnv*/envFlag* helpers
+                // above): call_in_user_fun runs ~44k times per 5s during startup and
+                // each raw std::getenv here is a linear scan of the process
+                // environment, i.e. pure overhead on the interpreter's hottest path.
+                static const bool ncOn7 = (std::getenv("LPCVM_NAMECHAIN") != nullptr);
+                if (ncOn7) {
                     int fi = fromMeta ? m0 : static_cast<int16_t>(in.a);
                     int cn = fromMeta ? m1 : in.b;
                     auto fit = funcsByIndex_.find(fi);
@@ -10670,12 +10676,14 @@ private:
                 bool started = callUserFunction(funIndex, flags, r7);
                 // Inline start: the callee's return op will push its own
                 // result; do NOT push anything here.
-                if (started && std::getenv("LPCVM_NAMEBYPASS")) {
+                static const bool nbOn7 = (std::getenv("LPCVM_NAMEBYPASS") != nullptr);
+                if (started && nbOn7) {
                     const OriginalFunction* bf = functionByIndex(funIndex);
                     if (bf && bf->name == "check_name_length_legal" && r7.index() == 2)
                         r7 = make_int(0);
                 }
-                if (std::getenv("LPCVM_TEMPKEY") && started) {
+                static const bool tkOn7 = (std::getenv("LPCVM_TEMPKEY") != nullptr);
+                if (tkOn7 && started) {
                     const OriginalFunction* tf2 = functionByIndex(funIndex);
                     if (tf2 && (tf2->name == "lite_set_temp" || tf2->name == "lite_query_temp" ||
                                 tf2->name == "set_temp" || tf2->name == "query_temp"))
@@ -10683,7 +10691,8 @@ private:
                                   << " -> " << to_string(r7, false).substr(0, 70) << "\n";
                     std::cerr.flush();
                 }
-                if (std::getenv("LPCVM_MENUDECIDE")) {
+                static const bool mdOn7 = (std::getenv("LPCVM_MENUDECIDE") != nullptr);
+                if (mdOn7) {
                     auto itm = funcsByIndex_.find(funIndex);
                     const OriginalFunction* tfm = (itm != funcsByIndex_.end()) ? itm->second : nullptr;
                     if (tfm && (tfm->name == "lite_query_temp" || tfm->name == "lite_set_temp" ||
@@ -10695,7 +10704,8 @@ private:
                 break;
             }
             case 8: { // call_in_other_fun_ex
-                if (std::getenv("LPCVM_NAMECHAIN")) {
+                static const bool ncOn8 = (std::getenv("LPCVM_NAMECHAIN") != nullptr);
+                if (ncOn8) {
                     Value pv = pop().value;   // path
                     Value fv = pop().value;   // function
                     const std::string fp = (pv.index() == 4) ? std::get<SharedString>(pv)
@@ -11542,7 +11552,8 @@ private:
                 break;
             }
             case 5: { // call_fun_ptr
-                if (std::getenv("LPCVM_MENUCLOSURE")) {
+                static const bool mcOn5 = (std::getenv("LPCVM_MENUCLOSURE") != nullptr);
+                if (mcOn5) {
                     bool inTalk3 = false;
                     for (const auto& fr : frames_)
                         if (fr.fn && fr.fn->name == "start_talk_to") { inTalk3 = true; break; }
@@ -11565,7 +11576,8 @@ private:
                         std::cerr.flush();
                     }
                 }
-                if (std::getenv("LPCVM_FUNPTR")) {
+                static const bool fpOn5 = (std::getenv("LPCVM_FUNPTR") != nullptr);
+                if (fpOn5) {
                     std::string ad;
                     int n2 = fromMeta ? m1 : in.b;
                     int bot6 = static_cast<int>(stack_.size()) - n2 - 1;
