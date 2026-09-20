@@ -13586,17 +13586,45 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
         int64_t thrRecvReads = 0;
         int64_t thrNoData = 0;
         for (;;) {
+            // Wait for readable data with select() instead of recv()+Sleep(1):
+            // the sockets handed over by the virtual socket layer are
+            // non-blocking (xdbcConnectAsync / FIONBIO), so each idle connection
+            // used to wake ~1000x/s (Windows Sleep(1) is ~1-15ms) and burn CPU
+            // for nothing - a running server showed "[recv-thr] cno=2 ... no-data
+            // spins=70000" while all daemon queues were parked in idle-wait, and
+            // the boot-time CPU was ~80% of a core.  A 100ms select keeps the same
+            // non-blocking recv path and error handling, just without the spin.
+            {
+                fd_set rfds;
+                FD_ZERO(&rfds);
+                FD_SET(static_cast<SOCKET>(fd), &rfds);
+                timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 100000;   // 100ms
+                int sel = select(0, &rfds, nullptr, nullptr, &tv);   // nfds ignored on Windows
+                if (sel == SOCKET_ERROR) {
+                    std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
+                              << " EXIT select-err err=" << WSAGetLastError()
+                              << " reads=" << thrRecvReads << " bytes=" << thrRecvBytes << "\n";
+                    break;
+                }
+                if (sel == 0) {
+                    if (++thrNoData <= 1 || (thrNoData % 100) == 0)
+                        std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
+                                  << " no-data waits=" << thrNoData << "\n";
+                    continue;
+                }
+            }
             int n = recv(static_cast<SOCKET>(fd), buf, sizeof(buf), 0);
             if (n == SOCKET_ERROR) {
                 int err = WSAGetLastError();
-                // Non-blocking socket (created by xdbcConnectAsync / FIONBIO
-                // in the virtual socket layer): no data yet is NOT an error -
-                // retry after a short sleep instead of killing the connection.
+                // select() said readable, so WSAEWOULDBLOCK here means the data
+                // was consumed elsewhere (or a spurious wakeup): retry through the
+                // select() above rather than killing the connection.
                 if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
-                    if (++thrNoData <= 1 || (thrNoData % 5000) == 0)
+                    if (++thrNoData <= 1 || (thrNoData % 100) == 0)
                         std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd
-                                  << " no-data spins=" << thrNoData << "\n";
-                    Sleep(1);
+                                  << " no-data waits=" << thrNoData << "\n";
                     continue;
                 }
                 std::cerr << "[recv-thr] cno=" << clientNo << " fd=" << fd

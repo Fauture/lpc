@@ -272,6 +272,18 @@ bool MysqlClient::connect(const std::string& host, int port, const std::string& 
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
     }
 
+    // Disable Nagle.  The MySQL protocol is strictly request/response with small
+    // packets (a query is one send, the reply arrives after a full round trip),
+    // so Nagle + delayed ACK added up to ~40ms to EVERY statement.  Measured on
+    // a boot: ~2800 filed RPCs (gs -> dba -> MySQL -> gs) at p50 30ms / p90
+    // 141ms, which is what made startup take 13-20 minutes; with the writes sent
+    // immediately the same RPC should cost a few ms.
+    {
+        BOOL nodelay = TRUE;
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay),
+                   sizeof(nodelay));
+    }
+
     if (!handshake(user, password, database, error)) {
         close();
         return false;
