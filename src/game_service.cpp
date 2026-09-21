@@ -13351,6 +13351,18 @@ int startGameService(int port) {
                                                             {make_int(clientNo)}, root);
                         agentType = static_cast<int>(a.index());
                         if (a.index() == 7) break;   // internal comm agent
+                        // Neither registry has this client - and for a LOGIN connection
+                        // that is the normal state, not a pending one: logind only
+                        // registers a "user" for a client AFTER it authenticates, which
+                        // cannot happen before this thread reads its first packet
+                        // (0x4124).  Polling the registries alone therefore burnt all
+                        // 200 iterations (200 x 5ms + one LPC round trip each) on EVERY
+                        // login - measured as "[accept] ... wait=3390ms user-type=0" -
+                        // while the CPU stayed near idle.  The thing actually worth
+                        // waiting for is the queued cmd_new_connection dispatch (it runs
+                        // on the scheduler thread): once the service queue is idle that
+                        // dispatch has completed, so reading the first packet is safe.
+                        if (tries >= 1 && lpc::serviceQueueIdle()) break;
                         if (std::getenv("LPCVM_TRACE"))
                             std::cerr << "[game] waiting client=" << clientNo
                                       << " try=" << tries << " user=" << userType
@@ -13417,7 +13429,15 @@ int startGameService(int port) {
                     // threadd service queue drains so the account packet doesn't
                     // race that tail and see antibot_answer still unset.
                     if (cur->attrib & ATTRIB_CLIENT_USER) {
-                        for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
+                        // The counter behind serviceQueueIdle() is released when a daemon
+                        // comes back for its NEXT receive; if one stops receiving (or its
+                        // queue is destroyed) the count stays stuck and this gate burnt
+                        // the full 200 x 5ms = 1s on EVERY packet - several packets per
+                        // action, which is the "~3s delay even in game" that was reported
+                        // with the CPU under 5%.  The cleanup tail this gate protects runs
+                        // on the scheduler thread within milliseconds, so a short bound is
+                        // enough; a stuck counter means waiting longer is pointless.
+                        for (int tries = 0; tries < 10 && !lpc::serviceQueueIdle(); ++tries)
                             std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     }
                     feedClient(*cur, buf, static_cast<size_t>(n));
@@ -13660,7 +13680,10 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
             // pending-service counter starved the socket - ccs's dba reply
             // (0x4401) was never fed, so filed's do_operate waited forever.
             if (cur->attrib & ATTRIB_CLIENT_USER) {
-                for (int tries = 0; tries < 200 && !lpc::serviceQueueIdle(); ++tries)
+                // Same bound as the accept loop's gate: 50ms is enough for the
+                // cooperative reply-then-cleanup tail (see above); a stuck pending
+                // counter must not cost a second per packet.
+                for (int tries = 0; tries < 10 && !lpc::serviceQueueIdle(); ++tries)
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
             feedClient(*cur, buf, static_cast<size_t>(n));
