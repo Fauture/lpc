@@ -2350,44 +2350,110 @@ void handle_vm_cmdCharPractice(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_char_practice", {make_int(cl.clientNo), make_int(body[0]), make_int(body[1]), make_int(v5)});
 }
 
+// Runtime-armed chat probe: env LPCVM_CHAT=1, or create the marker file
+// _probe_on\LPCVM_CHAT (dynProbeFlag refreshes it once a second, so it can be turned on
+// against an already running server).
+static bool chatProbeOn()
+{
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_CHAT");
+    return f.load(std::memory_order_relaxed);
+}
+
 void handle_vm_cmdChat(GameClient& cl, const uint8_t* body, size_t len)
 {
-    if (len < 3) return;
+    // Chat probe (runtime-armed via env LPCVM_CHAT or _probe_on\LPCVM_CHAT): the
+    // client's chat UI sends 0x2276 cmd_chat / 0x3AE4 cmd_chat_ex, and "chat and other
+    // messages do not show up" needs to be localised to (a) the packet never arriving,
+    // (b) the LPC cmd_chat/channeld path, or (c) the outgoing message packet.  Every
+    // rejected parse is logged UNCONDITIONALLY, because a silently dropped chat packet
+    // looks exactly like a server that does not answer.
+    char raw[3 * 96 + 1];
+    size_t rn = len < 96 ? len : 96;
+    static const char* hx = "0123456789ABCDEF";
+    for (size_t i = 0; i < rn; ++i) {
+        raw[3 * i] = hx[(body[i] >> 4) & 0xF];
+        raw[3 * i + 1] = hx[body[i] & 0xF];
+        raw[3 * i + 2] = ' ';
+    }
+    raw[3 * rn] = 0;
+    if (len < 3) {
+        std::cerr << "[chat] cmd_chat TOO SHORT cno=" << cl.clientNo << " len=" << len
+                  << " body=" << raw << "\n";
+        return;
+    }
     uint16_t channelId = rd16be(body);
     uint8_t slen = body[2];
-    if (3 + slen > len) return;
+    if (3 + slen > len) {
+        std::cerr << "[chat] cmd_chat TRUNCATED cno=" << cl.clientNo << " len=" << len
+                  << " channel=" << channelId << " slen=" << static_cast<int>(slen)
+                  << " body=" << raw << "\n";
+        return;
+    }
     std::string msg((const char*)body + 3, slen);
+    if (chatProbeOn())
+        std::cerr << "[chat] cmd_chat cno=" << cl.clientNo << " channel=" << channelId
+                  << " len=" << slen << " msg=\"" << msg.substr(0, 80) << "\"\n";
     applyLpc("cmd_chat", {make_int(cl.clientNo), make_int(channelId), make_string(msg)});
 }
 
 void handle_vm_cmdChatEx(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
-    if (len < 8) return;
+    if (len < 8) {
+        std::cerr << "[chat] cmd_chat_ex TOO SHORT cno=" << cl.clientNo << " len=" << len << "\n";
+        return;
+    }
     uint16_t channelId = rd16be(body + off); off += 2;
     uint16_t comp = rd16be(body + off); off += 2;
     uint16_t orgLen = rd16be(body + off); off += 2;
     uint16_t msgLen = rd16be(body + off); off += 2;
-    if (msgLen > len - off) return;
+    if (msgLen > len - off) {
+        std::cerr << "[chat] cmd_chat_ex BAD msgLen cno=" << cl.clientNo << " len=" << len
+                  << " channel=" << channelId << " msgLen=" << msgLen << " off=" << off << "\n";
+        return;
+    }
     std::string msg((const char*)body + off, msgLen); off += msgLen;
     auto arr = std::make_shared<ArrayValue>();
     auto arrType = std::make_shared<ArrayValue>();
-    if (len - off == 1) return;
+    if (len - off == 1) {
+        std::cerr << "[chat] cmd_chat_ex TRAILING-1 cno=" << cl.clientNo << " len=" << len
+                  << " off=" << off << " msg=\"" << msg.substr(0, 60) << "\"\n";
+        return;
+    }
     if (len - off >= 2)
     {
         uint16_t itemCount = rd16be(body + off); off += 2;
-        if (itemCount > 20) return;
+        if (itemCount > 20) {
+            std::cerr << "[chat] cmd_chat_ex itemCount=" << itemCount << " cno=" << cl.clientNo
+                      << " len=" << len << " -> DROPPED\n";
+            return;
+        }
         for (uint16_t i = 0; i < itemCount; ++i)
         {
-            if (off >= len) return;
+            if (off >= len) {
+                std::cerr << "[chat] cmd_chat_ex item " << i << "/" << itemCount
+                          << " out of body cno=" << cl.clientNo << "\n";
+                return;
+            }
             uint8_t sl = body[off++];
-            if (sl > len - off) return;
+            if (sl > len - off) {
+                std::cerr << "[chat] cmd_chat_ex item " << i << " slen=" << static_cast<int>(sl)
+                          << " overruns cno=" << cl.clientNo << "\n";
+                return;
+            }
             arr->items.push_back(make_string(std::string((const char*)body + off, sl)));
             off += sl;
-            if (off >= len) return;
+            if (off >= len) {
+                std::cerr << "[chat] cmd_chat_ex item " << i << " missing type cno=" << cl.clientNo << "\n";
+                return;
+            }
             arrType->items.push_back(make_int(body[off++]));
         }
     }
+    if (chatProbeOn())
+        std::cerr << "[chat] cmd_chat_ex cno=" << cl.clientNo << " channel=" << channelId
+                  << " comp=" << comp << " orgLen=" << orgLen << " msgLen=" << msgLen
+                  << " items=" << arr->items.size() << " msg=\"" << msg.substr(0, 60) << "\"\n";
     applyLpc("cmd_chat_ex", {make_int(cl.clientNo), make_int(channelId), make_int(comp), make_int(orgLen), make_string(msg), arr, arrType});
 }
 

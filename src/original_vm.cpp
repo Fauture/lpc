@@ -3000,25 +3000,14 @@ public:
         return executeFunctionOnStack(*it->second);
     }
 
-    // [statue] The map guardian's 守护时长 is displayed as
-    // `time() - npc->query("last_statue_time")` (statued.c::init_menu_content),
-    // and the ONLY writer of that field in the whole game is
-    // statued::do_set_statue_time(), called from statue_template.c:144 when a
-    // party TAKES the statue.  A fresh world (cleared DB) has no value at all,
-    // so the client showed 20713天3小时26分钟 - the entire Unix epoch.  The
-    // intended semantics are "the guardian's timer starts when the statue
-    // appears", so seed it at construction; every later takeover overwrites it
-    // through do_set_statue_time().
-    void seedStatueGuardianTime() {
-        if (obj_.sourceName.find("npc/misc/statue") == std::string::npos) return;
-        Value cur = callFunctionByName("query", {make_string("last_statue_time")});
-        if (cur.index() != 0 && toInt(cur) != 0) return;
-        int64_t now = static_cast<int64_t>(std::time(nullptr));
-        callFunctionByName("set", {make_string("last_statue_time"), make_int(now)});
-        std::cerr << "[statue] seeded last_statue_time=" << now
-                  << " on " << obj_.sourceName << "\n";
-        std::cerr.flush();
-    }
+    // TODO(over-fix, reverted 2026-09-21): this used to seed last_statue_time with
+    // time() for every npc/misc/statue object, which made the client show "0 days"
+    // on a fresh (cleared) world.  That was an OVER-FIX and is intentionally gone:
+    // the original shows time() - 0 = 20713/20714 days (the whole Unix epoch)
+    // whenever the field was never written, because statued::do_set_statue_time()
+    // (statue_template.c:144, called only when a party TAKES the statue) is the sole
+    // writer.  Do not re-add the seeding - an empty DB MUST keep the epoch-length
+    // duration in the guardian's menu, exactly like the original.
 
     int runInit(const std::vector<Value>& createArgs = {}) {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
@@ -3044,7 +3033,8 @@ public:
                 std::cerr << "[runinit] create obj=" << obj_.sourceName
                           << " t=" << std::this_thread::get_id() << "\n";
             callCreate(createArgs);
-            seedStatueGuardianTime();
+            // (the statue-guardian seeding that used to run here was an over-fix and
+            //  has been removed - see the TODO above runInit)
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
                                      " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
@@ -3176,7 +3166,7 @@ public:
                 // Construction finished: mark the object initialized in the
                 // registry and wake the load_object caller parked on this event.
                 markObjectInitialized();
-                seedStatueGuardianTime();
+                // (statue-guardian seeding removed - it was an over-fix, see runInit)
                 if (constructDiagOn())
                     std::cerr << "[construct-done] " << objName_ << " event=" << initDoneEvent_ << "\n";
                 scheduler().wakeEventFront(initDoneEvent_);
@@ -8567,6 +8557,27 @@ private:
                 break;
             case 61: { // push_obj_var
                 int vi = static_cast<int>(in.a) + currentVarOffset();
+                // [chat-probe] LPCVM_CHATVAR: what does the char's object-global read
+                // actually return inside comm.c::send_channel_msg?  The bytecode there
+                // is `push_obj_var 4; if; return_from_fun` - object global #4 is
+                // `mobile_client`, and when it is truthy EVERY channel message is
+                // dropped (that is why chat and other messages never display).  This
+                // prints the raw slot, the base offset our frame applied, and the value
+                // our truthiness rule sees.
+                static const std::atomic<bool>& chatVarFlag = dynProbeFlag("LPCVM_CHATVAR");
+                if (chatVarFlag.load(std::memory_order_relaxed) && !frames_.empty() &&
+                    frames_.back().fn && frames_.back().fn->name == "send_channel_msg") {
+                    Value gv = (vi >= 0 && static_cast<size_t>(vi) < objVars_->size())
+                                   ? (*objVars_)[vi] : Value{};
+                    std::cerr << "[chatvar] obj=" << objName_
+                              << " in.a=" << static_cast<int>(in.a)
+                              << " varOffset=" << currentVarOffset() << " vi=" << vi
+                              << " vars=" << objVars_->size()
+                              << " val=t" << gv.index() << ":"
+                              << to_string(gv, false).substr(0, 40)
+                              << " isZero=" << (isZero(gv) ? 1 : 0) << "\n";
+                    std::cerr.flush();
+                }
                 // Everything below is diagnostic.  `isQed` used to be computed
                 // UNCONDITIONALLY - a std::string compare of the current function
                 // name on every object-variable read - and the map trace called
@@ -8594,8 +8605,7 @@ private:
                 if (vmEnvDbgObjVar() &&
                     ((objName_.find("/zone/") != std::string::npos && vi < 2) ||
                      (!frames_.empty() && frames_.back().fn &&
-                      frames_.back().fn->name == "query_entire_dbase"))) {
-                    std::cerr << "[zvar] obj=" << objName_ << " fn="
+                      frames_.back().fn->name == "query_entire_dbase"))) {                    std::cerr << "[zvar] obj=" << objName_ << " fn="
                               << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
                               << " varOff=" << currentVarOffset()
                               << " idx=" << vi << " vars=" << objVars_->size()
@@ -11326,6 +11336,58 @@ private:
                             found = true;
                         }
                     }
+                } else if (pathVal.index() == 5) {
+                    // ------------------------------------------------------------------
+                    // ARRAY CALL (MudOS/LPC driver extension): `(array)->fn(args)` calls
+                    // fn on EVERY object element and returns the array of results.
+                    //
+                    // The game relies on this for broadcasts.  gs/daemons/channeld.c
+                    // recv_channel ends with:
+                    //     (listeners["ob"])->send_emote(channel, msg, sender, expand);
+                    //     (listeners["ob"])->send_channel_msg(channel, buf);
+                    // and send_channel_msg -> send_channel_accord_privilege ->
+                    // send_to_client is the ONLY path that ever puts a channel message on
+                    // the wire.  This op-8 dispatch had branches for a path string
+                    // (index 4) and for an object value (index 7) but NONE for an array,
+                    // so every such broadcast call silently did nothing: the chat packet
+                    // arrived, cmd_chat_ex -> process_command("chat_ex") -> channeld ran,
+                    // recv_filter returned the player as a listener, and then no packet
+                    // was ever sent - chat and every other array-broadcast message
+                    // (dialog/prompt/refresh) never reached the client.
+                    // ------------------------------------------------------------------
+                    auto arr = std::get<std::shared_ptr<ArrayValue>>(pathVal);
+                    std::vector<Value> callArgs = popArgs();
+                    auto results = std::make_shared<ArrayValue>();
+                    // Nested arrays flatten one level, like the driver.
+                    std::vector<Value> targets;
+                    for (auto& el : arr->items) {
+                        Value ev = resolveCrossVmRef(el);
+                        if (ev.index() == 5) {
+                            auto inner = std::get<std::shared_ptr<ArrayValue>>(ev);
+                            for (auto& e2 : inner->items) targets.push_back(resolveCrossVmRef(e2));
+                        } else {
+                            targets.push_back(ev);
+                        }
+                    }
+                    for (auto& tv : targets) {
+                        if (tv.index() != 7) continue;      // non-objects are skipped
+                        auto ov = std::get<std::shared_ptr<ObjectValue>>(tv);
+                        const std::string& op = ov->programName;
+                        Value r;
+                        if (!funName.empty())
+                            r = tryCallOtherObject(searchRoot_, op, funName, callArgs, thisObjectName_);
+                        else
+                            r = tryCallOtherObjectByIndex(searchRoot_, op, funIndex, callArgs, thisObjectName_);
+                        results->items.push_back(r);
+                    }
+                    Value resultArr = make_array();
+                    std::get<std::shared_ptr<ArrayValue>>(resultArr)->items = std::move(results->items);
+                    result = resultArr;
+                    found = true;
+                    argsConsumed = true;
+                    if (vmEnvTrace())
+                        std::cerr << "[array-call] " << funName << " on " << targets.size()
+                                  << " elements\n";
                 } else if (pathVal.index() == 7) {
                     // Object value: resolve through the clone/registry key.
                     auto ov = std::get<std::shared_ptr<ObjectValue>>(pathVal);
@@ -11623,6 +11685,24 @@ private:
                 // slot/obj refs as a CrossVmRef (index-11) that survives the value
                 // vectors and is forwarded by writeThrough / set_local_var into the
                 // caller's slot once precost_coin executes inline on this VM.
+                //
+                // TODO(possible over-fix - needs the ORIGINAL server to settle):
+                //   commit 847c20a introduced this (and the matching case 7/8 handling)
+                //   to fix "Mall precost returned result=0 (元宝不足) although the
+                //   balance check passed" and verified "precost reply now result=1".
+                //   Side effect reported by the operator: right after a fresh server
+                //   start a normal player used to need the item package card
+                //   (道具套餐卡, which grants 位列仙班) to enter the game for the first
+                //   ~1-3 minutes, and after this change they enter immediately - i.e.
+                //   the precost result now comes back successful where the original
+                //   might still answer 0 (payment/qualification required).
+                //   DO NOT revert this block wholesale to get that back: the same
+                //   ref-preserving logic is what makes NPC menus work
+                //   (gs/feature/npc/dynamic_menu.c create_menu_content ->
+                //   init_myself_menu_content writing `string &menu_content`, fixed in
+                //   a3f7f89) - reverting would break every NPC menu again.  Decide it
+                //   against the original driver (or IDA on vm_callFunPtr /
+                //   vm_callOtherFun) and then narrow the condition, not the feature.
                 bool refArgCoClosure = false;
                 if (funItem.value.index() == 8) {
                     auto cl0 = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
