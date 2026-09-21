@@ -1859,9 +1859,19 @@ public:
             tidPoolInit_ = true;
         }
         if (freeTids_.empty()) {
-            // pool exhausted: hand out the next counter value (wrapped); the
-            // caller's read_etc will contend but this is the degenerate case.
-            return nextTid_.fetch_add(1) % 128;
+            // Pool exhausted: hand out a STRICTLY UNIQUE id instead of wrapping.
+            // Wrapping (% 128) re-issued an id that a still-live parked process owned,
+            // and filed.c::do_operate pairs its wait/raise purely through that id:
+            //     wait_event("ev_filed" + tid/32, 1 << (tid % 32), 0, -1)
+            // Two live processes with ids 128 apart therefore shared one wait bit - the
+            // reply for request A woke B, A never woke and do_operate returned its
+            // initial -2, which login.c::check_valid_name turns into
+            //   9112 "数据库目前正在维护中，无法确认角色名字是否存在"
+            // (seen only when the player submits character creation twice in quick
+            // succession - a 1s pause let the first request finish, so the pool never
+            // filled up).  Ids >= 128 get their own event name ("ev_filed" + tid/32), so
+            // they distinguish waiters exactly like 0..127 do.
+            return 128 + nextTid_.fetch_add(1);
         }
         auto it = freeTids_.begin();
         int64_t t = *it;

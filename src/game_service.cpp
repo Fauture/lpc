@@ -13408,7 +13408,15 @@ int startGameService(int port) {
                     // connection takes ~3.6s" the client reported.
                     auto root = lpc::masterSearchRoot();
                     uint64_t waitStart = GetTickCount64();
-                    for (int tries = 0; tries < 200; ++tries) {
+                    // Hard cap: 20 x 5ms = 100ms.  The registry checks below already
+                    // break as soon as the client is known, and the queued
+                    // cmd_new_connection dispatch (which is what a login connection
+                    // actually needs before its first packet) completes in a few ms -
+                    // a 200-iteration cap let the wait run the full 3.2s again whenever
+                    // the pending-service counter was stuck ("[accept] ... wait=3219ms
+                    // user-type=0", i.e. the ~3s login delay coming back). 100ms is
+                    // ample for the dispatch and bounds the worst case.
+                    for (int tries = 0; tries < 20; ++tries) {
                         Value u = callMasterProgramFunction("find_user_by_client",
                                                             {make_int(clientNo)}, root);
                         userType = static_cast<int>(u.index());
