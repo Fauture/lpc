@@ -1646,6 +1646,10 @@ public:
         if (currentProcess_) return currentProcess_->tid;
         return -1;
     }
+    // Saved/restored around every efun call (see schedulerCurrentProcess below):
+    // an efun may wake or park processes, which changes currentProcess_.
+    std::shared_ptr<Process> currentProcessSnapshot() const { return currentProcess_; }
+    void restoreCurrentProcess(const std::shared_ptr<Process>& p) { currentProcess_ = p; }
     // A cross-object runDetached layer just restored ITS OWN VM's detached
     // frames while the (blocking) callee parks on another VM.  That VM must be
     // resumed (resumeCaller) after the callee returns, before the process's
@@ -1859,19 +1863,21 @@ public:
             tidPoolInit_ = true;
         }
         if (freeTids_.empty()) {
-            // Pool exhausted: hand out a STRICTLY UNIQUE id instead of wrapping.
-            // Wrapping (% 128) re-issued an id that a still-live parked process owned,
-            // and filed.c::do_operate pairs its wait/raise purely through that id:
+            // Pool exhausted: more than 128 live LPC processes.  The original
+            // driver caps itself at 128 (--max-process 128); our scheduler keeps
+            // every parked daemon as its own Process, so boot exceeds it.
+            // The tid is a WIRE VALUE, not just an internal id: filed.c derives
+            // its wait/raise event name from it -
             //     wait_event("ev_filed" + tid/32, 1 << (tid % 32), 0, -1)
-            // Two live processes with ids 128 apart therefore shared one wait bit - the
-            // reply for request A woke B, A never woke and do_operate returned its
-            // initial -2, which login.c::check_valid_name turns into
-            //   9112 "数据库目前正在维护中，无法确认角色名字是否存在"
-            // (seen only when the player submits character creation twice in quick
-            // succession - a 1s pause let the first request finish, so the pool never
-            // filled up).  Ids >= 128 get their own event name ("ev_filed" + tid/32), so
-            // they distinguish waiters exactly like 0..127 do.
-            return 128 + nextTid_.fetch_add(1);
+            // and the LPC only creates ev_filed0..ev_filed3 (max_threads=128).
+            // A tid >= 128 therefore parks on an event that was NEVER created
+            // (wait_event -> -101, and every vendued/map_decorated request fails
+            // with -2).  Wrap inside 0..127 instead: two live processes can now
+            // share a bit, and parkOnEvent's resume hook re-parks whichever one
+            // did not have ITS bits raised, so a reply can no longer wake the
+            // wrong waiter into a forged wait_event()==0.
+            int64_t wrap = nextTid_.fetch_add(1);
+            return wrap % 128;
         }
         auto it = freeTids_.begin();
         int64_t t = *it;
@@ -4136,6 +4142,18 @@ private:
     // Call an efun by index with already-collected arguments.
     Value callEfunWithArgs(int efunIndex, const std::vector<Value>& args) {
         stackDbgCheck("efun");
+        // Keep get_thread_id() stable for the caller's step: an efun may wake or park
+        // processes, which changes the scheduler's current process.  filed.c::do_operate
+        // builds its reply closure with one get_thread_id() and waits with another;
+        // without this guard a wake inside send_to_queue made the second call return the
+        // woken daemon's tid, the reply raised the wrong wait bit and the request ended
+        // as -2, which login.c::check_valid_name turns into
+        //   9112 "数据库目前正在维护中，无法确认角色名字是否存在".
+        struct CurProcGuard {
+            decltype(scheduler().currentProcessSnapshot()) saved;
+            CurProcGuard() : saved(scheduler().currentProcessSnapshot()) {}
+            ~CurProcGuard() { scheduler().restoreCurrentProcess(saved); }
+        } curProcGuard;
         static const bool menuDecide = (std::getenv("LPCVM_MENUDECIDE") != nullptr);
         const auto& names = efunNameTable();
         // LPCVM_NEWBIE: dump every element post_enter_world tests with
@@ -7760,6 +7778,31 @@ private:
         // THIS VM's frame chain, so the continuation already happened inside
         // the parked VM's resume) - skip.
         if (frames_.empty()) return;
+        // A VM parked on a condition that has its OWN wake source (event /
+        // queue / socket / mutex / timer - parkCurrent registers those) may ONLY
+        // be resumed through that source: those paths run the park's resume hook
+        // and push the efun's REAL result.  Resuming it from a caller-chain
+        // drain pushes an unrelated value straight into the parked efun's result
+        // slot - filed.c::do_operate then saw wait_event()==0 although its reply
+        // had not arrived and returned its default ({-2,cookie})[0] (9112
+        // 「数据库目前正在维护中」).
+        // kind 0/4 is the OPPOSITE case: the VM did NOT park itself - it is a
+        // caller whose frames were detached by runDetached for a cross-VM
+        // blocking call (executeFunctionFromOutsideLocked marks such a VM parked
+        // when the callee's SuspendSignal propagates through it) and this drain
+        // IS its wake mechanism ("park forever, external explicit wake via
+        // wake() or process list").  Skipping THAT one aborted filed's startup
+        // ("FILE_D wait for CONFIG_D" never finished -> filed never created its
+        // events/service queue -> every later get_gid failed with -101).
+        if (parked_ && cond_.kind != 0 && cond_.kind != 4) {
+            if (vmEnvEvDbg())
+                std::cerr << "[ev] resume-caller SKIP parked vm=" << this
+                          << " obj=" << objName_ << " kind=" << cond_.kind
+                          << " key=" << (cond_.qkey.empty() ? cond_.ename : cond_.qkey)
+                          << "\n";
+            std::cerr.flush();
+            return;
+        }
         bool rcLog = std::getenv("LPCVM_TAIL") &&
                      (objName_.find("login.o") != std::string::npos ||
                       objName_.find("logind.o") != std::string::npos ||
@@ -7951,6 +7994,75 @@ private:
     }
     // The value to push when this parked VM resumes.
     Value& parkedResumeValue() { return resumeValue_; }
+
+    // Park the current process on an event until one of `mask`'s bits is raised
+    // (the original vm_f_wait_event).  secs < 0 parks forever, secs > 0 adds the
+    // timeout wake timer, secs == 0 must be handled by the caller (poll).
+    //
+    // The resume hook re-checks the event and only reports success when one of
+    // OUR bits was actually consumed.  A forever wait that gets resumed by
+    // anything else (a caller-chain drain resuming a parked VM with an
+    // unrelated value, a stale watchdog/timer wake, a stray raise) RE-PARKS
+    // instead of forging wait_event()==0: filed.c::do_operate treats 0 as "the
+    // reply arrived" and otherwise returns its default ({-2, cookie})[0], which
+    // is exactly the 9112 「数据库目前正在维护中，无法确认角色名字是否存在」 dialog.
+    void parkOnEvent(const std::string& ename, const Value& eref, uint32_t mask, double secs) {
+        ResumeCond cond;
+        cond.kind = 3;
+        cond.ename = ename;
+        cond.mask = mask;
+        if (secs > 0.0) {
+            using namespace std::chrono;
+            int64_t nowMs = duration_cast<milliseconds>(
+                steady_clock::now().time_since_epoch()).count();
+            // INT32_MAX (and anything above) is the original's "wait forever"
+            // idiom on 32-bit ticks - park on the event only, NO wake timer.
+            if (secs < 2147483647.0) {
+                double wakeMs = static_cast<double>(nowMs) + secs * 1000.0;
+                // Overflow/garbage guard: only a value that would WRAP int64
+                // or land in the past is bad.
+                if (!(wakeMs > static_cast<double>(nowMs)) || wakeMs > 9.2e18) {
+                    std::cerr << "[wait_event] BAD secs=" << secs
+                              << " for " << ename << "; clamping to 100ms\n";
+                    wakeMs = static_cast<double>(nowMs) + 100.0;
+                }
+                cond.wakeAtMs = static_cast<int64_t>(wakeMs);
+            }
+        }
+        const bool forever = (cond.wakeAtMs == 0);
+        auto hook = [this, eref, mask, ename, forever, secs]() {
+            // Who woke us?  wakeEvent marks a waiter it actually matched via
+            // p->eventWoken, and the timeout timer marks its own expiry the same
+            // way (and writes -501).  The raised bits themselves are already
+            // CLEARED at raise time (vm_f_raise_event semantics), so them being
+            // gone here is NOT evidence of a spurious wake - the flag is.
+            auto cur = lpc::scheduler().currentProcessShared();
+            if (!cur || cur->eventWoken) {
+                // Legitimate wake (or no process context to judge by - keep the
+                // old behaviour rather than risk parking forever): resumeValue_
+                // is already correct (0 for a matching raise, -501 for the
+                // timeout timer).
+                return;
+            }
+            // Resumed by something that had nothing to do with this wait (a
+            // caller-chain drain, requeue/slice resume, an unrelated wakeFront).
+            int64_t rc = lpc::eventWait(eref, mask, 0.0);   // consume bits if raised
+            if (rc == 0) {
+                parkedResumeValue() = make_int(0);
+                return;
+            }
+            if (forever) {
+                if (vmEnvEvDbg())
+                    std::cerr << "[ev] spurious resume of forever wait " << ename
+                              << " mask=0x" << std::hex << mask << std::dec
+                              << " rc=" << rc << " -> re-park\n";
+                parkOnEvent(ename, eref, mask, secs);   // still waiting: go back to sleep
+                return;
+            }
+            parkedResumeValue() = make_int(rc == -101 ? -101 : -501);
+        };
+        parkAndSuspend(cond, std::move(hook), make_int(0));
+    }
 
     // The single cooperative instruction loop.  Executes code_/meta_/ip_
     // until finish_action, a top-level return (frame with no caller), or the
@@ -10504,39 +10616,10 @@ private:
                         // vm_f_wait_event (0x80f097c): park the process on the
                         // event.  timeout > 0 parks with a wake timer (arg is in
                         // SECONDS); timeout -1 parks forever (raise_event wakes
-                        // it).  Exact original semantics.
-                        ResumeCond cond;
-                        cond.kind = 3;
-                        cond.ename = ename;
-                        cond.mask = mask;
-                        if (secs > 0.0) {
-                            using namespace std::chrono;
-                            int64_t nowMs = duration_cast<milliseconds>(
-                                steady_clock::now().time_since_epoch()).count();
-                            // INT32_MAX (and anything above) is the original's
-                            // "wait forever" idiom on 32-bit ticks - park on
-                            // the event only, with NO wake timer.
-                            if (secs < 2147483647.0) {
-                                double wakeMs = static_cast<double>(nowMs) + secs * 1000.0;
-                                // Overflow/garbage guard: only a value that
-                                // would WRAP int64 or land in the past is bad.
-                                if (!(wakeMs > static_cast<double>(nowMs)) ||
-                                    wakeMs > 9.2e18) {
-                                    std::cerr << "[wait_event] BAD secs=" << secs
-                                              << " for " << ename << "; clamping to 100ms\n";
-                                    wakeMs = static_cast<double>(nowMs) + 100.0;
-                                }
-                                cond.wakeAtMs = static_cast<int64_t>(wakeMs);
-                            }
-                        }
-                        // The resume hook consumes the raised bits via a
-                        // blocking-free wait on the already-raised event.
-                        auto hook = [this, eref, mask]() {
-                            bool rok = false;
-                            int64_t rc = lpc::eventWait(eref, mask, 0.0);
-                            (void)rc;
-                        };
-                        parkAndSuspend(cond, std::move(hook), make_int(0));
+                        // it).  Exact original semantics.  parkOnEvent's resume
+                        // hook consumes the raised bits and re-parks a forever
+                        // wait that is resumed by anything but its own bits.
+                        parkOnEvent(ename, eref, mask, secs);
                         break;
                     }
                     break;
@@ -15184,6 +15267,24 @@ int64_t Scheduler::nowMs() {
 
 void Scheduler::runProcess(std::shared_ptr<Process> p) {
     Value callResult = make_int(0);
+    // currentProcess_ is the PCB that get_thread_id(), noteParkedCaller and the
+    // process-mutex ownership read.  A process can run NESTED inside another one
+    // (send_to_queue / execOnMain hand control to a service process while the
+    // caller's own C++ frame is still on the stack), so the previous value MUST
+    // be restored on the way out.  Leaving the nested process behind gave two
+    // real bugs:
+    //   * get_thread_id() changed INSIDE a single LPC statement - filed.c's
+    //     do_operate built its reply closure with tid 10 and then computed the
+    //     wait mask from tid 6, so the reply raised bit 0x400 while the process
+    //     waited on 0x40 and the request died with -2 (9112);
+    //   * noteParkedCaller chained THIS VM into the WRONG process's callers_,
+    //     and when that unrelated process finished, the caller-chain drain
+    //     resumed our parked VM with its result - a forged wait_event()==0.
+    struct CurProcRestore {
+        Scheduler* sched;
+        std::shared_ptr<Process> prev;
+        ~CurProcRestore() { sched->currentProcess_ = std::move(prev); }
+    } curProcRestore{this, currentProcess_};
     currentProcess_ = p;   // get_thread_id() returns this process's tid
     // [lp] login-process tracker: any scheduler run whose VM or parked VM is a
     // login clone or logind - shows how the login closure process advances
