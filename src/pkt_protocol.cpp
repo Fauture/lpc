@@ -22,10 +22,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <mutex>
+#include <thread>
 
 #include "builtins.h"
 #include "original_vm.h"
@@ -354,6 +358,30 @@ const PktInterface* pktFindInterface(uint16_t cmdNo) {
     return it == pktState().interfaces.end() ? nullptr : &it->second;
 }
 
+// ---- per-connection serial dispatch ---------------------------------------
+// The original driver applies a client packet's LPC interface INLINE in that
+// connection's own thread (vm_clientSocketCallback -> vm_pktAnalyse ->
+// vm_applyFun), so a second packet of the same client can never start while the
+// first one's LPC call is still running - a blocked DB operation just pends
+// that thread (vm_pendCurrentProcessOnObject) and the connection waits.
+// Our engine invokes the interface from the client's reader thread AND from
+// scheduler continuations, so two commands of one client can overlap and each
+// observes a half-finished state of the other (the LPC's own re-entrancy guard
+// then answers with 9101 「请求处理中」 / 9113 「名字已经存在」 dialogs, which are
+// modal on the client and abort its flow: the just-created character never
+// enters the game, so it is never linked to the account - basic_char_info stays
+// empty).  Serialise on the connection like the original does.
+std::recursive_mutex& clientDispatchMutex(int clientNo) {
+    static std::mutex regMutex;
+    static std::map<int, std::unique_ptr<std::recursive_mutex>> reg;
+    std::lock_guard<std::mutex> lk(regMutex);
+    auto it = reg.find(clientNo);
+    if (it == reg.end())
+        it = reg.emplace(clientNo, std::unique_ptr<std::recursive_mutex>(
+                                      new std::recursive_mutex())).first;
+    return *it->second;
+}
+
 int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
                const uint8_t* body, size_t len) {
     std::unique_lock<std::recursive_mutex> lk(pktMutex());
@@ -454,6 +482,12 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     // non-recursive-owner deadlock results if we hold it across the callback.
     Value func = pi.func;
     lk.unlock();
+    // NOTE: a "wait until the dispatched service queue is idle" guard was tried
+    // here and REMOVED again - it runs on the packet's own reader thread and
+    // starved the player connection for up to 3s per packet (and the DBA/filed
+    // link shares this dispatch path).  The cooperative reply-then-cleanup
+    // ordering is enforced where the packets are read (game_service's per
+    // connection gates), not here.
     if (func.index() == 8) {
         auto cl = std::get<std::shared_ptr<ClosureValue>>(func);
         if (std::getenv("LPCVM_TRACE"))

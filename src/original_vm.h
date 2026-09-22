@@ -90,6 +90,15 @@ bool masterDefineLookup(const std::string& name, std::string& expansion);
 // Used by the packet protocol analyser to invoke registered command handlers.
 Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args);
 
+// Instance-variable access by NAME (the original driver's vm_getObjVar):
+// resolves "varName" (optionally "progName::varName") to the object's variable
+// slot using the PROG_VARS records the loader now keeps.  Returns the value
+// (undefined when unknown) and whether a slot was written.
+Value objVarGet(const Value& obj, const std::string& name);
+bool objVarSet(const Value& obj, const std::string& name, const Value& v);
+// save_object(): the object dbase as "progName::varName=value\n" lines.
+std::string objVarsToString(const Value& obj);
+
 // Spawn threads queued at runtime by create_thread (e.g. the telnet daemon
 // thread created when a client connects).  Startup threads are drained by
 // runOriginalObject itself; this drains the runtime ones.

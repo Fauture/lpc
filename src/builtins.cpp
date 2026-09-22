@@ -502,6 +502,38 @@ bool serviceQueueIdle() {
     return g_pendingServices.load(std::memory_order_acquire) == 0;
 }
 
+// ---- per-connection flow bookkeeping ---------------------------------------
+// The client-packet dispatch gate (pkt_protocol.cpp) keeps a connection busy
+// until the command's CLIENT-VISIBLE result has been delivered and the flow has
+// gone quiet.  In the original the connection thread returns from vm_applyFun
+// while the client - already past the dialog point - keeps going; if we release
+// the gate earlier, the next packet of that client races the tail of the
+// previous flow and the LPC's own re-entrancy guard answers with the modal
+// 9101/9113 dialogs, which abort the client's flow (a filed-create then never
+// reaches enter-game, so the new character is never linked to the account).
+static std::mutex g_clientSendMtx;
+static std::map<int64_t, int64_t> g_clientLastSendMs;
+
+static int64_t steadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void noteClientSend(int64_t cno) {
+    if (cno < 0) return;
+    std::lock_guard<std::mutex> lk(g_clientSendMtx);
+    g_clientLastSendMs[cno] = steadyNowMs();
+}
+
+// ms since the last packet was sent to this client; a large value when we have
+// never sent anything to it.
+int64_t clientSendIdleMs(int64_t cno) {
+    std::lock_guard<std::mutex> lk(g_clientSendMtx);
+    auto it = g_clientLastSendMs.find(cno);
+    if (it == g_clientLastSendMs.end()) return 1 << 30;
+    return steadyNowMs() - it->second;
+}
+
 int64_t queueCreate(int64_t qid, const std::string& name) {
     auto& reg = queueRegistry();
     std::lock_guard<std::mutex> lk(reg.mtx);
@@ -776,6 +808,17 @@ std::unordered_map<const void*, Value>& mysqlRecords() {
 std::mutex& mysqlStateMutex() {
     static std::mutex m;
     return m;
+}
+
+// ---- driver daemon-data table (register/get/unregister_daemon_data) -----------
+// path -> key -> value; in-memory and per boot, like the original driver's table.
+std::mutex& daemonDataMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<std::string, std::map<std::string, Value>>& daemonDataTable() {
+    static std::unordered_map<std::string, std::map<std::string, Value>> t;
+    return t;
 }
 
 // Real MySQL connections, keyed by the small integer handle (cno) that
@@ -3261,7 +3304,61 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
         return make_int(ov->programName.find('#') != std::string::npos ? 1 : 0);
     }
-    if (name == "register_daemon_data" || name == "dispatch_service" || name == "send_to_cta") return make_int(1);
+    if (name == "register_daemon_data" || name == "unregister_daemon_data") {
+        // The driver keeps a per-daemon data table (path -> key -> value) that
+        // survives object reloads; the LPC uses it as the canonical place to stash
+        // daemon state and read it back:
+        //   configd.c:298        register_daemon_data("/daemons/configd.c","config",config)
+        //   configd.c:792        m = get_daemon_data("/daemons/configd.c")   (restore)
+        //   scheduled.c:379      register_daemon_data("/daemons/scheduled.c",event,event)
+        //   douchong_dahui.c:918 register_daemon_data(".../douchong_dahui.c",
+        //                                              "all_challenge_npc", all_challenge_npc)
+        //   douchong_dahui.c:1125 m["all_challenge_npc"] -> restore, then unregister
+        // This used to be a no-op stub, so every restore read back NOTHING: the
+        // challenge table (and the event scheduler's own state) was lost, which is
+        // why douchong_dahui's 1000 "challenge" rows were written on some boots and
+        // never written on others.  Implemented faithfully as an in-memory,
+        // per-boot registry keyed by (daemon path, key).
+        if (args.size() < 2) return make_int(0);
+        std::string dpath = as_string(args[0]);
+        std::string dkey = as_string(args[1]);
+        std::lock_guard<std::mutex> lk(daemonDataMutex());
+        auto& tbl = daemonDataTable();
+        if (name == "unregister_daemon_data") {
+            auto it = tbl.find(dpath);
+            if (it != tbl.end()) {
+                it->second.erase(dkey);
+                if (it->second.empty()) tbl.erase(it);
+            }
+            return make_int(1);
+        }
+        if (args.size() < 3) return make_int(0);
+        tbl[dpath][dkey] = args[2];
+        return make_int(1);
+    }
+    if (name == "get_daemon_data") {
+        // get_daemon_data(path) -> mapping of every key registered for that daemon;
+        // get_daemon_data(path, key) -> that single value.  Callers test the result
+        // with is_mapping(), so an unknown path must yield something that is not a
+        // mapping (undefined), not an empty one - configd/ctacommandd rely on that
+        // to decide whether a stored config exists.
+        if (args.empty()) return Value{};
+        std::string dpath = as_string(args[0]);
+        std::lock_guard<std::mutex> lk(daemonDataMutex());
+        auto& tbl = daemonDataTable();
+        auto it = tbl.find(dpath);
+        if (args.size() >= 2) {
+            if (it == tbl.end()) return Value{};
+            auto kit = it->second.find(as_string(args[1]));
+            return kit == it->second.end() ? Value{} : kit->second;
+        }
+        if (it == tbl.end() || it->second.empty()) return Value{};
+        Value m = make_mapping();
+        auto mp = std::get<std::shared_ptr<MappingValue>>(m);
+        for (const auto& kv : it->second) mp->insert(make_string(kv.first), kv.second);
+        return m;
+    }
+    if (name == "dispatch_service" || name == "send_to_cta") return make_int(1);
     if (name == "find_function") {
         // Return a function value for a builtin efun (the game uses this to
         // build the mysql_connect closure in find_mysql_func).
@@ -4704,6 +4801,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // reads bodyLen = msgLen - 2.
         if (args.size() >= 2 && args[0].index() == 2) {
             int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            noteClientSend(cno);   // per-connection flow gate (see its comment)
             std::string data;
             int64_t msgNo = 0;
             if (args.size() >= 3) {
@@ -6499,6 +6597,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // (0x2337) instead of entering the game.  Report idle_ticks on the
         // same wall-clock millisecond base as tick(): when the server is
         // idle the ratio is ~1 and cpu_possess ~0.
+        //
+        // TODO(over-fix, operator says DO NOT FIX for now - decide later):
+        //   Reporting idle_ticks on the wall-clock base makes the ratio ~1, i.e.
+        //   cpu_possess is ALWAYS ~0.  In the original it is real CPU usage, and
+        //   logind.c:2400 gates ordinary logins on it:
+        //       if (!sysinfod->check_server_load(30)) return 0;        // not busy -> allow
+        //       busy_flag = (cpu_possess * 100) >= gs_cpu_full(80);     // busy -> 0x2337
+        //   so right after a restart (boot keeps the CPU busy for ~1-3 minutes) a normal
+        //   player was asked to buy the item package card (道具套餐卡, service_malld.c)
+        //   instead of entering; once the server settled they entered freely.  With
+        //   cpu_possess pinned to 0 that startup window is gone and players enter
+        //   immediately.
+        //   A faithful fix is to report real process CPU time here (idle grows only while
+        //   the process is not burning CPU, e.g. from GetProcessTimes) - this file once
+        //   had that implementation and it was reverted unanswered.  It was left as a
+        //   TODO because the same value feeds sysinfod's status reports to ccs/aaa, so
+        //   changing it may have knock-on effects elsewhere; the operator wants to
+        //   decide that separately.
         auto now = std::chrono::system_clock::now().time_since_epoch();
         int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
         auto cpu = std::make_shared<MappingValue>();
@@ -6842,8 +6958,117 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "get_obj_var") {
         // vm_f_get_obj_var: get_obj_var(obj, name) -> instance variable value.
-        // Requires VM object introspection; fall back to 0.
-        return make_int(0);
+        // Now backed by the loader's PROG_VARS records (name -> slot).
+        if (args.size() >= 2) return lpc::objVarGet(args[0], as_string(args[1]));
+        return Value{};
+    }
+    if (name == "set_obj_var") {
+        // vm_f_set_obj_var: set_obj_var(obj, name, value[, progName]) -> value.
+        // Used by the object-dbase restore path; returning without writing used
+        // to lose every restored field (e.g. login's "chars" list).
+        if (args.size() >= 3) {
+            std::string vn = as_string(args[1]);
+            if (args.size() >= 4 && args[2].index() == 4) {
+                // (obj, progName, varName, value) form
+                vn = as_string(args[2]);
+                if (lpc::objVarSet(args[0], vn, args[3])) return args[3];
+                return Value{};
+            }
+            if (lpc::objVarSet(args[0], vn, args[2])) return args[2];
+        }
+        return Value{};
+    }
+    if (name == "save_object") {
+        // vm_f_save_object: save_object(obj) -> "prog::var=value\n" text.
+        if (!args.empty()) return make_string(lpc::objVarsToString(args[0]));
+        return make_string(std::string());
+    }
+    if (name == "restore_object") {
+        // vm_f_restore_object: restore_object(obj, text[, clearUndefined]).
+        // The text is the "progName::varName=value\n" form produced by
+        // save_object - the login/user dbase is stored in the DB that way, so a
+        // no-op here lost every restored field (login's "chars" stayed
+        // undefined, the character list after a create came back empty and the
+        // client never reached the character-selection screen).
+        if (args.size() < 2 || args[0].index() != 7 || args[1].index() != 4)
+            return make_int(0);
+        const std::string text = std::get<SharedString>(args[1]).str();
+        std::function<Value(const std::string&, size_t&)> pv =
+            [&](const std::string& s, size_t& i) -> Value {
+            while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+            if (i >= s.size()) return Value{};
+            char c = s[i];
+            if (c == '"') {                                  // string
+                ++i;
+                std::string out;
+                while (i < s.size() && s[i] != '"') {
+                    if (s[i] == '\\' && i + 1 < s.size()) ++i;
+                    out += s[i++];
+                }
+                if (i < s.size()) ++i;
+                return make_string(out);
+            }
+            if (c == '(' && i + 1 < s.size() && (s[i + 1] == '{' || s[i + 1] == '[')) {
+                const bool isMap = (s[i + 1] == '[');
+                i += 2;
+                if (isMap) {
+                    auto mp = std::make_shared<MappingValue>();
+                    while (i < s.size() && !(s[i] == ']' && i + 1 < s.size() && s[i + 1] == ')')) {
+                        Value k = pv(s, i);
+                        while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+                        if (i < s.size() && s[i] == ':') ++i;
+                        Value v = pv(s, i);
+                        mp->insert(k, v);
+                        while (i < s.size() && (s[i] == ',' || s[i] == ' ')) ++i;
+                    }
+                    i += 2;
+                    return mp;
+                }
+                auto arr = std::make_shared<ArrayValue>();
+                while (i < s.size() && !(s[i] == '}' && i + 1 < s.size() && s[i + 1] == ')')) {
+                    arr->items.push_back(pv(s, i));
+                    while (i < s.size() && (s[i] == ',' || s[i] == ' ')) ++i;
+                }
+                i += 2;
+                return arr;
+            }
+            if (c == ':') {                                  // buffer :HEX:
+                ++i;
+                std::string hex;
+                while (i < s.size() && s[i] != ':') hex += s[i++];
+                if (i < s.size()) ++i;
+                return make_string(hex);
+            }
+            if (c == 'U') { ++i; return Value{}; }
+            {                                                // int / float
+                size_t st = i;
+                while (i < s.size() && (isdigit((unsigned char)s[i]) || s[i] == '-' ||
+                                        s[i] == '+' || s[i] == '.' || s[i] == 'e' || s[i] == 'E'))
+                    ++i;
+                const std::string t = s.substr(st, i - st);
+                if (t.find('.') != std::string::npos || t.find('e') != std::string::npos ||
+                    t.find('E') != std::string::npos)
+                    return make_float(std::strtod(t.c_str(), nullptr));
+                return make_int(static_cast<int64_t>(std::strtoll(t.c_str(), nullptr, 10)));
+            }
+        };
+        int restored = 0;
+        size_t pos = 0;
+        while (pos < text.size()) {
+            size_t eol = text.find('\n', pos);
+            std::string line = text.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+            pos = (eol == std::string::npos) ? text.size() : eol + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            size_t vi = 0;
+            const std::string vtext = line.substr(eq + 1);
+            Value v = pv(vtext, vi);
+            if (v.index() == 0) continue;
+            if (lpc::objVarSet(args[0], line.substr(0, eq), v)) ++restored;
+        }
+        return make_int(restored > 0 ? 1 : 0);
     }
     if (name == "get_function_owner") return make_int(0);
     if (name == "move_object") {

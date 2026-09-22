@@ -1585,7 +1585,7 @@ public:
 
     // Park the CURRENTLY RUNNING process (called from run() while executing a
     // process whose VM threw SuspendSignal).  Registers the wake condition.
-    void parkCurrent(std::shared_ptr<Process> p);
+    void parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond);
 
     // Wake every process waiting on queue `qkey` (send_to_queue side).
     void wakeQueue(const std::string& qkey);
@@ -1835,6 +1835,13 @@ public:
     // The process currently executing (set by runProcess / execOnMain).  Used
     // by get_thread_id() to return a per-PROCESS id on the single scheduler
     // thread (a thread_local would be identical for every process).
+    // The LPC process (PCB) whose code is currently executing.  NOTE: kept as a
+    // single shared slot on purpose - parkCurrent()/resumeProcess() are entered
+    // from the SuspendSignal handler after the signal has propagated out of the
+    // parking VM, so they must see the SAME process that runProcess() set, even
+    // when the unwind crosses threads.  A thread_local copy was tried and made
+    // the waiter register under a different process (a 20x-ENTER burst then
+    // produced a 9112 with the waiter missing from the event's waiter list).
     std::shared_ptr<Process> currentProcess_;
     static std::atomic<int64_t> nextTid_;
     bool shutdown_ = false;
@@ -7778,31 +7785,13 @@ private:
         // THIS VM's frame chain, so the continuation already happened inside
         // the parked VM's resume) - skip.
         if (frames_.empty()) return;
-        // A VM parked on a condition that has its OWN wake source (event /
-        // queue / socket / mutex / timer - parkCurrent registers those) may ONLY
-        // be resumed through that source: those paths run the park's resume hook
-        // and push the efun's REAL result.  Resuming it from a caller-chain
-        // drain pushes an unrelated value straight into the parked efun's result
-        // slot - filed.c::do_operate then saw wait_event()==0 although its reply
-        // had not arrived and returned its default ({-2,cookie})[0] (9112
-        // 「数据库目前正在维护中」).
-        // kind 0/4 is the OPPOSITE case: the VM did NOT park itself - it is a
-        // caller whose frames were detached by runDetached for a cross-VM
-        // blocking call (executeFunctionFromOutsideLocked marks such a VM parked
-        // when the callee's SuspendSignal propagates through it) and this drain
-        // IS its wake mechanism ("park forever, external explicit wake via
-        // wake() or process list").  Skipping THAT one aborted filed's startup
-        // ("FILE_D wait for CONFIG_D" never finished -> filed never created its
-        // events/service queue -> every later get_gid failed with -101).
-        if (parked_ && cond_.kind != 0 && cond_.kind != 4) {
-            if (vmEnvEvDbg())
-                std::cerr << "[ev] resume-caller SKIP parked vm=" << this
-                          << " obj=" << objName_ << " kind=" << cond_.kind
-                          << " key=" << (cond_.qkey.empty() ? cond_.ename : cond_.qkey)
-                          << "\n";
-            std::cerr.flush();
-            return;
-        }
+        // NOTE: a guard that skipped resumeCaller() for a parked VM was tried
+        // here and REMOVED again: the missing continuation it caused was the
+        // tail of login.c::check_name_used (lite_set("chars") / save() /
+        // logind->show_char_list()) - the cross-object call into logind IS the
+        // resume of a VM that is parked (kind 0/4 caller layer), so skipping it
+        // left the created character unregistered and the client without its
+        // char list (0xF061) / enter packet (0x211B).
         bool rcLog = std::getenv("LPCVM_TAIL") &&
                      (objName_.find("login.o") != std::string::npos ||
                       objName_.find("logind.o") != std::string::npos ||
@@ -7995,6 +7984,59 @@ private:
     // The value to push when this parked VM resumes.
     Value& parkedResumeValue() { return resumeValue_; }
 
+    // ---- instance variables by NAME (the original's vm_getObjVar) -----------
+    // (public: the free helpers objVarGet/objVarSet/objVarsToString and the
+    // get_obj_var/set_obj_var/save_object/restore_object efuns use these.)
+public:
+    static void splitObjVarName(const std::string& q, std::string& prog, std::string& name) {
+        size_t sep = q.find("::");
+        if (sep == std::string::npos) { prog.clear(); name = q; }
+        else { prog = q.substr(0, sep); name = q.substr(sep + 2); }
+    }
+    int objVarSlotByName(const std::string& q) {
+        std::string wprog, wname;
+        splitObjVarName(q, wprog, wname);
+        const auto& pv = object().progVars;
+        for (size_t i = 0; i < pv.size(); ++i) {
+            std::string pprog, pname;
+            splitObjVarName(pv[i].name, pprog, pname);
+            if (pname != wname) continue;
+            if (!wprog.empty() && pprog != wprog) continue;
+            return static_cast<int>(i);
+        }
+        return -1;
+    }
+    Value objVarByName(const std::string& q) {
+        int slot = objVarSlotByName(q);
+        if (slot < 0 || !objVars_) return Value{};
+        if (static_cast<size_t>(slot) >= objVars_->size()) return Value{};
+        return (*objVars_)[static_cast<size_t>(slot)];
+    }
+    bool setObjVarByName(const std::string& q, const Value& v) {
+        int slot = objVarSlotByName(q);
+        if (slot < 0 || !objVars_) return false;
+        if (static_cast<size_t>(slot) >= objVars_->size()) return false;
+        (*objVars_)[static_cast<size_t>(slot)] = v;
+        return true;
+    }
+    // save_object(): "prog::var=value\n" for every non-hidden variable slot that
+    // has a PROG_VARS record (the original emits only attrib & 1 == 0 entries).
+    std::string objVarsToSaveText() {
+        std::string out;
+        const auto& pv = object().progVars;
+        for (size_t i = 0; i < pv.size(); ++i) {
+            if (!objVars_ || i >= objVars_->size()) break;
+            const Value& v = (*objVars_)[i];
+            if (v.index() == 0) continue;      // undefined -> not saved
+            out += pv[i].name.empty() ? ("::" + std::to_string(i)) : pv[i].name;
+            out += "=";
+            out += to_string(v, true);
+            out += "\n";
+        }
+        return out;
+    }
+private:
+
     // Park the current process on an event until one of `mask`'s bits is raised
     // (the original vm_f_wait_event).  secs < 0 parks forever, secs > 0 adds the
     // timeout wake timer, secs == 0 must be handled by the caller (poll).
@@ -8052,11 +8094,26 @@ private:
                 return;
             }
             if (forever) {
-                if (vmEnvEvDbg())
-                    std::cerr << "[ev] spurious resume of forever wait " << ename
-                              << " mask=0x" << std::hex << mask << std::dec
-                              << " rc=" << rc << " -> re-park\n";
-                parkOnEvent(ename, eref, mask, secs);   // still waiting: go back to sleep
+                // Re-park ONLY when this resume really belongs to our park: one
+                // VM can host several processes and its park slots (cond_/
+                // onResume_) are a single set, so re-parking blindly would
+                // clobber a park that another process installed on this VM and
+                // its waiter registration would be lost (a 20x-ENTER burst then
+                // had the name-check waiter missing from ev_filed0's list and it
+                // returned -2 -> 9112).  If the state no longer matches ours,
+                // report the honest "no bits for me" result instead.
+                auto cur2 = lpc::scheduler().currentProcessShared();
+                const bool ours = cur2 && !cur2->eventWoken && cur2->cond.kind == 3 &&
+                                  cur2->cond.ename == ename && cur2->cond.mask == mask;
+                if (ours) {
+                    if (vmEnvEvDbg())
+                        std::cerr << "[ev] spurious resume of forever wait " << ename
+                                  << " mask=0x" << std::hex << mask << std::dec
+                                  << " rc=" << rc << " -> re-park\n";
+                    parkOnEvent(ename, eref, mask, secs);   // still waiting
+                    return;
+                }
+                parkedResumeValue() = make_int(rc == -101 ? -101 : -501);
                 return;
             }
             parkedResumeValue() = make_int(rc == -101 ? -101 : -501);
@@ -14243,13 +14300,19 @@ void Scheduler::requeue(std::shared_ptr<Process> p) {
     cv_.notify_one();
 }
 
-void Scheduler::parkCurrent(std::shared_ptr<Process> p) {
+void Scheduler::parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond) {
     std::lock_guard<std::mutex> lk(mtx_);
-    // The parked VM owns the ResumeCond (the VM that threw SuspendSignal).
-    const ResumeCond& c = p->parkedVm->resumeCond();
-    // Snapshot the park condition onto the PROCESS (see Process::cond): the
-    // VM's cond_ is a single slot and can be overwritten by a later park on
-    // the same VM, which used to strand this waiter on mask mismatch.
+    // Take the park condition from the SuspendSignal that was just caught, NOT
+    // from the VM's cond_ slot: one VM hosts several processes and that slot is
+    // a SINGLE value, so a second process parking on the same VM overwrote the
+    // first one's condition.  The first process was then registered under the
+    // other's event/mask (or woken by an unrelated raise) and returned from its
+    // wait_event early - filed.c::do_operate answered its default -2 and
+    // login.c::check_valid_name turned that into the 9112 「数据库目前正在维护
+    // 中」 dialog (real client, hammering ENTER: two name-check waits with mask
+    // 0x400 and 0x20, one reply each, and the 0x20 waiter returned -2 before its
+    // own reply arrived).
+    const ResumeCond& c = cond;
     p->cond = c;
     if (std::getenv("LPCVM_TAIL")) {
         auto relO = [](const std::string& o) {
@@ -14536,6 +14599,7 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
         if (vmEnvEvDbg() && evDbgName(ename)) {
             std::cerr << "[ev] wake " << ename << " raised=0x" << std::hex << raisedMask
                       << std::dec << " hits=" << hits.size() << " keep=" << keep.size()
+                      << " t=" << lpc::msSinceStart() << "ms"
                       << " hitTids=[";
             for (size_t hi = 0; hi < hits.size(); ++hi)
                 std::cerr << (hi ? "," : "") << hits[hi]->tid << ":0x" << std::hex
@@ -15769,7 +15833,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 std::cerr.flush();
             }
         }
-        parkCurrent(p);
+        parkCurrent(p, sig.cond);
     } catch (const std::exception& e) {
         if (std::getenv("LPCVM_TAIL")) {
             auto relO = [](const std::string& o) {
@@ -17065,8 +17129,36 @@ bool masterDefineLookup(const std::string& name, std::string& expansion) {
     return false;
 }
 
-Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) {
-    if (closure.index() != 8) return make_int(0);
+// ---- instance variables by NAME, on top of the loader's PROG_VARS ----------
+namespace {
+std::shared_ptr<OriginalVm> vmOfObjValue(const Value& obj) {
+    if (obj.index() != 7) return nullptr;
+    auto ov = std::get<std::shared_ptr<ObjectValue>>(obj);
+    if (!ov) return nullptr;
+    if (!ov->programName.empty()) {
+        auto vm = envVmForKey(ov->programName);
+        if (vm) return vm;
+    }
+    return nullptr;
+}
+} // namespace
+
+Value objVarGet(const Value& obj, const std::string& name) {
+    auto vm = vmOfObjValue(obj);
+    return vm ? vm->objVarByName(name) : Value{};
+}
+
+bool objVarSet(const Value& obj, const std::string& name, const Value& v) {
+    auto vm = vmOfObjValue(obj);
+    return vm ? vm->setObjVarByName(name, v) : false;
+}
+
+std::string objVarsToString(const Value& obj) {
+    auto vm = vmOfObjValue(obj);
+    return vm ? vm->objVarsToSaveText() : std::string();
+}
+
+Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) {    if (closure.index() != 8) return make_int(0);
     auto cl = std::get<std::shared_ptr<ClosureValue>>(closure);
     std::vector<Value> all = cl->boundArgs;
     all.insert(all.end(), args.begin(), args.end());

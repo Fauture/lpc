@@ -190,8 +190,19 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
     // Global programs (functionBC != 0) store only the global variable count.
     if (obj.functionBC == 0) {
         for (uint16_t i = 0; i < progVarCount; ++i) {
-            r.bytes(16);
-            r.tempString();
+            // Keep the records: they carry the variable NAME (pVarName) plus the
+            // attrib/valueNo fields, i.e. the name -> instance-variable-slot map
+            // that get_obj_var / set_obj_var / save_object / restore_object
+            // need.  Discarding them made every name-based variable access a
+            // silent no-op, so an object's saved dbase could never be restored
+            // (login's "chars" stayed undefined -> empty character list after a
+            // create -> client stuck on the create page).
+            OriginalObject::ProgVarRec rec;
+            std::vector<uint8_t> raw = r.bytes(16);
+            for (size_t b = 0; b < sizeof(rec.raw) && b < raw.size(); ++b)
+                rec.raw[b] = raw[b];
+            rec.name = r.tempString();
+            obj.progVars.push_back(std::move(rec));
         }
     }
 

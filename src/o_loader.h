@@ -63,6 +63,19 @@ struct OriginalObject {
     std::vector<OriginalInsn> globalCode;
     std::vector<uint8_t> globalMeta;
     std::vector<OriginalInherit> inherits;
+    // Per-constitution PROG_VARS records (the original driver's pProgVars): they
+    // map a variable NAME to its slot index (valueNo + baseVarOffset), which is
+    // exactly what get_obj_var / set_obj_var / save_object / restore_object need.
+    // These records used to be parsed and thrown away, so every name-based
+    // instance-variable access was a no-op and an object's dbase could never be
+    // restored: login's "chars" stayed undefined, the character list sent after
+    // a create came back empty (0xF061 count=0) and the account link
+    // (basic_char_info) was never written.
+    struct ProgVarRec {
+        uint8_t raw[16] = {0};
+        std::string name;      // pVarName
+    };
+    std::vector<ProgVarRec> progVars;
 };
 
 OriginalObject loadOriginalObject(const std::string& path);

@@ -56,6 +56,55 @@ void ensureWsaGame() {
 
 // attrib bits (vm_magicInit predefines)
 constexpr uint32_t ATTRIB_CLIENT_USER = 1;     // CLIENT_USER
+
+// Per-connection in-flight command tracking: absorbs re-presses of a command
+// that is still running on the same player connection (see the definition
+// comment further down for why).
+static std::mutex g_inflightMtx;
+static std::map<int, std::string> g_inflightCmd;
+static std::map<int, int64_t> g_inflightAt;   // when that command was first dispatched
+
+static std::string packetCmdKey(const char* buf, size_t n) {
+    // wire: 'M','Z', checksum(2), tick(4), msgLen(2), cmdNo(2), body...
+    if (!buf || n < 12 || buf[0] != 'M' || buf[1] != 'Z') return std::string();
+    return std::string(buf + 10, n - 10);
+}
+
+static bool connectionBusy(int cno) {
+    if (!lpc::serviceQueueIdle()) return true;
+    return lpc::clientSendIdleMs(cno) < 150;
+}
+
+static bool absorbDuplicate(int cno, const std::string& key) {
+    if (key.empty()) return false;
+    std::lock_guard<std::mutex> lk(g_inflightMtx);
+    auto it = g_inflightCmd.find(cno);
+    if (it == g_inflightCmd.end() || it->second != key) return false;
+    // Same command as the one this connection is running: a re-press while the
+    // action is still in flight.  The window must cover the whole key-hammering
+    // burst (the client keeps sending for ~1.5s), otherwise the copies that
+    // arrive after the flow falls quiet start a SECOND concurrent action on the
+    // same object - two check_name_used on one login clone clobbered each other,
+    // the char list came back empty (0xF061 count=0) and the account link
+    // (basic_char_info) was never written.
+    auto at = g_inflightAt.find(cno);
+    if (at == g_inflightAt.end()) return false;
+    return (lpc::msSinceStart() - at->second) < 3000;
+}
+
+static void noteInflightCmd(int cno, const std::string& key) {
+    if (key.empty()) return;
+    std::lock_guard<std::mutex> lk(g_inflightMtx);
+    auto it = g_inflightCmd.find(cno);
+    if (it == g_inflightCmd.end() || it->second != key) g_inflightAt[cno] = lpc::msSinceStart();
+    g_inflightCmd[cno] = key;
+}
+
+static void clearInflightCmd(int cno) {
+    std::lock_guard<std::mutex> lk(g_inflightMtx);
+    g_inflightCmd.erase(cno);
+    g_inflightAt.erase(cno);
+}
 constexpr uint32_t ATTRIB_INTERNAL_COMM = 2;   // INTERNAL_COMM
 constexpr uint32_t ATTRIB_FROM_SERVER = 4;     // FROM_SERVER
 
@@ -12165,7 +12214,11 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
                   << " len=" << len << " body=" << hex << "\n";
     }
     if (std::getenv("LPCVM_TAIL")) {
-        uint64_t n = GetTickCount64();
+        // Same clock as [send]/[recv-accept] (lpc::msSinceStart) so the
+        // request->reply round trip of a filed operation can be computed by
+        // subtracting the [send] timestamp; GetTickCount64 has a different base
+        // and made the two lines incomparable.
+        uint64_t n = static_cast<uint64_t>(lpc::msSinceStart());
         if (cmdNo == 0x3400 || cmdNo == 0x3411 || cmdNo == 0x4401 ||
             cmdNo == 0x2405 || cmdNo == 0x2407) {
             std::string hex;
@@ -13358,6 +13411,11 @@ int startGameService(int port) {
                 GameClient cl;
                 cl.fd = static_cast<int>(c);
                 cl.clientNo = clientNo;
+                // A fresh connection must not inherit the previous one's
+                // in-flight command: client numbers are recycled, and a stale
+                // entry would absorb this connection's FIRST command (the create
+                // silently never ran: gid_info stayed empty).
+                clearInflightCmd(clientNo);
                 cl.attrib = ATTRIB_CLIENT_USER;  // CLIENT_USER initially
                 cl.status = 1;
                 cl.timeStamp = time(nullptr);
@@ -13503,16 +13561,26 @@ int startGameService(int port) {
                     // threadd service queue drains so the account packet doesn't
                     // race that tail and see antibot_answer still unset.
                     if (cur->attrib & ATTRIB_CLIENT_USER) {
-                        // The counter behind serviceQueueIdle() is released when a daemon
-                        // comes back for its NEXT receive; if one stops receiving (or its
-                        // queue is destroyed) the count stays stuck and this gate burnt
-                        // the full 200 x 5ms = 1s on EVERY packet - several packets per
-                        // action, which is the "~3s delay even in game" that was reported
-                        // with the CPU under 5%.  The cleanup tail this gate protects runs
-                        // on the scheduler thread within milliseconds, so a short bound is
-                        // enough; a stuck counter means waiting longer is pointless.
-                        for (int tries = 0; tries < 10 && !lpc::serviceQueueIdle(); ++tries)
-                            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        // (1) absorb a RETRY of the command this connection is
+                        //     still running (see absorbDuplicate): the duplicate
+                        //     would otherwise start a second concurrent action
+                        //     and wreck both.
+                        std::string key = packetCmdKey(buf, static_cast<size_t>(n));
+                        // A same-key repeat is a re-press of the action this
+                        // connection is still running and is absorbed; only
+                        // after the flow has gone quiet (no packet sent to this
+                        // client for a while) may the same command start again.
+                        const bool flowOpen = (lpc::clientSendIdleMs(clientNo) < 800) ||
+                                              !lpc::serviceQueueIdle();
+                        if (flowOpen && absorbDuplicate(clientNo, key)) {
+                            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_TAIL"))
+                                std::cerr << "[absorb] cno=" << clientNo
+                                          << " retry of in-flight cmd t="
+                                          << lpc::msSinceStart() << "ms\n";
+                            continue;
+                        }
+                        if (!flowOpen) clearInflightCmd(clientNo);
+                        noteInflightCmd(clientNo, key);
                     }
                     feedClient(*cur, buf, static_cast<size_t>(n));
                 }
@@ -13634,6 +13702,8 @@ bool gameServiceSend(int clientNo, const std::string& data) {
     return true;
 }
 
+// (per-connection in-flight command helpers are defined near the top of this file)
+
 int gameServiceBindClient(int fd, uint32_t clientType) {
     // vm_bindToClient (0x804eccc): register a connected socket as a game
     // client and start its receive loop.  The original driver adds the socket
@@ -13754,11 +13824,21 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
             // pending-service counter starved the socket - ccs's dba reply
             // (0x4401) was never fed, so filed's do_operate waited forever.
             if (cur->attrib & ATTRIB_CLIENT_USER) {
-                // Same bound as the accept loop's gate: 50ms is enough for the
-                // cooperative reply-then-cleanup tail (see above); a stuck pending
-                // counter must not cost a second per packet.
-                for (int tries = 0; tries < 10 && !lpc::serviceQueueIdle(); ++tries)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                // Retry absorption for the account-login connection: a packet
+                // that repeats the command still running here is a re-press of
+                // the same action, not new input (see absorbDuplicate).
+                std::string key = packetCmdKey(buf, static_cast<size_t>(n));
+                const bool flowOpen = (lpc::clientSendIdleMs(clientNo) < 800) ||
+                                      !lpc::serviceQueueIdle();
+                if (flowOpen && absorbDuplicate(clientNo, key)) {
+                    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_TAIL"))
+                        std::cerr << "[absorb] cno=" << clientNo
+                                  << " retry of in-flight cmd t="
+                                  << lpc::msSinceStart() << "ms\n";
+                    continue;
+                }
+                if (!flowOpen) clearInflightCmd(clientNo);
+                noteInflightCmd(clientNo, key);
             }
             feedClient(*cur, buf, static_cast<size_t>(n));
         }

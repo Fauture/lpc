@@ -165,4 +165,10 @@ int64_t schedulerCurrentTid();
 // scheduler's reply-then-cleanup ordering).
 bool serviceQueueIdle();
 
+// Per-connection flow gate: ms since the last packet was sent to that client
+// (used by pkt_protocol.cpp to keep a connection busy until its command's
+// client-visible result has been delivered and the flow went quiet).
+void noteClientSend(int64_t cno);
+int64_t clientSendIdleMs(int64_t cno);
+
 } // namespace lpc
