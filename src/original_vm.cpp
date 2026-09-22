@@ -1475,6 +1475,15 @@ public:
         // (what builtins' lpcThreadId() returns) is identical for every process;
         // assign a fresh id per Process instead and expose the CURRENT process.
         int64_t tid = 0;
+        // Unique id of this process's execution chain, never reused (unlike tid,
+        // which comes from a 0..127 pool and can wrap under load).  The per-chain
+        // run state of a VM is keyed by THIS id, so a recycled tid can never pick
+        // up a dead chain's frames/stack.
+        static int64_t nextChainSeq() {
+            static std::atomic<int64_t> n{1};
+            return n.fetch_add(1);
+        }
+        int64_t chainSeq = nextChainSeq();
         std::shared_ptr<TimerEntry> timerEntry;   // set_timer callback (cancellation)
         // The VM whose execution state was parked by a blocking efun.  Usually
         // == vm, but a cross-object call_other executes on the TARGET's
@@ -1646,6 +1655,35 @@ public:
         if (currentProcess_) return currentProcess_->tid;
         return -1;
     }
+    // The tid of the process that OWNS the frame chain currently executing.  A
+    // chain can be parked by one process and resumed by another (traced:
+    // "[vmown] /gs/clone/char/login.o chain owned by tid=8 but resumed by
+    // tid=10"), and get_thread_id() must still return ONE value for the whole
+    // chain: filed.c::do_operate otherwise builds its reply closure with tid 8
+    // and computes its wait mask from tid 10, so the reply raises a bit nobody
+    // waits on, the request returns its default -2 (9112 「数据库目前正在维护
+    // 中」) and check_name_used's tail (save() + logind->show_char_list) is lost -
+    // 0xF061 then carries no character and basic_char_info is never written.
+    //
+    // PER-THREAD, like the original's per-PCB state: the pin is installed by
+    // runProcess() on the thread that runs (or resumes) the process, and services
+    // run processes on several threads at once.  A single shared member let
+    // thread A read the tid thread B had just pinned and compute a foreign event
+    // mask, which is the same lost-reply failure class as above.
+    static int64_t& tlsChainTid() {
+        static thread_local int64_t v = -1;
+        return v;
+    }
+    int64_t chainTid() const { return tlsChainTid(); }
+    void setChainTid(int64_t t) { tlsChainTid() = t; }
+    // Per-chain run-state KEY (see Process::chainSeq): unique for the whole run
+    // of the server, so a recycled tid cannot alias a finished chain's state.
+    static int64_t& tlsChainKey() {
+        static thread_local int64_t v = -1;
+        return v;
+    }
+    int64_t chainKey() const { return tlsChainKey(); }
+    void setChainKey(int64_t k) { tlsChainKey() = k; }
     // Saved/restored around every efun call (see schedulerCurrentProcess below):
     // an efun may wake or park processes, which changes currentProcess_.
     std::shared_ptr<Process> currentProcessSnapshot() const { return currentProcess_; }
@@ -2337,6 +2375,21 @@ public:
     }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
+        // Per-process run state (the original's per-PCB frame stack).
+        // REMOVED (2026-09-22, boot regression): this used to STASH the parked
+        // chain aside when a different process entered the object (probe-gated
+        // LPCVM_VMSTACK).  Moving a parked chain out of the VM breaks the event
+        // contract: while the chain's frames_/cond_/parked_ live in runStates_[A],
+        // the reply that should wake A is delivered against the VM and finds no
+        // waiter, so the DB round trip is lost - during boot that silently
+        // dropped ~6 of 634 NPC registrations (山神/龙神/青龙/雷神/花神/憾地魔),
+        // and the task objects that look those NPCs up then retried do_init
+        // forever, so the service never reached "listening".  Interleaving a
+        // second process on top of a parked chain is ALREADY safe: the entry
+        // pushes a Frame that saves code_/meta_/ip_ (and the operand stack is
+        // balanced), and ExecGuard keeps the VM single-threaded.  Only the
+        // get_thread_id() flip needed fixing, and that is done by pinning the
+        // chain tid (see chainTid()).
         {
             VmNestGuard nestGuardEntry("ENTRY");
             static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
@@ -3034,6 +3087,7 @@ public:
 
     int runInit(const std::vector<Value>& createArgs = {}) {
         std::lock_guard<std::recursive_mutex> lock(execMutex_);
+        switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         if (std::getenv("LPCVM_LOCK_TRACE"))
             std::cerr << "[runinit] enter obj=" << obj_.sourceName
                       << " t=" << std::this_thread::get_id() << "\n";
@@ -6869,6 +6923,7 @@ private:
             std::cerr << "[lock] TRY obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
         ExecGuard lock(execMutex_, execDepth_, ("fromOutside " + objName_ + "/" + fn.name).c_str());
+        switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         if (diagMe)
             std::cerr << "[lock] GOT obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
@@ -7451,6 +7506,7 @@ private:
         }
         ExecGuard lock(execMutex_, execDepth_, "onStack " + objName_ + "/" + fn.name);
         bool probeCd = (fn.name == "create_data") && constructDiagOn();
+        switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         if (probeCd)
             std::cerr << "[hprobe] onStack create_data obj=" << objName_
                       << " this=" << thisObjectName_
@@ -7726,6 +7782,22 @@ private:
     // resumeValue must be a fresh value; the caller owns any stack effects.
     void resumeProcess(Value /*resumeValue ignored*/) {
         ExecGuard lock(execMutex_, execDepth_, "resume " + objName_);
+        // Record (and report) which process owns this VM's chain: entering the
+        switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
+        // same object from a second process clobbers the parked chain on the
+        // single frame stack (see execOwnerTid_).
+        {
+            int64_t curTid = lpc::scheduler().currentProcessTid();
+            if (execOwnerTid_ >= 0 && curTid >= 0 && execOwnerTid_ != curTid &&
+                vmEnvEvDbg())
+                std::cerr << "[vmown] " << objName_ << " chain owned by tid="
+                          << execOwnerTid_ << " but resumed by tid=" << curTid << "\n";
+            // NOTE: do NOT overwrite execOwnerTid_ here.  It records the process
+            // that PARKED this object's chain (set in parkOnEvent), which is the
+            // tid the wake/reply mask must be computed from; overwriting it with
+            // whoever happens to enter only made resumeCaller re-pin the wrong
+            // process after a nested entry.
+        }
         if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
             objName_.find("/clone/npc/master") != std::string::npos) {
             std::string cf = frames_.empty() || !frames_.back().fn ? "<none>" : frames_.back().fn->name;
@@ -7768,6 +7840,7 @@ private:
     // that closure's own execution and resumes the SAME frames later.
     void resumeRunLoop() {
         ExecGuard lock(execMutex_, execDepth_, "resumeRunLoop " + objName_);
+        switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         runLoop();
     }
 
@@ -7781,6 +7854,29 @@ private:
     // (the op after the case-8 call site).
     void resumeCaller(Value result) {
         ExecGuard lock(execMutex_, execDepth_, "resumeCaller " + objName_);
+        // Keep get_thread_id() on the OWNER of this caller chain while it runs.
+        // A caller VM is resumed from the finishing process's caller-chain drain,
+        // which can be a different process than the one that parked here (traced:
+        // "[vmown] /gs/clone/char/login.o chain owned by tid=6 but resumed by
+        // tid=12", 57x per burst): the two then share frames_, the login.o chain
+        // that stores "chars" and calls save() loses the update, show_char_list
+        // sees an empty list and 0xF061 never carries the new character, so the
+        // client stays on the create screen and basic_char_info is never written.
+        struct ChainTidScope {
+            int64_t prev;
+            ~ChainTidScope() { lpc::scheduler().setChainTid(prev); }
+        } chainTidScope{lpc::scheduler().chainTid()};
+        // Pin to the tid that PARKED this chain (a real 0..127 process id, never
+        // the per-chain key): the LPC builds its event name/mask from
+        // get_thread_id(), so a key here parked the tail on ev_filed4 (tid 150)
+        // -> wait_event -101 and no 0xF061 character list.
+        if (chainOwnerTid() >= 0 && chainOwnerTid() < 128)
+            lpc::scheduler().setChainTid(chainOwnerTid());
+        // Install the caller chain's OWN run state (per-chain frame stack): this
+        // VM may currently hold another process's parked chain, and this is the
+        // path that carries a create command's tail (lite_set("chars") / save() /
+        // logind->show_char_list()) after the dispatched closure finished.
+        switchToChain(lpc::scheduler().chainKey());
         // Nothing to resume here (the detached callee was merged back into
         // THIS VM's frame chain, so the continuation already happened inside
         // the parked VM's resume) - skip.
@@ -7976,6 +8072,22 @@ private:
         SuspendSignal sig;
         sig.vm = this;
         sig.cond = cond_;
+        // Ownership diagnostic: which process parks this object's chain, and how
+        // many frames it holds.  Compared against the [vmown] line emitted when
+        // the chain is later RESUMED by a different tid, this pinpoints whether
+        // the waiter was registered under the wrong process or the resume was
+        // delivered to the wrong one (the mix makes get_thread_id() flip inside
+        // one statement: filed's do_operate raised its reply on the wrong event
+        // bit -> -2 -> 9112, and show_char_list's tail was lost -> 0xF061 empty).
+        // This object's chain now belongs to the parking process: its tid is what
+        // the reply/wake mask must be computed from (resumeCaller re-pins it).
+        if (lpc::scheduler().currentProcessTid() >= 0)
+            execOwnerTid_ = lpc::scheduler().currentProcessTid();
+        if (vmEnvEvDbg())
+            std::cerr << "[vmown-park] vm=" << this << " obj=" << objName_
+                      << " tid=" << lpc::scheduler().currentProcessTid()
+                      << " frames=" << frames_.size()
+                      << " ownerTid=" << execOwnerTid_ << "\n";
         if (vmEnvTrace())
             std::cerr << "[suspend] vm=" << this << " obj=" << objName_
                       << " kind=" << cond.kind << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
@@ -7983,6 +8095,198 @@ private:
     }
     // The value to push when this parked VM resumes.
     Value& parkedResumeValue() { return resumeValue_; }
+
+    // ---- execution ownership (one process at a time per object) -------------
+    // The frame stack lives in the VM, so a SECOND process must never run this
+    // object while another one is parked inside it: traced on vm=403430A8, tid=12
+    // held check_name_used<-get_catalog<-do_operate_ex while tid=6 ran
+    // check_name_used<-create_gid<-do_operate on the SAME frame stack, so
+    // get_thread_id() returned a foreign tid inside one statement, filed's
+    // do_operate raised the reply on tid 12's bit while waiting on tid 6's,
+    // returned its default -2 (9112) and the create's show_char_list tail was
+    // lost (0xF061 never sent, basic_char_info never written).  The original has
+    // per-PCB stacks, so this cannot happen there; here the tid of the process
+    // that owns this VM's chain is recorded so a conflicting entry is at least
+    // visible (the full fix is moving the frame stack onto the process).
+    int64_t execOwnerTid_ = -1;
+
+    // ---- per-CHAIN run state (the original's per-PCB frame stack) -----------
+    // The original driver keeps the frame stack on the PCB, so two processes can
+    // be inside ONE object at the same time: each has its own frames/stack/ip and
+    // its own park slot.  Here they used to be VM members shared by every chain,
+    // which produced this (traced, 20x-ENTER burst on the create screen, VM
+    // 4FD3E8A8 = login.o#17305):
+    //   227318 park tid=9  frames=6 chain=[_process_command<-create_new_char<-...<-do_operate]
+    //   227344 park tid=10 frames=3 chain=[check_name_used<-get_catalog<-do_operate_ex]
+    //   227365 park tid=9  frames=9 chain=[check_name_used<-get_catalog<-do_operate_ex
+    //                                      <-_process_command<-create_new_char<-...]
+    // The dispatched service closure (tid 10) had APPENDED its frames on top of
+    // the client command's parked chain (tid 9); when tid 9 resumed, "the current
+    // function" was tid 10's, the two DB round trips collided (mask 0x200 vs
+    // 0x400), the reply was lost, `operating` stayed 1 and every later packet got
+    // 9101/9112 while the character was never created (gid_info empty, 0xF061
+    // body=4).  So each chain now owns its run state; the VM members hold only the
+    // state of the chain that is CURRENTLY executing on this VM (activeKey_).
+    struct VmRunState {
+        std::vector<Frame> frames;
+        std::vector<StackItem> stack;
+        std::vector<StackItem> detachedStack;
+        const std::vector<OriginalInsn>* code = nullptr;
+        const std::vector<uint8_t>* meta = nullptr;
+        size_t ip = 0;
+        ResumeCond cond;
+        std::function<void()> onResume;
+        Value resumeValue;
+        bool parked = false;
+        bool returned = false;
+        Value returnValue;
+        std::vector<CatchRecord> catches;
+        int catchDepth = 0;
+        std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall;
+        const std::map<int, const OriginalFunction*>* funcLookup = nullptr;
+        int lastEfunIndex = -1;
+        int lastOp = -1;
+        size_t lastIp = 0;
+        int64_t ownerTid = -1;
+    };
+    std::unordered_map<int64_t, VmRunState> runStates_;
+    // tid whose run state currently occupies the VM members (-1 = nobody).
+    int64_t activeKey_ = -1;
+
+    void clearRunMembers() {
+        frames_.clear();
+        stack_.clear();
+        detachedStack_.clear();
+        code_ = nullptr;
+        meta_ = nullptr;
+        ip_ = 0;
+        cond_ = ResumeCond{};
+        onResume_ = nullptr;
+        resumeValue_ = Value{};
+        parked_ = false;
+        returned_ = false;
+        returnValue_ = make_int(0);
+        catches_.clear();
+        catchDepth_ = 0;
+        savedObjVarsForNextCall_.reset();
+        funcLookup_ = nullptr;
+        lastEfunIndex_ = -1;
+        lastOp_ = -1;
+        lastIp_ = 0;
+        execOwnerTid_ = -1;
+    }
+    void stashRunState(int64_t tid) {
+        if (tid < 0) return;
+        VmRunState& st = runStates_[tid];
+        st.frames = std::move(frames_);
+        st.stack = std::move(stack_);
+        st.detachedStack = std::move(detachedStack_);
+        st.code = code_;
+        st.meta = meta_;
+        st.ip = ip_;
+        st.cond = cond_;
+        st.onResume = std::move(onResume_);
+        st.resumeValue = std::move(resumeValue_);
+        st.parked = parked_;
+        st.returned = returned_;
+        st.returnValue = std::move(returnValue_);
+        st.catches = std::move(catches_);
+        st.catchDepth = catchDepth_;
+        st.savedObjVarsForNextCall = std::move(savedObjVarsForNextCall_);
+        st.funcLookup = funcLookup_;
+        st.lastEfunIndex = lastEfunIndex_;
+        st.lastOp = lastOp_;
+        st.lastIp = lastIp_;
+        // ownerTid must stay a PROCESS TID (0..127): it is what resumeCaller
+        // re-pins get_thread_id() to, and the LPC derives its wait/raise event
+        // from that value (filed.c: wait_event("ev_filed" + tid/32,
+        // 1 << (tid % 32))).  It used to be set to the STASH KEY, which after
+        // the move to per-chain keys (Process::chainSeq, e.g. 150) made
+        // get_thread_id() return 150 -> ev_filed4 -> wait_event -101 ("event
+        // does not exist") inside the create command's tail, so
+        // logind->show_char_list never sent 0xF061 and the client stayed on the
+        // create screen with the character already created.
+        st.ownerTid = (lpc::scheduler().chainTid() >= 0)
+                          ? lpc::scheduler().chainTid()
+                          : lpc::scheduler().currentProcessTid();
+        onResume_ = nullptr;
+        resumeValue_ = Value{};
+        cond_ = ResumeCond{};
+        parked_ = false;
+        code_ = nullptr;
+        meta_ = nullptr;
+        ip_ = 0;
+        returnValue_ = make_int(0);
+        catches_.clear();
+        catchDepth_ = 0;
+        savedObjVarsForNextCall_.reset();
+        funcLookup_ = nullptr;
+    }
+    bool restoreRunState(int64_t tid) {
+        auto it = runStates_.find(tid);
+        if (it == runStates_.end()) return false;
+        VmRunState& st = it->second;
+        frames_ = std::move(st.frames);
+        stack_ = std::move(st.stack);
+        detachedStack_ = std::move(st.detachedStack);
+        code_ = st.code;
+        meta_ = st.meta;
+        ip_ = st.ip;
+        cond_ = st.cond;
+        onResume_ = std::move(st.onResume);
+        resumeValue_ = std::move(st.resumeValue);
+        parked_ = st.parked;
+        returned_ = st.returned;
+        returnValue_ = std::move(st.returnValue);
+        catches_ = std::move(st.catches);
+        catchDepth_ = st.catchDepth;
+        savedObjVarsForNextCall_ = std::move(st.savedObjVarsForNextCall);
+        funcLookup_ = st.funcLookup;
+        lastEfunIndex_ = st.lastEfunIndex;
+        lastOp_ = st.lastOp;
+        lastIp_ = st.lastIp;
+        execOwnerTid_ = st.ownerTid;
+        runStates_.erase(it);
+        return true;
+    }
+    // Make `key`'s chain the one whose state the VM members hold.  A no-op when
+    // this chain is already active, so nested calls inside one chain (the common
+    // case) cost two compares.
+    // Diagnostic (LPCVM_TAIL): who moves this object's chain state around.
+    void chainDbg(const char* what, int64_t key) {
+        if (!std::getenv("LPCVM_TAIL")) return;
+        if (objName_.find("login.o") == std::string::npos) return;
+        std::cerr << "[chn] " << what << " key=" << key << " active=" << activeKey_
+                  << " frames=" << frames_.size() << " parked=" << (parked_ ? 1 : 0)
+                  << " cond=" << cond_.kind << " stash=" << runStates_.size() << "\n";
+        std::cerr.flush();
+    }
+    void switchToChain(int64_t key) {
+        if (key < 0 || key == activeKey_) return;
+        chainDbg("switch-in", key);
+        const bool hasState = activeKey_ >= 0 &&
+                              (!frames_.empty() || !stack_.empty() || parked_ ||
+                               !detachedStack_.empty() || cond_.kind != 0);
+        if (hasState) stashRunState(activeKey_);
+        else clearRunMembers();
+        const bool got = restoreRunState(key);
+        if (!got) clearRunMembers();
+        activeKey_ = key;
+        chainDbg(got ? "switch-restored" : "switch-fresh", key);
+    }
+    int64_t activeChainKey() const { return activeKey_; }
+    // The chain key's process finished: its state must not linger (a later chain
+    // with the same recycled tid would otherwise restore it).
+    void finishChain(int64_t key) {
+        if (key < 0) return;
+        chainDbg("finish", key);
+        runStates_.erase(key);
+        if (activeKey_ == key) {
+            clearRunMembers();
+            activeKey_ = -1;
+            chainDbg("finish-cleared", key);
+        }
+    }
 
     // ---- instance variables by NAME (the original's vm_getObjVar) -----------
     // (public: the free helpers objVarGet/objVarSet/objVarsToString and the
@@ -8006,6 +8310,22 @@ public:
         }
         return -1;
     }
+    // Chain ownership accessors (public: runProcess/schedulerCurrentTid use them
+    // to keep get_thread_id() on the tid of the process that owns the executing
+    // frame chain - see the comment on schedulerCurrentTid()).
+    int64_t chainOwnerTid() const { return execOwnerTid_; }
+    void setChainOwnerTid(int64_t t) { execOwnerTid_ = t; }
+    // Process-switch access to the per-process run state (see runProcess): the
+    // object keeps the chain of whichever process is running it; a different
+    // process stashes that chain aside and swaps in its own - a pointer-level
+    // switch performed once per process switch, never inside the interpreter
+    // loop (doing it per runLoop entry lost chains during object construction).
+    void stashChain(int64_t tid) { stashRunState(tid); }
+    bool restoreChain(int64_t tid) { return restoreRunState(tid); }
+    // Public entry for the scheduler's direct runLoop() paths (resumeRunLoop):
+    // install the executing chain's own run state before continuing its stream.
+    void enterChain(int64_t key) { switchToChain(key); }
+
     Value objVarByName(const std::string& q) {
         int slot = objVarSlotByName(q);
         if (slot < 0 || !objVars_) return Value{};
@@ -8094,26 +8414,18 @@ private:
                 return;
             }
             if (forever) {
-                // Re-park ONLY when this resume really belongs to our park: one
-                // VM can host several processes and its park slots (cond_/
-                // onResume_) are a single set, so re-parking blindly would
-                // clobber a park that another process installed on this VM and
-                // its waiter registration would be lost (a 20x-ENTER burst then
-                // had the name-check waiter missing from ev_filed0's list and it
-                // returned -2 -> 9112).  If the state no longer matches ours,
-                // report the honest "no bits for me" result instead.
-                auto cur2 = lpc::scheduler().currentProcessShared();
-                const bool ours = cur2 && !cur2->eventWoken && cur2->cond.kind == 3 &&
-                                  cur2->cond.ename == ename && cur2->cond.mask == mask;
-                if (ours) {
-                    if (vmEnvEvDbg())
-                        std::cerr << "[ev] spurious resume of forever wait " << ename
-                                  << " mask=0x" << std::hex << mask << std::dec
-                                  << " rc=" << rc << " -> re-park\n";
-                    parkOnEvent(ename, eref, mask, secs);   // still waiting
-                    return;
-                }
-                parkedResumeValue() = make_int(rc == -101 ? -101 : -501);
+                // Always go back to sleep when the wake did not consume one of
+                // OUR bits: an ownership check here (only re-park when the
+                // process's cond still matches this wait) was too strict - one VM
+                // hosts several processes and its cond slot gets replaced, so the
+                // check failed and the wait reported the honest -501 instead,
+                // which made filed.c::do_operate return its default -2 (9112
+                // 「数据库目前正在维护中」) even though the reply was still coming.
+                if (vmEnvEvDbg())
+                    std::cerr << "[ev] spurious resume of forever wait " << ename
+                              << " mask=0x" << std::hex << mask << std::dec
+                              << " rc=" << rc << " -> re-park\n";
+                parkOnEvent(ename, eref, mask, secs);   // still waiting
                 return;
             }
             parkedResumeValue() = make_int(rc == -101 ? -101 : -501);
@@ -8128,6 +8440,13 @@ private:
     // returning from here and resume by re-entering with the saved ip_ -
     // exactly like the original scheduler restoring a PCB.
     void runLoop() {
+        // NOTE: a universal per-process frame-stack swap here (stash the other
+        // process's chain at entry, restore it on exit) STALLED the boot - nested
+        // runLoop entries with different tids during object construction swap the
+        // chain in and out at every nesting level and lose it.  The [vmown]
+        // conflicts it targeted (login.o chain owned by one tid, resumed by
+        // another) therefore still need a targeted fix at the individual
+        // entry/resume points, not a blanket swap in the interpreter loop.
         // Step-throughput meter (LPCVM_STEP_PROF=1): prints obj/fn/ip plus
         // cumulative instruction and runLoop-activation counts once per second
         // of wall time while instructions execute.  When the env var is unset
@@ -10395,11 +10714,34 @@ private:
                     // vm_f_send_to_queue (0x80f2d94): send_to_queue(qid, value,
                     // timeout) enqueues and wakes a receiver; 0 on success,
                     // -101 unknown queue.
+                    //
+                    // Pin the executing process for the WHOLE dispatch: waking
+                    // the receiver can run a nested process on this same thread
+                    // (the service daemon that picks the closure up), and the
+                    // nested run used to leave ITS process in the current-process
+                    // slot.  get_thread_id() then returned a different tid inside
+                    // one statement - filed.c::do_operate built its reply closure
+                    // with that foreign tid and computed its wait mask from the
+                    // real one, so the reply raised a bit nobody waited on and
+                    // the request answered its default -2 (9112 「数据库目前正在
+                    // 维护中」, still seen when two create commands overlap).
+                    struct CurProcPin {
+                        decltype(scheduler().currentProcessSnapshot()) saved;
+                        CurProcPin() : saved(scheduler().currentProcessSnapshot()) {}
+                        ~CurProcPin() { scheduler().restoreCurrentProcess(saved); }
+                    } curProcPin;
                     std::vector<StackItem> items;
                     for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
                     if (items.size() >= 2) {
                         Value qv = items[0].isRef ? deref(items[0]) : items[0].value;
                         Value v = items[1].isRef ? deref(items[1]) : items[1].value;
+                        // NOTE: running a dispatched closure INLINE here (instead
+                        // of handing it to a service daemon) also stalled the boot
+                        // - the daemon's receive/invoke loop is re-entered
+                        // recursively and its own queue traffic never advances.
+                        // The two-processes-in-one-object problem it aimed at
+                        // (see [vmown]) needs the original's model: a frame stack
+                        // per PCB.
                         int64_t qid = queueResolveId(qv);
                         bool ok = queueSend(qid, v);
                         static const std::atomic<bool>& qSendTrace =
@@ -15147,6 +15489,20 @@ void Scheduler::run() {
                 // live processes share an id, so configd's read_etc waits get
                 // woken by replies meant for the other process and time out.
                 releaseTid(p->tid);
+                // Drop this chain's per-VM run state (see OriginalVm::finishChain):
+                // the tid goes back into the pool, and a later chain that gets the
+                // same tid must start with an EMPTY frame stack, not this one's.
+                {
+                    std::set<OriginalVm*> dropped;
+                    auto drop = [&](const std::shared_ptr<OriginalVm>& v) {
+                        if (v && dropped.insert(v.get()).second) v->finishChain(p->chainSeq);
+                    };
+                    drop(p->vm);
+                    drop(p->parkedVm);
+                    drop(p->callerVm);
+                    drop(p->homeVm);
+                    for (const auto& v : p->callers_) drop(v);
+                }
                 // The original's vm_holdObject machinery force-releases every
                 // mutex a dying PCB still holds (vm_releaseMutex as the hold
                 // callback); hand each to its head waiter so a process that
@@ -15331,6 +15687,18 @@ int64_t Scheduler::nowMs() {
 
 void Scheduler::runProcess(std::shared_ptr<Process> p) {
     Value callResult = make_int(0);
+    // Pin the chain-owner tid for this run: get_thread_id() must return the same
+    // tid for the process that owns the executing frame chain (see chainTid()).
+    if (p->tid >= 0) setChainTid(p->tid);
+    if (p->chainSeq > 0) setChainKey(p->chainSeq);
+    // NOTE (2026-09-22): a per-process chain SWAP used to live here too (stash the
+    // object's previous occupant, restore this process's own chain).  It was
+    // removed with the callFunctionByName swap: taking a PARKED chain out of its
+    // VM hides its cond_/parked_ from the reply that should wake it, and during
+    // boot that lost ~1% of the DB round trips (6 of 634 NPCs never registered,
+    // and the task objects waiting for them retried do_init forever instead of
+    // the service reaching "listening").  The tid pin above is what actually
+    // fixes the get_thread_id()/event-mask flip ([vmown]).
     // currentProcess_ is the PCB that get_thread_id(), noteParkedCaller and the
     // process-mutex ownership read.  A process can run NESTED inside another one
     // (send_to_queue / execOnMain hand control to a service process while the
@@ -15557,8 +15925,10 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 p->vm->runAsMaster();
             else if (p->entry == "__init__")
                 p->vm->runConstruction(p->args, p->doneEvent);
-            else
+            else {
+                p->vm->enterChain(p->chainSeq);   // per-chain frame stack
                 p->vm->runLoop();   // daemon yielded (rare): continue its stream
+            }
             p->done = true;
         } else {
             // Resume the VM whose execution state was parked (usually p->vm,
@@ -16568,7 +16938,28 @@ std::string registerObjectVM(const std::string& virtualPath, const std::string& 
 // Current LPC process's tid (the original driver's PCB->tid).  Called by the
 // get_thread_id() efun.  On the single scheduler thread every process would
 // otherwise share one thread_local id; this returns the per-process id.
+//
+// ONE OBJECT, ONE CHAIN: the tid must be the one of the process that OWNS the
+// frame chain currently executing, not whatever process happens to be "current".
+// Traced failure (20x ENTER on the create screen): the chain of the create
+// command was parked by tid=8 ([vmown-park]) but resumed by tid=10 ([vmown]
+// "login.o chain owned by tid=8 but resumed by tid=10"), so within ONE statement
+// filed.c::do_operate built its reply closure with tid 8 and computed its wait
+// mask from tid 10: the reply raised tid 8's event bit while the waiter sat on
+// tid 10's, the request returned its default -2 (9112 「数据库目前正在维护中」)
+// and check_name_used's tail (save() + logind->show_char_list) was lost, so the
+// character list 0xF061 carried no character and basic_char_info was never
+// written.  The VM that is executing sets tlsExecVm below and its recorded chain
+// owner (execOwnerTid_) takes precedence here.
+// (tlsExecVm is defined outside this anonymous namespace, next to
+// schedulerCurrentTid(), so runProcess can declare it extern.)
+
 int64_t schedulerCurrentTid() {
+    // Prefer the tid pinned for the executing chain (set by runProcess): the
+    // "current" process can be a different one that resumed this chain after a
+    // park - see the comment on Scheduler::chainTid().
+    int64_t c = scheduler().chainTid();
+    if (c >= 0) return c;
     return scheduler().currentProcessTid();
 }
 

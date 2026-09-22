@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -56,6 +57,40 @@ void ensureWsaGame() {
 
 // attrib bits (vm_magicInit predefines)
 constexpr uint32_t ATTRIB_CLIENT_USER = 1;     // CLIENT_USER
+
+// ---- per-connection command queue -----------------------------------------
+// One player connection must not run two commands at once: two overlapping
+// create_new_char commands on a single login clone lose the duplicate name
+// lookup's reply (do_operate answers its default -2 -> 9112 「数据库目前正在维护
+// 中」) and wreck the first command's tail, so the character list is never sent.
+// Packets must not be DROPPED either - an earlier absorption attempt swallowed
+// the client's legitimate retries and parked logins on 「连接中」.  The reader
+// therefore enqueues and drains strictly in order: dispatch one packet, wait for
+// that command's flow to settle, then dispatch the next.
+static std::mutex g_pqMtx;
+static std::map<int, std::deque<std::string>> g_pendingPkts;
+
+static void queuePacket(int cno, const char* buf, size_t n) {
+    std::lock_guard<std::mutex> lk(g_pqMtx);
+    g_pendingPkts[cno].emplace_back(buf, n);
+}
+
+static bool takePacket(int cno, std::string& out) {
+    std::lock_guard<std::mutex> lk(g_pqMtx);
+    auto it = g_pendingPkts.find(cno);
+    if (it == g_pendingPkts.end() || it->second.empty()) return false;
+    out = std::move(it->second.front());
+    it->second.pop_front();
+    if (it->second.empty()) g_pendingPkts.erase(it);
+    return true;
+}
+
+static void waitFlowSettled(int cno) {
+    for (int i = 0; i < 200; ++i) {          // bounded (~1s per packet)
+        if (lpc::serviceQueueIdle() && lpc::clientSendIdleMs(cno) >= 50) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
 
 // (per-connection command absorption removed: the character-creation bug it was
 // meant to work around is fixed at its root - the loader now keeps PROG_VARS, so
@@ -13513,12 +13548,22 @@ int startGameService(int port) {
                     // threadd service queue drains so the account packet doesn't
                     // race that tail and see antibot_answer still unset.
                     if (cur->attrib & ATTRIB_CLIENT_USER) {
-                        // Reply-then-cleanup ordering only (see above): let the
-                        // dispatched service finish before the next packet is
-                        // fed.  No packet is ever discarded here - swallowing a
-                        // retry parked the client on 「连接中」 (~1 in 10 logins).
-                        for (int tries = 0; tries < 10 && !lpc::serviceQueueIdle(); ++tries)
-                            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        // Enqueue and drain in order (see the queue comment):
+                        // never two commands at once, never a dropped packet.
+                        queuePacket(clientNo, buf, static_cast<size_t>(n));
+                        std::string one;
+                        while (takePacket(clientNo, one)) {
+                            GameClient* c2;
+                            {
+                                std::lock_guard<std::mutex> lk(gameMutex());
+                                auto it2 = gameClients().find(clientNo);
+                                if (it2 == gameClients().end()) break;
+                                c2 = &it2->second;
+                            }
+                            feedClient(*c2, one.data(), one.size());
+                            waitFlowSettled(clientNo);
+                        }
+                        continue;
                     }
                     feedClient(*cur, buf, static_cast<size_t>(n));
                 }
@@ -13762,11 +13807,21 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
             // pending-service counter starved the socket - ccs's dba reply
             // (0x4401) was never fed, so filed's do_operate waited forever.
             if (cur->attrib & ATTRIB_CLIENT_USER) {
-                // Reply-then-cleanup ordering only (see above); no packet is
-                // discarded here - dropping a retry parked the client on
-                // 「连接中」 in ~1 of 10 logins.
-                for (int tries = 0; tries < 10 && !lpc::serviceQueueIdle(); ++tries)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                // Enqueue and drain in order (see the queue comment above).
+                queuePacket(clientNo, buf, static_cast<size_t>(n));
+                std::string one;
+                while (takePacket(clientNo, one)) {
+                    GameClient* c2;
+                    {
+                        std::lock_guard<std::mutex> lk(gameMutex());
+                        auto it2 = gameClients().find(clientNo);
+                        if (it2 == gameClients().end()) break;
+                        c2 = &it2->second;
+                    }
+                    feedClient(*c2, one.data(), one.size());
+                    waitFlowSettled(clientNo);
+                }
+                continue;
             }
             feedClient(*cur, buf, static_cast<size_t>(n));
         }
