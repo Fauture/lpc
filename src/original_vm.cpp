@@ -15761,7 +15761,17 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
     // Pin the chain-owner tid for this run: get_thread_id() must return the same
     // tid for the process that owns the executing frame chain (see chainTid()).
     if (p->tid >= 0) setChainTid(p->tid);
-    if (p->chainSeq > 0) setChainKey(p->chainSeq);
+    // The chain key selects the per-chain execution state at the interpreter's
+    // entry points.  It is CLEARED (not restored to the previous process's key)
+    // when this run returns: an entry with no key of its own then starts from a
+    // clean state instead of inheriting an unrelated chain's frames.  Restoring
+    // the previous key was measured to be worse than leaving it stale (3/3 runs
+    // with one 9112 vs 0 in the stale version), so clearing is the variant under
+    // test here.  See docs/scheduler_refactor_plan.md section 9.
+    struct ChainKeyScope {
+        ~ChainKeyScope() { lpc::scheduler().setChainKey(-1); }
+    } chainKeyScope;
+    if (p->chainSeq > 0) lpc::scheduler().setChainKey(p->chainSeq);
     // NOTE (2026-09-22): a per-process chain SWAP used to live here too (stash the
     // object's previous occupant, restore this process's own chain).  It was
     // removed with the callFunctionByName swap: taking a PARKED chain out of its
