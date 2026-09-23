@@ -24,8 +24,12 @@ import sys
 from PIL import Image  # noqa: E402
 
 # References captured from runs whose in-game state was confirmed by eye.
-REF_DIR = '.'
-REFS = ['after20.jpg', 'c7_after.jpg', '_v6_relogin_ingame.jpg']
+# NOTE: a freshly created character lands in the OPENING NEWBIE STORY
+# (`跳过` button, black cinematic bands, name tag on the ground) - NOT on the
+# town screen.  Without that reference a perfectly successful run was scored
+# "not-ingame (distance 82.6)" for all three accounts (vF11, 2026-09-24), so it
+# is part of the in-game reference set, not an exception.
+REFS = ['_ref_story_open.jpg', 'c7_after.jpg', '_v6_relogin_ingame.jpg']
 
 REGIONS = (
     (0.02, 0.90, 0.35, 0.99),   # bottom-left status / exp band
