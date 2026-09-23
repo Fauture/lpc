@@ -139,3 +139,32 @@ VM 只留 `ExecState* es_`，于是 `switchToChain()` 从"搬 19 个成员"变�
 
 回退记录：`git checkout`/备份恢复后重建（18:12:10 的 Release 二进制），
 `src/` 与 HEAD `84ea3c6` 一致，A3 验收数据（0×9112）保持不变。
+
+## 9. 链状态（Step A3）与链键（A4/A5）的完整实测对照
+
+测试方法：真机 `_rapid2.py 100 <name> 20`（登录→建角页→名字→一次 `{ENTER 20}`），
+每个版本连跑 3 次，`_acc.py` 统计客户端弹窗与数据库行。
+
+| 版本 | 说明 | 9112 维护中 | 9101 处理中 | 9113 名字已存在 | basic_char_info | 客户端 |
+|---|---|---|---|---|---|---|
+| A3（`84ea3c6`，当前 HEAD） | 链状态表永久持有执行态，`es_` 只换指向 | **0 / 0 / 0** | 6 / 6 / 6 | 3 / 3 / 3 | 1 行 | ingame |
+| A4 | 把 19 个宏换成类内访问器 `frames_()` | 1 / 1 / 1 | 9 / 9 / 9 | 3 / 3 / 3 | 1 行 | ingame |
+| A5 | 在 `runProcess` 里保存/恢复 `chainKey` | 1 / 1 / 1 | 7 / 7 / 7 | 3 / 3 / 3 | 1 行 | ingame |
+
+结论（都是确定性差异，不是噪声）：
+
+1. **A3 是当前最优且已提交的状态**：0 次 9112、6 次 9101、关联行写出、客户端进游戏。
+2. **A4 与 A5 都稳定引入 1 次 9112**（`filed.do_operate` 返回 -2 → 「数据库目前正在
+   维护中（原因：9112）」）。二者唯一的共同点：都改变了"VM 在入口处安装哪条链的
+   执行状态"这一时序。
+3. `chainKey` 在本文件里**只有** 6 处用途——全部是 `switchToChain(lpc::scheduler().chainKey())`
+   入口切换（`executeFunctionFromOutside` / `executeFunctionOnStack` / `resumeProcess` /
+   `resumeCaller` / `resumeRunLoop` / `enterChain`）。也就是说"谁在跑"完全由这个
+   thread-local 决定，而 A3 里它**从不恢复**（`runProcess` 只置位）。
+4. 因此下一步只剩两个明确的实验，二选一做完再谈删 `switchToChain`：
+   * **清空式**：一次运行结束后把 chainKey 置 `-1`（而不是恢复成上一个进程的 key），
+     让嵌套/跨对象入口落到 `defaultEs_`；
+   * **绑定式**：让 `Process` 直接持有 `shared_ptr<ExecState>`，调度器进入时把
+     `vm->es_` 设为该进程的链状态，`switchToChain(key)` 只在"key 正是当前进程的链"时才
+     生效，否则不动（这样 A4 的访问器才有确定落点）。
+   两者都必须用上面同一套 3 连跑对照来做判定（0×9112 才算通过）。
