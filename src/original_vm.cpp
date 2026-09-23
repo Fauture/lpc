@@ -6289,7 +6289,11 @@ private:
                 std::cerr << "[menuclo] ENTER " << tfc->name << " on " << objName_
                           << " argc=" << tfc->argCount << " bytes=" << tfc->code.size() << "\n";
         }
-        if (std::getenv("LPCVM_TEMPKEY")) {
+        // Runtime-armable (env or _probe_on\LPCVM_TEMPKEY): the marker file
+        // lets this be turned on for a live server, which matters because a
+        // restart costs ~20 minutes.
+        static const std::atomic<bool>& tkFlagIn = dynProbeFlag("LPCVM_TEMPKEY");
+        if (tkFlagIn.load(std::memory_order_relaxed)) {
             const OriginalFunction* tf = functionByIndex(index);
             if (tf && (tf->name == "lite_set_temp" || tf->name == "lite_query_temp" ||
                        tf->name == "set_temp" || tf->name == "query_temp") &&
@@ -11213,7 +11217,8 @@ private:
                     if (bf && bf->name == "check_name_length_legal" && r7.index() == 2)
                         r7 = make_int(0);
                 }
-                static const bool tkOn7 = (std::getenv("LPCVM_TEMPKEY") != nullptr);
+                static const std::atomic<bool>& tkFlagOut = dynProbeFlag("LPCVM_TEMPKEY");
+                const bool tkOn7 = tkFlagOut.load(std::memory_order_relaxed);
                 if (tkOn7 && started) {
                     const OriginalFunction* tf2 = functionByIndex(funIndex);
                     if (tf2 && (tf2->name == "lite_set_temp" || tf2->name == "lite_query_temp" ||
