@@ -200,3 +200,31 @@ A4“确定性回归”的结论不成立——A4b 与 A6 在正确计数下几�
 | `_rapid2.py <acct> <name> <n>` | 真机登录 + 建角 + n 连击 ENTER |
 | `_acc6.py <logdir> [names]` | 按轮统计弹窗（唯一可信的弹窗计数） |
 | `_flowgate4.py <logdir> <name>` | 该轮是否为建角流程 |
+
+## 11. Step C 测量：VM 到底会不会被非调度线程进入？
+
+`execMutex_` / `execDepth_` / `runDetached` 存在的唯一理由是"一个 VM 可能被多个线程进入"
+（代码注释自己这么写）。要删它们，先要证明**没有**非调度线程进入。
+
+做法：在 5 个 guard 点（`fromOutside` / `onStack` / `resume` / `resumeRunLoop` /
+`resumeCaller`）加 `noteVmEntry()` 探针，打印 `schedulerThread=0/1`（`LPCVM_ENTRYDBG`
+可运行时开关），前 40 次进入采样。
+
+实测（起服 + 账号 1/2/3 各一次 20 连击建号）：
+
+| 阶段 | schedulerThread=1 | schedulerThread=0 |
+|---|---|---|
+| 启动到 listening | 40 | **0** |
+| 真机建号连击 | （采样已满，无新增非调度进入） | **0** |
+
+同批次的验收数据（3 个不同账号）：每轮 `creates=11~12`、`9101 = 7/6/0`、
+`9113 = 3/3/0`、**`9112 = 0`**，三轮全部 `ingame`。
+
+结论：
+1. 现在所有 LPC 入口都在调度器线程上（`create_thread` 三个 spawn 点、timer、构造、
+   网络包 `execOnMain`），锁在热路径上只是空操作开销。
+2. 剩下 3 处 OS 线程是：`create_thread` 的 telnet 回退分支（`isTelnetThread`）、
+   两处 pending-threads 的 `workers` 线程池；它们要么走 `spawn`，要么在真实服务里不触发。
+3. 下一批改动（Step C 的正式落地）：删掉 `execMutex_`/`execDepth_`/`ExecGuard` 与
+   `runDetached` 的解锁/重锁逻辑，只保留 `es_->detachedStack` 的语义；然后处理那 3 处线程。
+   每批仍按"编译 → 起服 → 3 个不同账号（9112=0）"验收。

@@ -2006,6 +2006,26 @@ private:
         std::make_shared<std::vector<std::shared_ptr<OriginalFunction>>>();
 };
 
+
+// ---- Step C diagnostic: who enters the VM? -------------------------------
+// `execMutex_`/`execDepth_`/`runDetached` only exist because a VM can be entered
+// from several threads.  Every entry should go through the scheduler now, so
+// this records any entry that does NOT - the evidence needed to delete the lock
+// machinery (see docs/scheduler_refactor_plan.md, Step C).
+inline void noteVmEntry(const char* site, const char* obj) {
+    static const std::atomic<bool>& on = dynProbeFlag("LPCVM_ENTRYDBG");
+    if (!on.load(std::memory_order_relaxed)) return;
+    const bool sched = lpc::scheduler().isSchedulerThread();
+    static std::atomic<int> shown{0};
+    if (sched) {
+        if (shown.fetch_add(1) >= 40) return;
+    }
+    std::cerr << "[entry] site=" << site << " obj=" << obj
+              << " schedulerThread=" << (sched ? 1 : 0)
+              << " tid=" << std::this_thread::get_id() << "\n";
+    std::cerr.flush();
+}
+
 class OriginalVm {
 public:
     explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
@@ -7556,6 +7576,7 @@ private:
             }
         }
         ExecGuard lock(execMutex_, execDepth_, "onStack " + objName_ + "/" + fn.name);
+        noteVmEntry("onStack", objName_.c_str());
         bool probeCd = (fn.name == "create_data") && constructDiagOn();
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         if (probeCd)
@@ -7833,6 +7854,7 @@ private:
     // resumeValue must be a fresh value; the caller owns any stack effects.
     void resumeProcess(Value /*resumeValue ignored*/) {
         ExecGuard lock(execMutex_, execDepth_, "resume " + objName_);
+        noteVmEntry("resume", objName_.c_str());
         // Record (and report) which process owns this VM's chain: entering the
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         // same object from a second process clobbers the parked chain on the
@@ -7891,6 +7913,7 @@ private:
     // that closure's own execution and resumes the SAME frames later.
     void resumeRunLoop() {
         ExecGuard lock(execMutex_, execDepth_, "resumeRunLoop " + objName_);
+        noteVmEntry("resumeRunLoop", objName_.c_str());
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         runLoop();
     }
@@ -7905,6 +7928,7 @@ private:
     // (the op after the case-8 call site).
     void resumeCaller(Value result) {
         ExecGuard lock(execMutex_, execDepth_, "resumeCaller " + objName_);
+        noteVmEntry("resumeCaller", objName_.c_str());
         // Keep get_thread_id() on the OWNER of this caller chain while it runs.
         // A caller VM is resumed from the finishing process's caller-chain drain,
         // which can be a different process than the one that parked here (traced:
