@@ -8189,30 +8189,15 @@ private:
     // tid whose run state currently occupies the VM members (-1 = nobody).
     int64_t activeKey_ = -1;
 
+    // Reset the active chain's execution state IN PLACE.  The state object is
+    // owned by the chain table (or is `defaultEs_`) and must not be replaced,
+    // because `es_` points into it.
     void clearRunMembers() {
-        ExecState fresh;
-        *es_ = std::move(fresh);
+        if (es_ == &defaultEs_) defaultEs_ = ExecState{};
+        else *es_ = ExecState{};
         execOwnerTid_ = -1;
     }
-    // Hand the active state to `key`'s chain.  With the state carried BY the
-    // chain this is an ownership transfer (shared_ptr), not a copy of 19 members
-    // - the old stashRunState()/restoreRunState() pair is gone.
-    void stashRunState(int64_t key) {
-        if (key < 0) return;
-        runStates_[key].es = std::shared_ptr<ExecState>(new ExecState(std::move(*es_)));
-        *es_ = ExecState{};
-    }
-    bool restoreRunState(int64_t key) {
-        auto it = runStates_.find(key);
-        if (it == runStates_.end()) return false;
-        if (it->second.es) *es_ = std::move(*it->second.es);
-        execOwnerTid_ = it->second.ownerTid;
-        // The chain is running again: its stashed copy is not needed any more.
-        runStates_.erase(it);
-        return true;
-    }
-    // Make `key`'s chain the one `es_` points at.  A no-op when it is already
-    // active, so nested calls inside one chain cost two compares.
+    // Diagnostic (LPCVM_TAIL): who moves this object's chain around.
     void chainDbg(const char* what, int64_t key) {
         if (!std::getenv("LPCVM_TAIL")) return;
         if (objName_.find("login.o") == std::string::npos) return;
@@ -8221,39 +8206,54 @@ private:
                   << " cond=" << es_->cond.kind << " stash=" << runStates_.size() << "\n";
         std::cerr.flush();
     }
+    // Make `key`'s chain current.  `key < 0` means "no chain": the default state
+    // is reset and used.  Otherwise the chain's own state object is allocated on
+    // first use and simply pointed at from then on - nothing is copied or moved,
+    // so a park/resume cycle cannot lose or duplicate a frame stack.
     void switchToChain(int64_t key) {
-        if (key < 0 || key == activeKey_) return;
-        chainDbg("switch-in", key);
-        if (activeKey_ >= 0) {
-            stashRunState(activeKey_);      // the running chain keeps its state
-        } else {
-            clearRunMembers();              // no chain owned es_: start clean
-        }
-        const bool got = restoreRunState(key);
-        if (!got) {
+        if (key == activeKey_) return;
+        if (key < 0) {
+            chainDbg("switch-default", key);
             clearRunMembers();
+            activeKey_ = -1;
+            es_ = &defaultEs_;
+            return;
+        }
+        chainDbg("switch-in", key);
+        auto it = runStates_.find(key);
+        if (it == runStates_.end()) {
+            runStates_[key].es = std::shared_ptr<ExecState>(new ExecState());
+            runStates_[key].ownerTid = (lpc::scheduler().chainTid() >= 0)
+                                           ? lpc::scheduler().chainTid()
+                                           : lpc::scheduler().currentProcessTid();
+            it = runStates_.find(key);
             activeKey_ = key;
-            runStates_[key].ownerTid =
-                (lpc::scheduler().chainTid() >= 0) ? lpc::scheduler().chainTid()
-                                                   : lpc::scheduler().currentProcessTid();
+            es_ = it->second.es.get();
+            execOwnerTid_ = it->second.ownerTid;
             chainDbg("switch-fresh", key);
             return;
         }
         activeKey_ = key;
-        chainDbg("switch-restored", key);
+        es_ = it->second.es.get();
+        execOwnerTid_ = it->second.ownerTid;
+        chainDbg("switch-resume", key);
     }
-    int64_t activeChainKey() const { return activeKey_; }
+
     // The chain key's process finished: its state must not linger (a later chain
     // with the same recycled tid would otherwise restore it).
+    // The chain's process finished: its state must not linger (a later chain
+    // with the same recycled key would otherwise resume into it).
     void finishChain(int64_t key) {
         if (key < 0) return;
         chainDbg("finish", key);
-        runStates_.erase(key);
         if (activeKey_ == key) {
-            clearRunMembers();
+            if (es_ != &defaultEs_) *es_ = ExecState{};
+            es_ = &defaultEs_;
             activeKey_ = -1;
-            chainDbg("finish-cleared", key);
+            execOwnerTid_ = -1;
         }
+        runStates_.erase(key);
+        chainDbg("finish-cleared", key);
     }
 
     // ---- instance variables by NAME (the original's vm_getObjVar) -----------
@@ -8281,6 +8281,7 @@ public:
     // Chain ownership accessors (public: runProcess/schedulerCurrentTid use them
     // to keep get_thread_id() on the tid of the process that owns the executing
     // frame chain - see the comment on schedulerCurrentTid()).
+    int64_t activeChainKey() const { return activeKey_; }
     int64_t chainOwnerTid() const { return execOwnerTid_; }
     void setChainOwnerTid(int64_t t) { execOwnerTid_ = t; }
     // Process-switch access to the per-process run state (see runProcess): the
@@ -8288,8 +8289,17 @@ public:
     // process stashes that chain aside and swaps in its own - a pointer-level
     // switch performed once per process switch, never inside the interpreter
     // loop (doing it per runLoop entry lost chains during object construction).
-    void stashChain(int64_t tid) { stashRunState(tid); }
-    bool restoreChain(int64_t tid) { return restoreRunState(tid); }
+    // With the chain table owning each chain's state (see switchToChain), a
+    // "stash" is only a bookkeeping step: the state object never moves, so the
+    // scheduler no longer has to hand 19 members over and back.
+    void stashChain(int64_t tid) {
+        if (tid >= 0) { activeKey_ = tid; runStates_[tid].ownerTid = execOwnerTid_; }
+    }
+    bool restoreChain(int64_t tid) {
+        if (tid < 0) return false;
+        switchToChain(tid);
+        return true;
+    }
     // Public entry for the scheduler's direct runLoop() paths (resumeRunLoop):
     // install the executing chain's own run state before continuing its stream.
     void enterChain(int64_t key) { switchToChain(key); }
