@@ -1848,7 +1848,7 @@ public:
             if (it->second.empty()) it = mutexWaiters_.erase(it);
             else ++it;
         }
-        parked_.erase(std::remove(parked_.begin(), parked_.end(), p), parked_.end());
+        parkedList_.erase(std::remove(parkedList_.begin(), parkedList_.end(), p), parkedList_.end());
     }
 
     std::mutex mtx_;
@@ -1874,7 +1874,7 @@ public:
     std::unordered_map<std::string, uintptr_t> wdogWho_;
     // fd -> processes parked in connect()/recv() (kind 5).  Polled by run().
     std::unordered_map<int, std::deque<std::shared_ptr<Process>>> sockWaiters_;
-    std::vector<std::shared_ptr<Process>> parked_;   // no automatic wakeup
+    std::vector<std::shared_ptr<Process>> parkedList_;   // no automatic wakeup
     // The process currently executing (set by runProcess / execOnMain).  Used
     // by get_thread_id() to return a per-PROCESS id on the single scheduler
     // thread (a thread_local would be identical for every process).
@@ -2085,8 +2085,8 @@ public:
         return std::make_shared<OriginalObject>(obj_);
     }
     const std::string& objName() const { return objName_; }
-    const std::vector<OriginalInsn>* code() const { return code_; }
-    size_t ip() const { return ip_; }
+    const std::vector<OriginalInsn>* code() const { return es_->code; }
+    size_t ip() const { return es_->ip; }
     // Public lookups for cross-object inline calls (case 8).
     const OriginalFunction* findFunctionAny(const std::string& name) const {
         for (const auto& fn : obj_.functions)
@@ -2129,14 +2129,14 @@ public:
     }
     // Whether this VM currently has an active LPC frame chain (used by the
     // scheduler to decide if a resumed process still has work on another VM).
-    bool hasActiveFrames() const { return !frames_.empty(); }
+    bool hasActiveFrames() const { return !es_->frames.empty(); }
     // Diagnostic (scheduler idle-wait dump): the VM's LPC frame chain,
     // innermost first, so a parked process is attributable to a function
     // instead of just an event name.
     std::string frameChainDump(size_t maxFrames = 6) const {
         std::string out = objName_;
         size_t n = 0;
-        for (auto it = frames_.rbegin(); it != frames_.rend() && n < maxFrames; ++it, ++n) {
+        for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && n < maxFrames; ++it, ++n) {
             out += " ";
             out += (it->fn ? it->fn->name : std::string("<ctx>"));
         }
@@ -2198,7 +2198,7 @@ public:
     // baseVarOffset of the currently executing function's constitution.
     // Global init code runs with no frame -> offset 0 (its own program).
     int currentVarOffset() const {
-        return frames_.empty() ? 0 : frames_.back().varOffset;
+        return es_->frames.empty() ? 0 : es_->frames.back().varOffset;
     }
     std::string functionNameByIndex(int index) const {
         auto it = funcsByIndex_.find(index);
@@ -2248,8 +2248,8 @@ public:
                   << static_cast<const void*>(oldBlk.get())
                   << " to=" << objVars_->size() << "@"
                   << static_cast<const void*>(objVars_.get())
-                  << " key=" << thisObjectName_ << " frames=" << frames_.size()
-                  << " parked=" << (parked_ ? 1 : 0) << " vm=" << this << "\n";
+                  << " key=" << thisObjectName_ << " frames=" << es_->frames.size()
+                  << " parked=" << (es_->parked ? 1 : 0) << " vm=" << this << "\n";
         std::cerr.flush();
     }
     // Point this VM's instance-variable storage at another VM's (original
@@ -2286,13 +2286,13 @@ public:
     // LPC-visible identity of the frame that is running right now: the callee's
     // object for a cross-object inline frame, otherwise this VM's own.
     const std::string& currentThisName() const {
-        if (!frames_.empty() && !frames_.back().thisNameOverride.empty())
-            return frames_.back().thisNameOverride;
+        if (!es_->frames.empty() && !es_->frames.back().thisNameOverride.empty())
+            return es_->frames.back().thisNameOverride;
         return thisObjectName_;
     }
     const OriginalObject* currentThisObj() const {
-        if (!frames_.empty() && frames_.back().thisObjOverride)
-            return frames_.back().thisObjOverride;
+        if (!es_->frames.empty() && es_->frames.back().thisObjOverride)
+            return es_->frames.back().thisObjOverride;
         return &obj_;
     }
     // True while this object's LPC destructor (destruct) runs inside
@@ -2376,8 +2376,8 @@ public:
         std::string out = "vm=";
         out += objName_;
         std::string chain;
-        for (size_t fi = 0; fi < frames_.size(); ++fi) {
-            const Frame& fr = frames_[fi];
+        for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+            const Frame& fr = es_->frames[fi];
             std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
             if (!chain.empty()) chain += "<-";
             chain += fnm;
@@ -2391,10 +2391,10 @@ public:
         out += "] wait=";
         out += (cond.qkey.empty() ? cond.ename : cond.qkey);
         out += " efun=";
-        if (lastEfunIndex_ >= 0) {
+        if (es_->lastEfunIndex >= 0) {
             const auto& t = efunNameTable();
-            if (lastEfunIndex_ < static_cast<int>(t.size()))
-                out += t[static_cast<size_t>(lastEfunIndex_)];
+            if (es_->lastEfunIndex < static_cast<int>(t.size()))
+                out += t[static_cast<size_t>(es_->lastEfunIndex)];
             else
                 out += "?";
         } else {
@@ -2437,7 +2437,7 @@ public:
             }
             std::cerr << "[hprobe] cfn-enter create_data vm=" << this
                       << " obj=" << objName_ << " this=" << thisObjectName_
-                      << " parked=" << parked_ << " frames=" << frames_.size()
+                      << " parked=" << es_->parked << " frames=" << es_->frames.size()
                       << " args=" << args.size() << " a0=[" << a0 << "]\n";
             std::cerr.flush();
         }
@@ -2471,7 +2471,7 @@ public:
             for (size_t ai = 0; ai < args.size() && ai < 4; ++ai)
                 a0s += (ai ? " | " : "") + to_string(args[ai], false).substr(0, 60);
             std::string chain;
-            for (const auto& fr : frames_) {
+            for (const auto& fr : es_->frames) {
                 if (!chain.empty()) chain += "<-";
                 chain += fr.fn ? fr.fn->name : "<ctx>";
                 if (chain.size() > 200) break;
@@ -2500,7 +2500,7 @@ public:
              name == "main" || name == "lite_set" || name == "update_runtime_info")) {
             static bool inLf = false;
             std::string ch;
-            for (const auto& fr : frames_) {
+            for (const auto& fr : es_->frames) {
                 if (!ch.empty()) ch += "<-";
                 ch += fr.fn ? fr.fn->name : "<ctx>";
                 if (ch.size() > 240) break;
@@ -2517,7 +2517,7 @@ public:
             }
             std::cerr << "[login-flow] vm=" << this << " ob=" << thisObjectName_
                       << " fn=" << name << " a0=[" << a0s2 << "] op=" << opv
-                      << " frames=" << frames_.size() << " chain=[" << ch << "]\n";
+                      << " frames=" << es_->frames.size() << " chain=[" << ch << "]\n";
             std::cerr.flush();
         }
         // [gsp] probe: restore_raw / get_save_path entry - confirm whether the
@@ -2525,7 +2525,7 @@ public:
         // (index 11) or get flattened, and who the caller (prev) is.
         if (envFlagTail() && (name == "get_save_path" || name == "restore_raw")) {
             std::string ch;
-            for (const auto& fr : frames_) {
+            for (const auto& fr : es_->frames) {
                 if (!ch.empty()) ch += "<-";
                 ch += fr.fn ? fr.fn->name : "<ctx>";
                 if (ch.size() > 220) break;
@@ -2554,7 +2554,7 @@ public:
             std::cerr << "[gsp] fn=" << name << " vm=" << this << " obj=" << objName_
                       << " this=" << thisObjectName_ << " prev=" << previousObjectName_
                       << " argc=" << args.size() << " args=[" << adbg
-                      << "] frames=" << frames_.size() << " chain=[" << ch << "]\n";
+                      << "] frames=" << es_->frames.size() << " chain=[" << ch << "]\n";
             std::cerr.flush();
         }
         // [rst] restore-path entry probe (user enter chain: userd/user/achieved)
@@ -2582,7 +2582,7 @@ public:
                 static int rstN = 0;
                 if (rstN++ < 1200) {
                     std::string ch;
-                    for (const auto& fr : frames_) {
+                    for (const auto& fr : es_->frames) {
                         if (!ch.empty()) ch += "<-";
                         ch += fr.fn ? fr.fn->name : "<ctx>";
                         if (ch.size() > 200) break;
@@ -2594,7 +2594,7 @@ public:
                     }
                     std::cerr << "[rst] ENTER fn=" << name << " obj=" << objName_
                               << " this=" << thisObjectName_ << " vm=" << this
-                              << " frames=" << frames_.size() << " a=[" << adbg
+                              << " frames=" << es_->frames.size() << " a=[" << adbg
                               << "] chain=[" << ch << "]\n";
                     std::cerr.flush();
                 }
@@ -2656,14 +2656,14 @@ public:
                         hexb += bf;
                     }
                     std::string chain;
-                    for (const auto& fr : frames_) {
+                    for (const auto& fr : es_->frames) {
                         if (!chain.empty()) chain += "<-";
                         chain += fr.fn ? fr.fn->name : "<ctx>";
                         if (chain.size() > 200) break;
                     }
                     std::cerr << "[regc] fn=" << name << " this=" << thisObjectName_
                               << " obj=" << objName_ << " a0hex=" << hexb
-                              << " parked=" << parked_ << " frames=" << frames_.size()
+                              << " parked=" << es_->parked << " frames=" << es_->frames.size()
                               << " chain=[" << chain << "]\n";
                     std::cerr.flush();
                 }
@@ -2708,10 +2708,10 @@ public:
             if (objVars_ != ownObjVars_) {
                 savedVars = objVars_;
                 { auto _ob = objVars_; objVars_ = ownObjVars_; noteVars("own", _ob); }
-                savedObjVarsForNextCall_ = savedVars;
+                es_->savedObjVarsForNextCall = savedVars;
             }
             Value r = executeFunctionFromOutside(*fn, args);
-            if (savedVars && !parked_)
+            if (savedVars && !es_->parked)
                 { auto _ob = objVars_; objVars_ = savedVars; noteVars("saved", _ob); }
             if (name == "create_data" && constructDiagOn()) {
                 std::cerr << "[hprobe] cfn-exit create_data vm=" << this
@@ -2735,7 +2735,7 @@ public:
                 (name == "register_entry" || name == "query_entry")) {
                 std::string a0s = args.empty() ? "-" : to_string(args[0], false).substr(0, 48);
                 std::string chainX;
-                for (const auto& frX : frames_) {
+                for (const auto& frX : es_->frames) {
                     if (!chainX.empty()) chainX += "<-";
                     chainX += frX.fn ? frX.fn->name : "<ctx>";
                     if (chainX.size() > 120) break;
@@ -2827,7 +2827,7 @@ public:
                 auto it2 = reg2.initialized.find(key);
                 ok = (it2 != reg2.initialized.end() && it2->second);
             }
-            resumeValue_ = ok ? make_object(key) : make_int(0);
+            es_->resumeValue = ok ? make_object(key) : make_int(0);
         };
         parkAndSuspend(cond, std::move(hook), make_int(0));
         return make_int(0);   // unreachable (SuspendSignal thrown)
@@ -2879,7 +2879,7 @@ public:
                     auto it2 = reg2.initialized.find(key);
                     ok = (it2 != reg2.initialized.end() && it2->second);
                 }
-                resumeValue_ = ok ? make_object(vpath) : make_int(0);
+                es_->resumeValue = ok ? make_object(vpath) : make_int(0);
             };
             parkAndSuspend(cond, std::move(hook), make_int(0));
             return make_int(0);   // unreachable (SuspendSignal thrown)
@@ -2913,7 +2913,7 @@ public:
                 auto it2 = reg2.initialized.find(key);
                 ok = (it2 != reg2.initialized.end() && it2->second);
             }
-            resumeValue_ = ok ? make_object(vpath) : make_int(0);
+            es_->resumeValue = ok ? make_object(vpath) : make_int(0);
         };
         parkAndSuspend(cond, std::move(hook), make_int(0));
         return make_int(0);   // unreachable (SuspendSignal thrown)
@@ -3003,7 +3003,7 @@ public:
                 auto it2 = reg2.initialized.find(cloneKey);
                 ok = (it2 != reg2.initialized.end() && it2->second);
             }
-            resumeValue_ = ok ? make_object(cloneKey) : make_int(0);
+            es_->resumeValue = ok ? make_object(cloneKey) : make_int(0);
         };
         parkAndSuspend(cond, std::move(hook), make_int(0));
         return make_int(0);   // unreachable (SuspendSignal thrown)
@@ -3039,10 +3039,10 @@ public:
         if (objVars_ != ownObjVars_) {
             savedVars = objVars_;
             { auto _ob = objVars_; objVars_ = ownObjVars_; noteVars("own", _ob); }
-            savedObjVarsForNextCall_ = savedVars;
+            es_->savedObjVarsForNextCall = savedVars;
         }
         Value r = executeFunctionFromOutside(*fn, args);
-        if (savedVars && !parked_) { auto _ob = objVars_; objVars_ = savedVars; noteVars("saved", _ob); }
+        if (savedVars && !es_->parked) { auto _ob = objVars_; objVars_ = savedVars; noteVars("saved", _ob); }
         return r;
     }
 
@@ -3062,40 +3062,40 @@ public:
             if (it != funcsByIndex_.end()) f = it->second;
             if (f && f->name == "convert_to_int") {
                 std::string chain;
-                for (const auto& fr : frames_) {
+                for (const auto& fr : es_->frames) {
                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                     if (!chain.empty()) chain += "<-";
                     chain += fnm;
                 }
                 std::string adbg;
                 for (int i = 0; i < 8; ++i) {
-                    int si = static_cast<int>(stack_.size()) - 1 - i;
+                    int si = static_cast<int>(es_->stack.size()) - 1 - i;
                     if (si < 0) break;
                     if (!adbg.empty()) adbg += " | ";
-                    adbg += std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" +
-                            to_string(stack_[static_cast<size_t>(si)].value, false).substr(0, 90);
+                    adbg += std::to_string(es_->stack[static_cast<size_t>(si)].value.index()) + ":" +
+                            to_string(es_->stack[static_cast<size_t>(si)].value, false).substr(0, 90);
                 }
                 std::cerr << "[c2i-call:byIndex] obj=" << objName_ << " thisObj=" << thisObjectName_
                           << " prevObj=" << previousObjectName_ << " index=" << index
-                          << " frames=" << frames_.size() << " chain=[" << chain
-                          << "] sz=" << stack_.size() << " [" << adbg << "]\n";
+                          << " frames=" << es_->frames.size() << " chain=[" << chain
+                          << "] sz=" << es_->stack.size() << " [" << adbg << "]\n";
                 std::cerr.flush();
             }
             if (envFlagTail() && f && f->name == "set_operating" &&
                 thisObjectName_.find("login") != std::string::npos) {
                 // who sets operating (1 = process_command start, 0 = unwind)?
                 std::string chain;
-                for (const auto& fr : frames_) {
+                for (const auto& fr : es_->frames) {
                     if (!chain.empty()) chain += "<-";
                     chain += fr.fn ? fr.fn->name : "<ctx>";
                     if (chain.size() > 220) break;
                 }
                 std::string a0v = "?";
-                int top = static_cast<int>(stack_.size()) - 1;
+                int top = static_cast<int>(es_->stack.size()) - 1;
                 if (top >= 0)
-                    a0v = to_string(stack_[static_cast<size_t>(top)].value, false).substr(0, 24);
+                    a0v = to_string(es_->stack[static_cast<size_t>(top)].value, false).substr(0, 24);
                 std::cerr << "[setop] vm=" << this << " ob=" << thisObjectName_
-                          << " new=" << a0v << " frames=" << frames_.size()
+                          << " new=" << a0v << " frames=" << es_->frames.size()
                           << " chain=[" << chain << "]\n";
                 std::cerr.flush();
             }
@@ -3142,8 +3142,8 @@ public:
             // (the statue-guardian seeding that used to run here was an over-fix and
             //  has been removed - see the TODO above runInit)
         } catch (const std::exception& e) {
-            throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
-                                     " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
+            throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(es_->lastIp) +
+                                     " op=" + std::to_string(es_->lastOp) + " (" + actionInfo(es_->lastOp).name + ")");
         }
         return 0;
     }
@@ -3155,8 +3155,8 @@ public:
             callCreate();
             runMainLoop(10, std::chrono::milliseconds(50));
         } catch (const std::exception& e) {
-            throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(lastIp_) +
-                                     " op=" + std::to_string(lastOp_) + " (" + actionInfo(lastOp_).name + ")");
+            throw std::runtime_error(std::string(e.what()) + " at ip=" + std::to_string(es_->lastIp) +
+                                     " op=" + std::to_string(es_->lastOp) + " (" + actionInfo(es_->lastOp).name + ")");
         }
         return 0;
     }
@@ -3172,8 +3172,8 @@ public:
     void runAsMaster() {
         if (vmEnvTrace())
             std::cerr << "[master-enter] phase=" << masterPhase_
-                      << " code=" << (code_ ? code_->size() : -1)
-                      << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                      << " code=" << (es_->code ? es_->code->size() : -1)
+                      << " ip=" << es_->ip << " frames=" << es_->frames.size() << "\n";
         // Phase 0 (globalCode / load_all) may yield via relinquish; the
         // scheduler requeues this VM and runAsMaster() is called again with
         // code_/ip_ preserved - runLoop() continues where it left off.
@@ -3181,12 +3181,12 @@ public:
         // cannot resume mid-way, so masterNoYield_ makes relinquish return
         // immediately and they run to completion synchronously.
         if (masterPhase_ <= 0) {
-            if (!code_) {
+            if (!es_->code) {
                 execute(obj_.globalCode, obj_.globalMeta);
             } else {
                 runLoop();   // resumed after a yield
             }
-            code_ = nullptr;
+            es_->code = nullptr;
             if (masterPhase_ == 0) {
                 masterPhase_ = 1;
                 if (vmEnvTrace())
@@ -3197,7 +3197,7 @@ public:
             masterNoYield_ = true;
             runInheritedInits(0, 0);
             masterNoYield_ = false;
-            code_ = nullptr;
+            es_->code = nullptr;
             masterPhase_ = 2;
             if (vmEnvTrace())
                 std::cerr << "[master-phase] 1->2 create\n";
@@ -3209,7 +3209,7 @@ public:
                 callCreate();        // ONE-SHOT (stable baseline)
             }
             masterNoYield_ = false;
-            code_ = nullptr;
+            es_->code = nullptr;
             masterPhase_ = 3;
             if (vmEnvTrace())
                 std::cerr << "[master-phase] 2->3 post_init\n";
@@ -3237,19 +3237,19 @@ public:
                       << " event=" << doneEvent << " entry\n";
         try {
             if (initPhase_ <= 0) {
-                if (!code_) {
+                if (!es_->code) {
                     execute(obj_.globalCode, obj_.globalMeta);
                 } else {
                     runLoop();   // resumed after a yield in the global code
                 }
-                code_ = nullptr;
+                es_->code = nullptr;
                 initPhase_ = 1;
             }
             if (initPhase_ == 1) {
                 masterNoYield_ = true;
                 runInheritedInits(0, 0);
                 masterNoYield_ = false;
-                code_ = nullptr;
+                es_->code = nullptr;
                 initPhase_ = 2;
             }
             if (initPhase_ == 2) {
@@ -3265,7 +3265,7 @@ public:
                 callCreate(initCreateArgs_);   // parks unwind; resume continues here
                 masterNoYield_ = false;
                 // Only reached when ALL creates completed (no park).
-                code_ = nullptr;
+                es_->code = nullptr;
                 initPhase_ = 3;
             }
             if (initPhase_ == 3) {
@@ -3286,23 +3286,23 @@ public:
             initParkedInCreate_ = (initPhase_ == 2);
             if (constructDiagOn()) {
                 std::string cf = "<global>";
-                if (!frames_.empty() && frames_.back().fn) cf = frames_.back().fn->name;
+                if (!es_->frames.empty() && es_->frames.back().fn) cf = es_->frames.back().fn->name;
                 std::string chain;
-                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                    const Frame& fr = frames_[fi];
+                for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                    const Frame& fr = es_->frames[fi];
                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                     if (!chain.empty()) chain += "<-";
                     chain += fnm;
                     if (chain.size() > 260) break;
                 }
                 std::string efName = "?";
-                if (lastEfunIndex_ >= 0) {
+                if (es_->lastEfunIndex >= 0) {
                     const auto& tbl = efunNameTable();
-                    if (lastEfunIndex_ < static_cast<int>(tbl.size()) && !tbl[lastEfunIndex_].empty())
-                        efName = tbl[static_cast<size_t>(lastEfunIndex_)];
+                    if (es_->lastEfunIndex < static_cast<int>(tbl.size()) && !tbl[es_->lastEfunIndex].empty())
+                        efName = tbl[static_cast<size_t>(es_->lastEfunIndex)];
                 }
                 std::cerr << "[construct] " << objName_ << " parked phase=" << initPhase_
-                          << " fn=" << cf << " efun=" << efName << "(" << lastEfunIndex_ << ")"
+                          << " fn=" << cf << " efun=" << efName << "(" << es_->lastEfunIndex << ")"
                           << " wait kind=" << sig.cond.kind
                           << " key=" << (sig.cond.qkey.empty() ? sig.cond.ename : sig.cond.qkey)
                           << " chain=[" << chain << "]\n";
@@ -3314,7 +3314,7 @@ public:
             // and returns 0 for a failed object.
             std::cerr << "[construct-err] " << objName_ << " event=" << initDoneEvent_
                       << " phase=" << initPhase_ << " what=" << e.what() << "\n";
-            code_ = nullptr;
+            es_->code = nullptr;
             initPhase_ = 9;
             scheduler().wakeEventFront(initDoneEvent_);
             throw;
@@ -3370,7 +3370,7 @@ public:
             // Execute the parent's own global init code under its constitution.
             Frame frame{nullptr, 0, 0, 0, &parentObj->strings};
             frame.varOffset = varOff;
-            frames_.push_back(frame);
+            es_->frames.push_back(frame);
             if (std::getenv("LPCVM_LOCK_TRACE"))
                 std::cerr << "[inhinit] executing " << parentObj->sourceName
                           << " varOff=" << varOff << " globalCode=" << parentObj->globalCode.size()
@@ -3378,17 +3378,17 @@ public:
             try {
                 if (std::getenv("LPCVM_LOCK_TRACE"))
                     std::cerr << "[inhinit] BEFORE exec " << parentObj->sourceName
-                              << " frames=" << frames_.size() << " t=" << std::this_thread::get_id() << "\n";
+                              << " frames=" << es_->frames.size() << " t=" << std::this_thread::get_id() << "\n";
                 execute(parentObj->globalCode, parentObj->globalMeta);
                 if (std::getenv("LPCVM_LOCK_TRACE"))
                     std::cerr << "[inhinit] AFTER exec " << parentObj->sourceName
-                              << " frames=" << frames_.size() << " ip=" << ip_
+                              << " frames=" << es_->frames.size() << " ip=" << es_->ip
                               << " t=" << std::this_thread::get_id() << "\n";
             } catch (...) {
-                frames_.pop_back();
+                es_->frames.pop_back();
                 throw;
             }
-            frames_.pop_back();
+            es_->frames.pop_back();
         }
     }
 
@@ -3589,7 +3589,47 @@ private:
     // instance) instead of a global key->key map so clones keep their own
     // environment and env queries never depend on process/scheduler state.
     std::string envContainerKey_;
-    std::vector<StackItem> stack_;
+    // ---- per-chain execution state -------------------------------------
+    // The interpreter's whole mutable state for ONE execution chain, reached
+    // through `es_` (the active chain's state) instead of living directly on the
+    // VM.  One VM object hosts several chains (a create command, its continuation
+    // on another object, daemons sharing a registry VM); keeping this data in
+    // shared members forced the old stashRunState()/restoreRunState() copy dance
+    // on every switch, and a missed switch point lost frames (the historical
+    // "no character list / no account link" failures).  See
+    // docs/scheduler_refactor_plan.md.
+    struct CatchRecord {
+        size_t ipTarget = 0;     // resume ip when an error is caught
+        size_t stackSize = 0;    // stack to unwind to
+        size_t frameCount = 0;   // frames to keep
+    };
+    struct ExecState {
+        std::vector<StackItem> stack;
+        std::vector<StackItem> detachedStack;
+        std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall;
+        std::vector<Frame> frames;
+        const std::map<int, const OriginalFunction*>* funcLookup = nullptr;
+        int lastOp = -1;
+        int lastEfunIndex = -1;
+        size_t lastIp = 0;
+        Value returnValue;
+        bool returned = false;
+        int catchDepth = 0;
+        std::vector<CatchRecord> catches;
+        const std::vector<OriginalInsn>* code = nullptr;
+        const std::vector<uint8_t>* meta = nullptr;
+        size_t ip = 0;
+        ResumeCond cond;
+        bool parked = false;
+        Value resumeValue;
+        std::function<void()> onResume;
+        ExecState() : returnValue(make_int(0)), resumeValue(make_int(0)) {}
+    };
+    // Every LPC entry goes through switchToChain(), but a few paths (the master,
+    // runInit) execute before any chain key exists; the default state is owned
+    // here so `es_` never dangles.
+    ExecState defaultEs_;
+    ExecState* es_ = &defaultEs_;
     // While runDetached() is executing a detached callee, the CALLER's stack
     // lives here (moved out of stack_ so the callee gets a clean stack).
     // CrossVmRef by-ref arguments that point into the caller's slots must
@@ -3597,7 +3637,6 @@ private:
     // callee running on ANOTHER VM (e.g. userd.restore_raw -> raw_user's
     // get_save_path(&path,&id,&branch)) writes into an empty stack and the
     // by-ref writes are lost (character restore read an empty path/name).
-    std::vector<StackItem> detachedStack_;
     std::shared_ptr<std::vector<Value>> objVars_;  // per-object instance variables (shared across threads of the same object)
     // This VM's OWN object-variable table (never switched by cross-object
     // inline frames).  A top-level function call (external entry) must run in
@@ -3608,8 +3647,6 @@ private:
     // frame switched objVars_ and a cross-object call runs on THIS VM, the
     // next executeFunctionOnStack frame records the switched table here so
     // its pop restores it (survives park/resume via the frame's savedObjVars).
-    std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall_;
-    std::vector<Frame> frames_;
     CowFtab funcsByIndex_;
     CowOwned ownedFns_;
     // Function pointers reachable in THIS object's constitution (own +
@@ -3626,10 +3663,6 @@ private:
     // master's stack) is active this points at the TARGET object's
     // funcsByIndex_ so the callee's internal local-index calls resolve in its
     // own program; nullptr means this VM's own funcsByIndex_.
-    const std::map<int, const OriginalFunction*>* funcLookup_ = nullptr;
-    int lastOp_ = -1;
-    int lastEfunIndex_ = -1;   // efun index of the last call_in_efun op (diag)
-    size_t lastIp_ = 0;
     int stepCounter_ = 0;
     // Time-slice state (master process): after this many instructions the
     // runLoop yields (TimeSliceSignal) so daemon processes created during
@@ -3670,15 +3703,6 @@ private:
     bool initCreateListBuilt_ = false;
     size_t initCreateNext_ = 0;
     std::vector<InitCreateItem> initCreates_;
-    Value returnValue_ = make_int(0);
-    bool returned_ = false;
-    int catchDepth_ = 0;
-    struct CatchRecord {
-        size_t ipTarget = 0;     // resume ip when an error is caught
-        size_t stackSize = 0;    // stack to unwind to
-        size_t frameCount = 0;   // frames to keep
-    };
-    std::vector<CatchRecord> catches_;
     // Explicit-stack-machine execution context.  These are the current
     // instruction stream (code), its metadata and the next instruction index.
     // They live as members so a blocking efun can SAVE the whole execution
@@ -3687,19 +3711,14 @@ private:
     // exactly like the original PCB's sp/funCp/ip restore.  Function calls
     // no longer recurse into a second execute(): they push a Frame carrying
     // the caller's (retCode/retMeta/retIp) and switch these members.
-    const std::vector<OriginalInsn>* code_ = nullptr;
-    const std::vector<uint8_t>* meta_ = nullptr;
-    size_t ip_ = 0;
     // Cooperative-scheduler park state (stage B).  When a blocking efun throws
     // SuspendSignal, cond_.kind != 0 records what to wait for and the VM is
     // parked; resumeProcess(v) pushes v and re-enters runLoop at ip_.  All
     // execution state stays in the members above - nothing is moved or copied.
-    ResumeCond cond_;
     // While parked, the top-level entry that owns this VM (callFunctionByName
     // from a create_thread/network thread) must NOT run cleanup; it re-throws
     // SuspendSignal and the thread exits, leaving the VM object owned by the
     // scheduler.  This flag is cleared by resumeProcess.
-    bool parked_ = false;
     // Set by an efun that started a callee INLINE (frame pushed, stream
     // switched) - the callee's return op pushes the result, so the case-6
     // default path must NOT push the efun's return value.
@@ -3723,7 +3742,6 @@ private:
     //            the installed hook.
     std::function<bool(Value&)> efunReturnHook_;
     // Value pushed when this parked VM resumes (parkAndSuspend stores it).
-    Value resumeValue_ = make_int(0);
 
     const OriginalFunction* findFunction(const std::string& name) {
         for (const auto& fn : obj_.functions)
@@ -3848,23 +3866,23 @@ private:
     }
 
     // ---- stack primitives (top = back of vector) ----
-    void push(const StackItem& it) { stack_.push_back(it); }
+    void push(const StackItem& it) { es_->stack.push_back(it); }
     void pushValue(const Value& v) { push(makeItem(v)); }
     StackItem pop() {
-        if (stack_.empty()) throw VmError("original_vm: stack underflow");
-        StackItem it = std::move(stack_.back());
-        stack_.pop_back();
+        if (es_->stack.empty()) throw VmError("original_vm: stack underflow");
+        StackItem it = std::move(es_->stack.back());
+        es_->stack.pop_back();
         return it;
     }
     StackItem& top() {
-        if (stack_.empty()) throw VmError("original_vm: stack underflow");
-        return stack_.back();
+        if (es_->stack.empty()) throw VmError("original_vm: stack underflow");
+        return es_->stack.back();
     }
 
     // Absolute stack slot for a local/arg operand (a1 may be negative).
     int slotOf(int a1) const {
-        if (frames_.empty()) return a1;
-        const Frame& f = frames_.back();
+        if (es_->frames.empty()) return a1;
+        const Frame& f = es_->frames.back();
         return f.bp - a1;
     }
 
@@ -3881,16 +3899,16 @@ private:
             static int rcN = 0;
             if (rcN++ < 20)
                 std::cerr << "[refcyc] deref chain >32 obj=" << objName_ << " fn="
-                          << ((!frames_.empty() && frames_.back().fn) ? frames_.back().fn->name
+                          << ((!es_->frames.empty() && es_->frames.back().fn) ? es_->frames.back().fn->name
                                                                      : std::string("<none>"))
                           << " slot=" << ref.slotIndex << "\n";
             return make_int(0);
         }
         if (ref.slotIndex >= 0) {
-            if (static_cast<size_t>(ref.slotIndex) >= stack_.size()) return make_int(0);
-            const StackItem& it = stack_[ref.slotIndex];
-            if (constructDiagOn() && !frames_.empty() && frames_.back().fn &&
-                frames_.back().fn->name == "create_data_from2") {
+            if (static_cast<size_t>(ref.slotIndex) >= es_->stack.size()) return make_int(0);
+            const StackItem& it = es_->stack[ref.slotIndex];
+            if (constructDiagOn() && !es_->frames.empty() && es_->frames.back().fn &&
+                es_->frames.back().fn->name == "create_data_from2") {
                 std::string is = "plain";
                 if (it.isRef) is = "ref";
                 else if (it.value.index() == 11) {
@@ -3948,8 +3966,8 @@ private:
         int guard = 0;
         while (cur->isRef && guard++ < 64) {
             if (cur->slotIndex >= 0) {
-                if (static_cast<size_t>(cur->slotIndex) >= stack_.size()) return cur;
-                const StackItem& next = stack_[static_cast<size_t>(cur->slotIndex)];
+                if (static_cast<size_t>(cur->slotIndex) >= es_->stack.size()) return cur;
+                const StackItem& next = es_->stack[static_cast<size_t>(cur->slotIndex)];
                 if (next.isRef) {
                     cur = &next;   // ref-to-ref: keep walking
                 } else {
@@ -3966,8 +3984,8 @@ private:
         const StackItem* target = followRefChain(ref);
         if (!target) return;
         if (target->slotIndex >= 0) {
-            if (static_cast<size_t>(target->slotIndex) < stack_.size()) {
-                StackItem& slot = stack_[static_cast<size_t>(target->slotIndex)];
+            if (static_cast<size_t>(target->slotIndex) < es_->stack.size()) {
+                StackItem& slot = es_->stack[static_cast<size_t>(target->slotIndex)];
                 if (slot.value.index() == 11) {
                     // The slot holds a CrossVmRef argument: the assignment
                     // must land in the CALLER VM's object variable / local
@@ -3982,12 +4000,12 @@ private:
                             ++wtN;
                             std::string tg = "?";
                             if (vm) {
-                                if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->stack_.size())
+                                if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
                                     tg = "slot=" + std::to_string(r->slotIndex) + " val=t" +
-                                         std::to_string(vm->stack_[static_cast<size_t>(r->slotIndex)].value.index());
-                                else if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
+                                         std::to_string(vm->es_->stack[static_cast<size_t>(r->slotIndex)].value.index());
+                                else if (r->slotIndex >= 0 && static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
                                     tg = "detach-slot=" + std::to_string(r->slotIndex) + " val=t" +
-                                         std::to_string(vm->detachedStack_[static_cast<size_t>(r->slotIndex)].value.index());
+                                         std::to_string(vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)].value.index());
                                 else if (r->objIndex >= 0)
                                     tg = "obj=" + std::to_string(r->objIndex);
                                 else tg = "unresolved";
@@ -4002,10 +4020,10 @@ private:
                     if (vm) {
                         StackItem* cslot = nullptr;
                         if (r->slotIndex >= 0) {
-                            if (static_cast<size_t>(r->slotIndex) < vm->stack_.size())
-                                cslot = &vm->stack_[static_cast<size_t>(r->slotIndex)];
-                            else if (static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
-                                cslot = &vm->detachedStack_[static_cast<size_t>(r->slotIndex)];
+                            if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
+                                cslot = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
+                            else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
+                                cslot = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];
                         }
                         if (cslot) {
                             cslot->value = v;
@@ -4024,8 +4042,8 @@ private:
             // with what - catches a rogue appender.
             if (nbProbeOn() && target->globalIndex == 31) {
                 std::cerr << "[nb-gw] via-ref obj=" << objName_
-                          << " fn=" << ((!frames_.empty() && frames_.back().fn)
-                                            ? frames_.back().fn->name : std::string("<none>"))
+                          << " fn=" << ((!es_->frames.empty() && es_->frames.back().fn)
+                                            ? es_->frames.back().fn->name : std::string("<none>"))
                           << " v=" << to_string(v, false).substr(0, 40)
                           << " v0=" << ((v.index() == 5 &&
                                          !std::get<std::shared_ptr<ArrayValue>>(v)->items.empty())
@@ -4048,8 +4066,8 @@ private:
 
     // Read the value at a stack slot; if the slot holds a ref, dereference it.
     Value slotValue(int idx) const {
-        if (idx < 0 || static_cast<size_t>(idx) >= stack_.size()) return make_int(0);
-        const StackItem& it = stack_[idx];
+        if (idx < 0 || static_cast<size_t>(idx) >= es_->stack.size()) return make_int(0);
+        const StackItem& it = es_->stack[idx];
         if (it.isRef) return deref(it);
         return resolveCrossVmRef(it.value);
     }
@@ -4065,10 +4083,10 @@ private:
             if (!vm) return make_int(0);
             if (r->slotIndex >= 0) {
                 const StackItem* it = nullptr;
-                if (static_cast<size_t>(r->slotIndex) < vm->stack_.size())
-                    it = &vm->stack_[static_cast<size_t>(r->slotIndex)];
-                else if (static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
-                    it = &vm->detachedStack_[static_cast<size_t>(r->slotIndex)];  // caller stack moved out by runDetached
+                if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
+                    it = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
+                else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
+                    it = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];  // caller stack moved out by runDetached
                 if (it) {
                     if (it->isRef) {
                         // ref-to-ref: the caller's slot itself is a reference
@@ -4174,17 +4192,17 @@ private:
         if (used <= high + 1024 * 1024) return;
         high = used;
         std::string chain;
-        if (frames_.empty()) {
+        if (es_->frames.empty()) {
             chain = "<no-frame>";
         } else {
-            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it) {
                 if (!chain.empty()) chain += "<-";
                 chain += (it->fn ? it->fn->name : std::string("<ctx>"));
                 if (chain.size() > 300) { chain += "<-..."; break; }
             }
         }
         std::cerr << "[stackdbg] used=" << (used / 1024) << "KB at=" << where
-                  << " frames=" << frames_.size() << " obj=" << objName_ << " chain=" << chain
+                  << " frames=" << es_->frames.size() << " obj=" << objName_ << " chain=" << chain
                   << "\n";
         std::cerr.flush();
         if (used < 4u * 1024 * 1024 || dumps >= 6) return;
@@ -4221,7 +4239,7 @@ private:
         // which is why the items appeared only after moving one).  Deref to
         // the LIVE value: containers are shared_ptr-backed, so the callee's
         // in-place writes reach the caller's variable.
-        for (int i = 0; i < argCount && !stack_.empty(); ++i) {
+        for (int i = 0; i < argCount && !es_->stack.empty(); ++i) {
             StackItem it = pop();
             args.push_back(it.isRef ? deref(it) : it.value);
         }
@@ -4259,7 +4277,7 @@ private:
             }();
             if (efunIndex == isFnIdx) {
                 bool inPEW = false;
-                for (const auto& fr : frames_)
+                for (const auto& fr : es_->frames)
                     if (fr.fn && fr.fn->name == "post_enter_world") { inPEW = true; break; }
                 if (inPEW) {
                     static int nbN = 0;
@@ -4302,7 +4320,7 @@ private:
             std::string nm0 = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                   ? names[efunIndex] : "?";
             std::string fn0 = "<global>";
-            if (!frames_.empty() && frames_.back().fn) fn0 = frames_.back().fn->name;
+            if (!es_->frames.empty() && es_->frames.back().fn) fn0 = es_->frames.back().fn->name;
             EfunWatch efunWatch(nm0, objName_, fn0);
         }
         // Per-efun CPU profiler (LPCVM_EFUN_PROF=1): accumulate wall time per
@@ -4353,7 +4371,7 @@ private:
             std::string nm = (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
                                  ? names[efunIndex] : "?";
             std::string fn = "<global>";
-            if (!frames_.empty() && frames_.back().fn) fn = frames_.back().fn->name;
+            if (!es_->frames.empty() && es_->frames.back().fn) fn = es_->frames.back().fn->name;
             std::cerr << "[vm] efun idx=" << efunIndex << " name=" << nm << " argc=" << args.size()
                       << " in=" << fn << " obj=" << objName_ << "\n";
         }
@@ -4475,7 +4493,7 @@ private:
                         // env_object(me) == env_object(ob); log only the calls
                         // made from is_near so the 400-line budget is not
                         // consumed by unrelated boot-time lookups.
-                        std::string fnC = frames_.empty() || !frames_.back().fn ? "<g>" : frames_.back().fn->name;
+                        std::string fnC = es_->frames.empty() || !es_->frames.back().fn ? "<g>" : es_->frames.back().fn->name;
                         if (fnC == "is_near") {
                             std::cerr << "[near-env] q=" << obKey << " env="
                                       << (env.empty() ? std::string("0") : env)
@@ -4486,7 +4504,7 @@ private:
                     if (std::getenv("LPCVM_TAIL")) {
                         static int evN = 0;
                         if (evN++ < 80) {
-                            std::string fnC = frames_.empty() || !frames_.back().fn ? "<g>" : frames_.back().fn->name;
+                            std::string fnC = es_->frames.empty() || !es_->frames.back().fn ? "<g>" : es_->frames.back().fn->name;
                             std::cerr << "[env-ob] q=" << obKey << " hit="
                                       << (env.empty() ? "NO" : ("YES->" + env))
                                       << " fn=" << fnC << " mapsz=" << envCountObjKeys() << "\n";
@@ -4517,8 +4535,8 @@ private:
                 // level is outside the stack.
                 int64_t level = args.empty() ? 1 : toInt(args[0]);
                 if (level < 1) level = 1;
-                if (static_cast<size_t>(level) >= frames_.size()) return make_int(0);
-                const Frame& fr = frames_[frames_.size() - 1 - static_cast<size_t>(level)];
+                if (static_cast<size_t>(level) >= es_->frames.size()) return make_int(0);
+                const Frame& fr = es_->frames[es_->frames.size() - 1 - static_cast<size_t>(level)];
                 if (!fr.fn) return make_int(0);
                 return make_string(fr.fn->name);
             }
@@ -4754,7 +4772,7 @@ private:
                 }
                 if (std::getenv("LPCVM_ERR_TRACE")) {
                     std::string chain;
-                    for (const auto& fr : frames_) {
+                    for (const auto& fr : es_->frames) {
                         std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                         if (!chain.empty()) chain += "<-";
                         chain += fnm;
@@ -4765,25 +4783,25 @@ private:
                         dbg += to_string(args[ai], false);
                     }
                     std::cerr << "[lpc-error] obj=" << objName_
-                              << " ip=" << ip_ << " frames=" << frames_.size()
+                              << " ip=" << es_->ip << " frames=" << es_->frames.size()
                               << " chain=[" << chain << "] msg=[" << dbg << "]\n";
-                    if (!frames_.empty()) {
-                        const Frame& fr = frames_.back();
+                    if (!es_->frames.empty()) {
+                        const Frame& fr = es_->frames.back();
                         std::string wnd;
                         int bp = fr.bp;
                         int lo = std::max(0, bp - 10);
-                        int hi = static_cast<int>(stack_.size());
+                        int hi = static_cast<int>(es_->stack.size());
                         for (int i = lo; i < hi && i <= bp + 12; ++i) {
                             if (!wnd.empty()) wnd += " | ";
                             std::string vs;
-                            try { vs = to_string(stack_[static_cast<size_t>(i)].value, false); }
+                            try { vs = to_string(es_->stack[static_cast<size_t>(i)].value, false); }
                             catch (...) { vs = "<err>"; }
                             if (vs.size() > 90) vs = vs.substr(0, 90);
-                            wnd += std::to_string(i) + ":" + std::to_string(stack_[static_cast<size_t>(i)].value.index()) + ":" + vs;
+                            wnd += std::to_string(i) + ":" + std::to_string(es_->stack[static_cast<size_t>(i)].value.index()) + ":" + vs;
                         }
                         std::cerr << "[lpc-error-stack] fn=" << (fr.fn ? fr.fn->name : "?")
                                   << " bp=" << bp << " argN=" << fr.argNum
-                                  << " locN=" << fr.localCount << " sz=" << stack_.size()
+                                  << " locN=" << fr.localCount << " sz=" << es_->stack.size()
                                   << " [" << wnd << "]\n";
                     }
                     std::cerr.flush();
@@ -4791,7 +4809,7 @@ private:
                            (objName_.find("change_lookd") != std::string::npos ||
                             objName_.find("vendued") != std::string::npos)) {
                     std::string chain;
-                    for (const auto& fr : frames_) {
+                    for (const auto& fr : es_->frames) {
                         std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                         if (!chain.empty()) chain += "<-";
                         chain += fnm;
@@ -4805,27 +4823,27 @@ private:
                     std::cerr << "[d-raise] obj=" << objName_ << " chain=[" << chain
                               << "] msg=[" << dbb << "]\n";
                     std::cerr.flush();
-                } else if (constructDiagOn() && !frames_.empty()) {
+                } else if (constructDiagOn() && !es_->frames.empty()) {
                     // Compact one-line raise log (no ERR_TRACE volume): name the
                     // daemon/closure that raises a caught LPC error during the
                     // post_init do_init cluster (onlinemalld/custom_packd/herod/
                     // longgong_xianyi...) so a deadlocking wait becomes
                     // attributable without the heavy trace that crashes gs.
                     std::string chain;
-                    for (const auto& fr : frames_) {
+                    for (const auto& fr : es_->frames) {
                         std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                         if (!chain.empty()) chain += "<-";
                         chain += fnm;
                         if (chain.size() > 200) break;
                     }
                     std::cerr << "[lpc-raise] obj=" << objName_
-                              << " fn=" << (frames_.back().fn ? frames_.back().fn->name : "?")
+                              << " fn=" << (es_->frames.back().fn ? es_->frames.back().fn->name : "?")
                               << " chain=[" << chain << "] msg=[" << msg << "]\n";
-                    if (msg.rfind("coupon", 0) == 0 && !frames_.empty()) {
-                        const Frame& fr = frames_.back();
+                    if (msg.rfind("coupon", 0) == 0 && !es_->frames.empty()) {
+                        const Frame& fr = es_->frames.back();
                         int bp = fr.bp;
-                        for (int i = std::max(0, bp - 12); i <= bp + 10 && static_cast<size_t>(i) < stack_.size(); ++i) {
-                            const Value& v = stack_[static_cast<size_t>(i)].value;
+                        for (int i = std::max(0, bp - 12); i <= bp + 10 && static_cast<size_t>(i) < es_->stack.size(); ++i) {
+                            const Value& v = es_->stack[static_cast<size_t>(i)].value;
                             if (v.index() == 4) {
                                 const std::string& st = std::get<SharedString>(v).str();
                                 // match GBK bytes of "充值送" (B3 E4 D6 B5 CB CD); keep source ASCII
@@ -4851,23 +4869,23 @@ private:
                             }
                         }
                     }
-                    if (msg.rfind("coupon", 0) == 0 && !frames_.empty()) {
-                        const Frame& fr = frames_.back();
+                    if (msg.rfind("coupon", 0) == 0 && !es_->frames.empty()) {
+                        const Frame& fr = es_->frames.back();
                         int bp = fr.bp;
                         std::cerr << "[coupon-diag] now=" << std::time(nullptr) << "\n";
                         std::cerr.flush();
                         std::string wnd;
-                        for (int i = 0; i < static_cast<int>(stack_.size()); ++i) {
+                        for (int i = 0; i < static_cast<int>(es_->stack.size()); ++i) {
                             if (!wnd.empty()) wnd += " | ";
                             std::string vs;
-                            try { vs = to_string(stack_[static_cast<size_t>(i)].value, false); }
+                            try { vs = to_string(es_->stack[static_cast<size_t>(i)].value, false); }
                             catch (...) { vs = "<err>"; }
                             if (vs.size() > 90) vs = vs.substr(0, 90);
                             wnd += std::to_string(i) + ":" +
-                                   std::to_string(stack_[static_cast<size_t>(i)].value.index()) + ":" + vs;
+                                   std::to_string(es_->stack[static_cast<size_t>(i)].value.index()) + ":" + vs;
                         }
                         std::cerr << "[lpc-raise-stack] fn=" << (fr.fn ? fr.fn->name : "?")
-                                  << " bp=" << bp << " sz=" << stack_.size()
+                                  << " bp=" << bp << " sz=" << es_->stack.size()
                                   << " [" << wnd << "]\n";
                         std::cerr.flush();
                     }
@@ -5036,7 +5054,7 @@ private:
                 if (targetVm) targetFn = targetVm->findFunctionAny(funName);
                 if (funName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
                     std::string chain;
-                    for (const auto& fr : frames_) {
+                    for (const auto& fr : es_->frames) {
                         std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                         if (!chain.empty()) chain += "<-";
                         chain += fnm;
@@ -5067,7 +5085,7 @@ private:
                     int declared = fn.argCount;
                     int pad = (declared > static_cast<int>(callArgs.size()))
                                   ? declared - static_cast<int>(callArgs.size()) : 0;
-                    size_t base = stack_.size();
+                    size_t base = es_->stack.size();
                     // The original VM zero-initializes every declared param
                     // slot at frame allocation, so an omitted declared arg is
                     // int 0 - never "undefined" (is_int(undefined) fails in
@@ -5086,7 +5104,7 @@ private:
                         }
                         // Inline failed (shallow stack): run on the TARGET's
                         // registry VM (correct obj vars AND function table).
-                        stack_.resize(base);
+                        es_->stack.resize(base);
                         return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                     }
                     bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
@@ -5098,7 +5116,7 @@ private:
                         efunInlineStarted_ = true;
                         return make_int(0);
                     }
-                    stack_.resize(base);
+                    es_->stack.resize(base);
                     return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                 }
                 return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
@@ -5163,7 +5181,7 @@ private:
                         int declared = fn.argCount;
                         int pad = (declared > static_cast<int>(callArgs.size()))
                                       ? declared - static_cast<int>(callArgs.size()) : 0;
-                        size_t base = stack_.size();
+                        size_t base = es_->stack.size();
                         // Omitted declared args are int 0 (frame-area zero
                         // init in the original driver), see call_other above.
                         for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
@@ -5179,7 +5197,7 @@ private:
                             }
                             // Inline failed: run on the TARGET's registry VM
                             // (correct obj vars AND function table).
-                            stack_.resize(base);
+                            es_->stack.resize(base);
                             return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                         }
                         bool inlOk = startInlineFunction(fn, false, static_cast<int>(callArgs.size()),
@@ -5191,7 +5209,7 @@ private:
                             efunInlineStarted_ = true;
                             return make_int(0);
                         }
-                        stack_.resize(base);
+                        es_->stack.resize(base);
                         return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
                     }
                 }
@@ -5253,8 +5271,8 @@ private:
                     }
                     if (dynProbeFlag("LPCVM_MAPDBG").load(std::memory_order_relaxed)) {
                         std::cerr << "[mapdbg] enter obj=" << objName_ << " caller="
-                                  << ((frames_.empty() || !frames_.back().fn)
-                                          ? std::string("<g>") : frames_.back().fn->name)
+                                  << ((es_->frames.empty() || !es_->frames.back().fn)
+                                          ? std::string("<g>") : es_->frames.back().fn->name)
                                   << " n=" << srcArr->items.size() << " target=efun:"
                                   << cl->functionName << " idx=" << eidx << "\n";
                         std::cerr.flush();
@@ -5283,8 +5301,8 @@ private:
                 const bool mapDbg = dynProbeFlag("LPCVM_MAPDBG").load(std::memory_order_relaxed);
                 if (mapDbg) {
                     std::cerr << "[mapdbg] enter obj=" << objName_ << " caller="
-                              << ((frames_.empty() || !frames_.back().fn)
-                                      ? std::string("<g>") : frames_.back().fn->name)
+                              << ((es_->frames.empty() || !es_->frames.back().fn)
+                                      ? std::string("<g>") : es_->frames.back().fn->name)
                               << " n=" << srcArr->items.size() << " target=" << mfn->name
                               << " nest=" << t_vmNestDepth << "\n";
                     std::cerr.flush();
@@ -5706,7 +5724,7 @@ private:
                         auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
                         cname = cl->functionName + (cl->owner ? ("@" + cl->owner->sourceName) : "");
                     }
-                    std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                    std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                     std::cerr << "[rpi-efun] obj=" << objName_ << " this=" << thisObjectName_
                               << " fn=" << cur << " [" << cname << "] vm=" << this << "\n";
                     std::cerr.flush();
@@ -5930,7 +5948,7 @@ private:
                                  (cl->func && cl->func->name == "convert_to_int")) &&
                                 std::getenv("LPCVM_ERR_TRACE")) {
                                 std::string chain;
-                                for (const auto& fr : frames_) {
+                                for (const auto& fr : es_->frames) {
                                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                                     if (!chain.empty()) chain += "<-";
                                     chain += fnm;
@@ -5967,7 +5985,7 @@ private:
                 // resumes here (returning 1) after the other processes ran.
                 if (vmEnvTrace())
                     std::cerr << "[relinquish] vm=" << this << " obj=" << objName_
-                              << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                              << " ip=" << es_->ip << " frames=" << es_->frames.size() << "\n";
                 if (masterNoYield_) {
                     // Inside runInheritedInits/callCreate (C++ loops that
                     // cannot resume mid-way): run synchronously, no yield.
@@ -5998,7 +6016,7 @@ private:
                 auto hook = [this, fd]() {
                     // Listener readable: accept now (non-blocking enough - a
                     // pending connection is present).
-                    resumeValue_ = make_int(xdbcAccept(fd));
+                    es_->resumeValue = make_int(xdbcAccept(fd));
                 };
                 parkAndSuspend(cond, std::move(hook), make_int(-1));
                 return make_int(-1);   // unreachable (SuspendSignal thrown)
@@ -6106,7 +6124,7 @@ private:
                     cond.wantWrite = true;
                     auto hook = [this, fd]() {
                         // Socket writable: check the connect result.
-                        resumeValue_ = make_int(xdbcConnectResult(fd));
+                        es_->resumeValue = make_int(xdbcConnectResult(fd));
                     };
                     if (vmEnvTrace())
                         std::cerr << "[connect] parking fd=" << fd << " kind=" << cond.kind << "\n";
@@ -6205,8 +6223,8 @@ private:
             // Remember WHO is calling before falling through to builtins.cpp,
             // so [efun-stub] lines identify object::function.
             stubCallCtx().obj = objName_;
-            stubCallCtx().fn = frames_.empty() || !frames_.back().fn
-                                   ? "<global>" : frames_.back().fn->name;
+            stubCallCtx().fn = es_->frames.empty() || !es_->frames.back().fn
+                                   ? "<global>" : es_->frames.back().fn->name;
             // ... and its exact instance key (destruct_object(this_object())).
             stubCallCtx().key = thisObjectName_;
             if (envFlagTail() && nm == "printf" && !args.empty() &&
@@ -6222,7 +6240,7 @@ private:
                         if (kv.first.find("roomd") == std::string::npos &&
                             kv.first.find("yunxiaogong") == std::string::npos) continue;
                         for (auto& pf : kv.second->functions) {
-                            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                            for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it) {
                                 if (it->fn && !it->fn->code.empty() && !pf.code.empty() &&
                                     it->fn->code.data() == pf.code.data() && it->fn->code.size() == pf.code.size()) {
                                     ownerDbg += " " + pf.name + "#" + std::to_string(pf.index) + "@" + kv.first;
@@ -6231,7 +6249,7 @@ private:
                         }
                     }
                 }
-                for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 400; ++it) {
+                for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && chain.size() < 400; ++it) {
                     if (!chain.empty()) chain += "<-";
                     chain += it->fn ? it->fn->name : "<ctx>";
                     chain += "#";
@@ -6244,8 +6262,8 @@ private:
                     if (cp) procE = cp->entry;
                 }
                 std::string fwd;
-                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                    const Frame& fr = frames_[fi];
+                for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                    const Frame& fr = es_->frames[fi];
                     if (!fwd.empty()) fwd += " | ";
                     fwd += std::to_string(fi) + ":" + (fr.fn ? fr.fn->name : "<ctx>") + "#" +
                            (fr.fn ? std::to_string(fr.fn->index) : "?") + "@bp" +
@@ -6253,8 +6271,8 @@ private:
                 }
                 std::cerr << "[banner-vm] vm=" << this << " obj=" << objName_
                           << " objSrc=" << obj_.sourceName
-                          << " this=" << thisObjectName_ << " parked=" << parked_
-                          << " ip=" << ip_ << " frames=" << frames_.size()
+                          << " this=" << thisObjectName_ << " parked=" << es_->parked
+                          << " ip=" << es_->ip << " frames=" << es_->frames.size()
                           << " fwd=[" << fwd << "] owners=[" << ownerDbg
                           << "] procEntry=" << procE << "\n";
                 std::cerr.flush();
@@ -6299,8 +6317,8 @@ private:
                        tf->name == "set_temp" || tf->name == "query_temp") &&
                 tf->argCount >= 1) {
                 std::string k;
-                int top = static_cast<int>(stack_.size()) - 1;
-                if (top >= 0) k = to_string(stack_[static_cast<size_t>(top)].value, false);
+                int top = static_cast<int>(es_->stack.size()) - 1;
+                if (top >= 0) k = to_string(es_->stack[static_cast<size_t>(top)].value, false);
                 std::cerr << "[tempkey] IN  " << objName_ << "::" << tf->name
                           << " key=\"" << k.substr(0, 70) << "\"\n";
                 std::cerr.flush();
@@ -6310,14 +6328,14 @@ private:
             const OriginalFunction* tfn = functionByIndex(index);
             if (tfn && tfn->name == "start_talk_to")
                 std::cerr << "[talk] ENTER start_talk_to on " << objName_
-                          << " stack=" << stack_.size() << "\n";
+                          << " stack=" << es_->stack.size() << "\n";
         }
         if (std::getenv("LPCVM_CALLTRACE")) {
             const char* flt = std::getenv("LPCVM_CALLFILTER");
             if (!flt || objName_.find(flt) != std::string::npos) {
                 int off = 0;
                 int li = index;
-                if ((flags & 0x80) == 0) off = frames_.empty() ? 0 : frames_.back().funOffset;
+                if ((flags & 0x80) == 0) off = es_->frames.empty() ? 0 : es_->frames.back().funOffset;
                 li = index + off;
                 auto fit = funcsByIndex_.find(li);
                 std::cerr << "[calltrace] " << objName_ << " idx=" << index
@@ -6332,7 +6350,7 @@ private:
             const OriginalFunction* tfn = functionByIndex(index);
             if (tfn && tfn->name.find("check_name") != std::string::npos)
                 std::cerr << "[namerule] enter " << tfn->name
-                          << " obj=" << objName_ << " stack=" << stack_.size() << "\n";
+                          << " obj=" << objName_ << " stack=" << es_->stack.size() << "\n";
         }
         result = make_int(0);
         if (flags & 0x80) {
@@ -6351,11 +6369,11 @@ private:
                 // try_to_sync_time waiting for the ccs_clientd daemon that
                 // the stolen create_thread closure was supposed to spawn).
                 if (vmEnvTrace()) {
-                    std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
+                    std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<global>" : es_->frames.back().fn->name;
                     std::cerr << "[gfn] inline global fn=" << gfn->name << " idx=" << index
                               << " argc=" << (flags & 0x3F) << " vm=" << this
                               << " obj=" << objName_ << " cur=" << cur
-                              << " frames=" << frames_.size() << " stack=" << stack_.size() << "\n";
+                              << " frames=" << es_->frames.size() << " stack=" << es_->stack.size() << "\n";
                     std::cerr.flush();
                 }
                 if (envFlagTail() && gfn->name == "register_post_init" &&
@@ -6363,17 +6381,17 @@ private:
                      objName_.find("change_lookd") != std::string::npos ||
                      std::getenv("LPCVM_STUCK_TRACE"))) {
                     std::string chain;
-                    for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 200; ++it) {
+                    for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && chain.size() < 200; ++it) {
                         if (!chain.empty()) chain += "<-";
                         chain += it->fn ? it->fn->name : "<ctx>";
                     }
                     std::string adbg;
                     int ac = flags & 0x3F;
                     for (int k = 0; k < ac && k < 3; ++k) {
-                        size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                        size_t si = es_->stack.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
                         if (!adbg.empty()) adbg += " | ";
-                        if (si < stack_.size()) {
-                            const Value& av = stack_[si].value;
+                        if (si < es_->stack.size()) {
+                            const Value& av = es_->stack[si].value;
                             if (av.index() == 8) {
                                 auto cl = std::get<std::shared_ptr<ClosureValue>>(av);
                                 adbg += "cl:" + cl->functionName + (cl->owner ? ("@" + cl->owner->sourceName) : "");
@@ -6395,10 +6413,10 @@ private:
                     int ac = flags & 0x3F;
                     std::string adbg;
                     for (int k = 0; k < ac && k < 3; ++k) {
-                        size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                        size_t si = es_->stack.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
                         if (!adbg.empty()) adbg += " | ";
-                        if (si < stack_.size()) {
-                            const Value& av = stack_[si].value;
+                        if (si < es_->stack.size()) {
+                            const Value& av = es_->stack[si].value;
                             if (av.index() == 4) adbg += std::get<SharedString>(av).str().substr(0, 30);
                             else if (av.index() == 7)
                                 adbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 60);
@@ -6426,10 +6444,10 @@ private:
                         int ac = flags & 0x3F;
                         std::string adbg;
                         for (int k = 0; k < ac && k < 3; ++k) {
-                            size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                            size_t si = es_->stack.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
                             if (!adbg.empty()) adbg += " | ";
-                            if (si < stack_.size()) {
-                                const Value& av = stack_[si].value;
+                            if (si < es_->stack.size()) {
+                                const Value& av = es_->stack[si].value;
                                 if (av.index() == 4) adbg += "str(" + std::to_string(std::get<SharedString>(av).size()) + ")["
                                                           + std::get<SharedString>(av).str().substr(0, 24) + "]";
                                 else adbg += to_string(av, false).substr(0, 60);
@@ -6450,16 +6468,16 @@ private:
                 std::cerr << "[gfn] global fn idx=" << index << " NOT FOUND in master\n";
             return false;
         }
-        const std::map<int, const OriginalFunction*>* tabPtr = funcLookup_;
-        if (!tabPtr && !frames_.empty() && frames_.back().fn &&
-            !ownedFns_.count(frames_.back().fn)) {
+        const std::map<int, const OriginalFunction*>* tabPtr = es_->funcLookup;
+        if (!tabPtr && !es_->frames.empty() && es_->frames.back().fn &&
+            !ownedFns_.count(es_->frames.back().fn)) {
             // The executing function belongs to ANOTHER constitution and is
             // running inline on this VM (threadd applies the aaa's
             // cmd_l_precost_coin.main on the serverd VM).  Its bit7-clear
             // indices are relative to ITS program: resolve them in the home
             // table first, otherwise index 4 hit serverd's remove_entry and the
             // whole precost chain silently died.
-            const OriginalVm* home = originalHomeVmOf(frames_.back().fn);
+            const OriginalVm* home = originalHomeVmOf(es_->frames.back().fn);
             if (home && home != this && home->functionTable().count(index))
                 tabPtr = &home->functionTable();
         }
@@ -6496,7 +6514,7 @@ private:
                         std::cerr << "[cfu] fwd " << fn.name << " idx=" << index << " NO IMPL\n";
                     // No implementation anywhere: keep a zero result but still
                     // consume the declared arguments.
-                    for (int i = 0; i < fn.argCount && !stack_.empty(); ++i) pop();
+                    for (int i = 0; i < fn.argCount && !es_->stack.empty(); ++i) pop();
                     return false;
                 }
             }
@@ -6509,10 +6527,10 @@ private:
                 int ac = flags & 0x3F;
                 std::string adbg;
                 for (int k = 0; k < ac && k < 3; ++k) {
-                    size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                    size_t si = es_->stack.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
                     if (!adbg.empty()) adbg += " | ";
-                    if (si < stack_.size()) {
-                        const Value& av = stack_[si].value;
+                    if (si < es_->stack.size()) {
+                        const Value& av = es_->stack[si].value;
                         if (av.index() == 4) adbg += std::get<SharedString>(av).str().substr(0, 30);
                         else if (av.index() == 7)
                             adbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 45);
@@ -6532,8 +6550,8 @@ private:
                 std::string adbg;
                 for (int k = 0; k < ac && k < 6; ++k) {
                     if (k) adbg += ",";
-                    size_t si = stack_.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
-                    adbg += (si < stack_.size()) ? to_string(stack_[si].value, false).substr(0, 40) : "?";
+                    size_t si = es_->stack.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
+                    adbg += (si < es_->stack.size()) ? to_string(es_->stack[si].value, false).substr(0, 40) : "?";
                 }
                 std::cerr << "[auth] " << impl->name << " obj=" << objName_
                           << " argc=" << ac << " args=[" << adbg << "]\n";
@@ -6565,16 +6583,16 @@ private:
                     // is_int() used to fail on the undefined pad, aborting
                     // the master NPC clone's create()).
                     std::vector<StackItem> args2;
-                    for (int i = 0; i < ac && !stack_.empty(); ++i) args2.push_back(pop());
+                    for (int i = 0; i < ac && !es_->stack.empty(); ++i) args2.push_back(pop());
                     for (int i = 0; i < pad; ++i) pushValue(Value{});   // all-zero == undefined, NOT int 0
-                    for (auto it = args2.rbegin(); it != args2.rend(); ++it) stack_.push_back(*it);
+                    for (auto it = args2.rbegin(); it != args2.rend(); ++it) es_->stack.push_back(*it);
                 }
                 // The callee inherits the CURRENT frame's string table (a
                 // cross-object inline frame switched to the target program; a
                 // local private call like filed.do_operate must resolve its
                 // shared strings in filed's table, not this VM's own object).
                 const std::vector<std::string>* curTbl =
-                    frames_.empty() ? nullptr : frames_.back().strings;
+                    es_->frames.empty() ? nullptr : es_->frames.back().strings;
                 if (std::getenv("LPCVM_NO_CONST")) curTbl = nullptr;
                 {
                     static const char* filedFns[] = {"do_operate", "do_operate_ex", "read_content",
@@ -6588,10 +6606,10 @@ private:
                     for (auto* ff : filedFns) {
                         if (impl->name == ff && vmEnvSvcTrace()) {
                             std::string chain;
-                            for (int fi = 0; fi < static_cast<int>(frames_.size()) && fi < 5; ++fi) {
+                            for (int fi = 0; fi < static_cast<int>(es_->frames.size()) && fi < 5; ++fi) {
                                 if (!chain.empty()) chain += "<-";
-                                chain += frames_[static_cast<size_t>(fi)].fn
-                                             ? frames_[static_cast<size_t>(fi)].fn->name : "?";
+                                chain += es_->frames[static_cast<size_t>(fi)].fn
+                                             ? es_->frames[static_cast<size_t>(fi)].fn->name : "?";
                             }
                             // Which variable BLOCK is live in this frame, and is
                             // this VM the registered instance at all?  A second
@@ -6629,9 +6647,9 @@ private:
                                       << " varsOwner=" << varsOwner
                                       << " regSelf=" << regSelf
                                       << " this=" << thisObjectName_
-                                      << " frames=" << frames_.size()
+                                      << " frames=" << es_->frames.size()
                                       << " chain=[" << chain << "]"
-                                      << " lookup=" << (funcLookup_ ? "func" : "byIndex")
+                                      << " lookup=" << (es_->funcLookup ? "func" : "byIndex")
                                       << " varOff=" << impl->varOffset
                                       << " sibs=[" << sibs << " ]\n";
                             break;
@@ -6645,10 +6663,10 @@ private:
                     std::string dbg;
                     int ac2 = flags & 0x3F;
                     for (int k = 0; k < ac2 && k < 4; ++k) {
-                        size_t si = stack_.size() - static_cast<size_t>(ac2) + static_cast<size_t>(k);
+                        size_t si = es_->stack.size() - static_cast<size_t>(ac2) + static_cast<size_t>(k);
                         if (!dbg.empty()) dbg += ", ";
-                        dbg += (si < stack_.size())
-                                   ? to_string(stack_[si].value, false).substr(0, 60) : "?";
+                        dbg += (si < es_->stack.size())
+                                   ? to_string(es_->stack[si].value, false).substr(0, 60) : "?";
                     }
                     std::cerr << "[initnpc-call] obj=" << objName_ << " ac=" << ac2
                               << " args=[" << dbg << "] declared=" << impl->argCount << "\n";
@@ -6712,19 +6730,19 @@ private:
                           << " same=" << (target.get() == this)
                           << " caller=" << objName_ << " args=";
                 for (int i = 0; i < argCount; ++i) {
-                    size_t si = stack_.size() - static_cast<size_t>(argCount) + static_cast<size_t>(i);
+                    size_t si = es_->stack.size() - static_cast<size_t>(argCount) + static_cast<size_t>(i);
                     std::cerr << (i ? "," : "")
-                              << (si < stack_.size() ? to_string(stack_[si].value, false).substr(0, 40) : "?");
+                              << (si < es_->stack.size() ? to_string(es_->stack[si].value, false).substr(0, 40) : "?");
                 }
                 std::cerr << "\n";
             }
             if (vmEnvTrace())
                 std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
             std::vector<Value> args;
-            for (int i = 0; i < argCount && !stack_.empty(); ++i) args.push_back(pop().value);
+            for (int i = 0; i < argCount && !es_->stack.empty(); ++i) args.push_back(pop().value);
             if (name == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
                 std::string chain;
-                for (const auto& fr : frames_) {
+                for (const auto& fr : es_->frames) {
                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                     if (!chain.empty()) chain += "<-";
                     chain += fnm;
@@ -6743,7 +6761,7 @@ private:
                 std::string dbg;
                 for (auto& a : args) { if (!dbg.empty()) dbg += ","; dbg += to_string(a, false); }
                 std::cerr << "[fallback] vm=" << this << " index=" << index << " name=" << name
-                          << " argc=" << argCount << " args=[" << dbg << "] stackLeft=" << stack_.size() << "\n";
+                          << " argc=" << argCount << " args=[" << dbg << "] stackLeft=" << es_->stack.size() << "\n";
             }
             result = runDetached([&] { return target->callFunctionByName(name, args); });
             return false;
@@ -6774,8 +6792,8 @@ private:
                 ++n;
                 std::cerr << "[cfu-miss] obj=" << objName_ << " idx=" << index
                           << " flags=0x" << std::hex << flags << std::dec
-                          << " fn=" << ((!frames_.empty() && frames_.back().fn)
-                                            ? frames_.back().fn->name : std::string("?"))
+                          << " fn=" << ((!es_->frames.empty() && es_->frames.back().fn)
+                                            ? es_->frames.back().fn->name : std::string("?"))
                           << " table=" << funcsByIndex_.size()
                           << " miss=" << n << "\n";
             }
@@ -6822,11 +6840,11 @@ private:
         int d = execDepth_;
         // Preserve an outer detached layer (re-entrant runDetached on the same
         // VM) so the inner window doesn't clobber the outer caller's slots.
-        std::vector<StackItem> outerDetached = std::move(detachedStack_);
-        detachedStack_ = std::move(stack_);
-        std::vector<Frame> f = std::move(frames_);
-        Value rv = returnValue_;
-        bool rd = returned_;
+        std::vector<StackItem> outerDetached = std::move(es_->detachedStack);
+        es_->detachedStack = std::move(es_->stack);
+        std::vector<Frame> f = std::move(es_->frames);
+        Value rv = es_->returnValue;
+        bool rd = es_->returned;
         // funcLookup_ is part of the paused caller state too: while the
         // detached call runs (possibly a cross-object inline that switches
         // funcLookup_ to its own program's table), the caller's table must be
@@ -6834,17 +6852,17 @@ private:
         // like a fresh empty VM, so funcLookup_ starts at nullptr (own table)
         // and the boundary frame remembers the caller's value to restore when
         // the callee chain returns into the caller's stream.
-        const std::map<int, const OriginalFunction*>* savedLookup = funcLookup_;
-        funcLookup_ = nullptr;
-        returnValue_ = make_int(0);
-        returned_ = false;
+        const std::map<int, const OriginalFunction*>* savedLookup = es_->funcLookup;
+        es_->funcLookup = nullptr;
+        es_->returnValue = make_int(0);
+        es_->returned = false;
         execDepth_ = 0;
         // The caller's continuation (this VM's stream at the call site): a
         // SAME-VM detached callee that parks must return into it (see the
         // SuspendSignal branch below).
-        const std::vector<OriginalInsn>* savedCode = code_;
-        const std::vector<uint8_t>* savedMeta = meta_;
-        size_t savedIp = ip_;
+        const std::vector<OriginalInsn>* savedCode = es_->code;
+        const std::vector<uint8_t>* savedMeta = es_->meta;
+        size_t savedIp = es_->ip;
         for (int i = 0; i < d; ++i) execMutex_.unlock();
         Value r;
         try {
@@ -6865,12 +6883,12 @@ private:
             // restored (the scheduler resumes the caller via callerVm).
             for (int i = 0; i < d; ++i) execMutex_.lock();
             execDepth_ = d;
-            if (!frames_.empty()) {
+            if (!es_->frames.empty()) {
                 size_t calleeStart = f.size();
-                int shift = static_cast<int>(detachedStack_.size());
+                int shift = static_cast<int>(es_->detachedStack.size());
                 if (envFlagTail() && std::getenv("LPCVM_RST")) {
                     std::string dbg;
-                    for (const auto& fr : frames_)
+                    for (const auto& fr : es_->frames)
                         dbg += (fr.fn ? fr.fn->name : "<ctx>") + std::string("(bp=") +
                                std::to_string(fr.bp) + ") ";
                     std::string cdbg;
@@ -6882,9 +6900,9 @@ private:
                               << "] callerFrames=[" << cdbg << "]\n";
                     std::cerr.flush();
                 }
-                for (auto& fr : frames_) fr.bp += shift;
-                detachedStack_.insert(detachedStack_.end(), stack_.begin(), stack_.end());
-                f.insert(f.end(), frames_.begin(), frames_.end());
+                for (auto& fr : es_->frames) fr.bp += shift;
+                es_->detachedStack.insert(es_->detachedStack.end(), es_->stack.begin(), es_->stack.end());
+                f.insert(f.end(), es_->frames.begin(), es_->frames.end());
                 if (calleeStart < f.size()) {
                     f[calleeStart].retCode = savedCode;
                     f[calleeStart].retMeta = savedMeta;
@@ -6898,14 +6916,14 @@ private:
                     f[calleeStart].savedFuncLookup = savedLookup;
                     f[calleeStart].funcLookupSwitched = true;
                 }
-                stack_ = std::move(detachedStack_);
-                detachedStack_ = std::move(outerDetached);
-                frames_ = std::move(f);
+                es_->stack = std::move(es_->detachedStack);
+                es_->detachedStack = std::move(outerDetached);
+                es_->frames = std::move(f);
             } else {
-                stack_ = std::move(detachedStack_);
-                detachedStack_ = std::move(outerDetached);
-                frames_ = std::move(f);
-                funcLookup_ = savedLookup;
+                es_->stack = std::move(es_->detachedStack);
+                es_->detachedStack = std::move(outerDetached);
+                es_->frames = std::move(f);
+                es_->funcLookup = savedLookup;
                 // CROSS-VM blocking park: this VM's caller frames (e.g. a
                 // daemon's do_init running on ITS owner VM, called from the
                 // master's post_init loop) were detached and are now restored
@@ -6916,28 +6934,28 @@ private:
                 // do_init's remaining code after the blocking call never runs.
                 scheduler().noteParkedCaller(this);
             }
-            returnValue_ = rv;
-            returned_ = rd;
+            es_->returnValue = rv;
+            es_->returned = rd;
             throw;
         } catch (...) {
             for (int i = 0; i < d; ++i) execMutex_.lock();
             execDepth_ = d;
-            stack_ = std::move(detachedStack_);
-            detachedStack_ = std::move(outerDetached);
-            frames_ = std::move(f);
-            funcLookup_ = savedLookup;
-            returnValue_ = rv;
-            returned_ = rd;
+            es_->stack = std::move(es_->detachedStack);
+            es_->detachedStack = std::move(outerDetached);
+            es_->frames = std::move(f);
+            es_->funcLookup = savedLookup;
+            es_->returnValue = rv;
+            es_->returned = rd;
             throw;
         }
         for (int i = 0; i < d; ++i) execMutex_.lock();
         execDepth_ = d;
-        stack_ = std::move(detachedStack_);
-        detachedStack_ = std::move(outerDetached);
-        frames_ = std::move(f);
-        funcLookup_ = savedLookup;
-        returnValue_ = rv;
-        returned_ = rd;
+        es_->stack = std::move(es_->detachedStack);
+        es_->detachedStack = std::move(outerDetached);
+        es_->frames = std::move(f);
+        es_->funcLookup = savedLookup;
+        es_->returnValue = rv;
+        es_->returned = rd;
         return r;
     }
 
@@ -7000,15 +7018,15 @@ private:
     // vm_returnToBackend: end this thread's script execution.  Drop every
     // frame/stack slot so the VM is reusable and mark the call finished.
     void abortThreadForExit() {
-        frames_.clear();
-        stack_.clear();
-        catches_.clear();
-        code_ = nullptr;
-        meta_ = nullptr;
-        ip_ = 0;
-        returnValue_ = make_int(0);
-        returned_ = true;
-        parked_ = false;
+        es_->frames.clear();
+        es_->stack.clear();
+        es_->catches.clear();
+        es_->code = nullptr;
+        es_->meta = nullptr;
+        es_->ip = 0;
+        es_->returnValue = make_int(0);
+        es_->returned = true;
+        es_->parked = false;
     }
 
     Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
@@ -7017,7 +7035,7 @@ private:
             static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
             if (depthOn.load(std::memory_order_relaxed) && (nestGuard.depth % 25) == 0) {
                 std::string chain;
-                for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it) {
                     chain += it->fn ? it->fn->name : "<ctx>";
                     chain += "<-";
                     if (chain.size() > 160) break;
@@ -7032,9 +7050,9 @@ private:
         // so bp >= 0 and local/loop-control slots (bp + n) stay in bounds.
         if (vmEnvTrace() && fn.name == "save_to_text")
             std::cerr << "[efo-dbg] save_to_text args=" << args.size()
-                      << " stackBefore=" << stack_.size()
-                      << " caller=" << (frames_.empty() || !frames_.back().fn
-                                            ? "<top>" : frames_.back().fn->name) << "\n";
+                      << " stackBefore=" << es_->stack.size()
+                      << " caller=" << (es_->frames.empty() || !es_->frames.back().fn
+                                            ? "<top>" : es_->frames.back().fn->name) << "\n";
         // all declared arguments were pushed (missing ones as undefined)
         bool placeholder = pushArgsForFunction(fn, args);
         try {
@@ -7143,18 +7161,18 @@ private:
         for (int i = 0; i < shown; ++i) {
             int si = bp - i;
             if (!dbg.empty()) dbg += " | ";
-            if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
-                std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+            if (si >= 0 && static_cast<size_t>(si) < es_->stack.size()) {
+                std::string vs = to_string(es_->stack[static_cast<size_t>(si)].value, false);
                 if (vs.size() > 170) vs = vs.substr(0, 170);
                 dbg += "a" + std::to_string(i) + ":t" +
-                       std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+                       std::to_string(es_->stack[static_cast<size_t>(si)].value.index()) + ":" + vs;
             } else {
                 dbg += "a" + std::to_string(i) + ":<noslot>";
             }
         }
         std::cerr << "[mall] " << what << " obj=" << objName_
                   << " this=" << thisObjectName_ << " fn=" << fn
-                  << " passed=" << passed << " frames=" << frames_.size();
+                  << " passed=" << passed << " frames=" << es_->frames.size();
         if (ret) {
             std::string rs = to_string(*ret, false);
             if (rs.size() > 90) rs = rs.substr(0, 90);
@@ -7200,22 +7218,22 @@ private:
         for (int i = 0; i < shown; ++i) {
             int si = bp - i;
             if (!dbg.empty()) dbg += " | ";
-            if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
-                std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+            if (si >= 0 && static_cast<size_t>(si) < es_->stack.size()) {
+                std::string vs = to_string(es_->stack[static_cast<size_t>(si)].value, false);
                 if (vs.size() > 120) vs = vs.substr(0, 120);
                 dbg += "a" + std::to_string(i) + ":t" +
-                       std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+                       std::to_string(es_->stack[static_cast<size_t>(si)].value.index()) + ":" + vs;
             } else {
                 dbg += "a" + std::to_string(i) + ":<noslot>";
             }
         }
         std::string chain;
-        for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 90; ++it) {
+        for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && chain.size() < 90; ++it) {
             if (!chain.empty()) chain += "<-";
             chain += it->fn ? it->fn->name : "<ctx>";
         }
         std::cerr << "[room] " << what << " obj=" << objName_ << " fn=" << fn
-                  << " passed=" << passed << " frames=" << frames_.size()
+                  << " passed=" << passed << " frames=" << es_->frames.size()
                   << " chain=[" << chain << "]";
         if (!dbg.empty()) std::cerr << " [" << dbg << "]";
         std::cerr << "\n";
@@ -7260,11 +7278,11 @@ private:
         for (int i = 0; i < shown; ++i) {
             int si = bp - i;
             if (!dbg.empty()) dbg += " | ";
-            if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
-                std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+            if (si >= 0 && static_cast<size_t>(si) < es_->stack.size()) {
+                std::string vs = to_string(es_->stack[static_cast<size_t>(si)].value, false);
                 if (vs.size() > 90) vs = vs.substr(0, 90);
                 dbg += "a" + std::to_string(i) + ":t" +
-                       std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+                       std::to_string(es_->stack[static_cast<size_t>(si)].value.index()) + ":" + vs;
             } else {
                 dbg += "a" + std::to_string(i) + ":<noslot>";
             }
@@ -7290,26 +7308,26 @@ private:
         static const size_t kMaxFrames =
             static_cast<size_t>(std::getenv("LPCVM_MAXFRAMES")
                                     ? std::atoi(std::getenv("LPCVM_MAXFRAMES")) : 400);
-        if (frames_.size() < kMaxFrames) return;
+        if (es_->frames.size() < kMaxFrames) return;
         static int dumps = 0;
         if (dumps++ < 4) {
             std::map<std::string, int> counts;
             std::string chain;
             int shown = 0;
-            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it) {
                 const std::string nm = it->fn ? it->fn->name : std::string("<ctx>");
                 counts[nm]++;
                 if (shown++ < 24) chain += (chain.empty() ? "" : "<-") + nm;
             }
             std::cerr << "[deep] obj=" << objName_ << " entering=" << entering
-                      << " frames=" << frames_.size() << " chain=[" << chain << "]\n";
+                      << " frames=" << es_->frames.size() << " chain=[" << chain << "]\n";
             for (const auto& kv : counts)
                 if (kv.second > 4)
                     std::cerr << "[deep]   " << kv.first << " x" << kv.second << "\n";
             std::cerr.flush();
         }
         throw VmError("function call stack overflow (" + entering + ", depth " +
-                      std::to_string(frames_.size()) + ")");
+                      std::to_string(es_->frames.size()) + ")");
     }
 
     bool startInlineFunction(const OriginalFunction& fn, bool zeroArgPlaceholder, int passedArgs,
@@ -7324,8 +7342,8 @@ private:
         // declares 3 params with defaults but is called with 1 - startInline
         // returned false, the call yielded 0, and load_valid_chinese errored).
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
-        if (static_cast<int>(stack_.size()) < need) return false;
-        int bp = static_cast<int>(stack_.size()) - 1;
+        if (static_cast<int>(es_->stack.size()) < need) return false;
+        int bp = static_cast<int>(es_->stack.size()) - 1;
         // Cross-object inline call: the LPC-visible identity is the CALLEE's.
         std::string idOverride;
         if (identityVm && identityVm != this && !identityVm->thisObjectName().empty() &&
@@ -7339,8 +7357,8 @@ private:
                 int acA = (passedArgs >= 0) ? passedArgs : fn.argCount;
                 for (int ai = 0; ai < acA && ai < 4; ++ai) {
                     int si = bp - ai;   // param0 is on TOP of the stack
-                    if (si < 0 || si >= static_cast<int>(stack_.size())) break;
-                    const Value& av = stack_[static_cast<size_t>(si)].value;
+                    if (si < 0 || si >= static_cast<int>(es_->stack.size())) break;
+                    const Value& av = es_->stack[static_cast<size_t>(si)].value;
                     std::string s = to_string(av, false);
                     if (s.size() > 140) s = s.substr(0, 140) + "...";
                     std::cerr << " a" << ai << "=t" << av.index() << ":" << s;
@@ -7366,9 +7384,9 @@ private:
         if (nbProbeOn() && fn.name == "register_enter_world") {
             std::cerr << "[nb-reg] obj=" << objName_ << " this=" << thisObjectName_
                       << " passed=" << passedArgs << " argc=" << fn.argCount
-                      << " bp=" << bp << " stack=" << stack_.size()
-                      << " top=" << (stack_.empty() ? std::string("<empty>")
-                                                    : nbClosureDesc(stack_.back().value))
+                      << " bp=" << bp << " stack=" << es_->stack.size()
+                      << " top=" << (es_->stack.empty() ? std::string("<empty>")
+                                                    : nbClosureDesc(es_->stack.back().value))
                       << "\n";
             std::cerr.flush();
         }
@@ -7488,23 +7506,23 @@ private:
             switchFuncs ? switchFuncs : autoFuncs;
         if (wantLookup == nullptr && ownedFns_.count(&fn))
             wantLookup = nullptr;   // own/inherited: run on funcsByIndex_
-        if ((wantLookup || ownedFns_.count(&fn)) && wantLookup != funcLookup_) {
-            frame.savedFuncLookup = funcLookup_;
-            funcLookup_ = wantLookup;
+        if ((wantLookup || ownedFns_.count(&fn)) && wantLookup != es_->funcLookup) {
+            frame.savedFuncLookup = es_->funcLookup;
+            es_->funcLookup = wantLookup;
             frame.funcLookupSwitched = true;
         }
         // Save the caller's stream so return_from_fun can resume it.
-        frame.retCode = code_;
-        frame.retMeta = meta_;
-        frame.retIp = ip_;   // ip_ already points at the instruction AFTER the call
+        frame.retCode = es_->code;
+        frame.retMeta = es_->meta;
+        frame.retIp = es_->ip;   // es_->ip already points at the instruction AFTER the call
         frame.padArgs = padArgs;
         frame.passedArgs = passedArgs;
-        frames_.push_back(frame);
-        code_ = &fn.code;
-        meta_ = &fn.metaData;
-        ip_ = 0;
-        returnValue_ = make_int(0);
-        returned_ = false;
+        es_->frames.push_back(frame);
+        es_->code = &fn.code;
+        es_->meta = &fn.metaData;
+        es_->ip = 0;
+        es_->returnValue = make_int(0);
+        es_->returned = false;
         return true;
     }
 
@@ -7526,7 +7544,7 @@ private:
             static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
             if (depthOn.load(std::memory_order_relaxed) && (nestGuardStack.depth % 25) == 0) {
                 std::string chain;
-                for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it) {
                     chain += it->fn ? it->fn->name : "<ctx>";
                     chain += "<-";
                     if (chain.size() > 200) break;
@@ -7543,16 +7561,16 @@ private:
         if (probeCd)
             std::cerr << "[hprobe] onStack create_data obj=" << objName_
                       << " this=" << thisObjectName_
-                      << " parked=" << parked_ << " schParked="
+                      << " parked=" << es_->parked << " schParked="
                       << lpc::scheduler().isVmParked(this)
-                      << " frames=" << frames_.size()
-                      << " stack=" << stack_.size() << " code0=" << fn.code.size() << "\n";
+                      << " frames=" << es_->frames.size()
+                      << " stack=" << es_->stack.size() << " code0=" << fn.code.size() << "\n";
         // Only the REAL arguments must be present; declared-but-defaulted
         // params are filled by the callee's check_args_num default block.
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
-        if (static_cast<int>(stack_.size()) < need) return make_int(0);
+        if (static_cast<int>(es_->stack.size()) < need) return make_int(0);
 
-        int bp = static_cast<int>(stack_.size()) - 1;
+        int bp = static_cast<int>(es_->stack.size()) - 1;
         lpcRingPush(fn.name.c_str());
         if (fnTraceMatch(fn.name) && fnObjMatch(objName_)) {
             std::cerr << "[fn] ENTER " << fn.name << " obj=" << objName_
@@ -7561,8 +7579,8 @@ private:
                 int acA = (passedArgs >= 0) ? passedArgs : fn.argCount;
                 for (int ai = 0; ai < acA && ai < 4; ++ai) {
                     int si = bp - ai;   // param0 is on TOP of the stack
-                    if (si < 0 || si >= static_cast<int>(stack_.size())) break;
-                    const Value& av = stack_[static_cast<size_t>(si)].value;
+                    if (si < 0 || si >= static_cast<int>(es_->stack.size())) break;
+                    const Value& av = es_->stack[static_cast<size_t>(si)].value;
                     std::string s = to_string(av, false);
                     if (s.size() > 140) s = s.substr(0, 140) + "...";
                     std::cerr << " a" << ai << "=t" << av.index() << ":" << s;
@@ -7578,7 +7596,7 @@ private:
             // Who enters convert_to_int from OUTSIDE with a single (or odd)
             // frame?  Dump caller VM context + the argument slots.
             std::string chain;
-            for (const auto& fr : frames_) {
+            for (const auto& fr : es_->frames) {
                 std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                 if (!chain.empty()) chain += "<-";
                 chain += fnm;
@@ -7588,25 +7606,25 @@ private:
             for (int i = 0; i < shown; ++i) {
                 if (i) adbg += " | ";
                 int si = bp - i;
-                if (si >= 0 && static_cast<size_t>(si) < stack_.size()) {
-                    std::string vs = to_string(stack_[static_cast<size_t>(si)].value, false);
+                if (si >= 0 && static_cast<size_t>(si) < es_->stack.size()) {
+                    std::string vs = to_string(es_->stack[static_cast<size_t>(si)].value, false);
                     if (vs.size() > 120) vs = vs.substr(0, 120);
-                    adbg += "a" + std::to_string(i) + ":" + std::to_string(stack_[static_cast<size_t>(si)].value.index()) + ":" + vs;
+                    adbg += "a" + std::to_string(i) + ":" + std::to_string(es_->stack[static_cast<size_t>(si)].value.index()) + ":" + vs;
                 } else {
                     adbg += "a" + std::to_string(i) + ":<no-slot>";
                 }
             }
             std::string ef = "?";
-            if (lastEfunIndex_ >= 0) {
+            if (es_->lastEfunIndex >= 0) {
                 const auto& tbl = efunNameTable();
-                if (lastEfunIndex_ < static_cast<int>(tbl.size()) && !tbl[static_cast<size_t>(lastEfunIndex_)].empty())
-                    ef = tbl[static_cast<size_t>(lastEfunIndex_)];
+                if (es_->lastEfunIndex < static_cast<int>(tbl.size()) && !tbl[static_cast<size_t>(es_->lastEfunIndex)].empty())
+                    ef = tbl[static_cast<size_t>(es_->lastEfunIndex)];
             }
             std::cerr << "[c2i-enter] obj=" << objName_ << " thisObj=" << thisObjectName_
                       << " prevObj=" << previousObjectName_
-                      << " efun=" << ef << "(" << lastEfunIndex_ << ")"
+                      << " efun=" << ef << "(" << es_->lastEfunIndex << ")"
                       << " argN=" << fn.argCount << " passed=" << passedArgs
-                      << " frames=" << frames_.size() << " chain=[" << chain << "] bp=" << bp
+                      << " frames=" << es_->frames.size() << " chain=[" << chain << "] bp=" << bp
                       << " [" << adbg << "]\n";
             std::cerr.flush();
         }
@@ -7615,7 +7633,7 @@ private:
             for (int i = 0; i < fn.argCount; ++i)
                 dbg += (i ? "," : "") + to_string(slotValue(bp - i), false);
             std::cerr << "[reg] exec " << fn.name << " obj=" << objName_ << " varOff=" << fn.varOffset
-                      << " params=[" << dbg << "] stackSize=" << stack_.size() << "\n";
+                      << " params=[" << dbg << "] stackSize=" << es_->stack.size() << "\n";
             // dump the entry table (obj var at the register.c constitution)
             int tableVar = fn.varOffset;  // register.c var 0
             if (static_cast<size_t>(tableVar) < objVars_->size()) {
@@ -7633,8 +7651,8 @@ private:
         }
         if (vmEnvTrace() && (fn.name == "load_comm_desc" || fn.name == "load_file_dependence")) {
             std::cerr << "[xfn] " << fn.name << " bp=" << bp << " argc=" << fn.argCount
-                      << " argsPassed=" << fn.argCount << " stackSize=" << stack_.size()
-                      << " localCount=" << fn.localCount << " frames=" << frames_.size() << "\n";
+                      << " argsPassed=" << fn.argCount << " stackSize=" << es_->stack.size()
+                      << " localCount=" << fn.localCount << " frames=" << es_->frames.size() << "\n";
         } else if (vmEnvTrace() && (fn.name == "mixed_mysql_select" || fn.name == "mysql_select" ||
                                            fn.name == "fetch_config_list" || fn.name == "update_config" ||
                                            fn.name == "assure_connection" || fn.name == "choose_one_url" ||
@@ -7644,10 +7662,10 @@ private:
                 dbg += (i ? "," : "") + to_string(slotValue(bp - i), false);
             std::string stack0;
             if (fn.name == "fetch_config_list")
-                stack0 = stack_.size() > 0 ? to_string(stack_[0].value, false) : "<empty>";
+                stack0 = es_->stack.size() > 0 ? to_string(es_->stack[0].value, false) : "<empty>";
             std::cerr << "[xfn] vm=" << this << " " << fn.name << " params=[" << dbg << "] bp=" << bp
-                      << " argNum=" << fn.argCount << " stackSize=" << stack_.size()
-                      << " frames=" << frames_.size()
+                      << " argNum=" << fn.argCount << " stackSize=" << es_->stack.size()
+                      << " frames=" << es_->frames.size()
                       << (stack0.empty() ? "" : (" stack0=" + stack0)) << "\n";
         }
         // argNum records how many arguments were actually PASSED: functions
@@ -7659,9 +7677,9 @@ private:
         // A cross-object entry call (callFunctionByName) pre-switched
         // objVars_ to this VM's own table and parked the previous (switched)
         // table here: record it on the frame so the pop restores it.
-        if (savedObjVarsForNextCall_) {
-            frame.savedObjVars = std::move(savedObjVarsForNextCall_);
-            savedObjVarsForNextCall_.reset();
+        if (es_->savedObjVarsForNextCall) {
+            frame.savedObjVars = std::move(es_->savedObjVarsForNextCall);
+            es_->savedObjVarsForNextCall.reset();
         }
         // This VM hosts many scheduler processes (execOnMain) and their frames
         // share the members.  efunInlineStarted_ is set by a call_other_arg
@@ -7689,27 +7707,27 @@ private:
         // table (cross-object apply running on its OWN VM) leave funcLookup_
         // alone; master global functions too (they run on every VM).
         if (ownedFns_.count(&fn)) {
-            if (funcLookup_ != nullptr) {
-                frame.savedFuncLookup = funcLookup_;
+            if (es_->funcLookup != nullptr) {
+                frame.savedFuncLookup = es_->funcLookup;
                 frame.funcLookupSwitched = true;
-                funcLookup_ = nullptr;
+                es_->funcLookup = nullptr;
             }
         }
-        frames_.push_back(frame);
-        Value savedReturn = returnValue_;
-        bool savedReturned = returned_;
-        returnValue_ = make_int(0);
-        returned_ = false;
+        es_->frames.push_back(frame);
+        Value savedReturn = es_->returnValue;
+        bool savedReturned = es_->returned;
+        es_->returnValue = make_int(0);
+        es_->returned = false;
         // The calling context (may be an outer runLoop on this VM, e.g. an
         // efun embedded call, or an idle VM when entered externally).  Save
         // and restore it so the explicit stack machine never loses it.
-        const std::vector<OriginalInsn>* savedCode = code_;
-        const std::vector<uint8_t>* savedMeta = meta_;
-        size_t savedIp = ip_;
+        const std::vector<OriginalInsn>* savedCode = es_->code;
+        const std::vector<uint8_t>* savedMeta = es_->meta;
+        size_t savedIp = es_->ip;
         try {
-            code_ = &fn.code;
-            meta_ = &fn.metaData;
-            ip_ = 0;
+            es_->code = &fn.code;
+            es_->meta = &fn.metaData;
+            es_->ip = 0;
             runLoop();
         } catch (const SuspendSignal&) {
             // Parked by a blocking efun.  ALL execution state (stack_/frames_/
@@ -7717,7 +7735,7 @@ private:
             // the parked process image; the scheduler resumes it via
             // resumeProcess().  Do NOT restore savedCode/savedMeta/savedIp and
             // do NOT pop the frame - that would destroy the parked state.
-            parked_ = true;
+            es_->parked = true;
             throw;
         } catch (const TimeSliceSignal&) {
             // Master time-slice yield: keep ALL state (stack_/frames_/
@@ -7726,55 +7744,55 @@ private:
         } catch (...) {
             if (probeCd)
                 std::cerr << "[hprobe] onStack create_data THREW obj=" << objName_
-                          << " frames=" << frames_.size() << "\n";
-            code_ = savedCode;
-            meta_ = savedMeta;
-            ip_ = savedIp;
-            if (!frames_.empty() && frames_.back().fn == &fn) {
-                if (frames_.back().savedObjVars) { auto _ob = objVars_; objVars_ = frames_.back().savedObjVars; noteVars("pop-frame", _ob); }
-                if (frames_.back().funcLookupSwitched) funcLookup_ = frames_.back().savedFuncLookup;
-                frames_.pop_back();
+                          << " frames=" << es_->frames.size() << "\n";
+            es_->code = savedCode;
+            es_->meta = savedMeta;
+            es_->ip = savedIp;
+            if (!es_->frames.empty() && es_->frames.back().fn == &fn) {
+                if (es_->frames.back().savedObjVars) { auto _ob = objVars_; objVars_ = es_->frames.back().savedObjVars; noteVars("pop-frame", _ob); }
+                if (es_->frames.back().funcLookupSwitched) es_->funcLookup = es_->frames.back().savedFuncLookup;
+                es_->frames.pop_back();
             }
-            returnValue_ = savedReturn;
-            returned_ = savedReturned;
+            es_->returnValue = savedReturn;
+            es_->returned = savedReturned;
             throw;
         }
-        Value result = returnValue_;
+        Value result = es_->returnValue;
         // Normal path: case 72/73 already popped our frame and cleaned the
         // stack.  Defensive: if runLoop exited abnormally (finish_action,
         // step limit, code exhaustion) the frame may still be on the stack.
-        if (!frames_.empty() && frames_.back().fn == &fn) {
+        if (!es_->frames.empty() && es_->frames.back().fn == &fn) {
             // The cleanup must be based on the LIVE frame: resort_stack moves
             // the frame base (inline default arguments become trailing
             // parameters) and updates argNum to passed + defaults.
-            int liveBp = frames_.back().bp;
-            int usedArgs = frames_.back().argNum;
+            int liveBp = es_->frames.back().bp;
+            int usedArgs = es_->frames.back().argNum;
             // The zero pads pushed for omitted declared parameters must go
             // away in BOTH cases: without a default block they ARE the
             // parameters (removed here), and when the default block's
             // resort_stack ran they were left BELOW the rearranged parameters
             // (its truncation only drops the real args), so they would leak
             // into the caller's stack frame.
-            int padEff = frames_.back().padArgs;
-            int newSize = liveBp - usedArgs + 1 - (frames_.back().zeroArgPlaceholder ? 1 : 0)
+            int padEff = es_->frames.back().padArgs;
+            int newSize = liveBp - usedArgs + 1 - (es_->frames.back().zeroArgPlaceholder ? 1 : 0)
                           - padEff;
             if (newSize < 0) newSize = 0;
-            stack_.resize(static_cast<size_t>(newSize));
-            if (frames_.back().savedObjVars) { auto _ob = objVars_; objVars_ = frames_.back().savedObjVars; noteVars("pop-frame", _ob); }
-            if (frames_.back().funcLookupSwitched) funcLookup_ = frames_.back().savedFuncLookup;
-            frames_.pop_back();
+            es_->stack.resize(static_cast<size_t>(newSize));
+            if (es_->frames.back().savedObjVars) { auto _ob = objVars_; objVars_ = es_->frames.back().savedObjVars; noteVars("pop-frame", _ob); }
+            if (es_->frames.back().funcLookupSwitched) es_->funcLookup = es_->frames.back().savedFuncLookup;
+            es_->frames.pop_back();
         }
-        code_ = savedCode;
-        meta_ = savedMeta;
-        ip_ = savedIp;
-        returnValue_ = savedReturn;
-        returned_ = savedReturned;
+        es_->code = savedCode;
+        es_->meta = savedMeta;
+        es_->ip = savedIp;
+        es_->returnValue = savedReturn;
+        es_->returned = savedReturned;
         if (probeCd)
             std::cerr << "[hprobe] onStack create_data RESULT obj=" << objName_
                       << " retIdx=" << result.index() << " ret="
                       << to_string(result, false).substr(0, 40)
-                      << " ip=" << ip_ << " frames=" << frames_.size()
-                      << " stack=" << stack_.size() << "\n";
+                      << " ip=" << es_->ip << " frames=" << es_->frames.size()
+                      << " stack=" << es_->stack.size() << "\n";
         return result;
     }
 
@@ -7797,10 +7815,10 @@ private:
         // cross-object inline code - so a funcLookup_ left pointing at a
         // foreign table by an earlier process/inline on this shared VM must
         // not hijack the local-index calls this segment makes (R120-R122).
-        funcLookup_ = nullptr;
-        code_ = &code;
-        meta_ = &meta;
-        ip_ = 0;
+        es_->funcLookup = nullptr;
+        es_->code = &code;
+        es_->meta = &meta;
+        es_->ip = 0;
         runLoop();
     }
 
@@ -7833,32 +7851,32 @@ private:
         }
         if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
             objName_.find("/clone/npc/master") != std::string::npos) {
-            std::string cf = frames_.empty() || !frames_.back().fn ? "<none>" : frames_.back().fn->name;
+            std::string cf = es_->frames.empty() || !es_->frames.back().fn ? "<none>" : es_->frames.back().fn->name;
             std::string chain;
-            for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                const Frame& fr = frames_[static_cast<size_t>(fi)];
+            for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                const Frame& fr = es_->frames[static_cast<size_t>(fi)];
                 std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                 if (!chain.empty()) chain += "<-";
                 chain += fnm;
                 if (chain.size() > 220) break;
             }
             std::cerr << "[resume-m] vm=" << this << " obj=" << objName_
-                      << " top=" << cf << " ip=" << ip_ << " chain=[" << chain << "]\n";
+                      << " top=" << cf << " ip=" << es_->ip << " chain=[" << chain << "]\n";
         }
-        parked_ = false;
-        ResumeCond c = cond_;
-        cond_ = ResumeCond{};
-        if (onResume_) {
-            auto hook = std::move(onResume_);
-            onResume_ = nullptr;
-            hook();     // may update resumeValue_ (e.g. connect's result check)
+        es_->parked = false;
+        ResumeCond c = es_->cond;
+        es_->cond = ResumeCond{};
+        if (es_->onResume) {
+            auto hook = std::move(es_->onResume);
+            es_->onResume = nullptr;
+            hook();     // may update es_->resumeValue (e.g. connect's result check)
         }
-        pushValue(std::move(resumeValue_));
+        pushValue(std::move(es_->resumeValue));
         runLoop();
         if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
             objName_.find("/clone/npc/master") != std::string::npos)
-            std::cerr << "[resume-end] vm=" << this << " obj=" << objName_ << " ip=" << ip_
-                      << " frames=" << frames_.size() << "\n";
+            std::cerr << "[resume-end] vm=" << this << " obj=" << objName_ << " ip=" << es_->ip
+                      << " frames=" << es_->frames.size() << "\n";
         // runLoop returned normally: the whole call chain finished and the
         // top-level frame was popped by case 72/73 (retCode == nullptr).
         // All state is already clean; nothing to restore.
@@ -7879,7 +7897,7 @@ private:
 
     // The result a just-completed top-level call left in returnValue_
     // (used by runProcess to hand a resumed process's result to execOnMain).
-    Value lastReturnValue() const { return returnValue_; }
+    Value lastReturnValue() const { return es_->returnValue; }
 
     // Resume a CALLER VM whose frame chain was detached by runDetached while
     // a cross-object callee ran (and blocked) on another VM.  Push the
@@ -7913,7 +7931,7 @@ private:
         // Nothing to resume here (the detached callee was merged back into
         // THIS VM's frame chain, so the continuation already happened inside
         // the parked VM's resume) - skip.
-        if (frames_.empty()) return;
+        if (es_->frames.empty()) return;
         // NOTE: a guard that skipped resumeCaller() for a parked VM was tried
         // here and REMOVED again: the missing continuation it caused was the
         // tail of login.c::check_name_used (lite_set("chars") / save() /
@@ -7926,21 +7944,21 @@ private:
                       objName_.find("logind.o") != std::string::npos ||
                       thisObjectName_.find("login.o") != std::string::npos);
         if (rcLog) {
-            std::string top = frames_.back().fn ? frames_.back().fn->name : "?";
-            size_t topCode = frames_.back().fn && code_ == &frames_.back().fn->code
-                                 ? code_->size() : 0;
+            std::string top = es_->frames.back().fn ? es_->frames.back().fn->name : "?";
+            size_t topCode = es_->frames.back().fn && es_->code == &es_->frames.back().fn->code
+                                 ? es_->code->size() : 0;
             std::cerr << "[rc] vm=" << this << " obj=" << objName_
-                      << " frames=" << frames_.size() << " ip=" << ip_
+                      << " frames=" << es_->frames.size() << " ip=" << es_->ip
                       << " top=" << top
-                      << " codeOk=" << (code_ && frames_.back().fn &&
-                                        code_ == &frames_.back().fn->code ? 1 : 0)
-                      << " codeSize=" << (code_ ? code_->size() : 0)
+                      << " codeOk=" << (es_->code && es_->frames.back().fn &&
+                                        es_->code == &es_->frames.back().fn->code ? 1 : 0)
+                      << " codeSize=" << (es_->code ? es_->code->size() : 0)
                       << " topCodeSize=" << topCode << "\n";
             std::cerr.flush();
         }
         if (vmEnvTrace())
             std::cerr << "[resume-caller] vm=" << this << " obj=" << objName_
-                      << " frames=" << frames_.size() << " ip=" << ip_ << "\n";
+                      << " frames=" << es_->frames.size() << " ip=" << es_->ip << "\n";
         // [cv3] Switch the execution context back to the TOP frame's own
         // function before continuing: after a deep cross-VM detach chain the
         // code_ member still points at the last executed (callee) function,
@@ -7949,12 +7967,12 @@ private:
         // caller's continuation - login's _process_command never reached
         // set_operating(0), leaving operating=1 -> every later command is
         // rejected with 9101).
-        if (!frames_.empty() && frames_.back().fn) {
-            if (code_ != &frames_.back().fn->code) {
-                code_ = &frames_.back().fn->code;
-                meta_ = &frames_.back().fn->metaData;   // [cv4] meta must track code_
+        if (!es_->frames.empty() && es_->frames.back().fn) {
+            if (es_->code != &es_->frames.back().fn->code) {
+                es_->code = &es_->frames.back().fn->code;
+                es_->meta = &es_->frames.back().fn->metaData;   // [cv4] meta must track es_->code
             }
-            if (!frames_.back().funcLookupSwitched) funcLookup_ = nullptr;
+            if (!es_->frames.back().funcLookupSwitched) es_->funcLookup = nullptr;
         }
         pushValue(std::move(result));
         try {
@@ -7962,23 +7980,23 @@ private:
         } catch (const std::exception& e) {
             if (std::getenv("LPCVM_TAIL"))
                 std::cerr << "[rc-ex] vm=" << this << " obj=" << objName_
-                          << " frames=" << frames_.size()
-                          << " top=" << (frames_.empty() ? "none" : (frames_.back().fn ? frames_.back().fn->name : "?"))
+                          << " frames=" << es_->frames.size()
+                          << " top=" << (es_->frames.empty() ? "none" : (es_->frames.back().fn ? es_->frames.back().fn->name : "?"))
                           << " what=[" << e.what() << "]\n";
             std::cerr.flush();
             throw;
         }
         if (rcLog) {
             std::cerr << "[rc-end] vm=" << this << " obj=" << objName_
-                      << " frames=" << frames_.size() << " ip=" << ip_
-                      << " top=" << (frames_.empty() ? "none" : (frames_.back().fn ? frames_.back().fn->name : "?"))
-                      << " ret=" << to_string(returnValue_, false).substr(0, 40) << "\n";
+                      << " frames=" << es_->frames.size() << " ip=" << es_->ip
+                      << " top=" << (es_->frames.empty() ? "none" : (es_->frames.back().fn ? es_->frames.back().fn->name : "?"))
+                      << " ret=" << to_string(es_->returnValue, false).substr(0, 40) << "\n";
             std::cerr.flush();
         }
     }
 
     // True while this VM is parked (a blocking efun suspended it).
-    bool isParked() const { return parked_; }
+    bool isParked() const { return es_->parked; }
     // A create() that had parked has now fully completed (its resumed
     // execution returned).  Advance the create index so the NEXT program's
     // create runs - mirrors vm_f_construct_object_ok2.  Each create runs
@@ -7990,9 +8008,8 @@ private:
         }
     }
     // The condition the parked VM is waiting for (owned by the scheduler).
-    ResumeCond& resumeCond() { return cond_; }
+    ResumeCond& resumeCond() { return es_->cond; }
     // Resume hook run just before resumeValue is pushed (write-backs etc.).
-    std::function<void()> onResume_;
 
     // Park this VM on a wake condition and unwind to the scheduler.  cond
     // records what to wait for; hook runs on resume before the efun result
@@ -8010,16 +8027,16 @@ private:
             const int64_t delayMs = cond.wakeAtMs - nowP;
             if (delayMs > 60000) {
                 std::string chain;
-                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                    const Frame& fr = frames_[fi];
+                for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                    const Frame& fr = es_->frames[fi];
                     if (!chain.empty()) chain += "<-";
                     chain += (fr.fn ? fr.fn->name : std::string("<ctx>"));
                     if (chain.size() > 220) break;
                 }
                 std::cerr << "[longpark] in=" << (delayMs / 1000) << "s kind=" << cond.kind
                           << " ev=" << cond.ename << " obj=" << objName_
-                          << " this=" << thisObjectName_ << " ip=" << ip_
-                          << " lastOp=" << lastOp_ << " chain=[" << chain << "]\n";
+                          << " this=" << thisObjectName_ << " ip=" << es_->ip
+                          << " lastOp=" << es_->lastOp << " chain=[" << chain << "]\n";
                 std::cerr.flush();
             }
         }
@@ -8027,8 +8044,8 @@ private:
             cond.kind == 3 && cond.ename.rfind("ev_filed", 0) == 0 &&
             objName_.find("/clone/npc/master") != std::string::npos) {
             std::string chain;
-            for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                const Frame& fr = frames_[static_cast<size_t>(fi)];
+            for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                const Frame& fr = es_->frames[static_cast<size_t>(fi)];
                 std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                 if (!chain.empty()) chain += "<-";
                 chain += fnm;
@@ -8036,13 +8053,13 @@ private:
             }
             std::cerr << "[fw-wait] vm=" << this << " tid=" << scheduler().currentProcessTid()
                       << " ev=" << cond.ename << " mask=0x" << std::hex << cond.mask << std::dec
-                      << " obj=" << objName_ << " ip=" << ip_
+                      << " obj=" << objName_ << " ip=" << es_->ip
                       << " chain=[" << chain << "]\n";
         }
-        cond_ = cond;
-        onResume_ = std::move(hook);
-        parked_ = true;
-        resumeValue_ = std::move(resumeValue);
+        es_->cond = cond;
+        es_->onResume = std::move(hook);
+        es_->parked = true;
+        es_->resumeValue = std::move(resumeValue);
         if (envFlagTail() &&
             (cond.kind == 3) &&
             (objName_.find("login.o") != std::string::npos ||
@@ -8051,8 +8068,8 @@ private:
              thisObjectName_.find("login.o") != std::string::npos ||
              thisObjectName_.find("logind.o") != std::string::npos)) {
             std::string chain;
-            for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                const Frame& fr = frames_[fi];
+            for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                const Frame& fr = es_->frames[fi];
                 std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                 if (!chain.empty()) chain += "<-";
                 chain += fnm;
@@ -8064,7 +8081,7 @@ private:
                       << " ev=" << cond.ename
                       << " mask=0x" << std::hex << cond.mask << std::dec
                       << " obj=" << objName_ << " this=" << thisObjectName_
-                      << " ip=" << ip_ << " frames=" << frames_.size()
+                      << " ip=" << es_->ip << " frames=" << es_->frames.size()
                       << " chain=[" << chain << "]\n";
             std::cerr.flush();
         }
@@ -8075,7 +8092,7 @@ private:
                               objName_.find("clone:gs/clone/npc/misc/statue.o") != std::string::npos ||
                               cond.qkey == "q:26";
             if (!stRelevant) {
-                for (const auto& fr : frames_) {
+                for (const auto& fr : es_->frames) {
                     if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
                                   std::string(fr.fn->name) == "do_operate")) { stRelevant = true; break; }
                 }
@@ -8085,8 +8102,8 @@ private:
                 ++anyParkN;
                 if (anyParkN <= 200 || stRelevant) {
                     std::string chain;
-                    for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                        const Frame& fr = frames_[fi];
+                    for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                        const Frame& fr = es_->frames[fi];
                         std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                         if (!chain.empty()) chain += "<-";
                         chain += fnm;
@@ -8096,7 +8113,7 @@ private:
                               << " obj=" << objName_
                               << " kind=" << cond.kind
                               << " key=" << (cond.qkey.empty() ? cond.ename : cond.qkey)
-                              << " ip=" << ip_ << " frames=" << frames_.size()
+                              << " ip=" << es_->ip << " frames=" << es_->frames.size()
                               << " chain=[" << chain << "]\n";
                     std::cerr.flush();
                 }
@@ -8104,7 +8121,7 @@ private:
         }
         SuspendSignal sig;
         sig.vm = this;
-        sig.cond = cond_;
+        sig.cond = es_->cond;
         // Ownership diagnostic: which process parks this object's chain, and how
         // many frames it holds.  Compared against the [vmown] line emitted when
         // the chain is later RESUMED by a different tid, this pinpoints whether
@@ -8119,15 +8136,15 @@ private:
         if (vmEnvEvDbg())
             std::cerr << "[vmown-park] vm=" << this << " obj=" << objName_
                       << " tid=" << lpc::scheduler().currentProcessTid()
-                      << " frames=" << frames_.size()
+                      << " frames=" << es_->frames.size()
                       << " ownerTid=" << execOwnerTid_ << "\n";
         if (vmEnvTrace())
             std::cerr << "[suspend] vm=" << this << " obj=" << objName_
-                      << " kind=" << cond.kind << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                      << " kind=" << cond.kind << " ip=" << es_->ip << " frames=" << es_->frames.size() << "\n";
         throw sig;
     }
     // The value to push when this parked VM resumes.
-    Value& parkedResumeValue() { return resumeValue_; }
+    Value& parkedResumeValue() { return es_->resumeValue; }
 
     // ---- execution ownership (one process at a time per object) -------------
     // The frame stack lives in the VM, so a SECOND process must never run this
@@ -8161,25 +8178,11 @@ private:
     // body=4).  So each chain now owns its run state; the VM members hold only the
     // state of the chain that is CURRENTLY executing on this VM (activeKey_).
     struct VmRunState {
-        std::vector<Frame> frames;
-        std::vector<StackItem> stack;
-        std::vector<StackItem> detachedStack;
-        const std::vector<OriginalInsn>* code = nullptr;
-        const std::vector<uint8_t>* meta = nullptr;
-        size_t ip = 0;
-        ResumeCond cond;
-        std::function<void()> onResume;
-        Value resumeValue;
-        bool parked = false;
-        bool returned = false;
-        Value returnValue;
-        std::vector<CatchRecord> catches;
-        int catchDepth = 0;
-        std::shared_ptr<std::vector<Value>> savedObjVarsForNextCall;
-        const std::map<int, const OriginalFunction*>* funcLookup = nullptr;
-        int lastEfunIndex = -1;
-        int lastOp = -1;
-        size_t lastIp = 0;
+        // The chain's execution state.  It used to be a COPY of the VM's 19
+        // execution members, moved in and out on every switch
+        // (stashRunState/restoreRunState); carrying the state itself makes a
+        // switch an ownership transfer, so a missed switch cannot lose frames.
+        std::shared_ptr<ExecState> es;
         int64_t ownerTid = -1;
     };
     std::unordered_map<int64_t, VmRunState> runStates_;
@@ -8187,125 +8190,57 @@ private:
     int64_t activeKey_ = -1;
 
     void clearRunMembers() {
-        frames_.clear();
-        stack_.clear();
-        detachedStack_.clear();
-        code_ = nullptr;
-        meta_ = nullptr;
-        ip_ = 0;
-        cond_ = ResumeCond{};
-        onResume_ = nullptr;
-        resumeValue_ = Value{};
-        parked_ = false;
-        returned_ = false;
-        returnValue_ = make_int(0);
-        catches_.clear();
-        catchDepth_ = 0;
-        savedObjVarsForNextCall_.reset();
-        funcLookup_ = nullptr;
-        lastEfunIndex_ = -1;
-        lastOp_ = -1;
-        lastIp_ = 0;
+        ExecState fresh;
+        *es_ = std::move(fresh);
         execOwnerTid_ = -1;
     }
-    void stashRunState(int64_t tid) {
-        if (tid < 0) return;
-        VmRunState& st = runStates_[tid];
-        st.frames = std::move(frames_);
-        st.stack = std::move(stack_);
-        st.detachedStack = std::move(detachedStack_);
-        st.code = code_;
-        st.meta = meta_;
-        st.ip = ip_;
-        st.cond = cond_;
-        st.onResume = std::move(onResume_);
-        st.resumeValue = std::move(resumeValue_);
-        st.parked = parked_;
-        st.returned = returned_;
-        st.returnValue = std::move(returnValue_);
-        st.catches = std::move(catches_);
-        st.catchDepth = catchDepth_;
-        st.savedObjVarsForNextCall = std::move(savedObjVarsForNextCall_);
-        st.funcLookup = funcLookup_;
-        st.lastEfunIndex = lastEfunIndex_;
-        st.lastOp = lastOp_;
-        st.lastIp = lastIp_;
-        // ownerTid must stay a PROCESS TID (0..127): it is what resumeCaller
-        // re-pins get_thread_id() to, and the LPC derives its wait/raise event
-        // from that value (filed.c: wait_event("ev_filed" + tid/32,
-        // 1 << (tid % 32))).  It used to be set to the STASH KEY, which after
-        // the move to per-chain keys (Process::chainSeq, e.g. 150) made
-        // get_thread_id() return 150 -> ev_filed4 -> wait_event -101 ("event
-        // does not exist") inside the create command's tail, so
-        // logind->show_char_list never sent 0xF061 and the client stayed on the
-        // create screen with the character already created.
-        st.ownerTid = (lpc::scheduler().chainTid() >= 0)
-                          ? lpc::scheduler().chainTid()
-                          : lpc::scheduler().currentProcessTid();
-        onResume_ = nullptr;
-        resumeValue_ = Value{};
-        cond_ = ResumeCond{};
-        parked_ = false;
-        code_ = nullptr;
-        meta_ = nullptr;
-        ip_ = 0;
-        returnValue_ = make_int(0);
-        catches_.clear();
-        catchDepth_ = 0;
-        savedObjVarsForNextCall_.reset();
-        funcLookup_ = nullptr;
+    // Hand the active state to `key`'s chain.  With the state carried BY the
+    // chain this is an ownership transfer (shared_ptr), not a copy of 19 members
+    // - the old stashRunState()/restoreRunState() pair is gone.
+    void stashRunState(int64_t key) {
+        if (key < 0) return;
+        runStates_[key].es = std::shared_ptr<ExecState>(new ExecState(std::move(*es_)));
+        *es_ = ExecState{};
     }
-    bool restoreRunState(int64_t tid) {
-        auto it = runStates_.find(tid);
+    bool restoreRunState(int64_t key) {
+        auto it = runStates_.find(key);
         if (it == runStates_.end()) return false;
-        VmRunState& st = it->second;
-        frames_ = std::move(st.frames);
-        stack_ = std::move(st.stack);
-        detachedStack_ = std::move(st.detachedStack);
-        code_ = st.code;
-        meta_ = st.meta;
-        ip_ = st.ip;
-        cond_ = st.cond;
-        onResume_ = std::move(st.onResume);
-        resumeValue_ = std::move(st.resumeValue);
-        parked_ = st.parked;
-        returned_ = st.returned;
-        returnValue_ = std::move(st.returnValue);
-        catches_ = std::move(st.catches);
-        catchDepth_ = st.catchDepth;
-        savedObjVarsForNextCall_ = std::move(st.savedObjVarsForNextCall);
-        funcLookup_ = st.funcLookup;
-        lastEfunIndex_ = st.lastEfunIndex;
-        lastOp_ = st.lastOp;
-        lastIp_ = st.lastIp;
-        execOwnerTid_ = st.ownerTid;
+        if (it->second.es) *es_ = std::move(*it->second.es);
+        execOwnerTid_ = it->second.ownerTid;
+        // The chain is running again: its stashed copy is not needed any more.
         runStates_.erase(it);
         return true;
     }
-    // Make `key`'s chain the one whose state the VM members hold.  A no-op when
-    // this chain is already active, so nested calls inside one chain (the common
-    // case) cost two compares.
-    // Diagnostic (LPCVM_TAIL): who moves this object's chain state around.
+    // Make `key`'s chain the one `es_` points at.  A no-op when it is already
+    // active, so nested calls inside one chain cost two compares.
     void chainDbg(const char* what, int64_t key) {
         if (!std::getenv("LPCVM_TAIL")) return;
         if (objName_.find("login.o") == std::string::npos) return;
         std::cerr << "[chn] " << what << " key=" << key << " active=" << activeKey_
-                  << " frames=" << frames_.size() << " parked=" << (parked_ ? 1 : 0)
-                  << " cond=" << cond_.kind << " stash=" << runStates_.size() << "\n";
+                  << " frames=" << es_->frames.size() << " parked=" << (es_->parked ? 1 : 0)
+                  << " cond=" << es_->cond.kind << " stash=" << runStates_.size() << "\n";
         std::cerr.flush();
     }
     void switchToChain(int64_t key) {
         if (key < 0 || key == activeKey_) return;
         chainDbg("switch-in", key);
-        const bool hasState = activeKey_ >= 0 &&
-                              (!frames_.empty() || !stack_.empty() || parked_ ||
-                               !detachedStack_.empty() || cond_.kind != 0);
-        if (hasState) stashRunState(activeKey_);
-        else clearRunMembers();
+        if (activeKey_ >= 0) {
+            stashRunState(activeKey_);      // the running chain keeps its state
+        } else {
+            clearRunMembers();              // no chain owned es_: start clean
+        }
         const bool got = restoreRunState(key);
-        if (!got) clearRunMembers();
+        if (!got) {
+            clearRunMembers();
+            activeKey_ = key;
+            runStates_[key].ownerTid =
+                (lpc::scheduler().chainTid() >= 0) ? lpc::scheduler().chainTid()
+                                                   : lpc::scheduler().currentProcessTid();
+            chainDbg("switch-fresh", key);
+            return;
+        }
         activeKey_ = key;
-        chainDbg(got ? "switch-restored" : "switch-fresh", key);
+        chainDbg("switch-restored", key);
     }
     int64_t activeChainKey() const { return activeKey_; }
     // The chain key's process finished: its state must not linger (a later chain
@@ -8517,18 +8452,18 @@ private:
         } stackDbgGuard(stackDbgActivations);
         stackDbgCheck("runLoop");
         unsigned stackDbgTick = 0;
-        while (code_ && ip_ < code_->size()) {
+        while (es_->code && es_->ip < es_->code->size()) {
             if ((++stackDbgTick & 0xFFF) == 0) stackDbgCheck("loop");
-            const OriginalInsn& in = (*code_)[ip_++];
-            lastOp_ = in.op;
-            lastIp_ = ip_ - 1;
+            const OriginalInsn& in = (*es_->code)[es_->ip++];
+            es_->lastOp = in.op;
+            es_->lastIp = es_->ip - 1;
             // LPCVM_SAMPLE: statistical profile of the LPC code that actually
             // burns the CPU - every 4096 instructions record the current
             // object::function and print the top entries once per second.
             if (sampleOn && ((++sampleN & 0xFFF) == 0)) {
                 std::string skey = objName_ + "::" +
-                    (frames_.empty() || !frames_.back().fn
-                         ? std::string("<g>") : frames_.back().fn->name);
+                    (es_->frames.empty() || !es_->frames.back().fn
+                         ? std::string("<g>") : es_->frames.back().fn->name);
                 if (!sampleMap) sampleMap = new std::unordered_map<std::string, int64_t>();
                 ++(*sampleMap)[skey];
                 int64_t nowS = static_cast<int64_t>(
@@ -8552,9 +8487,9 @@ private:
             }
             if (traceFnGated) {
                 std::string cur = "<global>";
-                if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
+                if (!es_->frames.empty() && es_->frames.back().fn) cur = es_->frames.back().fn->name;
                 if (cur == vmEnvTraceFn())
-                    std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (ip_ - 1) << " op=" << in.op
+                    std::cerr << "[fn] vm=" << this << " " << cur << " ip=" << (es_->ip - 1) << " op=" << in.op
                               << " " << actionInfo(in.op).name << " a=" << in.a << " b=" << in.b << "\n";
             }
             if (++stepCounter_ > 20000000) return;
@@ -8571,10 +8506,10 @@ private:
                 if (prevDur > 8000 && (nowNs - slowOpLastReport) > 100000000) {
                     slowOpLastReport = nowNs;
                     std::string cur = "<global>";
-                    if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
-                    std::cerr << "[slow-op] " << prevDur / 1000 << "us op=" << lastOp_
-                              << "(" << actionInfo(lastOp_).name << ") obj=" << objName_
-                              << " fn=" << cur << " ip=" << lastIp_ << "\n";
+                    if (!es_->frames.empty() && es_->frames.back().fn) cur = es_->frames.back().fn->name;
+                    std::cerr << "[slow-op] " << prevDur / 1000 << "us op=" << es_->lastOp
+                              << "(" << actionInfo(es_->lastOp).name << ") obj=" << objName_
+                              << " fn=" << cur << " ip=" << es_->lastIp << "\n";
                 }
             }
             if (stepProfOn) {
@@ -8584,9 +8519,9 @@ private:
                 if (now2 - stepProfLastMs >= 1000) {
                     stepProfLastMs = now2;
                     std::string cur = "<global>";
-                    if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
+                    if (!es_->frames.empty() && es_->frames.back().fn) cur = es_->frames.back().fn->name;
                     std::cerr << "[step-prof] obj=" << objName_ << " fn=" << cur
-                              << " ip=" << ip_ << "/" << (code_ ? code_->size() : 0)
+                              << " ip=" << es_->ip << "/" << (es_->code ? es_->code->size() : 0)
                               << " op=" << in.op << " insns=" << stepProfInsns
                               << " acts=" << stepProfActs << "\n";
                 }
@@ -8635,20 +8570,20 @@ private:
             if (stuckDiagGated &&
                 (stepCounter_ % 500000) == 0) {
                 std::string cur = "<global>";
-                if (!frames_.empty() && frames_.back().fn) cur = frames_.back().fn->name;
+                if (!es_->frames.empty() && es_->frames.back().fn) cur = es_->frames.back().fn->name;
                 std::cerr << "[vm-stuck] obj=" << objName_ << " fn=" << cur
-                          << " ip=" << ip_ << "/" << (code_ ? code_->size() : 0)
-                          << " op=" << in.op << " frames=" << frames_.size()
-                          << " stack=" << stack_.size();
+                          << " ip=" << es_->ip << "/" << (es_->code ? es_->code->size() : 0)
+                          << " op=" << in.op << " frames=" << es_->frames.size()
+                          << " stack=" << es_->stack.size();
                 // Full call chain (fn -> fn -> ...), most recent LAST.  Frame
                 // fns are the callee's program functions; cross-object inline
                 // calls show savedObjVars (different object variable table).
-                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                    const Frame& fr = frames_[fi];
+                for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                    const Frame& fr = es_->frames[fi];
                     std::string fn = (fr.fn ? fr.fn->name : "<ctx/global>");
                     std::string a0 = "?";
-                    if (fr.bp >= 0 && static_cast<size_t>(fr.bp) < stack_.size()) {
-                        a0 = to_string(stack_[static_cast<size_t>(fr.bp)].value, false);
+                    if (fr.bp >= 0 && static_cast<size_t>(fr.bp) < es_->stack.size()) {
+                        a0 = to_string(es_->stack[static_cast<size_t>(fr.bp)].value, false);
                         if (a0.size() > 28) a0 = a0.substr(0, 28) + "...";
                     }
                     std::cerr << " [" << fi << (fr.savedObjVars ? "|x" : "") << "]"
@@ -8657,8 +8592,8 @@ private:
                 // Show each frame's live loop-control blocks: type/current
                 // (or iter+array size) reveal whether a foreach/counter is
                 // stuck or advancing.
-                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                    const Frame& fr = frames_[fi];
+                for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                    const Frame& fr = es_->frames[fi];
                     if (fr.loops.empty()) continue;
                     std::string fn = (fr.fn ? fr.fn->name : "<ctx>");
                     std::cerr << " f" << fi << "(" << fn.substr(0, 24) << "){";
@@ -8678,23 +8613,23 @@ private:
                     }
                     std::cerr << "}";
                 }
-                if (!frames_.empty()) {
-                    const Frame& tf = frames_.back();
+                if (!es_->frames.empty()) {
+                    const Frame& tf = es_->frames.back();
                     std::cerr << " bp=" << tf.bp << " argc=" << tf.argNum;
                 }
-                size_t showN = stack_.size() > 8 ? 8 : stack_.size();
+                size_t showN = es_->stack.size() > 8 ? 8 : es_->stack.size();
                 std::cerr << " top=[";
-                for (size_t si = stack_.size() - showN; si < stack_.size(); ++si) {
-                    if (si > stack_.size() - showN) std::cerr << " ";
-                    std::string vs = to_string(stack_[si].value, false);
+                for (size_t si = es_->stack.size() - showN; si < es_->stack.size(); ++si) {
+                    if (si > es_->stack.size() - showN) std::cerr << " ";
+                    std::string vs = to_string(es_->stack[si].value, false);
                     if (vs.size() > 40) vs = vs.substr(0, 40) + "...";
                     std::cerr << "s" << si << "=" << vs;
                 }
                 // Any loop-control blocks parked on the stack (foreach state
                 // lives in a local slot as a LoopCtrl value).
-                for (size_t si = 0; si < stack_.size(); ++si) {
-                    if (stack_[si].value.index() != 9) continue;
-                    auto c = std::get<std::shared_ptr<LoopCtrl>>(stack_[si].value);
+                for (size_t si = 0; si < es_->stack.size(); ++si) {
+                    if (es_->stack[si].value.index() != 9) continue;
+                    auto c = std::get<std::shared_ptr<LoopCtrl>>(es_->stack[si].value);
                     if (!c) continue;
                     if (c->type == 1 || c->type == -1)
                         std::cerr << " lc@[" << si << "]cnt=" << c->current << "/" << c->to;
@@ -8710,43 +8645,43 @@ private:
                 std::cerr << "]\n";
             }
             static const bool mallOpOn = (std::getenv("LPCVM_MALL2") != nullptr);
-            if (mallOpOn && !frames_.empty() && frames_.back().fn) {
-                const std::string& mn = frames_.back().fn->name;
+            if (mallOpOn && !es_->frames.empty() && es_->frames.back().fn) {
+                const std::string& mn = es_->frames.back().fn->name;
                 if (mn == "buy_from_mall_vsucc" || mn == "buy_from_mall" ||
                     mn == "decrypt" || mn == "precost_coin" ||
                     mn == "do_when_got_precost_coin" || mn == "send_result")
-                    std::cerr << "[mall-op] fn=" << mn << " ip=" << ip_
+                    std::cerr << "[mall-op] fn=" << mn << " ip=" << es_->ip
                               << " op=" << in.op << " a=" << in.a << " b=" << in.b
-                              << " sp=" << stack_.size() << "\n";
+                              << " sp=" << es_->stack.size() << "\n";
             }
             const ActionInfo& ai = actionInfo(in.op);
             int32_t m0 = 0, m1 = 0;
             bool fromMeta = (ai.attrib & 0x80000000u) != 0;
             if (fromMeta) {
                 uint32_t off = static_cast<uint32_t>(in.a) | (static_cast<uint32_t>(in.b) << 16);
-                m0 = readI32(*meta_, off);
-                if (ai.parameters == 2) m1 = readI32(*meta_, off + 4);
+                m0 = readI32(*es_->meta, off);
+                if (ai.parameters == 2) m1 = readI32(*es_->meta, off + 4);
             }
             // LPCVM_OPFN=<substr>: per-instruction trace (operand + stack top)
             // of matching LPC functions.  Diagnostic only; capped per function.
             {
                 static const bool opFnOn = (std::getenv("LPCVM_OPFN") != nullptr);
-                if (opFnOn && !frames_.empty() && frames_.back().fn) {
+                if (opFnOn && !es_->frames.empty() && es_->frames.back().fn) {
                     static const char* const opFnFlt = std::getenv("LPCVM_OPFN");
-                    const std::string& tfn = frames_.back().fn->name;
+                    const std::string& tfn = es_->frames.back().fn->name;
                     if (opFnFlt && *opFnFlt && tfn.find(opFnFlt) != std::string::npos) {
                         static std::map<std::string, int> opFnCount;
                         int& oc = opFnCount[tfn];
                         if (oc < 400) {
                             ++oc;
                             std::string topS = "<empty>";
-                            if (!stack_.empty())
-                                topS = "t" + std::to_string(stack_.back().value.index()) + ":" +
-                                       to_string(stack_.back().value, false).substr(0, 70);
-                            std::cerr << "[op] fn=" << tfn << " ip=" << ip_ << " op=" << in.op
+                            if (!es_->stack.empty())
+                                topS = "t" + std::to_string(es_->stack.back().value.index()) + ":" +
+                                       to_string(es_->stack.back().value, false).substr(0, 70);
+                            std::cerr << "[op] fn=" << tfn << " ip=" << es_->ip << " op=" << in.op
                                       << " a=" << in.a << " b=" << in.b;
                             if (fromMeta) std::cerr << " m0=" << m0 << " m1=" << m1;
-                            std::cerr << " sp=" << stack_.size() << " top=" << topS << "\n";
+                            std::cerr << " sp=" << es_->stack.size() << " top=" << topS << "\n";
                         }
                     }
                 }
@@ -8756,17 +8691,17 @@ private:
             case 46: // null_action
                 break;
             case 29: // finish_action
-                if (returned_) return;
-                returnValue_ = make_int(0);
+                if (es_->returned) return;
+                es_->returnValue = make_int(0);
                 return;
             if (std::getenv("LPCVM_RETVAL") &&
-                (in.op == 72 || in.op == 73) && !frames_.empty() &&
-                frames_.back().fn &&
-                frames_.back().fn->name.find("menu_content") != std::string::npos) {
-                std::string rv = stack_.empty() ? std::string("<empty>")
-                                                : to_string(stack_.back().value, false).substr(0, 80);
-                std::cerr << "[retval] " << frames_.back().fn->name << " on " << objName_
-                          << " returns type=" << (stack_.empty() ? -1 : stack_.back().value.index())
+                (in.op == 72 || in.op == 73) && !es_->frames.empty() &&
+                es_->frames.back().fn &&
+                es_->frames.back().fn->name.find("menu_content") != std::string::npos) {
+                std::string rv = es_->stack.empty() ? std::string("<empty>")
+                                                : to_string(es_->stack.back().value, false).substr(0, 80);
+                std::cerr << "[retval] " << es_->frames.back().fn->name << " on " << objName_
+                          << " returns type=" << (es_->stack.empty() ? -1 : es_->stack.back().value.index())
                           << " \"" << rv << "\"\n";
                 std::cerr.flush();
             }
@@ -8789,8 +8724,8 @@ private:
                 // not a real call frame: the return op must NOT pop that
                 // context frame (runInheritedInits pops it itself) and must not
                 // resume a caller stream - it just ends the init segment.
-                if (frames_.empty()) { returned_ = true; catches_.clear(); return; }
-                const Frame& f = frames_.back();
+                if (es_->frames.empty()) { es_->returned = true; es_->catches.clear(); return; }
+                const Frame& f = es_->frames.back();
                 static const bool tailDiagHere = (std::getenv("LPCVM_TAIL") != nullptr);
                 bool diInit = f.fn && (f.fn->name == "do_init" || f.fn->name == "do_init_data" ||
                                        f.fn->name == "init_data");
@@ -8804,24 +8739,24 @@ private:
                               << "fn=" << f.fn->name
                               << " on " << (home ? home->object().sourceName : obj_.sourceName)
                               << " vm=" << this
-                              << " top=" << (stack_.empty() ? std::string("empty")
-                                        : to_string(stack_.back().value, false).substr(0, 40))
-                              << " frames=" << frames_.size() << "\n";
+                              << " top=" << (es_->stack.empty() ? std::string("empty")
+                                        : to_string(es_->stack.back().value, false).substr(0, 40))
+                              << " frames=" << es_->frames.size() << "\n";
                     std::cerr.flush();
                 }
                 if (vmEnvTrace() && vmEnvTraceFn() &&
                     f.fn && f.fn->name == vmEnvTraceFn())
                     std::cerr << "[ret-enter] " << f.fn->name << " bp=" << f.bp
-                              << " argNum=" << f.argNum << " stack=" << stack_.size()
-                              << " frames=" << frames_.size() << " op=" << in.op << "\n";
+                              << " argNum=" << f.argNum << " stack=" << es_->stack.size()
+                              << " frames=" << es_->frames.size() << " op=" << in.op << "\n";
                 // Diagnostic return probe: scand query_objects results for the
                 // change_lookd monster gate, hero get_save_path shape, and
                 // (LPCVM_TAIL) vendue/change_lookd/scand entry functions.
                 static const bool tailDiag = (std::getenv("LPCVM_TAIL") != nullptr);
                 bool gRet = false;
                 std::string gRetCallee;
-                if ((constructDiagOn() || tailDiag) && f.fn && frames_.size() >= 2) {
-                    const Frame& caller = frames_[frames_.size() - 2];
+                if ((constructDiagOn() || tailDiag) && f.fn && es_->frames.size() >= 2) {
+                    const Frame& caller = es_->frames[es_->frames.size() - 2];
                     bool heroSave = caller.fn && caller.fn->name == "get_save_path" &&
                                     objName_.find("hero.o") != std::string::npos;
                     bool qoCall = f.fn->name == "query_objects";
@@ -8834,17 +8769,17 @@ private:
                                      f.fn->name == "load_vendue_slots_by_type" ||
                                      f.fn->name == "do_init");
                     if (qoCall) {
-                        for (size_t fi = 1; fi < frames_.size(); ++fi) {
-                            if (frames_[fi].fn && frames_[fi].fn->name == "do_init" &&
+                        for (size_t fi = 1; fi < es_->frames.size(); ++fi) {
+                            if (es_->frames[fi].fn && es_->frames[fi].fn->name == "do_init" &&
                                 (objName_.find("change_lookd") != std::string::npos ||
                                  objName_.find("scand") != std::string::npos)) {
                                 gRet = true;
                                 gRetCallee = f.fn->name;
                                 std::cerr << "[qo] " << objName_ << " caller="
-                                          << (frames_[1].fn ? frames_[1].fn->name : "?")
-                                          << " sz=" << stack_.size()
-                                          << " top=" << (stack_.empty() ? std::string("empty")
-                                                    : to_string(stack_.back().value, false)) << "\n";
+                                          << (es_->frames[1].fn ? es_->frames[1].fn->name : "?")
+                                          << " sz=" << es_->stack.size()
+                                          << " top=" << (es_->stack.empty() ? std::string("empty")
+                                                    : to_string(es_->stack.back().value, false)) << "\n";
                                 break;
                             }
                         }
@@ -8854,30 +8789,30 @@ private:
                     }
                 }
                 if (in.op == 72) {
-                    if (!stack_.empty()) returnValue_ = pop().value;
-                    else returnValue_ = make_int(0);
+                    if (!es_->stack.empty()) es_->returnValue = pop().value;
+                    else es_->returnValue = make_int(0);
                 } else {
                     size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
                     if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
-                        std::cerr << "[ret] " << f.fn->name << " bp=" << f.bp << " stack=" << stack_.size()
+                        std::cerr << "[ret] " << f.fn->name << " bp=" << f.bp << " stack=" << es_->stack.size()
                                   << " expVoid=" << expectedVoid << " top="
-                                  << (stack_.empty() ? "empty" : to_string(stack_.back().value, false)) << "\n";
-                    if (stack_.size() == expectedVoid) {
-                        returnValue_ = UndefinedTag{};   // void return value (type 1)
-                    } else if (stack_.size() == expectedVoid + 1 && !stack_.empty()) {
-                        returnValue_ = pop().value;
+                                  << (es_->stack.empty() ? "empty" : to_string(es_->stack.back().value, false)) << "\n";
+                    if (es_->stack.size() == expectedVoid) {
+                        es_->returnValue = UndefinedTag{};   // void return value (type 1)
+                    } else if (es_->stack.size() == expectedVoid + 1 && !es_->stack.empty()) {
+                        es_->returnValue = pop().value;
                     } else {
                         // Stack not in canonical shape; take the top if any.
-                        if (!stack_.empty()) returnValue_ = pop().value;
-                        else returnValue_ = UndefinedTag{};
+                        if (!es_->stack.empty()) es_->returnValue = pop().value;
+                        else es_->returnValue = UndefinedTag{};
                     }
                 }
                 if (vmEnvTrace() && f.fn && f.fn->name == "save_to_text")
-                    std::cerr << "[ret] -> " << to_string(returnValue_, false) << "\n";
-                if (f.fn) mallLog("RETURN", f.fn->name, f.bp, f.argNum, &returnValue_);
+                    std::cerr << "[ret] -> " << to_string(es_->returnValue, false) << "\n";
+                if (f.fn) mallLog("RETURN", f.fn->name, f.bp, f.argNum, &es_->returnValue);
                 if (f.fn) roomLog("RETURN", f.fn->name, f.bp, f.argNum);
                 if (f.fn) lifeLog("RETURN", f.fn->name, f.bp, f.argNum);
-                returned_ = true;
+                es_->returned = true;
                 // [rst] restore-path return probe
                 {
                     const char* rfn = f.fn ? f.fn->name.c_str() : "";
@@ -8899,9 +8834,9 @@ private:
                     if (envFlagTail() && std::getenv("LPCVM_RST") && f.fn && rstHit && rstObj) {
                         static int rstR = 0;
                         if (rstR++ < 1200) {
-                            std::string rd = (returnValue_.index() == 2)
-                                                 ? ("int " + std::to_string(std::get<int64_t>(returnValue_)))
-                                                 : ("t" + std::to_string(returnValue_.index()));
+                            std::string rd = (es_->returnValue.index() == 2)
+                                                 ? ("int " + std::to_string(std::get<int64_t>(es_->returnValue)))
+                                                 : ("t" + std::to_string(es_->returnValue.index()));
                             std::cerr << "[rst] RETURN fn=" << f.fn->name << " -> " << rd
                                       << " obj=" << objName_ << " this=" << thisObjectName_ << "\n";
                             std::cerr.flush();
@@ -8920,13 +8855,13 @@ private:
                     if (hit && f.fn->name == std::string("convert_to_value")) {
                         // Only noisy-print quoted strings (coupon .list values)
                         // so the many plain conversions do not flood the log.
-                        if (returnValue_.index() == 4 &&
-                            std::get<SharedString>(returnValue_).str().find('"') == std::string::npos)
+                        if (es_->returnValue.index() == 4 &&
+                            std::get<SharedString>(es_->returnValue).str().find('"') == std::string::npos)
                             hit = false;
                     }
                     if (hit) {
                         std::string rdbg;
-                        const Value& rv = returnValue_;
+                        const Value& rv = es_->returnValue;
                         switch (rv.index()) {
                         case 2: rdbg = "int " + std::to_string(std::get<int64_t>(rv)); break;
                         case 4: rdbg = "str(" + std::to_string(std::get<SharedString>(rv).size()) + ")["
@@ -8962,24 +8897,24 @@ private:
                      objName_.find("douchong_dahui") != std::string::npos ||
                      objName_.find("master") != std::string::npos))
                     std::cerr << "[clone-restore-ret] " << thisObjectName_ << " fn=" << f.fn->name
-                              << " ret=" << to_string(returnValue_, false) << "\n";
+                              << " ret=" << to_string(es_->returnValue, false) << "\n";
                 // Context frame (fn == nullptr): this is a global init code
                 // segment run by runInheritedInits.  Do NOT pop it (the caller
                 // pops it) and do NOT resume a caller stream - end the loop.
                 if (f.fn == nullptr) {
                     // Drop catch regions this context opened (kept LIFO).
-                    while (!catches_.empty() && catches_.back().frameCount >= frames_.size())
-                        catches_.pop_back();
+                    while (!es_->catches.empty() && es_->catches.back().frameCount >= es_->frames.size())
+                        es_->catches.pop_back();
                     return;
                 }
                 // Returning leaves the frame: any catch region opened in it
                 // (a `return` inside try, before its end_thread_catch) must be
                 // closed, exactly like vm_returnFromFun's vm_endThreadCatch.
-                while (!catches_.empty() && catches_.back().frameCount >= frames_.size())
-                    catches_.pop_back();
+                while (!es_->catches.empty() && es_->catches.back().frameCount >= es_->frames.size())
+                    es_->catches.pop_back();
                 if (fnTraceMatch(f.fn->name) && fnObjMatch(objName_))
                     std::cerr << "[fn] RETURN " << f.fn->name
-                              << " ret=" << to_string(returnValue_, false).substr(0, 160) << "\n";
+                              << " ret=" << to_string(es_->returnValue, false).substr(0, 160) << "\n";
                 // ---- explicit stack machine: return to the caller ----
                 // Clean the callee's argument/local slots off the stack
                 // (mirrors the cleanup executeFunctionOnStack used to do
@@ -9000,31 +8935,31 @@ private:
                 // Cross-object inline call: restore the caller's obj vars and
                 // function-index table (constitution).
                 if (f.savedObjVars) { auto _ob = objVars_; objVars_ = f.savedObjVars; noteVars("pop-f", _ob); }
-                if (f.funcLookupSwitched) funcLookup_ = f.savedFuncLookup;
-                frames_.pop_back();
-                stack_.resize(static_cast<size_t>(newSize));
+                if (f.funcLookupSwitched) es_->funcLookup = f.savedFuncLookup;
+                es_->frames.pop_back();
+                es_->stack.resize(static_cast<size_t>(newSize));
                 if (retCode == nullptr) {
                     // Top-level frame (pushed by executeFunctionOnStack): the
                     // whole call is done; the result stays in returnValue_.
                     return;
                 }
-                code_ = retCode;
-                meta_ = retMeta;
-                ip_ = retIp;
+                es_->code = retCode;
+                es_->meta = retMeta;
+                es_->ip = retIp;
                 if (vmEnvTrace() && vmEnvTraceFn() &&
                     f.fn && f.fn->name == vmEnvTraceFn())
                     std::cerr << "[ret-t] " << f.fn->name << " bp=" << f.bp << " argNum=" << f.argNum
                               << " retCode=" << (retCode ? "set" : "null")
                               << " retCodePtr=" << (retCode ? std::to_string(reinterpret_cast<uintptr_t>(retCode)) : "-")
-                              << " curCodePtr=" << (code_ ? std::to_string(reinterpret_cast<uintptr_t>(code_)) : "-")
+                              << " curCodePtr=" << (es_->code ? std::to_string(reinterpret_cast<uintptr_t>(es_->code)) : "-")
                               << " retIp=" << retIp << " newStack=" << newSize
-                              << " framesAfter=" << frames_.size() << "\n";
+                              << " framesAfter=" << es_->frames.size() << "\n";
                 {
                     static const char* retTraceObj = std::getenv("LPCVM_TRACE_OBJ");
                     if (retTraceObj && f.fn &&
                         objName_.find(retTraceObj) != std::string::npos) {
                         std::cerr << "[tr-ret] " << objName_ << "::" << f.fn->name
-                                  << " ret=" << to_string(returnValue_, false).substr(0, 60) << "\n";
+                                  << " ret=" << to_string(es_->returnValue, false).substr(0, 60) << "\n";
                         std::cerr.flush();
                     }
                 }
@@ -9035,22 +8970,22 @@ private:
                     // already started the next inline call (false).
                     auto hook = std::move(efunReturnHook_);
                     efunReturnHook_ = nullptr;
-                    Value hv = returnValue_;
+                    Value hv = es_->returnValue;
                     bool hookDone = hook(hv);
                     if (hookDone) pushValue(hv);
                     break;
                 }
-                pushValue(returnValue_);   // caller sees the return value on top
+                pushValue(es_->returnValue);   // caller sees the return value on top
                 if (gRet) {
                     std::string rdbg;
-                    if (returnValue_.index() == 5)
-                        rdbg = "arr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(returnValue_)->items.size()) + ")";
-                    else if (returnValue_.index() == 6)
-                        rdbg = "map(" + std::to_string(std::get<std::shared_ptr<MappingValue>>(returnValue_)->size()) + ")";
-                    else if (returnValue_.index() == 2)
-                        rdbg = "int " + std::to_string(std::get<int64_t>(returnValue_));
+                    if (es_->returnValue.index() == 5)
+                        rdbg = "arr(" + std::to_string(std::get<std::shared_ptr<ArrayValue>>(es_->returnValue)->items.size()) + ")";
+                    else if (es_->returnValue.index() == 6)
+                        rdbg = "map(" + std::to_string(std::get<std::shared_ptr<MappingValue>>(es_->returnValue)->size()) + ")";
+                    else if (es_->returnValue.index() == 2)
+                        rdbg = "int " + std::to_string(std::get<int64_t>(es_->returnValue));
                     else
-                        rdbg = "t" + std::to_string(returnValue_.index());
+                        rdbg = "t" + std::to_string(es_->returnValue.index());
                     std::cerr << "[" << (gRetCallee == "query_objects" ? "qo-ret" : "gret")
                               << "] <- " << gRetCallee << " ret=" << rdbg << "\n";
                     std::cerr.flush();
@@ -9061,7 +8996,7 @@ private:
                 pushValue(make_int(static_cast<int16_t>(in.a)));
                 break;
             case 60: // push_number(L)
-                pushValue(make_int(fromMeta ? m0 : metaOperand(*meta_, in.a, in.b)));
+                pushValue(make_int(fromMeta ? m0 : metaOperand(*es_->meta, in.a, in.b)));
                 break;
             case 63: // push_real_from_word (float bits in the first metadata word)
                 pushValue(make_float(*reinterpret_cast<const float*>(&m0)));
@@ -9069,7 +9004,7 @@ private:
             case 64: // push_shared_string
                 {
                     const std::vector<std::string>* tbl =
-                        frames_.empty() || !frames_.back().strings ? &obj_.strings : frames_.back().strings;
+                        es_->frames.empty() || !es_->frames.back().strings ? &obj_.strings : es_->frames.back().strings;
                     if (in.a < tbl->size()) pushValue(make_string((*tbl)[in.a]));
                     else pushValue(make_int(0));
                 }
@@ -9081,7 +9016,7 @@ private:
                 pushValue(make_object_owned(currentThisName(), currentThisObj()));
                 break;
             case 52: // push_arg_num
-                pushValue(make_int(frames_.empty() ? 0 : frames_.back().argNum));
+                pushValue(make_int(es_->frames.empty() ? 0 : es_->frames.back().argNum));
                 break;
             case 53: // push_global_var
                 pushValue(sharedGlobal(in.a));
@@ -9096,8 +9031,8 @@ private:
                 // prints the raw slot, the base offset our frame applied, and the value
                 // our truthiness rule sees.
                 static const std::atomic<bool>& chatVarFlag = dynProbeFlag("LPCVM_CHATVAR");
-                if (chatVarFlag.load(std::memory_order_relaxed) && !frames_.empty() &&
-                    frames_.back().fn && frames_.back().fn->name == "send_channel_msg") {
+                if (chatVarFlag.load(std::memory_order_relaxed) && !es_->frames.empty() &&
+                    es_->frames.back().fn && es_->frames.back().fn->name == "send_channel_msg") {
                     Value gv = (vi >= 0 && static_cast<size_t>(vi) < objVars_->size())
                                    ? (*objVars_)[vi] : Value{};
                     std::cerr << "[chatvar] obj=" << objName_
@@ -9120,8 +9055,8 @@ private:
                     dynProbeFlag("LPCVM_TRACE_OPERMAP");
                 if (opMapTraceFlag.load(std::memory_order_relaxed) &&
                     objName_.find("filed.o") != std::string::npos &&
-                    !frames_.empty() && frames_.back().fn) {
-                    const std::string& fnn = frames_.back().fn->name;
+                    !es_->frames.empty() && es_->frames.back().fn) {
+                    const std::string& fnn = es_->frames.back().fn->name;
                     if (fnn == "do_operate" || fnn == "msg_operate_done" || fnn == "operate_done" ||
                         fnn == "msg_read_content" || fnn == "operate_done_ex") {
                         bool isMap = vi >= 0 && static_cast<size_t>(vi) < objVars_->size() &&
@@ -9135,17 +9070,17 @@ private:
                 }
                 if (vmEnvDbgObjVar() &&
                     ((objName_.find("/zone/") != std::string::npos && vi < 2) ||
-                     (!frames_.empty() && frames_.back().fn &&
-                      frames_.back().fn->name == "query_entire_dbase"))) {                    std::cerr << "[zvar] obj=" << objName_ << " fn="
-                              << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
+                     (!es_->frames.empty() && es_->frames.back().fn &&
+                      es_->frames.back().fn->name == "query_entire_dbase"))) {                    std::cerr << "[zvar] obj=" << objName_ << " fn="
+                              << (es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name)
                               << " varOff=" << currentVarOffset()
                               << " idx=" << vi << " vars=" << objVars_->size()
                               << " type=" << ((vi >= 0 && static_cast<size_t>(vi) < objVars_->size()) ? (*objVars_)[vi].index() : -1)
                               << "\n";
                 }
                 static const bool nearOn61 = (std::getenv("LPCVM_NEAR") != nullptr);
-                if (nearOn61 && !frames_.empty() && frames_.back().fn) {
-                    const std::string fnn2 = frames_.back().fn->name;
+                if (nearOn61 && !es_->frames.empty() && es_->frames.back().fn) {
+                    const std::string fnn2 = es_->frames.back().fn->name;
                     if (fnn2 == "is_visible" || fnn2 == "is_near") {
                         std::string val = "<oob>";
                         if (vi >= 0 && static_cast<size_t>(vi) < objVars_->size())
@@ -9171,21 +9106,21 @@ private:
             case 56: { // push_local_var_i (index popped from stack)
                 int idx = static_cast<int16_t>(in.a);
                 if (in.op == 56) idx = static_cast<int>(toInt(pop().value));
-                if (envFlagTail() && std::getenv("LPCVM_RST") && !frames_.empty() &&
-                    frames_.back().fn && frames_.back().fn->name == "restore_achieve_data") {
+                if (envFlagTail() && std::getenv("LPCVM_RST") && !es_->frames.empty() &&
+                    es_->frames.back().fn && es_->frames.back().fn->name == "restore_achieve_data") {
                     static int plN = 0;
                     if (plN++ < 60) {
                         int absSlot = slotOf(idx);
                         std::string sv = "OOB";
-                        if (absSlot >= 0 && static_cast<size_t>(absSlot) < stack_.size())
-                            sv = "t" + std::to_string(stack_[static_cast<size_t>(absSlot)].value.index()) +
-                                 ":" + to_string(stack_[static_cast<size_t>(absSlot)].value, false).substr(0, 40);
+                        if (absSlot >= 0 && static_cast<size_t>(absSlot) < es_->stack.size())
+                            sv = "t" + std::to_string(es_->stack[static_cast<size_t>(absSlot)].value.index()) +
+                                 ":" + to_string(es_->stack[static_cast<size_t>(absSlot)].value, false).substr(0, 40);
                         std::cerr << "[rst] PUSHLOCAL fn=restore_achieve_data idx=" << idx
                                   << " slot=" << absSlot << " val=" << sv
-                                  << " bp=" << frames_.back().bp
-                                  << " stack=" << stack_.size()
+                                  << " bp=" << es_->frames.back().bp
+                                  << " stack=" << es_->stack.size()
                                   << " obj=" << objName_ << " this=" << thisObjectName_
-                                  << " frames=" << frames_.size() << "\n";
+                                  << " frames=" << es_->frames.size() << "\n";
                         std::cerr.flush();
                     }
                 }
@@ -9201,23 +9136,23 @@ private:
             }
             case 3: { // assign_value: pop ref, keep value on stack
                 StackItem ref = pop();
-                if (!stack_.empty()) writeThrough(ref, stack_.back().value);
-                if (constructDiagOn() && !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "create_data_from2" && ref.map)
+                if (!es_->stack.empty()) writeThrough(ref, es_->stack.back().value);
+                if (constructDiagOn() && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "create_data_from2" && ref.map)
                     std::cerr << "[hprobe] m68-assign cdf2 mapSize="
                               << ref.map->items().size() << " vm=" << this << " obj=" << objName_ << "\n";
                 break;
             }
             case 4: { // assign_value_reverse: pop value, keep ref
                 StackItem val = pop();
-                if (!stack_.empty()) writeThrough(stack_.back(), val.value);
+                if (!es_->stack.empty()) writeThrough(es_->stack.back(), val.value);
                 break;
             }
             case 76: // set_global_var
                 if (nbProbeOn() && (fromMeta ? m0 : static_cast<int16_t>(in.a)) == 31) {
                     std::cerr << "[nb-gs] obj=" << objName_ << " fn="
-                              << ((!frames_.empty() && frames_.back().fn)
-                                      ? frames_.back().fn->name : std::string("<none>"))
+                              << ((!es_->frames.empty() && es_->frames.back().fn)
+                                      ? es_->frames.back().fn->name : std::string("<none>"))
                               << " (set_global_var 31)\n";
                     std::cerr.flush();
                 }
@@ -9229,15 +9164,15 @@ private:
                 if (vmEnvDbgObjVar() && objName_.find("/zone/") != std::string::npos &&
                     sv.index() == 6) {
                     std::cerr << "[setvar-map] obj=" << objName_ << " fn="
-                              << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
+                              << (es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name)
                               << " idx=" << vi << " vars=" << objVars_->size() << "\n";
                 }
                 if (static_cast<size_t>(vi) < objVars_->size()) (*objVars_)[vi] = sv;
                 break;
             }
             case 77: // set_local_var
-                if (!stack_.empty()) {
-                    StackItem& slot = stack_[static_cast<size_t>(slotOf(static_cast<int16_t>(in.a)))];
+                if (!es_->stack.empty()) {
+                    StackItem& slot = es_->stack[static_cast<size_t>(slotOf(static_cast<int16_t>(in.a)))];
                     Value sv = pop().value;
                     if (slot.value.index() == 11) {
                         auto r = std::get<std::shared_ptr<CrossVmRef>>(slot.value);
@@ -9251,17 +9186,17 @@ private:
                                           << " write=[" << to_string(sv, false).substr(0, 40)
                                           << "] -> tgtvm=" << std::to_string(reinterpret_cast<uintptr_t>(vm))
                                           << " slot=" << r->slotIndex << " obj=" << r->objIndex
-                                          << " tgtSz=" << (vm ? vm->stack_.size() : size_t(0)) << "\n";
+                                          << " tgtSz=" << (vm ? vm->es_->stack.size() : size_t(0)) << "\n";
                                 std::cerr.flush();
                             }
                         }
                         if (vm) {
                             StackItem* cslot = nullptr;
                             if (r->slotIndex >= 0) {
-                                if (static_cast<size_t>(r->slotIndex) < vm->stack_.size())
-                                    cslot = &vm->stack_[static_cast<size_t>(r->slotIndex)];
-                                else if (static_cast<size_t>(r->slotIndex) < vm->detachedStack_.size())
-                                    cslot = &vm->detachedStack_[static_cast<size_t>(r->slotIndex)];
+                                if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
+                                    cslot = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
+                                else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
+                                    cslot = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];
                             }
                             if (cslot) {
                                 cslot->value = sv;
@@ -9279,10 +9214,10 @@ private:
                 pop();
                 break;
             case 50: // pop_n_stack
-                for (int i = 0; i < in.a && !stack_.empty(); ++i) pop();
+                for (int i = 0; i < in.a && !es_->stack.empty(); ++i) pop();
                 break;
             case 34: // inc_value
-                if (!stack_.empty()) {
+                if (!es_->stack.empty()) {
                     StackItem ref = pop();
                     if (ref.isRef) {
                         Value cur = deref(ref);
@@ -9303,7 +9238,7 @@ private:
                 // {-2, cookie} - operate_done reads set_result[1]==cookie.)
                 uint32_t count = in.a;
                 std::vector<Value> items;
-                for (uint32_t i = 0; i < count && !stack_.empty(); ++i) items.push_back(pop().value);
+                for (uint32_t i = 0; i < count && !es_->stack.empty(); ++i) items.push_back(pop().value);
                 auto arr = std::make_shared<ArrayValue>();
                 arr->items = std::move(items);
                 pushValue(arr);
@@ -9311,7 +9246,7 @@ private:
             }
             case 23: { // create_function_value (bound count = par8 & 0x3F)
                 if (std::getenv("LPCVM_CFV")) {
-                    const OriginalFunction* cf0 = frames_.empty() ? nullptr : frames_.back().fn;
+                    const OriginalFunction* cf0 = es_->frames.empty() ? nullptr : es_->frames.back().fn;
                     const std::string fn0 = cf0 ? cf0->name : "<none>";
                     auto pit = funcsByIndex_.find(in.a);
                     const std::string plain =
@@ -9360,7 +9295,7 @@ private:
                             cl->owner = nullptr;
                             int boundCount = in.b & 0x3F;
                             std::vector<Value> bound;
-                            for (int i = 0; i < boundCount && !stack_.empty(); ++i)
+                            for (int i = 0; i < boundCount && !es_->stack.empty(); ++i)
                                 bound.push_back(pop().value);
                             cl->boundArgs = std::move(bound);
                             if (vmEnvTrace())
@@ -9383,7 +9318,7 @@ private:
                     // register_menu_content stored a closure over set_temp in
                     // "menu_content", start_talk_to's is_string() guard failed
                     // and every NPC click silently sent no dialogue at all.
-                    const OriginalFunction* cur = frames_.empty() ? nullptr : frames_.back().fn;
+                    const OriginalFunction* cur = es_->frames.empty() ? nullptr : es_->frames.back().fn;
                     const int loff = cur ? cur->funOffset : 0;
                     if (cur) {
                         // Fast path: the frame function normally belongs to
@@ -9439,8 +9374,8 @@ private:
                               << " found=" << (fn != nullptr)
                               << (fn ? " name=" + fn->name : "") << "\n";
                 if (std::getenv("LPCVM_CFV")) {
-                    std::string cur2 = (!frames_.empty() && frames_.back().fn)
-                                           ? frames_.back().fn->name : std::string("<none>");
+                    std::string cur2 = (!es_->frames.empty() && es_->frames.back().fn)
+                                           ? es_->frames.back().fn->name : std::string("<none>");
                     std::cerr << "[cfv-res] obj=" << objName_ << " cur=" << cur2
                               << " a=" << in.a << " bind=" << (in.b & 0x3F)
                               << " glob=" << ((in.b & 0x80) != 0)
@@ -9452,7 +9387,7 @@ private:
                 if (fn) {
                     std::vector<Value> bound;
                     int boundCount = in.b & 0x3F;
-                    for (int i = 0; i < boundCount && !stack_.empty(); ++i) bound.push_back(pop().value);
+                    for (int i = 0; i < boundCount && !es_->stack.empty(); ++i) bound.push_back(pop().value);
                     if (vmEnvTrace() && fn->name == "process_command" &&
                         (in.a == 32 || in.a == 153)) {
                         std::string dbg;
@@ -9460,8 +9395,8 @@ private:
                             dbg += (k ? " | " : "") + to_string(bound[k], false).substr(0, 40);
                         std::cerr << "[cfv-create] " << fn->name << " idx=" << in.a
                                   << " bind=" << boundCount << " cur="
-                                  << (frames_.empty() || !frames_.back().fn
-                                          ? "<global>" : frames_.back().fn->name)
+                                  << (es_->frames.empty() || !es_->frames.back().fn
+                                          ? "<global>" : es_->frames.back().fn->name)
                                   << " vals=[" << dbg << "]\n";
                     }
                     auto cl = std::make_shared<ClosureValue>();
@@ -9477,8 +9412,8 @@ private:
                         static int nbC = 0;
                         if (nbC++ < 6000) {
                             const std::string curN =
-                                (!frames_.empty() && frames_.back().fn)
-                                    ? frames_.back().fn->name : std::string("<none>");
+                                (!es_->frames.empty() && es_->frames.back().fn)
+                                    ? es_->frames.back().fn->name : std::string("<none>");
                             std::cerr << "[nb-cfv] obj=" << objName_ << " cur=" << curN
                                       << " idx=" << in.a << " " << nbClosureDesc(cl)
                                       << "\n";
@@ -9497,7 +9432,7 @@ private:
                 // reversed and pair them back as (key, value).
                 uint32_t count = in.a;
                 std::vector<Value> items;
-                for (uint32_t i = 0; i < count && !stack_.empty(); ++i) items.push_back(pop().value);
+                for (uint32_t i = 0; i < count && !es_->stack.empty(); ++i) items.push_back(pop().value);
                 std::reverse(items.begin(), items.end());
                 auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(items.size() / 2));
                 for (size_t i = 0; i + 1 < items.size(); i += 2)
@@ -9507,8 +9442,8 @@ private:
             }
             case 21: { // create_argument_array
                 std::vector<Value> items;
-                if (!frames_.empty()) {
-                    const Frame& f = frames_.back();
+                if (!es_->frames.empty()) {
+                    const Frame& f = es_->frames.back();
                     for (int i = 0; i < f.argNum; ++i) items.push_back(slotValue(f.bp - i));
                 }
                 auto arr = std::make_shared<ArrayValue>();
@@ -9635,8 +9570,8 @@ private:
                 if (op == 2 && rhs.index() == 4) {
                     const StackItem* tgt = followRefChain(ref);
                     if (tgt && tgt->slotIndex >= 0 &&
-                        static_cast<size_t>(tgt->slotIndex) < stack_.size()) {
-                        StackItem& slot = stack_[static_cast<size_t>(tgt->slotIndex)];
+                        static_cast<size_t>(tgt->slotIndex) < es_->stack.size()) {
+                        StackItem& slot = es_->stack[static_cast<size_t>(tgt->slotIndex)];
                         if (!slot.isRef && slot.value.index() == 4) {
                             SharedString& ts = std::get<SharedString>(slot.value);
                             // Only amortize genuinely long strings: the
@@ -9691,8 +9626,8 @@ private:
                 }
                 // LPCVM_NEWBIE: prove what the newbie-hook append actually
                 // stores (register_enter_world does `_enter_world_funcs += ({f})`).
-                if (nbProbeOn() && !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "register_enter_world") {
+                if (nbProbeOn() && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "register_enter_world") {
                     auto trg = (target.index() == 5)
                                    ? std::get<std::shared_ptr<ArrayValue>>(target) : nullptr;
                     auto rvv = (rhs.index() == 5)
@@ -9755,9 +9690,9 @@ private:
                     static const std::atomic<bool>& istFlag = dynProbeFlag("LPCVM_ISFN");
                     if (istFlag.load(std::memory_order_relaxed)) {
                         static int istBudget = 400;
-                        if (istBudget > 0 && !stack_.empty()) {
+                        if (istBudget > 0 && !es_->stack.empty()) {
                             bool want36 = false;
-                            for (const auto& fr : frames_) {
+                            for (const auto& fr : es_->frames) {
                                 if (fr.fn && (fr.fn->name == "query_task_log" ||
                                               fr.fn->name == "query_task_tip" ||
                                               fr.fn->name == "query_task_desc")) {
@@ -9767,7 +9702,7 @@ private:
                             if (want36) {
                                 --istBudget;
                                 int t36 = fromMeta ? m0 : static_cast<int16_t>(in.a);
-                                const Value& vv = stack_.back().value;
+                                const Value& vv = es_->stack.back().value;
                                 std::string d = to_string(vv, false);
                                 if (d.size() > 120) d = d.substr(0, 120) + "...";
                                 if (vv.index() == 4) {
@@ -10063,8 +9998,8 @@ private:
                                 }
                                 // on a separate thread (the scheduler is the only
                                 // thread allowed to run LPC).
-                                if (frames_.back().fn &&
-                                    frames_.back().fn->name == "query_task_log" && t36 == 7) {
+                                if (es_->frames.back().fn &&
+                                    es_->frames.back().fn->name == "query_task_log" && t36 == 7) {
                                     static std::atomic<bool> dumped{false};
                                     if (!dumped.exchange(true)) {
                                         std::string root = searchRoot();
@@ -10104,7 +10039,7 @@ private:
                                 }
                                 {
                                     std::string chain;
-                                    for (const auto& fr : frames_) {
+                                    for (const auto& fr : es_->frames) {
                                         std::string fnm = fr.fn ? fr.fn->name : std::string("<ctx>");
                                         if (!chain.empty()) chain += "<-";
                                         chain += fnm;
@@ -10159,8 +10094,8 @@ private:
                                         }
                                     }
                                 }
-                                std::string cur = frames_.empty() || !frames_.back().fn
-                                                      ? "<top>" : frames_.back().fn->name;
+                                std::string cur = es_->frames.empty() || !es_->frames.back().fn
+                                                      ? "<top>" : es_->frames.back().fn->name;
                                 std::cerr << "[istype] fn=" << cur << " obj=" << objName_
                                           << " want=" << t36 << " valueType=" << vv.index()
                                           << " val=" << d << "\n";
@@ -10173,16 +10108,16 @@ private:
                     int t36 = fromMeta ? m0 : static_cast<int16_t>(in.a);
                     if (t36 == 9) {   // 9 = function
                         bool inPEW = false;
-                        for (const auto& fr : frames_)
+                        for (const auto& fr : es_->frames)
                             if (fr.fn && fr.fn->name == "post_enter_world") { inPEW = true; break; }
                         if (inPEW) {
                             static int nbN = 0;
                             if (nbN++ < 400) {
-                                std::string d = stack_.empty()
+                                std::string d = es_->stack.empty()
                                     ? std::string("<empty>")
-                                    : ("t" + std::to_string(stack_.back().value.index()) + ":"
-                                       + to_string(stack_.back().value, false).substr(0, 70)
-                                       + " " + nbClosureDesc(stack_.back().value));
+                                    : ("t" + std::to_string(es_->stack.back().value.index()) + ":"
+                                       + to_string(es_->stack.back().value, false).substr(0, 70)
+                                       + " " + nbClosureDesc(es_->stack.back().value));
                                 std::cerr << "[nb-isfn] " << d << "\n";
                                 std::cerr.flush();
                             }
@@ -10191,15 +10126,15 @@ private:
                 }
                 if (std::getenv("LPCVM_MENUDECIDE")) {
                     bool inTalk2 = false;
-                    for (const auto& fr : frames_)
+                    for (const auto& fr : es_->frames)
                         if (fr.fn && fr.fn->name == "start_talk_to") { inTalk2 = true; break; }
                     if (inTalk2) {
                         int want = fromMeta ? m0 : static_cast<int16_t>(in.a);
                         std::string topv;
-                        if (!stack_.empty())
-                            topv = to_string(stack_.back().value, false).substr(0, 60);
+                        if (!es_->stack.empty())
+                            topv = to_string(es_->stack.back().value, false).substr(0, 60);
                         std::cerr << "[menudecide] is_type(" << want << ") on \"" << topv
-                                  << "\" -> " << (stack_.empty() ? -1 : stack_.back().value.index())
+                                  << "\" -> " << (es_->stack.empty() ? -1 : es_->stack.back().value.index())
                                   << "\n";
                         std::cerr.flush();
                     }
@@ -10218,7 +10153,7 @@ private:
                 StackItem ref = top();
                 if (ref.isRef) {
                     Value v = deref(ref);
-                    stack_.back() = makeItem(v);
+                    es_->stack.back() = makeItem(v);
                 }
                 break;
             }
@@ -10254,8 +10189,8 @@ private:
                 // (attach_form_file -> importd.create_data -> _form_value
                 // stayed ([ ]) so herod/onlinemall forms never loaded).
                 container = resolveCrossVmRef(container);
-                if (constructDiagOn() && !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "create_data_from2") {
+                if (constructDiagOn() && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "create_data_from2") {
                     std::string ks = to_string(key, false).substr(0, 40);
                     std::string ci = (container.index() == 6)
                         ? ("map(" + std::to_string(std::get<std::shared_ptr<MappingValue>>(container)->items().size()) + ")")
@@ -10286,8 +10221,8 @@ private:
                     } else if (c.isRef && c.slotIndex >= 0) {
                         rdbg = "slotref idx=" + std::to_string(c.slotIndex);
                         if (c.slotIndex >= 0 &&
-                            static_cast<size_t>(c.slotIndex) < stack_.size()) {
-                            const StackItem& sit = stack_[static_cast<size_t>(c.slotIndex)];
+                            static_cast<size_t>(c.slotIndex) < es_->stack.size()) {
+                            const StackItem& sit = es_->stack[static_cast<size_t>(c.slotIndex)];
                             std::string is = sit.isRef ? "ref" : ("t" + std::to_string(sit.value.index()));
                             if (!sit.isRef && sit.value.index() == 11) {
                                 auto r = std::get<std::shared_ptr<CrossVmRef>>(sit.value);
@@ -10339,11 +10274,11 @@ private:
             case 6: { // call_in_efun
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
-                lastEfunIndex_ = efun;
+                es_->lastEfunIndex = efun;
                 if (vmEnvTrace() && objName_.find("cmd_log_important") != std::string::npos)
                     std::cerr << "[efun-pre] efun=" << efun << " argc=" << argc
-                              << " stack=" << stack_.size() << " frames=" << frames_.size()
-                              << " meta=" << (meta_ ? meta_->size() : 0)
+                              << " stack=" << es_->stack.size() << " frames=" << es_->frames.size()
+                              << " meta=" << (es_->meta ? es_->meta->size() : 0)
                               << " t=" << std::this_thread::get_id() << "\n";
                 const auto& names = efunNameTable();
                 if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
@@ -10355,7 +10290,7 @@ private:
                     // notice_others_appear/disappear; the stub returned 0 so
                     // players never saw each other appear or disappear.
                     std::vector<StackItem> refs;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) refs.push_back(pop());
                     int ret = 0;
                     if (refs.size() >= 5) {
                         Value mv = refs[0].isRef ? deref(refs[0]) : refs[0].value;
@@ -10394,7 +10329,7 @@ private:
                     // spawn placement (dungeond, familyd, lihe items, start_gs);
                     // the stub returned 0 so those placements never happened.
                     std::vector<StackItem> refs;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) refs.push_back(pop());
                     int ok = 0, nx = 0, ny = 0;
                     if (refs.size() >= 3) {
                         Value mv = refs[0].isRef ? deref(refs[0]) : refs[0].value;
@@ -10449,7 +10384,7 @@ private:
                     // spots" loops spun (22000+ stub calls) so post_init never
                     // drained and port 8160 never opened.
                     std::vector<StackItem> refs;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) refs.push_back(pop());
                     int ok = 0, nx = 0, ny = 0;
                     if (refs.size() >= 3) {
                         Value mv = refs[0].isRef ? deref(refs[0]) : refs[0].value;
@@ -10500,7 +10435,7 @@ private:
                     // so mutating buf->data updates the caller's buffer in
                     // place - no writeThrough needed.
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     std::reverse(items.begin(), items.end());
                     int64_t written = 0;
                     if (items.size() >= 3 && items[0].isRef) {
@@ -10548,7 +10483,7 @@ private:
                         // args[0]).  args[0] = input, args[1] = format, the
                         // rest are reference outputs.
                         std::vector<StackItem> refs;
-                        for (int i = 0; i < argc && !stack_.empty(); ++i) refs.push_back(pop());
+                        for (int i = 0; i < argc && !es_->stack.empty(); ++i) refs.push_back(pop());
                         std::string input = strOf(refs[0]);
                         std::string fmtStr = strOf(refs[1]);
                         std::vector<Value> outs;
@@ -10593,7 +10528,7 @@ private:
                         // (kind 5) and the scheduler resumes it once the fd
                         // becomes readable.
                         std::vector<StackItem> items;
-                        for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                        for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                         std::reverse(items.begin(), items.end());
                         if (items.size() >= 3) {
                             Value fdv = items[0].isRef ? deref(items[0]) : items[0].value;
@@ -10620,7 +10555,7 @@ private:
                                     bool rok = false;
                                     std::string d = xdbcRecvAsync(fd, len, rok);
                                     if (rok && !d.empty()) writeThrough(bufRef, make_string(d));
-                                    resumeValue_ = make_int(static_cast<int64_t>(d.size()));
+                                    es_->resumeValue = make_int(static_cast<int64_t>(d.size()));
                                 };
                                 parkAndSuspend(cond, std::move(hook), make_int(0));
                                 break;   // unreachable (SuspendSignal thrown)
@@ -10634,7 +10569,7 @@ private:
                         // vm_f_select: select(&read, &write, &exc, ms) filters
                         // the fd arrays in place and returns the ready count.
                         std::vector<StackItem> items;
-                        for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                        for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                         std::reverse(items.begin(), items.end());
                         int timeoutMs = 0;
                         if (items.size() >= 4) {
@@ -10669,7 +10604,7 @@ private:
                     // does not exist.  The VM pushes args in reverse (param0
                     // on top), so pop() yields arg0 first.
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     if (vmEnvTrace()) {
                         std::string dbg;
                         for (auto& it : items) {
@@ -10764,7 +10699,7 @@ private:
                         ~CurProcPin() { scheduler().restoreCurrentProcess(saved); }
                     } curProcPin;
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     if (items.size() >= 2) {
                         Value qv = items[0].isRef ? deref(items[0]) : items[0].value;
                         Value v = items[1].isRef ? deref(items[1]) : items[1].value;
@@ -10780,15 +10715,15 @@ private:
                         static const std::atomic<bool>& qSendTrace =
                             dynProbeFlag("LPCVM_QUEUE_TRACE");
                         if (envFlagTail() || qSendTrace.load(std::memory_order_relaxed)) {
-                            std::string cf = frames_.empty() || !frames_.back().fn
-                                                 ? "<global>" : frames_.back().fn->name;
+                            std::string cf = es_->frames.empty() || !es_->frames.back().fn
+                                                 ? "<global>" : es_->frames.back().fn->name;
                             std::string qvdesc = (qv.index() == 2)
                                                      ? std::to_string(std::get<int64_t>(qv))
                                                      : ("t" + std::to_string(qv.index()));
                             std::cerr << "[q-send] qid=" << qid << " ok=" << ok
                                       << " obj=" << objName_ << " fn=" << cf
                                       << " this=" << thisObjectName_ << " qv=" << qvdesc
-                                      << " ip=" << lastIp_
+                                      << " ip=" << es_->lastIp
                                       << " vm=" << this << "\n";
                         }
                         if (!ok) {
@@ -10796,17 +10731,17 @@ private:
                             // registered queues + the caller chain (frame by
                             // frame: fn name + whether the frame switched the
                             // object-variable table = cross-object inline).
-                            std::string cf = frames_.empty() || !frames_.back().fn
-                                                 ? "<global>" : frames_.back().fn->name;
+                            std::string cf = es_->frames.empty() || !es_->frames.back().fn
+                                                 ? "<global>" : es_->frames.back().fn->name;
                             std::string chain;
                             // Resolve each frame's function to its owning
                             // registry object (fn pointers live in object
                             // function tables), so a wrong-table execution is
                             // attributable to the exact dispatch that failed.
                             std::vector<const OriginalVm*> frameObjs;
-                            if (!frames_.empty()) {
+                            if (!es_->frames.empty()) {
                                 std::vector<const OriginalFunction*> want;
-                                for (auto& fr : frames_) if (fr.fn) want.push_back(fr.fn);
+                                for (auto& fr : es_->frames) if (fr.fn) want.push_back(fr.fn);
                                 std::lock_guard<std::recursive_mutex> rl3(registryMutex());
                                 auto& reg3 = objectRegistry();
                                 std::vector<std::string> fobjs(want.size());
@@ -10817,8 +10752,8 @@ private:
                                                 fobjs[fi3] = kv3.first;
                                     }
                                 }
-                                for (int fi = 0; fi < static_cast<int>(frames_.size()); ++fi) {
-                                    const Frame& fr = frames_[static_cast<size_t>(fi)];
+                                for (int fi = 0; fi < static_cast<int>(es_->frames.size()); ++fi) {
+                                    const Frame& fr = es_->frames[static_cast<size_t>(fi)];
                                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                                     std::string ob = (static_cast<size_t>(fi) < fobjs.size() && !fobjs[static_cast<size_t>(fi)].empty())
                                                          ? fobjs[static_cast<size_t>(fi)] : "";
@@ -10839,16 +10774,16 @@ private:
                             // return the same pointer?  A "[x]" frame above means
                             // the VM ran another object's function without a
                             // table switch - the exact disease under test.
-                            std::string curFn = frames_.empty() || !frames_.back().fn
-                                                    ? "<none>" : frames_.back().fn->name;
-                            const OriginalFunction* backFn = frames_.empty() ? nullptr : frames_.back().fn;
+                            std::string curFn = es_->frames.empty() || !es_->frames.back().fn
+                                                    ? "<none>" : es_->frames.back().fn->name;
+                            const OriginalFunction* backFn = es_->frames.empty() ? nullptr : es_->frames.back().fn;
                             std::string ownedCur = backFn && ownedFns_.count(backFn) ? "yes" : "NO";
                             std::string byName = "<none>";
                             if (backFn) {
                                 const OriginalFunction* nf = findFunctionAny(backFn->name);
                                 byName = nf ? ((nf == backFn) ? "same" : "DIFF") : "miss";
                             }
-                            std::string flk = funcLookup_ ? "yes" : "no";
+                            std::string flk = es_->funcLookup ? "yes" : "no";
                             // Which object's variable table is active right now?
                             std::string varsOwner = "?";
                             {
@@ -10872,7 +10807,7 @@ private:
                                       << " curfn=" << curFn << " ownedCur=" << ownedCur
                                       << " byName=" << byName << " funcLookup=" << flk
                                       << " nFns=" << funcsByIndex_.size()
-                                      << " fn=" << cf << " ip=" << lastIp_
+                                      << " fn=" << cf << " ip=" << es_->lastIp
                                       << " chain=[" << chain
                                       << "] reg={" << lpc::queueNameDump()
                                       << "} this=" << thisObjectName_ << "\n";
@@ -10893,7 +10828,7 @@ private:
                     // on a timer; the scheduler resumes it when the timer
                     // fires.  Cooperative: never blocks the OS thread.
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     double secs = 0;
                     if (!items.empty()) {
                         Value tv = items[0].isRef ? deref(items[0]) : items[0].value;
@@ -10912,14 +10847,14 @@ private:
                             static int rdsN = 0;
                             if (rdsN < 200) {
                                 ++rdsN;
-                                std::string curFn = frames_.empty() || !frames_.back().fn
-                                                        ? "<global>" : frames_.back().fn->name;
+                                std::string curFn = es_->frames.empty() || !es_->frames.back().fn
+                                                        ? "<global>" : es_->frames.back().fn->name;
                                 auto tt = std::chrono::steady_clock::now();
                                 int64_t tnow = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     tt.time_since_epoch()).count();
                                 std::cerr << "[rdsleep] t=" << tnow << " secs=" << secs << " fn=" << curFn
-                                          << " vm=" << this << " frames=" << frames_.size()
-                                          << " parked=" << parked_ << "\n";
+                                          << " vm=" << this << " frames=" << es_->frames.size()
+                                          << " parked=" << es_->parked << "\n";
                                 std::cerr.flush();
                             }
                         }
@@ -10956,7 +10891,7 @@ private:
                     // detach the VM state, block on the real event, then
                     // re-acquire the lock and restore.
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     std::string ename;
                     Value eref;
                     if (!items.empty()) {
@@ -10976,16 +10911,16 @@ private:
                         else if (tv.index() == 3) secs = std::get<double>(tv);
                     }
                     if (ename.rfind("oid:", 0) == 0 && vmEnvSvcTrace()) {
-                        std::string wf = frames_.empty() || !frames_.back().fn
-                                              ? "<global>" : frames_.back().fn->name;
+                        std::string wf = es_->frames.empty() || !es_->frames.back().fn
+                                              ? "<global>" : es_->frames.back().fn->name;
                         std::cerr << "[wait-oid] " << ename << " obj=" << objName_
-                                  << " fn=" << wf << " frames=" << frames_.size()
-                                  << " stack=" << stack_.size();
+                                  << " fn=" << wf << " frames=" << es_->frames.size()
+                                  << " stack=" << es_->stack.size();
                         // Full call chain (most recent LAST) so the LPC module
                         // that issued the int-oid wait is identifiable.
                         std::string chain;
-                        for (int fi = 0; fi < static_cast<int>(frames_.size()); ++fi) {
-                            const Frame& fr = frames_[static_cast<size_t>(fi)];
+                        for (int fi = 0; fi < static_cast<int>(es_->frames.size()); ++fi) {
+                            const Frame& fr = es_->frames[static_cast<size_t>(fi)];
                             std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                             if (!chain.empty()) chain += "<-";
                             chain += fnm;
@@ -10994,17 +10929,17 @@ private:
                         std::cerr << " chain=[" << chain << "]\n";
                     }
                     if (vmEnvEventTrace()) {
-                        std::string wfn = frames_.empty() || !frames_.back().fn
-                                              ? "<global>" : frames_.back().fn->name;
+                        std::string wfn = es_->frames.empty() || !es_->frames.back().fn
+                                              ? "<global>" : es_->frames.back().fn->name;
                         std::cerr << "[wait_event] " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " secs=" << secs
                                   << " vm=" << this << " obj=" << objName_
-                                  << " fn=" << wfn << " ip=" << ip_ << "\n";
+                                  << " fn=" << wfn << " ip=" << es_->ip << "\n";
                     }
                     bool evDbg = vmEnvEvDbg() && evDbgName(ename);
                     if (evDbg) {
-                        std::string wfn = frames_.empty() || !frames_.back().fn
-                                              ? "<global>" : frames_.back().fn->name;
+                        std::string wfn = es_->frames.empty() || !es_->frames.back().fn
+                                              ? "<global>" : es_->frames.back().fn->name;
                         std::cerr << "[ev] wait " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " secs=" << secs
                                   << " tid=" << scheduler().currentProcessTid()
@@ -11031,10 +10966,10 @@ private:
                         if (vmEnvEventTrace())
                             std::cerr << "[wait_event] unknown-event " << ename << " -> -101\n";
                         if (vmEnvEventTrace()) {
-                            std::string wfn = frames_.empty() || !frames_.back().fn
-                                                  ? "<global>" : frames_.back().fn->name;
+                            std::string wfn = es_->frames.empty() || !es_->frames.back().fn
+                                                  ? "<global>" : es_->frames.back().fn->name;
                             std::cerr << "[wait-unknown] " << ename << " obj=" << objName_
-                                      << " fn=" << wfn << " ip=" << ip_ << " stack=" << stack_.size() << "\n";
+                                      << " fn=" << wfn << " ip=" << es_->ip << " stack=" << es_->stack.size() << "\n";
                         }
                         pushValue(make_int(-101));
                     } else if (probe == 0) {
@@ -11062,7 +10997,7 @@ private:
                     // ORs mask into the event and wakes blocked waiters.  Not
                     // blocking, so no lock release needed.
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     std::string ename;
                     Value eref;
                     if (!items.empty()) {
@@ -11077,8 +11012,8 @@ private:
                     }
                     int64_t rc = lpc::eventRaise(eref, mask);
                     if (vmEnvEvDbg() && evDbgName(ename)) {
-                        std::string wfn = frames_.empty() || !frames_.back().fn
-                                              ? "<global>" : frames_.back().fn->name;
+                        std::string wfn = es_->frames.empty() || !es_->frames.back().fn
+                                              ? "<global>" : es_->frames.back().fn->name;
                         std::cerr << "[ev] raise " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " -> " << rc
                                   << " tid=" << scheduler().currentProcessTid()
@@ -11108,7 +11043,7 @@ private:
                 if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
                     names[efun] == "set_timer" && argc >= 3) {
                     std::vector<StackItem> items;
-                    for (int i = 0; i < argc && !stack_.empty(); ++i) items.push_back(pop());
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) items.push_back(pop());
                     std::vector<Value> eargs;
                     eargs.reserve(items.size());
                     for (auto& it : items) eargs.push_back(it.isRef ? deref(it) : it.value);
@@ -11139,9 +11074,9 @@ private:
                         pushValue(r);
                     }
                 }
-                if (vmEnvTrace() && !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "save_to_text" && efun == 102)
-                    std::cerr << "[efun-dbg] save_string after: stack=" << stack_.size()
+                if (vmEnvTrace() && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "save_to_text" && efun == 102)
+                    std::cerr << "[efun-dbg] save_string after: stack=" << es_->stack.size()
                               << " top=" << to_string(top().value, false) << " idx=" << top().value.index() << "\n";
                 break;
             }
@@ -11158,7 +11093,7 @@ private:
                     std::string fn = (fit != funcsByIndex_.end()) ? fit->second->name : std::string("?");
                     if (fn.find("name") != std::string::npos || fn.find("char") != std::string::npos) {
                         std::cerr << "[chain7] " << objName_ << " -> " << fn << " idx=" << fi
-                                  << " argc=" << cn << " args=" << nameChainArgs(stack_, cn) << "\n";
+                                  << " argc=" << cn << " args=" << nameChainArgs(es_->stack, cn) << "\n";
                         std::cerr.flush();
                     }
                 }
@@ -11173,11 +11108,11 @@ private:
                 // accumulated baseFunOffset of the CURRENT frame applies.
                 int off = 0;
                 if ((flags & 0x80) == 0) {
-                    off = frames_.empty() ? 0 : frames_.back().funOffset;
+                    off = es_->frames.empty() ? 0 : es_->frames.back().funOffset;
                     if (off != 0) funIndex += off;
                 }
-                if (vmEnvTrace() && !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "save_to_text") {
+                if (vmEnvTrace() && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "save_to_text") {
                     auto it = funcsByIndex_.find(funIndex);
                     std::cerr << "[cfu-dbg] save_to_text call a=" << (fromMeta ? m0 : static_cast<int16_t>(in.a))
                               << " funIndex=" << funIndex << " off=" << off
@@ -11199,8 +11134,8 @@ private:
                                      objName_.find("gift") != std::string::npos)) {
                     auto itc = funcsByIndex_.find(funIndex);
                     std::cerr << "[call7] obj=" << objName_
-                              << " fn=" << ((!frames_.empty() && frames_.back().fn)
-                                                ? frames_.back().fn->name : std::string("?"))
+                              << " fn=" << ((!es_->frames.empty() && es_->frames.back().fn)
+                                                ? es_->frames.back().fn->name : std::string("?"))
                               << " raw=" << (fromMeta ? m0 : static_cast<int16_t>(in.a))
                               << " off=" << off << " idx=" << funIndex
                               << " flags=0x" << std::hex << flags << std::dec
@@ -11250,7 +11185,7 @@ private:
                     int cn = fromMeta ? m1 : in.b;
                     if (ff.find("name") != std::string::npos || ff.find("char") != std::string::npos) {
                         std::cerr << "[chain8] " << objName_ << " -> " << fp << "::" << ff
-                                  << " argc=" << cn << " args=" << nameChainArgs(stack_, cn) << "\n";
+                                  << " argc=" << cn << " args=" << nameChainArgs(es_->stack, cn) << "\n";
                         std::cerr.flush();
                     }
                     pushValue(fv);
@@ -11260,20 +11195,20 @@ private:
                 Value funVal = pop().value;
                 int argn = fromMeta ? m1 : in.b;
                 if (vmEnvTrace() && vmEnvTraceFn() &&
-                    frames_.back().fn && frames_.back().fn->name == vmEnvTraceFn())
-                    std::cerr << "[case8-t] cur=" << frames_.back().fn->name
+                    es_->frames.back().fn && es_->frames.back().fn->name == vmEnvTraceFn())
+                    std::cerr << "[case8-t] cur=" << es_->frames.back().fn->name
                               << " pathIdx=" << pathVal.index()
                               << " path=" << (pathVal.index() == 4 ? std::get<SharedString>(pathVal).str().substr(0, 60) : "?")
                               << " funIdx=" << funVal.index()
                               << " fun=" << (funVal.index() == 4 ? std::get<SharedString>(funVal).str() : std::string("?"))
-                              << " argn=" << argn << " stack=" << stack_.size() << "\n";
-                if (vmEnvTrace() && !frames_.empty() && frames_.back().fn &&
+                              << " argn=" << argn << " stack=" << es_->stack.size() << "\n";
+                if (vmEnvTrace() && !es_->frames.empty() && es_->frames.back().fn &&
                     funVal.index() == 4 && std::get<SharedString>(funVal) == "save_to_text")
-                    std::cerr << "[case8-dbg] save_to_text cur=" << frames_.back().fn->name
-                              << " stack=" << stack_.size() << " argn=" << argn
-                              << " frames=" << frames_.size() << "\n";
+                    std::cerr << "[case8-dbg] save_to_text cur=" << es_->frames.back().fn->name
+                              << " stack=" << es_->stack.size() << " argn=" << argn
+                              << " frames=" << es_->frames.size() << "\n";
                 if (vmEnvTrace()) {
-                    std::string cur = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
+                    std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<global>" : es_->frames.back().fn->name;
                     std::string fv = funVal.index() == 4 ? std::get<SharedString>(funVal) : "";
                     if (fv == "lite_query_temp")
                         std::cerr << "[case8-lqt] pathIdx=" << static_cast<int>(pathVal.index())
@@ -11310,7 +11245,7 @@ private:
                 // (which covers inherited function calls).
                 auto popArgs = [&]() {
                     std::vector<Value> out;
-                    for (int i = 0; i < argn && !stack_.empty(); ++i) {
+                    for (int i = 0; i < argn && !es_->stack.empty(); ++i) {
                         StackItem it = pop();
                         // Reference arguments (&var in call_other, e.g.
                         // importd->create_data(file, &_form_index, &_form_value)
@@ -11390,7 +11325,7 @@ private:
                             // Omitted declared args are int 0 (zero-init frame
                             // area in the original driver), never undefined.
                             std::vector<StackItem> real;
-                            for (int i = 0; i < argn && !stack_.empty(); ++i) real.push_back(pop());
+                            for (int i = 0; i < argn && !es_->stack.empty(); ++i) real.push_back(pop());
                             // real[0] = param0 (popped from top first).
                             int declared = fn.argCount;
                             int pad = (declared > argn) ? declared - argn : 0;
@@ -11418,11 +11353,11 @@ private:
                     static int tioN = 0;
                     if (tioN++ < 4000) {
                         std::string ad;
-                        int bot5 = static_cast<int>(stack_.size()) - argn;
+                        int bot5 = static_cast<int>(es_->stack.size()) - argn;
                         if (bot5 < 0) bot5 = 0;
-                        for (int k = bot5; k < static_cast<int>(stack_.size()); ++k) {
+                        for (int k = bot5; k < static_cast<int>(es_->stack.size()); ++k) {
                             if (!ad.empty()) ad += " | ";
-                            ad += to_string(stack_[static_cast<size_t>(k)].value, false).substr(0, 60);
+                            ad += to_string(es_->stack[static_cast<size_t>(k)].value, false).substr(0, 60);
                         }
                         const bool npcObj = objName_.rfind("/gs/clone/", 0) == 0 ||
                                             objName_.rfind("clone:", 0) == 0;
@@ -11442,11 +11377,11 @@ private:
                     std::string tvp = pathVal.index() == 4 ? std::get<SharedString>(pathVal)
                         : (pathVal.index() == 7 ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName : "?");
                     std::string adbg;
-                    int bot = static_cast<int>(stack_.size()) - argn;
+                    int bot = static_cast<int>(es_->stack.size()) - argn;
                     if (bot < 0) bot = 0;
-                    for (int k = bot; k < static_cast<int>(stack_.size()); ++k) {
+                    for (int k = bot; k < static_cast<int>(es_->stack.size()); ++k) {
                         if (!adbg.empty()) adbg += ", ";
-                        const Value& av = stack_[static_cast<size_t>(k)].value;
+                        const Value& av = es_->stack[static_cast<size_t>(k)].value;
                         adbg += "t" + std::to_string(av.index()) + ":" +
                                 to_string(av, false).substr(0, 56);
                     }
@@ -11477,7 +11412,7 @@ private:
                 if (pathVal.index() == 4) {
                     std::string path = std::get<SharedString>(pathVal);
                     if (vmEnvTraceC8()) {
-                        std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                        std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                         std::cerr << "[c8] vm=" << this << " obj=" << objName_ << " fn=" << cur
                                   << " pathIdx=" << pathVal.index() << " funIdx=" << funVal.index()
                                   << " path='" << path << "' funName='" << funName << "'"
@@ -11516,10 +11451,10 @@ private:
                         if (std::getenv("LPCVM_NAMERULE2") &&
                             funName.find("check_") != std::string::npos) {
                             std::string a0, a1;
-                            int bot = static_cast<int>(stack_.size()) - argn;
+                            int bot = static_cast<int>(es_->stack.size()) - argn;
                             if (bot < 0) bot = 0;
-                            for (int k = bot; k < static_cast<int>(stack_.size()); ++k) {
-                                std::string t2 = to_string(stack_[static_cast<size_t>(k)].value, false);
+                            for (int k = bot; k < static_cast<int>(es_->stack.size()); ++k) {
+                                std::string t2 = to_string(es_->stack[static_cast<size_t>(k)].value, false);
                                 if (k == bot) a0 = t2; else a1 = t2;
                             }
                             std::cerr << "[namecall] " << objName_ << " -> " << funName
@@ -11533,12 +11468,12 @@ private:
                             static int ctN = 0;
                             if (ctN++ < 300) {
                                 std::string ad;
-                                int bot2 = static_cast<int>(stack_.size()) - argn;
+                                int bot2 = static_cast<int>(es_->stack.size()) - argn;
                                 if (bot2 < 0) bot2 = 0;
-                                for (int k = bot2; k < static_cast<int>(stack_.size()); ++k) {
+                                for (int k = bot2; k < static_cast<int>(es_->stack.size()); ++k) {
                                     if (!ad.empty()) ad += " | ";
-                                    ad += "t" + std::to_string(stack_[static_cast<size_t>(k)].value.index())
-                                          + "=" + to_string(stack_[static_cast<size_t>(k)].value, false).substr(0, 44);
+                                    ad += "t" + std::to_string(es_->stack[static_cast<size_t>(k)].value.index())
+                                          + "=" + to_string(es_->stack[static_cast<size_t>(k)].value, false).substr(0, 44);
                                 }
                                 std::cerr << "[create-temp] caller=" << objName_ << " -> " << funName
                                           << " argc=" << argn << " [" << ad << "]\n";
@@ -11547,17 +11482,17 @@ private:
                         }
                         if (std::getenv("LPCVM_OPENMENU")) {
                             bool inOm = false;
-                            for (const auto& fr : frames_)
+                            for (const auto& fr : es_->frames)
                                 if (fr.fn && fr.fn->name == "main" &&
                                     objName_.find("open_menu") != std::string::npos)
                                     inOm = true;
                             if (inOm) {
                                 std::string ad;
-                                int bot4 = static_cast<int>(stack_.size()) - argn;
+                                int bot4 = static_cast<int>(es_->stack.size()) - argn;
                                 if (bot4 < 0) bot4 = 0;
-                                for (int k = bot4; k < static_cast<int>(stack_.size()); ++k) {
+                                for (int k = bot4; k < static_cast<int>(es_->stack.size()); ++k) {
                                     if (!ad.empty()) ad += " | ";
-                                    ad += to_string(stack_[static_cast<size_t>(k)].value, false).substr(0, 46);
+                                    ad += to_string(es_->stack[static_cast<size_t>(k)].value, false).substr(0, 46);
                                 }
                                 std::cerr << "[openmenu] " << path << "::" << funName
                                           << " argc=" << argn << " [" << ad << "]\n";
@@ -11569,8 +11504,8 @@ private:
                             else targetFn = targetVm->findFunctionAny(funName);
                         }
                         if (constructDiagOn() && funName == "create_data") {
-                            std::string cur = frames_.empty() || !frames_.back().fn
-                                                  ? "<global>" : frames_.back().fn->name;
+                            std::string cur = es_->frames.empty() || !es_->frames.back().fn
+                                                  ? "<global>" : es_->frames.back().fn->name;
                             std::cerr << "[hprobe] case8->create_data cur=" << cur
                                       << " obj=" << objName_ << " path='" << path << "'"
                                       << " targetVm=" << (targetVm ? targetVm->objName() : "NULL")
@@ -11581,7 +11516,7 @@ private:
                         }
                         if (envFlagStuck() && targetVm &&
                             targetVm->objName().find("filed.o") != std::string::npos) {
-                            std::cerr << "[c8f] from=" << (frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name)
+                            std::cerr << "[c8f] from=" << (es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name)
                                       << " funName='" << funName << "' funIndex=" << funIndex
                                       << " targetFn=" << (targetFn ? targetFn->name : "NULL")
                                       << " targetIdx=" << (targetFn ? targetFn->index : -1)
@@ -11614,7 +11549,7 @@ private:
                             objName_.find('#') == std::string::npos;
                         if (roomdSetupCtx) {
                             roomdSetupCtx = false;
-                            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+                            for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it) {
                                 if (it->fn && (it->fn->name == "setup_npc" ||
                                                it->fn->name == "setup_room_basic_info" ||
                                                it->fn->name == "place_char")) {
@@ -11631,7 +11566,7 @@ private:
                             static int catN = 0;
                             if (catN < 60) {
                                 ++catN;
-                                std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                                 std::string a0;
                                 if (!args.empty() && args[0].index() == 4) {
                                     const std::string& s0 = std::get<SharedString>(args[0]).str();
@@ -11643,8 +11578,8 @@ private:
                                 } else a0 = args.empty() ? "-" : ("t" + std::to_string(args[0].index()));
                                 std::cerr << "[cat] fn=" << funName << " cur=" << cur
                                           << " target=" << targetVm->objName()
-                                          << " a0=" << a0 << " parked=" << parked_
-                                          << " frames=" << frames_.size() << "\n";
+                                          << " a0=" << a0 << " parked=" << es_->parked
+                                          << " frames=" << es_->frames.size() << "\n";
                                 std::cerr.flush();
                             }
                         }
@@ -11671,7 +11606,7 @@ private:
                                         a0 += bf;
                                     }
                                     a0 += "(" + std::to_string(a0full.size()) + ")";
-                                    std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                    std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                                     size_t aeSize = 0;
                                     if (targetVm) {
                                         auto& tv = targetVm->ownObjVars();
@@ -11701,9 +11636,9 @@ private:
                             static int c8zN = 0;
                             if (c8zN < 60) {
                                 ++c8zN;
-                                std::string cur8 = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                std::string cur8 = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                                 std::string chain8;
-                                for (auto it = frames_.rbegin(); it != frames_.rend() && chain8.size() < 200; ++it) {
+                                for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && chain8.size() < 200; ++it) {
                                     if (!chain8.empty()) chain8 += "<-";
                                     chain8 += it->fn ? it->fn->name : "<ctx>";
                                 }
@@ -11734,7 +11669,7 @@ private:
                         bool rstChainInline = false;
                         if (targetVm && targetFn) {
                             bool rstFrame = false;
-                            for (const auto& fr : frames_) {
+                            for (const auto& fr : es_->frames) {
                                 if (fr.fn && (fr.fn->name == "restore_achieve_data" ||
                                               fr.fn->name == "create_achieve_data" ||
                                               fr.fn->name == "restore_from_text" ||
@@ -11801,8 +11736,8 @@ private:
                                     adbg += "a" + std::to_string(k) + ":" + v;
                                 }
                                 std::cerr << "[hprobe] cd-inline caller=" << objName_ << " cur="
-                                          << (frames_.empty() || !frames_.back().fn ? "<top>"
-                                                                                    : frames_.back().fn->name)
+                                          << (es_->frames.empty() || !es_->frames.back().fn ? "<top>"
+                                                                                    : es_->frames.back().fn->name)
                                           << " argc=" << args.size() << " " << adbg << "\n";
                                 std::cerr.flush();
                             }
@@ -11954,7 +11889,7 @@ private:
                                     auto args = popArgs();
                                     if (std::getenv("LPCVM_ERR_TRACE")) {
                                         std::string chain;
-                                        for (const auto& fr : frames_) {
+                                        for (const auto& fr : es_->frames) {
                                             std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                                             if (!chain.empty()) chain += "<-";
                                             chain += fnm;
@@ -12013,8 +11948,8 @@ private:
                                         (path == currentThisName() || path == thisObjectName_));
                         bool hasRefArg = false;
                         if (selfRef) {
-                            for (int i = 0; i < argn && !stack_.empty(); ++i)
-                                if (stack_[stack_.size() - 1 - static_cast<size_t>(i)].isRef) { hasRefArg = true; break; }
+                            for (int i = 0; i < argn && !es_->stack.empty(); ++i)
+                                if (es_->stack[es_->stack.size() - 1 - static_cast<size_t>(i)].isRef) { hasRefArg = true; break; }
                         }
                         if (selfRef && hasRefArg) resolveSelf();
                         if (!(selfRef && hasRefArg && found)) {
@@ -12022,7 +11957,7 @@ private:
                                 static int qdC = 0;
                                 if (qdC < 80) {
                                     ++qdC;
-                                    std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                                    std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                                     std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal).str() : "?";
                                     std::string fv = funName.empty() ? ("idx" + std::to_string(funIndex)) : funName;
                                     std::cerr << "[qd-call] fn=" << fv << " path=" << pv
@@ -12055,7 +11990,7 @@ private:
                 // If nothing consumed the argument slots (no function found at
                 // all), drop them so they don't leak into the caller's stack.
                 if (!argsConsumed) {
-                    for (int i = 0; i < argn && !stack_.empty(); ++i) pop();
+                    for (int i = 0; i < argn && !es_->stack.empty(); ++i) pop();
                 }
                 // An inline start means the callee's return_from_fun will push
                 // its own result; do NOT pushValue(result) in that case.
@@ -12072,15 +12007,15 @@ private:
                 }
                 if (std::getenv("LPCVM_OPENMENU") &&
                     objName_.find("open_menu") != std::string::npos &&
-                    !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "main")
+                    !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "main")
                     std::cerr << "[openmenu] RET " << funName << " -> "
                               << to_string(result, false).substr(0, 60) << "\n";
                 {
                     static const bool talkOn = (std::getenv("LPCVM_TALK") != nullptr);
                     bool inTalk = false;
                     if (talkOn) {
-                        for (const auto& fr : frames_)
+                        for (const auto& fr : es_->frames)
                             if (fr.fn && fr.fn->name == "start_talk_to") { inTalk = true; break; }
                     }
                     if (inTalk)
@@ -12097,8 +12032,8 @@ private:
                 if (vmEnvEvDbg() && !funName.empty() &&
                     (objName_.find("newbie") != std::string::npos ||
                      objName_.find("gift") != std::string::npos)) {
-                    std::string cur8 = frames_.empty() || !frames_.back().fn
-                                           ? "<top>" : frames_.back().fn->name;
+                    std::string cur8 = es_->frames.empty() || !es_->frames.back().fn
+                                           ? "<top>" : es_->frames.back().fn->name;
                     if (cur8 == "create" || cur8 == "import" || cur8 == "setup" ||
                         funName == "basic_object" || funName == "get_import_name" ||
                         funName == "find_basic_object_by_import_name" ||
@@ -12116,20 +12051,20 @@ private:
                 if (vmEnvTrace() && funVal.index() == 4 &&
                     std::get<SharedString>(funVal) == "get_registered_name")
                     std::cerr << "[grn] result=[" << to_string(result, false).substr(0, 60)
-                              << "] cur=" << (frames_.empty() || !frames_.back().fn
-                                                  ? "<top>" : frames_.back().fn->name) << "\n";
+                              << "] cur=" << (es_->frames.empty() || !es_->frames.back().fn
+                                                  ? "<top>" : es_->frames.back().fn->name) << "\n";
                 if (vmEnvTrace() && funVal.index() == 4 &&
                     std::get<SharedString>(funVal) == "save_to_text")
                     std::cerr << "[case8-ret] save_to_text result=" << to_string(result, false)
-                              << " idx=" << result.index() << " stack=" << stack_.size()
-                              << " cur=" << (frames_.empty() || !frames_.back().fn
-                                                 ? "<top>" : frames_.back().fn->name) << "\n";
+                              << " idx=" << result.index() << " stack=" << es_->stack.size()
+                              << " cur=" << (es_->frames.empty() || !es_->frames.back().fn
+                                                 ? "<top>" : es_->frames.back().fn->name) << "\n";
                 if (envFlagTail() && objName_.find("questiond") != std::string::npos &&
                     !inlineStarted) {
                     static int qdR = 0;
                     if (qdR < 80) {
                         ++qdR;
-                        std::string cur = frames_.empty() || !frames_.back().fn ? "<top>" : frames_.back().fn->name;
+                        std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
                         std::string fv = (funVal.index() == 4) ? std::get<SharedString>(funVal).str()
                                                 : funName.empty() ? ("idx" + std::to_string(funIndex)) : funName;
                         std::cerr << "[qd-ret] fn=" << fv << " res=t" << result.index()
@@ -12143,10 +12078,10 @@ private:
                 static const bool mcOn5 = (std::getenv("LPCVM_MENUCLOSURE") != nullptr);
                 if (mcOn5) {
                     bool inTalk3 = false;
-                    for (const auto& fr : frames_)
+                    for (const auto& fr : es_->frames)
                         if (fr.fn && fr.fn->name == "start_talk_to") { inTalk3 = true; break; }
                     if (inTalk3) {
-                        Value fv = stack_.empty() ? Value{} : stack_.back().value;
+                        Value fv = es_->stack.empty() ? Value{} : es_->stack.back().value;
                         if (fv.index() == 8) {
                             auto cx = std::get<std::shared_ptr<ClosureValue>>(fv);
                             std::cerr << "[menuclo] call_fun_ptr funcName=\""
@@ -12168,10 +12103,10 @@ private:
                 if (fpOn5) {
                     std::string ad;
                     int n2 = fromMeta ? m1 : in.b;
-                    int bot6 = static_cast<int>(stack_.size()) - n2 - 1;
+                    int bot6 = static_cast<int>(es_->stack.size()) - n2 - 1;
                     if (bot6 < 0) bot6 = 0;
-                    for (int k = bot6; k < static_cast<int>(stack_.size()); ++k) {
-                        const StackItem& si = stack_[static_cast<size_t>(k)];
+                    for (int k = bot6; k < static_cast<int>(es_->stack.size()); ++k) {
+                        const StackItem& si = es_->stack[static_cast<size_t>(k)];
                         if (!ad.empty()) ad += " | ";
                         ad += (si.isRef ? std::string("REF:") : std::string()) +
                               to_string(si.value, false).substr(0, 44);
@@ -12185,7 +12120,7 @@ private:
                 StackItem funItem = pop();
                 if (funItem.value.index() == 8) {
                     bool inPEW2 = false;
-                    for (const auto& fr : frames_)
+                    for (const auto& fr : es_->frames)
                         if (fr.fn && fr.fn->name == "post_enter_world") { inPEW2 = true; break; }
                     if (inPEW2) {
                         auto cl2 = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
@@ -12250,7 +12185,7 @@ private:
                     refArgCoClosure = true;
                 }
                 std::vector<Value> args;
-                for (int i = 1; i < total && !stack_.empty(); ++i) {
+                for (int i = 1; i < total && !es_->stack.empty(); ++i) {
                     StackItem ait = pop();
                     if (refArgCoClosure && ait.isRef) {
                         if (ait.objIndex >= 0 || ait.slotIndex >= 0) {
@@ -12326,8 +12261,8 @@ private:
                 // runs).  Detach the init closures instead: post_init returns
                 // promptly, each init completes its waits on its own thread.
                 bool inPostInit = false;
-                if (!frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "post_init")
+                if (!es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "post_init")
                     inPostInit = true;
                 if (funItem.value.index() == 8) {
                     auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
@@ -12597,7 +12532,7 @@ private:
                             } else if (cl->func) {
                                 if (cl->functionName == "convert_to_int" && std::getenv("LPCVM_ERR_TRACE")) {
                                     std::string chain;
-                                    for (const auto& fr : frames_) {
+                                    for (const auto& fr : es_->frames) {
                                         std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                                         if (!chain.empty()) chain += "<-";
                                         chain += fnm;
@@ -12687,15 +12622,15 @@ private:
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int flags = fromMeta ? m1 : in.b;
                 bool zero = isZero(top().value);
-                if (zero != ((flags & 1) != 0)) ip_ += offset;
+                if (zero != ((flags & 1) != 0)) es_->ip += offset;
                 if (flags & 2) pop();
                 break;
             }
             case 31: // goto
-                ip_ += static_cast<int16_t>(in.a);
+                es_->ip += static_cast<int16_t>(in.a);
                 break;
             case 27: { // enter_function
-                const Frame& f = frames_.back();
+                const Frame& f = es_->frames.back();
                 bool traceEnter = vmEnvTrace() && f.fn &&
                     (f.fn->name == "load_file_dependence" || f.fn->name == "load_comm_desc");
                 // LPCVM_TRACE_OBJ=<substring>: focused enter/return trace for
@@ -12708,9 +12643,9 @@ private:
                 if (traceObjHit) {
                     std::string argsDbg;
                     for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
-                        if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                        if (k < 0 || static_cast<size_t>(k) >= es_->stack.size()) continue;
                         if (!argsDbg.empty()) argsDbg += " | ";
-                        const Value& av = stack_[static_cast<size_t>(k)].value;
+                        const Value& av = es_->stack[static_cast<size_t>(k)].value;
                         if (av.index() == 4) argsDbg += std::get<SharedString>(av).str().substr(0, 32);
                         else if (av.index() == 7)
                             argsDbg += std::get<std::shared_ptr<ObjectValue>>(av)->programName.substr(0, 48);
@@ -12746,9 +12681,9 @@ private:
                     if (tailObj && tailFn) {
                         std::string argsDbg;
                         for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
-                            if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
+                            if (k < 0 || static_cast<size_t>(k) >= es_->stack.size()) continue;
                             if (!argsDbg.empty()) argsDbg += " | ";
-                            const Value& av = stack_[static_cast<size_t>(k)].value;
+                            const Value& av = es_->stack[static_cast<size_t>(k)].value;
                             argsDbg += "a" + std::to_string(f.argNum - (f.bp - k)) + ":t" +
                                        std::to_string(av.index()) + ":";
                             if (av.index() == 4) argsDbg += std::get<SharedString>(av).str().substr(0, 24);
@@ -12765,10 +12700,10 @@ private:
                     // array at all.
                     if (f.fn->name == "setup_npc" && f.argNum >= 1) {
                         int k0 = f.bp - f.argNum + 1;
-                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
-                            stack_[static_cast<size_t>(k0)].value.index() == 7) {
+                        if (k0 >= 0 && static_cast<size_t>(k0) < es_->stack.size() &&
+                            es_->stack[static_cast<size_t>(k0)].value.index() == 7) {
                             std::string roomKey = std::get<std::shared_ptr<ObjectValue>>(
-                                stack_[static_cast<size_t>(k0)].value)->programName;
+                                es_->stack[static_cast<size_t>(k0)].value)->programName;
                             const char* hubs[] = {"wulongshan", "qianyuanshan", "kuloushan",
                                                   "fenghuangshan", "zhongnanshan"};
                             bool hub = false;
@@ -12824,10 +12759,10 @@ private:
                     if (f.fn && (f.fn->name == "add_object_list" || f.fn->name == "add_object_attrib") &&
                         objName_.find("scand") != std::string::npos && f.argNum >= 1) {
                         int k0 = f.bp - f.argNum + 1;
-                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
-                            stack_[static_cast<size_t>(k0)].value.index() == 7) {
+                        if (k0 >= 0 && static_cast<size_t>(k0) < es_->stack.size() &&
+                            es_->stack[static_cast<size_t>(k0)].value.index() == 7) {
                             std::string obKey = std::get<std::shared_ptr<ObjectValue>>(
-                                stack_[static_cast<size_t>(k0)].value)->programName;
+                                es_->stack[static_cast<size_t>(k0)].value)->programName;
                             if (obKey.find("wedding_dress") != std::string::npos ||
                                 obKey.find("jbxd-") != std::string::npos) {
                                 try {
@@ -12887,9 +12822,9 @@ private:
                         if (wd || armor) {
                             if (armor) ++armorCtrl;
                             int k0 = f.bp - f.argNum + 1;
-                            if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
-                                stack_[static_cast<size_t>(k0)].value.index() == 6) {
-                                std::string mstr = to_string(stack_[static_cast<size_t>(k0)].value, false);
+                            if (k0 >= 0 && static_cast<size_t>(k0) < es_->stack.size() &&
+                                es_->stack[static_cast<size_t>(k0)].value.index() == 6) {
+                                std::string mstr = to_string(es_->stack[static_cast<size_t>(k0)].value, false);
                                 if (mstr.size() > 1100) mstr.resize(1100);
                                 std::cerr << "[ibo] " << (wd ? "wd" : "armor")
                                           << " this=" << thisObjectName_
@@ -13542,13 +13477,13 @@ private:
                             ++dfnN;
                             std::string a0 = "?";
                             int k0 = f.bp - f.argNum + 1;
-                            if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
-                                stack_[static_cast<size_t>(k0)].value.index() == 4)
-                                a0 = std::get<SharedString>(stack_[static_cast<size_t>(k0)].value).str();
+                            if (k0 >= 0 && static_cast<size_t>(k0) < es_->stack.size() &&
+                                es_->stack[static_cast<size_t>(k0)].value.index() == 4)
+                                a0 = std::get<SharedString>(es_->stack[static_cast<size_t>(k0)].value).str();
                             std::string chainD;
-                            for (size_t fi = 0; fi < frames_.size() && chainD.size() < 160; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainD.size() < 160; ++fi) {
                                 if (!chainD.empty()) chainD += "<-";
-                                chainD += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainD += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
                             }
                             std::cerr << "[dfn] obj=" << objName_ << " _find_npc(" << a0
                                       << ") chain=[" << chainD << "]\n";
@@ -13563,12 +13498,12 @@ private:
                         if (q2N < 300) {
                             ++q2N;
                             std::string chainQ;
-                            for (size_t fi = 0; fi < frames_.size() && chainQ.size() < 120; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainQ.size() < 120; ++fi) {
                                 if (!chainQ.empty()) chainQ += "<-";
-                                chainQ += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainQ += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
                             }
                             std::cerr << "[q2] enter " << f.fn->name << " obj=" << objName_
-                                      << " ip=" << (ip_ - 1) << " chain=[" << chainQ << "]\n";
+                                      << " ip=" << (es_->ip - 1) << " chain=[" << chainQ << "]\n";
                             std::cerr.flush();
                         }
                     }
@@ -13582,11 +13517,11 @@ private:
                         if (zdN < 40) {
                             ++zdN;
                             std::string chainZ;
-                            for (size_t fi = 0; fi < frames_.size() && chainZ.size() < 220; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainZ.size() < 220; ++fi) {
                                 if (!chainZ.empty()) chainZ += "<-";
-                                chainZ += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainZ += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
                                 chainZ += "#";
-                                chainZ += frames_[fi].fn ? std::to_string(frames_[fi].fn->index) : "?";
+                                chainZ += es_->frames[fi].fn ? std::to_string(es_->frames[fi].fn->index) : "?";
                             }
                             std::string procZ = "?";
                             auto cpZ = lpc::scheduler().currentProcessShared();
@@ -13599,19 +13534,19 @@ private:
                             if (it18 != funcsByIndex_.end())
                                 ftDbg += " i18=" + it18->second->name + "#" + std::to_string(it18->second->index);
                             else ftDbg += " i18=?";
-                            ftDbg += " lookup=" + std::to_string(funcLookup_ ? funcLookup_->size() : 0);
+                            ftDbg += " lookup=" + std::to_string(es_->funcLookup ? es_->funcLookup->size() : 0);
                             // caller frame (get_display_name) state
-                            if (frames_.size() >= 1 && frames_[0].fn) {
-                                ftDbg += " fr0=" + frames_[0].fn->name + "#" +
-                                         std::to_string(frames_[0].fn->index);
+                            if (es_->frames.size() >= 1 && es_->frames[0].fn) {
+                                ftDbg += " fr0=" + es_->frames[0].fn->name + "#" +
+                                         std::to_string(es_->frames[0].fn->index);
                                 ftDbg += " fr0tbl=";
-                                auto& fr0 = frames_[0];
+                                auto& fr0 = es_->frames[0];
                                 auto t0 = fr0.strings ? std::string("<str>") : std::string("?");
                                 ftDbg += t0;
                             }
                             std::cerr << "[zdaemon] enter daemon vm=" << this
                                       << " obj=" << objName_ << " objSrc=" << obj_.sourceName
-                                      << " parked=" << parked_ << " ip=" << (ip_ - 1)
+                                      << " parked=" << es_->parked << " ip=" << (es_->ip - 1)
                                       << " proc=" << procZ << " " << ftDbg
                                       << " chain=[" << chainZ << "]\n";
                             std::cerr.flush();
@@ -13625,10 +13560,10 @@ private:
                         if (gdnN < 60) {
                             ++gdnN;
                             std::string chainG;
-                            for (size_t fi = 0; fi < frames_.size() && chainG.size() < 260; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainG.size() < 260; ++fi) {
                                 if (!chainG.empty()) chainG += "<-";
-                                chainG += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
-                                chainG += "#" + std::to_string(frames_[fi].fn ? frames_[fi].fn->index : -1);
+                                chainG += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
+                                chainG += "#" + std::to_string(es_->frames[fi].fn ? es_->frames[fi].fn->index : -1);
                             }
                             std::string procG = "?";
                             auto cpG = lpc::scheduler().currentProcessShared();
@@ -13637,15 +13572,15 @@ private:
                                       << " obj=" << objName_ << " proc=" << procG
                                       << " fnCode=" << (f.fn ? f.fn->code.size() : -1)
                                       << " funcsByIndex=" << funcsByIndex_.size()
-                                      << " lookup=" << (funcLookup_ ? funcLookup_->size() : 0)
-                                      << " ip=" << (ip_ - 1)
+                                      << " lookup=" << (es_->funcLookup ? es_->funcLookup->size() : 0)
+                                      << " ip=" << (es_->ip - 1)
                                       << " chain=[" << chainG << "]\n";
                             std::cerr.flush();
                         }
                     }
                     // TEMP R121: first time a zone-room VM's funcLookup_ points
                     // at a non-own table while executing own/roomd code.
-                    if (funcLookup_ && objName_.find("/gs/zone/") != std::string::npos &&
+                    if (es_->funcLookup && objName_.find("/gs/zone/") != std::string::npos &&
                         objName_.find("#") == std::string::npos && f.fn &&
                         (f.fn->name == "setup_room_basic_info" || f.fn->name == "setup_npc" ||
                          f.fn->name == "place_char" || f.fn->name == "do_scan" ||
@@ -13655,10 +13590,10 @@ private:
                         if (flN < 80) {
                             ++flN;
                             std::string chainL2;
-                            for (size_t fi = 0; fi < frames_.size() && chainL2.size() < 240; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainL2.size() < 240; ++fi) {
                                 if (!chainL2.empty()) chainL2 += "<-";
-                                chainL2 += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
-                                chainL2 += "#" + std::to_string(frames_[fi].fn ? frames_[fi].fn->index : -1);
+                                chainL2 += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
+                                chainL2 += "#" + std::to_string(es_->frames[fi].fn ? es_->frames[fi].fn->index : -1);
                             }
                             std::string procL = "?";
                             auto cpL = lpc::scheduler().currentProcessShared();
@@ -13667,9 +13602,9 @@ private:
                             std::cerr << "[fl] zone vm=" << this << " obj=" << objName_
                                       << " this=" << thisL << " proc=" << procL
                                       << " fn=" << f.fn->name
-                                      << " lookup=" << funcLookup_->size()
+                                      << " lookup=" << es_->funcLookup->size()
                                       << " own=" << funcsByIndex_.size()
-                                      << " ip=" << (ip_ - 1)
+                                      << " ip=" << (es_->ip - 1)
                                       << " chain=[" << chainL2 << "]\n";
                             std::cerr.flush();
                         }
@@ -13681,14 +13616,14 @@ private:
                         if (rdN < 400) {
                             ++rdN;
                             std::string chainR;
-                            for (size_t fi = 0; fi < frames_.size() && chainR.size() < 140; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainR.size() < 140; ++fi) {
                                 if (!chainR.empty()) chainR += "<-";
-                                chainR += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainR += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
                             }
                             std::string a0r;
                             if (f.argNum >= 1 && f.bp - f.argNum + 1 >= 0 &&
-                                static_cast<size_t>(f.bp - f.argNum + 1) < stack_.size()) {
-                                const Value& av = stack_[static_cast<size_t>(f.bp - f.argNum + 1)].value;
+                                static_cast<size_t>(f.bp - f.argNum + 1) < es_->stack.size()) {
+                                const Value& av = es_->stack[static_cast<size_t>(f.bp - f.argNum + 1)].value;
                                 if (av.index() == 4)
                                     a0r = std::get<SharedString>(av).str().substr(0, 60);
                                 else if (av.index() == 7)
@@ -13696,13 +13631,13 @@ private:
                                 else a0r = "t" + std::to_string(av.index());
                             } else a0r = "-";
                             std::cerr << "[rd] enter " << f.fn->name << " vm=" << this
-                                      << " parked=" << parked_ << " ip=" << (ip_ - 1)
+                                      << " parked=" << es_->parked << " ip=" << (es_->ip - 1)
                                       << " a0=[" << a0r << "] chain=[" << chainR << "]\n";
                             if (f.fn->name == "do_scan") {
                                 // Scan the ENTIRE stack for LoopCtrl entries.
                                 std::string lcDbg;
-                                for (size_t si = 0; si < stack_.size(); ++si) {
-                                    const Value& sv = stack_[si].value;
+                                for (size_t si = 0; si < es_->stack.size(); ++si) {
+                                    const Value& sv = es_->stack[si].value;
                                     if (sv.index() == 9) {
                                         auto c = std::get<std::shared_ptr<LoopCtrl>>(sv);
                                         if (!c) continue;
@@ -13716,7 +13651,7 @@ private:
                                                      std::to_string(c->to) + " ";
                                     }
                                 }
-                                std::cerr << "[rdlc] vm=" << this << " stackSize=" << stack_.size()
+                                std::cerr << "[rdlc] vm=" << this << " stackSize=" << es_->stack.size()
                                           << " loops=" << lcDbg << "\n";
                                 std::cerr.flush();
                             }
@@ -13728,10 +13663,10 @@ private:
                         if (renN < 120 && objName_.find("/gs/zone/") != std::string::npos) {
                             ++renN;
                             std::string chainR2;
-                            for (size_t fi = 0; fi < frames_.size() && chainR2.size() < 300; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainR2.size() < 300; ++fi) {
                                 if (!chainR2.empty()) chainR2 += "<-";
-                                chainR2 += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
-                                chainR2 += "#" + std::to_string(frames_[fi].fn ? frames_[fi].fn->index : -1);
+                                chainR2 += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
+                                chainR2 += "#" + std::to_string(es_->frames[fi].fn ? es_->frames[fi].fn->index : -1);
                             }
                             std::string owner2;
                             {
@@ -13761,9 +13696,9 @@ private:
                     if (f.fn && f.fn->name == "load_rooms") {
                         std::string d0 = "?";
                         int k0 = f.bp - f.argNum + 1;
-                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
-                            stack_[static_cast<size_t>(k0)].value.index() == 4)
-                            d0 = std::get<SharedString>(stack_[static_cast<size_t>(k0)].value).str();
+                        if (k0 >= 0 && static_cast<size_t>(k0) < es_->stack.size() &&
+                            es_->stack[static_cast<size_t>(k0)].value.index() == 4)
+                            d0 = std::get<SharedString>(es_->stack[static_cast<size_t>(k0)].value).str();
                         std::cerr << "[lr] zone=" << objName_ << " dir=" << d0
                                   << " vm=" << this << "\n";
                         std::cerr.flush();
@@ -13772,12 +13707,12 @@ private:
                         (objName_.find("zone/misc/") != std::string::npos ||
                          objName_.find("zone/wumingxiaozhen/") != std::string::npos)) {
                         std::string chainL;
-                        for (size_t fi = 0; fi < frames_.size() && chainL.size() < 140; ++fi) {
+                        for (size_t fi = 0; fi < es_->frames.size() && chainL.size() < 140; ++fi) {
                             if (!chainL.empty()) chainL += "<-";
-                            chainL += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                            chainL += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
                         }
                         std::cerr << "[lr2] room=" << objName_ << " chain=[" << chainL
-                                  << "] ip=" << (ip_ - 1) << "\n";
+                                  << "] ip=" << (es_->ip - 1) << "\n";
                         std::cerr.flush();
                     }
                     // TEMP R91: stage.clone_room gate - evaluate zoned
@@ -13829,8 +13764,8 @@ private:
                         };
                         std::vector<std::string> rcStrs;
                         for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
-                            if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
-                            const Value& av = stack_[static_cast<size_t>(k)].value;
+                            if (k < 0 || static_cast<size_t>(k) >= es_->stack.size()) continue;
+                            const Value& av = es_->stack[static_cast<size_t>(k)].value;
                             if (av.index() == 4) rcStrs.push_back(std::get<SharedString>(av).str());
                         }
                         bool rcHit = false;
@@ -13844,8 +13779,8 @@ private:
                             std::string mapKeyName;
                             std::shared_ptr<MappingValue> mapArg;
                             for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
-                                if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
-                                const Value& av = stack_[static_cast<size_t>(k)].value;
+                                if (k < 0 || static_cast<size_t>(k) >= es_->stack.size()) continue;
+                                const Value& av = es_->stack[static_cast<size_t>(k)].value;
                                 if (av.index() == 4 && mapKeyName.empty())
                                     mapKeyName = std::get<SharedString>(av).str();
                                 else if (av.index() == 6 && !mapArg)
@@ -13874,14 +13809,14 @@ private:
                                 } else dbg += "t" + std::to_string(cur->index());
                             }
                             for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
-                                if (k < 0 || static_cast<size_t>(k) >= stack_.size()) continue;
-                                const Value& av = stack_[static_cast<size_t>(k)].value;
+                                if (k < 0 || static_cast<size_t>(k) >= es_->stack.size()) continue;
+                                const Value& av = es_->stack[static_cast<size_t>(k)].value;
                                 if (av.index() == 7) { dbg += " add=" + std::get<std::shared_ptr<ObjectValue>>(av)->programName; break; }
                             }
                             std::string chainR;
-                            for (size_t fi = 0; fi < frames_.size() && chainR.size() < 120; ++fi) {
+                            for (size_t fi = 0; fi < es_->frames.size() && chainR.size() < 120; ++fi) {
                                 if (!chainR.empty()) chainR += "<-";
-                                chainR += frames_[fi].fn ? frames_[fi].fn->name : "<ctx>";
+                                chainR += es_->frames[fi].fn ? es_->frames[fi].fn->name : "<ctx>";
                             }
                             std::cerr << "[rco] " << dbg << " via [" << chainR << "]\n";
                             std::cerr.flush();
@@ -13893,10 +13828,10 @@ private:
                     if (f.fn && (f.fn->name == "register_entry" ||
                                  f.fn->name == "register_task_template") && f.argNum >= 1) {
                         int k0 = f.bp - f.argNum + 1;
-                        if (k0 >= 0 && static_cast<size_t>(k0) < stack_.size() &&
-                            stack_[static_cast<size_t>(k0)].value.index() == 4) {
+                        if (k0 >= 0 && static_cast<size_t>(k0) < es_->stack.size() &&
+                            es_->stack[static_cast<size_t>(k0)].value.index() == 4) {
                             const std::string& a0 = std::get<SharedString>(
-                                stack_[static_cast<size_t>(k0)].value).str();
+                                es_->stack[static_cast<size_t>(k0)].value).str();
                             static int regN = 0;
                             bool want = regN < 30 &&
                                 (thisObjectName_.find("child_adventure") != std::string::npos ||
@@ -13911,8 +13846,8 @@ private:
                                     hexb += bf;
                                 }
                                 std::string chain;
-                                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                                    const Frame& fr = frames_[fi];
+                                for (size_t fi = 0; fi < es_->frames.size(); ++fi) {
+                                    const Frame& fr = es_->frames[fi];
                                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                                     if (!chain.empty()) chain += "<-";
                                     chain += fnm;
@@ -13934,13 +13869,13 @@ private:
                         if (caN < 160) {
                             ++caN;
                             std::string chain;
-                            for (auto it = frames_.rbegin(); it != frames_.rend() && chain.size() < 200; ++it) {
+                            for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && chain.size() < 200; ++it) {
                                 if (!chain.empty()) chain += "<-";
                                 chain += it->fn ? it->fn->name : "<ctx>";
                             }
                             std::cerr << "[cat2] enter " << f.fn->name
                                       << " obj=" << objName_ << " this=" << thisObjectName_
-                                      << " frames=" << frames_.size()
+                                      << " frames=" << es_->frames.size()
                                       << " chain=[" << chain << "]\n";
                             std::cerr.flush();
                         }
@@ -13948,10 +13883,10 @@ private:
                 }
                 if (traceEnter)
                     std::cerr << "[enter] " << f.fn->name << " bp=" << f.bp << " localCount=" << f.localCount
-                              << " stackBefore=" << stack_.size() << "\n";
+                              << " stackBefore=" << es_->stack.size() << "\n";
                 for (int i = 0; i < f.localCount; ++i) pushValue(Value{});   // uninit locals = type 0 "undefined"
                 if (traceEnter)
-                    std::cerr << "[enter] " << f.fn->name << " stackAfter=" << stack_.size() << "\n";
+                    std::cerr << "[enter] " << f.fn->name << " stackAfter=" << es_->stack.size() << "\n";
                 break;
             }
             case 15: { // check_args_num
@@ -13968,27 +13903,27 @@ private:
                 int skipAll = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 {
                     static const char* argDbg = std::getenv("LPCVM_ARGDBG");
-                    if (argDbg && !frames_.empty() && frames_.back().fn &&
-                        frames_.back().fn->name == argDbg)
-                        std::cerr << "[argdbg] check_args_num fn=" << frames_.back().fn->name
-                                  << " passed=" << frames_.back().argNum
-                                  << " declared=" << frames_.back().fn->argCount
+                    if (argDbg && !es_->frames.empty() && es_->frames.back().fn &&
+                        es_->frames.back().fn->name == argDbg)
+                        std::cerr << "[argdbg] check_args_num fn=" << es_->frames.back().fn->name
+                                  << " passed=" << es_->frames.back().argNum
+                                  << " declared=" << es_->frames.back().fn->argCount
                                   << " operand=" << skipAll
-                                  << " padArgs=" << frames_.back().padArgs
-                                  << " stack=" << stack_.size()
-                                  << " bp=" << frames_.back().bp
-                                  << " locals=" << frames_.back().fn->localCount
+                                  << " padArgs=" << es_->frames.back().padArgs
+                                  << " stack=" << es_->stack.size()
+                                  << " bp=" << es_->frames.back().bp
+                                  << " locals=" << es_->frames.back().fn->localCount
                                   << " next8=";
-                    if (argDbg && !frames_.empty() && frames_.back().fn &&
-                        frames_.back().fn->name == argDbg) {
-                        for (size_t k = ip_; k < ip_ + 8 && k < code_->size(); ++k)
-                            std::cerr << " " << static_cast<int>((*code_)[k].a);
+                    if (argDbg && !es_->frames.empty() && es_->frames.back().fn &&
+                        es_->frames.back().fn->name == argDbg) {
+                        for (size_t k = es_->ip; k < es_->ip + 8 && k < es_->code->size(); ++k)
+                            std::cerr << " " << static_cast<int>((*es_->code)[k].a);
                         std::cerr << "\n";
                         std::cerr.flush();
                     }
                 }
-                int passed = frames_.empty() ? 0 : frames_.back().argNum;
-                int declared = frames_.empty() || !frames_.back().fn ? 0 : frames_.back().fn->argCount;
+                int passed = es_->frames.empty() ? 0 : es_->frames.back().argNum;
+                int declared = es_->frames.empty() || !es_->frames.back().fn ? 0 : es_->frames.back().fn->argCount;
                 // maxArgNo is the FUNCTION's declared maximum (Vm_Fun_T
                 // maxArgNo = fn->argCount).  The operand is the length of the
                 // inline default-value block in INSTRUCTIONS (measured on
@@ -13996,22 +13931,22 @@ private:
                 // as an argument count made `missing = maxArgNo - argNum` one
                 // too large and shifted every defaulted parameter by one slot.
                 int maxArgNo = declared;
-                if (!frames_.empty()) frames_.back().maxArgNo = maxArgNo;
-                if (vmEnvTrace() && frames_.back().fn &&
-                    frames_.back().fn->name == "read_etc_file")
+                if (!es_->frames.empty()) es_->frames.back().maxArgNo = maxArgNo;
+                if (vmEnvTrace() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "read_etc_file")
                     std::cerr << "[checkargs] read_etc_file passed=" << passed
                               << " declared=" << declared << " skipAll=" << skipAll
-                              << " stack=" << stack_.size() << " bp=" << frames_.back().bp << "\n";
+                              << " stack=" << es_->stack.size() << " bp=" << es_->frames.back().bp << "\n";
                 // If every declared argument was passed, skip the default-code block.
-                if (passed >= maxArgNo) ip_ += skipAll;   // skipAll = block length
+                if (passed >= maxArgNo) es_->ip += skipAll;   // skipAll = block length
                 // otherwise fall through and let the inline defaults + resort_stack run
                 break;
             }
             case 71: { // resort_stack: move inline default arguments below the
                        // real arguments so they become the trailing parameters.
-                if (frames_.empty()) break;
-                Frame& f = frames_.back();
-                int defaultPushed = static_cast<int>(stack_.size()) - 1 - f.bp;
+                if (es_->frames.empty()) break;
+                Frame& f = es_->frames.back();
+                int defaultPushed = static_cast<int>(es_->stack.size()) - 1 - f.bp;
                 if (defaultPushed > 0) {
                     // The compiler emits the default-value block for ALL
                     // parameters that HAVE a default - it cannot know at compile
@@ -14034,7 +13969,7 @@ private:
                         std::cerr << "[argdbg] resort_stack fn=" << f.fn->name
                                   << " defaultPushed=" << defaultPushed
                                   << " argNum=" << f.argNum << " maxArgNo=" << f.maxArgNo
-                                  << " bp=" << f.bp << " stack=" << stack_.size() << "\n";
+                                  << " bp=" << f.bp << " stack=" << es_->stack.size() << "\n";
                     if (argDbg2 && f.fn && f.fn->name == argDbg2) std::cerr.flush();
                     int keep = defaultPushed;
                     if (f.maxArgNo > 0) {
@@ -14045,11 +13980,11 @@ private:
                     if (keep < 0) keep = 0;
                     std::vector<StackItem> defaults;
                     for (int i = defaultPushed - keep; i < defaultPushed; ++i)
-                        defaults.push_back(stack_[static_cast<size_t>(f.bp + 1 + i)]);
+                        defaults.push_back(es_->stack[static_cast<size_t>(f.bp + 1 + i)]);
                     std::vector<StackItem> args;
                     for (int i = f.argNum - 1; i >= 0; --i)
-                        args.push_back(stack_[static_cast<size_t>(f.bp - i)]);
-                    stack_.resize(static_cast<size_t>(f.bp - f.argNum + 1));
+                        args.push_back(es_->stack[static_cast<size_t>(f.bp - i)]);
+                    es_->stack.resize(static_cast<size_t>(f.bp - f.argNum + 1));
                     // Parameter layout is [paramN ... param1, param0(top)]: the
                     // compiler pushes the default-value block in FORWARD param
                     // order (param1's default first, paramN's default last),
@@ -14061,10 +13996,10 @@ private:
                     // condition=""/timeout=1800 were landing swapped, corrupting
                     // the cmd_get_catalog_ex wire body.)
                     for (auto it = defaults.rbegin(); it != defaults.rend(); ++it)
-                        stack_.push_back(*it);
-                    for (auto& a : args) stack_.push_back(a);
+                        es_->stack.push_back(*it);
+                    for (auto& a : args) es_->stack.push_back(a);
                     f.argNum += keep;
-                    f.bp = static_cast<int>(stack_.size()) - 1;
+                    f.bp = static_cast<int>(es_->stack.size()) - 1;
                 }
                 break;
             }
@@ -14076,8 +14011,8 @@ private:
                 StackItem varRef = pop();
                 int number = static_cast<int>(toInt(typeV));
                 if (vmEnvTrace())
-                    std::cerr << "[loop] init fn=" << (frames_.empty() || !frames_.back().fn
-                                                           ? "<global>" : frames_.back().fn->name)
+                    std::cerr << "[loop] init fn=" << (es_->frames.empty() || !es_->frames.back().fn
+                                                           ? "<global>" : es_->frames.back().fn->name)
                               << " varNo=" << varNo << " slot=" << slot
                               << " typeV=" << number << " second.type=" << second.index()
                               << " second=" << to_string(second, false)
@@ -14092,8 +14027,8 @@ private:
                 // push_local_vptr pushed before this op) - not from varNo, which
                 // addresses the hidden control slot.
                 ctrl->varIsSlot = (varRef.slotIndex >= 0);
-                ctrl->varOff = ctrl->varIsSlot && !frames_.empty()
-                                   ? (frames_.back().bp - varRef.slotIndex) : 0;
+                ctrl->varOff = ctrl->varIsSlot && !es_->frames.empty()
+                                   ? (es_->frames.back().bp - varRef.slotIndex) : 0;
                 if (number == 1 || number == -1) {
                     ctrl->type = number;
                     ctrl->to = toInt(second);
@@ -14112,8 +14047,8 @@ private:
                 }
                 // LPCVM_NEWBIE: the post_enter_world hook array as the LOOP sees
                 // it - proves whether the tail really holds duplicate closures.
-                if (nbProbeOn() && !frames_.empty() && frames_.back().fn &&
-                    frames_.back().fn->name == "post_enter_world" && ctrl->arr) {
+                if (nbProbeOn() && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == "post_enter_world" && ctrl->arr) {
                     const auto& it = ctrl->arr->items;
                     std::cerr << "[nb-loop] n=" << it.size()
                               << " arrUse=" << (ctrl->arr.use_count())
@@ -14125,31 +14060,31 @@ private:
                               << "\n";
                     std::cerr.flush();
                 }
-                if (slot >= 0 && static_cast<size_t>(slot) < stack_.size())
-                    stack_[static_cast<size_t>(slot)].value = ctrl;
-                else if (vmEnvTrace())                    std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << stack_.size()
-                              << " fn=" << (frames_.empty() || !frames_.back().fn
-                                                ? "<global>" : frames_.back().fn->name)
-                              << " bp=" << (frames_.empty() ? -999 : frames_.back().bp) << "\n";
+                if (slot >= 0 && static_cast<size_t>(slot) < es_->stack.size())
+                    es_->stack[static_cast<size_t>(slot)].value = ctrl;
+                else if (vmEnvTrace())                    std::cerr << "[loop] init ctrl slot out of range: " << slot << " size=" << es_->stack.size()
+                              << " fn=" << (es_->frames.empty() || !es_->frames.back().fn
+                                                ? "<global>" : es_->frames.back().fn->name)
+                              << " bp=" << (es_->frames.empty() ? -999 : es_->frames.back().bp) << "\n";
                 break;
             }
             case 18: { // cond_jmp_for_loop
                 int breakOffset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int varNo = fromMeta ? m1 : static_cast<int8_t>(in.b);
-                loopStep(ip_, slotOf(varNo), breakOffset, 0);
+                loopStep(es_->ip, slotOf(varNo), breakOffset, 0);
                 break;
             }
             case 80: { // step_jmp_for_loop
                 int continueOffset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int varNo = fromMeta ? m1 : static_cast<int8_t>(in.b);
-                loopStep(ip_, slotOf(varNo), 0, continueOffset);
+                loopStep(es_->ip, slotOf(varNo), 0, continueOffset);
                 break;
             }
             case 82: // to_reserve_stack_value (placeholder slot; type irrelevant)
                 pushValue(Value{});
                 break;
             case 83: // to_unreserve_stack_value
-                if (!stack_.empty()) pop();
+                if (!es_->stack.empty()) pop();
                 break;
             case 14: // caught_error: entry point of a catch handler.  On an
                 // error the runLoop's VmError handler has already popped the
@@ -14159,7 +14094,7 @@ private:
                 break;
             case 26: // end_thread_catch: the guarded region completed without
                 // an error - drop the record vm_newThreadCatch pushed.
-                if (!catches_.empty()) catches_.pop_back();
+                if (!es_->catches.empty()) es_->catches.pop_back();
                 break;
             case 44: { // new_thread_catch (vm_newThreadCatch 0x80aaf84): enter
                 // an LPC catch region.  par16 is a PC-relative offset from the
@@ -14168,10 +14103,10 @@ private:
                 // the handler with the error string on the stack.
                 int64_t off = static_cast<int16_t>(in.a);
                 CatchRecord rec;
-                rec.ipTarget = ip_ + static_cast<size_t>(off);
-                rec.stackSize = stack_.size();
-                rec.frameCount = frames_.size();
-                catches_.push_back(rec);
+                rec.ipTarget = es_->ip + static_cast<size_t>(off);
+                rec.stackSize = es_->stack.size();
+                rec.frameCount = es_->frames.size();
+                es_->catches.push_back(rec);
                 break;
             }
             case 16: // check_is_ref_type
@@ -14182,8 +14117,8 @@ private:
                 break;
             case 12: { // case_default
                 int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
-                if (!stack_.empty()) pop();
-                ip_ += offset;
+                if (!es_->stack.empty()) pop();
+                es_->ip += offset;
                 break;
             }
             case 10: { // case_check_number
@@ -14193,7 +14128,7 @@ private:
                 bool hit = (v.index() == 2 && std::get<int64_t>(v) == number);
                 if (hit) {
                     pop();
-                    ip_ += offset;
+                    es_->ip += offset;
                 }
                 break;
             }
@@ -14202,19 +14137,19 @@ private:
                 int strIndex = fromMeta ? m1 : 0;
                 Value v = top().value;
                 const std::vector<std::string>* tbl =
-                    frames_.empty() || !frames_.back().strings ? &obj_.strings : frames_.back().strings;
+                    es_->frames.empty() || !es_->frames.back().strings ? &obj_.strings : es_->frames.back().strings;
                 if (v.index() == 4 && strIndex >= 0 &&
                     static_cast<size_t>(strIndex) < tbl->size() &&
                     std::get<SharedString>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
                     pop();
-                    ip_ += offset;
+                    es_->ip += offset;
                 }
                 break;
             }
             default:
                 if (vmEnvTrace())
                     std::cerr << "[vm] unhandled op " << in.op << " " << ai.name
-                              << " at ip=" << (ip_ - 1) << "\n";
+                              << " at ip=" << (es_->ip - 1) << "\n";
                 break;
             }
             } catch (const TimeSliceSignal&) {
@@ -14223,7 +14158,7 @@ private:
                 // the master at the tail of ready_ and resumes it later).
                 if (vmEnvTrace())
                     std::cerr << "[slice-yield] vm=" << this << " obj=" << objName_
-                              << " ip=" << ip_ << " frames=" << frames_.size() << "\n";
+                              << " ip=" << es_->ip << " frames=" << es_->frames.size() << "\n";
                 throw;
             } catch (const SuspendSignal& sig) {
                 // A blocking efun parked this process.  Execution state stays
@@ -14232,44 +14167,44 @@ private:
                 if (vmEnvTrace())
                     std::cerr << "[loop-suspend] vm=" << this << " obj=" << objName_
                               << " sigVm=" << (sig.vm ? reinterpret_cast<void*>(sig.vm) : nullptr)
-                              << " frames=" << frames_.size() << "\n";
+                              << " frames=" << es_->frames.size() << "\n";
                 throw;
             } catch (const VmError& e) {
                 // Unwind to the innermost new_thread_catch, if any.
-                if (catches_.empty()) throw;
-                CatchRecord rec = catches_.back();
-                if (rec.frameCount > frames_.size()) throw;
+                if (es_->catches.empty()) throw;
+                CatchRecord rec = es_->catches.back();
+                if (rec.frameCount > es_->frames.size()) throw;
                 // An LPC error propagates out of any frames called INSIDE the
                 // guarded region (the original's vm_errorQuit -> vm_traceError
                 // pops fun contexts down to the catch's funCp).  Pop each such
                 // frame exactly like a return (restore caller stream/obj vars,
                 // drop its argument/local slots), removing catch records opened
                 // by the frames being unwound.
-                while (frames_.size() > rec.frameCount) {
-                    if (!catches_.empty() && catches_.back().frameCount >= frames_.size())
-                        catches_.pop_back();
-                    const Frame& fr = frames_.back();
+                while (es_->frames.size() > rec.frameCount) {
+                    if (!es_->catches.empty() && es_->catches.back().frameCount >= es_->frames.size())
+                        es_->catches.pop_back();
+                    const Frame& fr = es_->frames.back();
                     if (fr.savedObjVars) { auto _ob = objVars_; objVars_ = fr.savedObjVars; noteVars("pop-fr", _ob); }
-                    if (fr.funcLookupSwitched) funcLookup_ = fr.savedFuncLookup;
-                    code_ = fr.retCode;
-                    meta_ = fr.retMeta;
+                    if (fr.funcLookupSwitched) es_->funcLookup = fr.savedFuncLookup;
+                    es_->code = fr.retCode;
+                    es_->meta = fr.retMeta;
                     int usedArgs = fr.argNum;
                     int newSize = fr.bp - usedArgs + 1 - (fr.zeroArgPlaceholder ? 1 : 0);
                     if (newSize < 0) newSize = 0;
-                    frames_.pop_back();
-                    stack_.resize(static_cast<size_t>(newSize));
+                    es_->frames.pop_back();
+                    es_->stack.resize(static_cast<size_t>(newSize));
                 }
                 // rec is the innermost catch of the surviving frame.
-                if (catches_.empty() || catches_.back().frameCount != frames_.size()) throw;
-                catches_.pop_back();
-                stack_.resize(rec.stackSize);
+                if (es_->catches.empty() || es_->catches.back().frameCount != es_->frames.size()) throw;
+                es_->catches.pop_back();
+                es_->stack.resize(rec.stackSize);
                 pushValue(make_string(std::string(e.what())));
-                ip_ = rec.ipTarget;
+                es_->ip = rec.ipTarget;
                 if (std::getenv("LPCVM_TAIL")) {
                     bool rel = thisObjectName_.find("login") != std::string::npos ||
                                objName_.find("login") != std::string::npos;
                     if (!rel) {
-                        for (const auto& fr : frames_) {
+                        for (const auto& fr : es_->frames) {
                             if (!fr.fn) continue;
                             const std::string fnm = fr.fn->name;
                             if (fnm == "do_login" || fnm == "_do_login" ||
@@ -14280,14 +14215,14 @@ private:
                     }
                     if (rel) {
                         std::string ch;
-                        for (const auto& fr : frames_) {
+                        for (const auto& fr : es_->frames) {
                             if (!ch.empty()) ch += "<-";
                             ch += fr.fn ? fr.fn->name : "<ctx>";
                             if (ch.size() > 240) break;
                         }
                         std::cerr << "[login-catch] swallowed error \"" << e.what()
                                   << "\" ob=" << thisObjectName_ << " obj=" << objName_
-                                  << " vm=" << this << " frames=" << frames_.size()
+                                  << " vm=" << this << " frames=" << es_->frames.size()
                                   << " chain=[" << ch << "] ip=" << rec.ipTarget << "\n";
                         std::cerr.flush();
                     }
@@ -14295,28 +14230,28 @@ private:
                 if (vmEnvTrace())
                     std::cerr << "[catch] error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
             } catch (const std::exception& e) {
-                if (!catches_.empty()) {
-                    CatchRecord rec = catches_.back();
-                    if (rec.frameCount > frames_.size()) throw;
-                    while (frames_.size() > rec.frameCount) {
-                        if (!catches_.empty() && catches_.back().frameCount >= frames_.size())
-                            catches_.pop_back();
-                        const Frame& fr = frames_.back();
+                if (!es_->catches.empty()) {
+                    CatchRecord rec = es_->catches.back();
+                    if (rec.frameCount > es_->frames.size()) throw;
+                    while (es_->frames.size() > rec.frameCount) {
+                        if (!es_->catches.empty() && es_->catches.back().frameCount >= es_->frames.size())
+                            es_->catches.pop_back();
+                        const Frame& fr = es_->frames.back();
                         if (fr.savedObjVars) { auto _ob = objVars_; objVars_ = fr.savedObjVars; noteVars("pop-fr", _ob); }
-                        if (fr.funcLookupSwitched) funcLookup_ = fr.savedFuncLookup;
-                        code_ = fr.retCode;
-                        meta_ = fr.retMeta;
+                        if (fr.funcLookupSwitched) es_->funcLookup = fr.savedFuncLookup;
+                        es_->code = fr.retCode;
+                        es_->meta = fr.retMeta;
                         int usedArgs = fr.argNum;
                         int newSize = fr.bp - usedArgs + 1 - (fr.zeroArgPlaceholder ? 1 : 0);
                         if (newSize < 0) newSize = 0;
-                        frames_.pop_back();
-                        stack_.resize(static_cast<size_t>(newSize));
+                        es_->frames.pop_back();
+                        es_->stack.resize(static_cast<size_t>(newSize));
                     }
-                    if (catches_.empty() || catches_.back().frameCount != frames_.size()) throw;
-                    catches_.pop_back();
-                    stack_.resize(rec.stackSize);
+                    if (es_->catches.empty() || es_->catches.back().frameCount != es_->frames.size()) throw;
+                    es_->catches.pop_back();
+                    es_->stack.resize(rec.stackSize);
                     pushValue(make_string(std::string(e.what())));
-                    ip_ = rec.ipTarget;
+                    es_->ip = rec.ipTarget;
                     if (vmEnvTrace())
                         std::cerr << "[catch] std error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
                 } else {
@@ -14330,16 +14265,16 @@ private:
     // Loop step (mirrors vm_cmpAndJmpInLoop)
     // ------------------------------------------------------------------
     void loopStep(size_t& ip, int ctrlSlot, int breakOffset, int continueOffset) {
-        if (ctrlSlot < 0 || static_cast<size_t>(ctrlSlot) >= stack_.size()) {
+        if (ctrlSlot < 0 || static_cast<size_t>(ctrlSlot) >= es_->stack.size()) {
             if (vmEnvTrace()) {
-                std::string fn = frames_.empty() || !frames_.back().fn ? "<global>" : frames_.back().fn->name;
-                std::cerr << "[loop] ctrl slot out of range: " << ctrlSlot << " size=" << stack_.size()
-                          << " fn=" << fn << " bp=" << (frames_.empty() ? -1 : frames_.back().bp)
-                          << " localCount=" << (frames_.empty() ? -1 : frames_.back().localCount) << "\n";
+                std::string fn = es_->frames.empty() || !es_->frames.back().fn ? "<global>" : es_->frames.back().fn->name;
+                std::cerr << "[loop] ctrl slot out of range: " << ctrlSlot << " size=" << es_->stack.size()
+                          << " fn=" << fn << " bp=" << (es_->frames.empty() ? -1 : es_->frames.back().bp)
+                          << " localCount=" << (es_->frames.empty() ? -1 : es_->frames.back().localCount) << "\n";
             }
             return;
         }
-        StackItem& slotItem = stack_[static_cast<size_t>(ctrlSlot)];
+        StackItem& slotItem = es_->stack[static_cast<size_t>(ctrlSlot)];
         if (slotItem.value.index() != 9) {    // LoopCtrl is variant index 9
             if (vmEnvTrace())
                 std::cerr << "[loop] ctrl slot " << ctrlSlot << " not a LoopCtrl (index="
@@ -14356,8 +14291,8 @@ private:
             // the frame is live.  Recomputing frame.bp - varNo keeps the write on
             // the slot the loop body actually reads.
             int slot = c->varIsSlot ? slotOf(c->varOff) : c->slotOfVar;
-            if (slot >= 0 && static_cast<size_t>(slot) < stack_.size())
-                stack_[static_cast<size_t>(slot)].value = v;
+            if (slot >= 0 && static_cast<size_t>(slot) < es_->stack.size())
+                es_->stack[static_cast<size_t>(slot)].value = v;
         };
         if (c->type == 1 || c->type == -1) {
             int64_t current = c->current;
@@ -14517,6 +14452,32 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
 };
 
 
+
+// ---- Stage 1 migration shims (see docs/scheduler_refactor_plan.md) ----
+// The VM's execution state now lives in the per-chain ExecState reached
+// through `es_`; these bind the old member names to it so ONE compile
+// verifies all of their uses.  Stage 2 rewrites the uses in batches
+// (frames first, then stack, ...) and deletes each macro as it goes.
+
+#define frames_ es_->frames
+#define stack_ es_->stack
+#define detachedStack_ es_->detachedStack
+#define savedObjVarsForNextCall_ es_->savedObjVarsForNextCall
+#define funcLookup_ es_->funcLookup
+#define lastOp_ es_->lastOp
+#define lastEfunIndex_ es_->lastEfunIndex
+#define lastIp_ es_->lastIp
+#define returnValue_ es_->returnValue
+#define returned_ es_->returned
+#define catchDepth_ es_->catchDepth
+#define catches_ es_->catches
+#define code_ es_->code
+#define meta_ es_->meta
+#define ip_ es_->ip
+#define cond_ es_->cond
+#define parked_ es_->parked
+#define resumeValue_ es_->resumeValue
+#define onResume_ es_->onResume
 // Scheduler member definitions (OriginalVm is complete here).
 
 namespace {
@@ -14638,7 +14599,7 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
         std::lock_guard<std::mutex> lk(mtx_);
         if (envFlagTail() && p->parkedVm) {
             bool st = false;
-            for (const auto& fr : p->parkedVm->frames_) {
+            for (const auto& fr : p->parkedVm->es_->frames) {
                 if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
                               std::string(fr.fn->name) == "do_operate")) { st = true; break; }
             }
@@ -14649,7 +14610,7 @@ void Scheduler::wake(std::shared_ptr<Process> p) {
                 ++stWakeN;
                 ResumeCond cc = p->parkedVm->resumeCond();
                 std::string chain;
-                for (const auto& fr2 : p->parkedVm->frames_) {
+                for (const auto& fr2 : p->parkedVm->es_->frames) {
                     if (!chain.empty()) chain += "<-";
                     chain += fr2.fn ? fr2.fn->name : "<ctx>";
                     if (chain.size() > 200) break;
@@ -14728,7 +14689,7 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond) 
         std::string pvo = p->parkedVm ? p->parkedVm->objName() : "?";
         std::string pch;
         if (p->parkedVm)
-            for (const auto& fr : p->parkedVm->frames_) {
+            for (const auto& fr : p->parkedVm->es_->frames) {
                 if (!pch.empty()) pch += "<-";
                 pch += fr.fn ? fr.fn->name : "<ctx>";
                 if (pch.size() > 200) break;
@@ -14750,17 +14711,17 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond) 
         int64_t pip = -1;
         std::string chain;
         if (p->parkedVm) {
-            pdepth = p->parkedVm->frames_.size();
+            pdepth = p->parkedVm->es_->frames.size();
             pip = static_cast<int64_t>(p->parkedVm->ip());
-            if (!p->parkedVm->frames_.empty() && p->parkedVm->frames_.back().fn)
-                pfn = p->parkedVm->frames_.back().fn->name;
+            if (!p->parkedVm->es_->frames.empty() && p->parkedVm->es_->frames.back().fn)
+                pfn = p->parkedVm->es_->frames.back().fn->name;
             // Full chain with per-frame object names: a frame whose object
             // does NOT match parkedVm's object means the VM's frame stack was
             // cross-contaminated by another process (e.g. the filed ldba_conn
             // daemon frame appearing inside the party_war VM's post_init
             // stack of the __master__ process).
-            for (size_t fi = 0; fi < p->parkedVm->frames_.size() && fi < 8; ++fi) {
-                auto& fr = p->parkedVm->frames_[fi];
+            for (size_t fi = 0; fi < p->parkedVm->es_->frames.size() && fi < 8; ++fi) {
+                auto& fr = p->parkedVm->es_->frames[fi];
                 if (!chain.empty()) chain += "<-";
                 chain += (fr.fn ? fr.fn->name : "?");
                 if (fr.fn) { chain += "#"; chain += std::to_string(fr.fn->index); }
@@ -14900,7 +14861,7 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond) 
         break;
     default:  // kind 0/4: no wakeup registered; park forever (external
               // explicit wake via wake() or process list)
-        parked_.push_back(p);
+        parkedList_.push_back(p);
         break;
     }
 }
@@ -15039,7 +15000,7 @@ void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
             std::string wobj = p->parkedVm ? p->parkedVm->objName() : "?";
             std::string wch;
             if (p->parkedVm)
-                for (const auto& fr : p->parkedVm->frames_) {
+                for (const auto& fr : p->parkedVm->es_->frames) {
                     if (!wch.empty()) wch += "<-";
                     wch += fr.fn ? fr.fn->name : "<ctx>";
                     if (wch.size() > 150) break;
@@ -15068,7 +15029,7 @@ bool Scheduler::isVmParked(const OriginalVm* vm) {
     auto on = [&](const std::shared_ptr<Process>& p) {
         return p && p->parkedVm && p->parkedVm.get() == vm;
     };
-    for (auto& p : parked_)
+    for (auto& p : parkedList_)
         if (on(p)) return true;
     for (auto& kv : queueWaiters_)
         for (auto& p : kv.second)
@@ -15244,7 +15205,7 @@ void Scheduler::dumpWaiters() {
             std::cerr << "[wait-dump] fd=" << kv.first << " entry=" << w->entry
                       << " obj=" << objOf(w) << " tid=" << w->tid
                       << " vars=" << varsOf(w) << "\n";
-    for (auto& w : parked_)
+    for (auto& w : parkedList_)
         std::cerr << "[wait-dump] parked entry=" << w->entry
                   << " obj=" << objOf(w) << " tid=" << w->tid
                   << " vars=" << varsOf(w) << "\n";
@@ -15462,7 +15423,7 @@ void Scheduler::run() {
                 int64_t mindt = -1;
                 {
                     std::lock_guard<std::mutex> lk0(mtx_);
-                    rd = ready_.size(); pk = parked_.size(); tm = timers_.size();
+                    rd = ready_.size(); pk = parkedList_.size(); tm = timers_.size();
                     qw = queueWaiters_.size(); ew = eventWaiters_.size();
                     sw = sockWaiters_.size();
                     if (!timers_.empty()) mindt = timers_.begin()->first - now0;
@@ -15501,12 +15462,12 @@ void Scheduler::run() {
                     }
                     return c;
                 };
-                std::cerr << "[census] ready=" << ready_.size() << " parked=" << parked_.size()
+                std::cerr << "[census] ready=" << ready_.size() << " parked=" << parkedList_.size()
                           << " timers=" << timers_.size() << "\n";
                 for (auto& w : ready_)
                     std::cerr << "[census] READY entry=" << w->entry
                               << " chain=[" << chainOf(w) << "]\n";
-                for (auto& w : parked_)
+                for (auto& w : parkedList_)
                     std::cerr << "[census] PARKED entry=" << w->entry
                               << " chain=[" << chainOf(w) << "]\n";
                 for (auto& te : timers_)
@@ -15568,9 +15529,9 @@ void Scheduler::run() {
                         size_t frN = 0;
                         std::string top;
                         if (dv) {
-                            frN = dv->frames_.size();
-                            if (!dv->frames_.empty() && dv->frames_.back().fn)
-                                top = dv->frames_.back().fn->name;
+                            frN = dv->es_->frames.size();
+                            if (!dv->es_->frames.empty() && dv->es_->frames.back().fn)
+                                top = dv->es_->frames.back().fn->name;
                         }
                         std::cerr << "[lp-done] entry=" << p->entry
                                   << " vm=" << ov << " pvm="
@@ -15673,7 +15634,7 @@ void Scheduler::run() {
                             std::cerr << "[idle-wait] fd=" << kv.first
                                       << " entry=" << w->entry
                                       << " chain=[" << chainOf(w) << "]\n";
-                    for (auto& w : parked_)
+                    for (auto& w : parkedList_)
                         std::cerr << "[idle-wait] parked entry=" << w->entry
                                   << " chain=[" << chainOf(w) << "]\n";
                     // Timer waits (kind-1 sleeps / timed event re-parks) are not
@@ -15777,7 +15738,7 @@ void Scheduler::requestShutdown() {
 
 void Scheduler::parkForever(std::shared_ptr<Process> p) {
     std::lock_guard<std::mutex> lk(mtx_);
-    parked_.push_back(std::move(p));
+    parkedList_.push_back(std::move(p));
 }
 
 int64_t Scheduler::nowMs() {
@@ -15794,7 +15755,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
     // NOTE (2026-09-22): a per-process chain SWAP used to live here too (stash the
     // object's previous occupant, restore this process's own chain).  It was
     // removed with the callFunctionByName swap: taking a PARKED chain out of its
-    // VM hides its cond_/parked_ from the reply that should wake it, and during
+    // VM hides its cond_/parkedList_ from the reply that should wake it, and during
     // boot that lost ~1% of the DB round trips (6 of 634 NPCs never registered,
     // and the task objects waiting for them retried do_init forever instead of
     // the service reaching "listening").  The tid pin above is what actually
@@ -15832,7 +15793,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             std::string chain;
             OriginalVm* chv = p->parkedVm ? p->parkedVm.get() : p->vm.get();
             if (chv)
-                for (const auto& fr : chv->frames_) {
+                for (const auto& fr : chv->es_->frames) {
                     if (!chain.empty()) chain += "<-";
                     chain += fr.fn ? fr.fn->name : "<ctx>";
                     if (chain.size() > 240) break;
@@ -15861,7 +15822,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             ++mRunN;
             std::string chain;
             if (pv)
-                for (const auto& fr : pv->frames_) {
+                for (const auto& fr : pv->es_->frames) {
                     if (!chain.empty()) chain += "<-";
                     chain += fr.fn ? fr.fn->name : "<ctx>";
                     if (chain.size() > 220) break;
@@ -15877,12 +15838,12 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             std::cerr.flush();
         }
     }
-    if (envFlagTail() && p->parkedVm && !p->parkedVm->frames_.empty()) {
-        for (const auto& fr : p->parkedVm->frames_) {
+    if (envFlagTail() && p->parkedVm && !p->parkedVm->es_->frames.empty()) {
+        for (const auto& fr : p->parkedVm->es_->frames) {
             if (fr.fn && (std::string(fr.fn->name) == "do_init_after_loaded" ||
                           std::string(fr.fn->name) == "do_operate")) {
                 std::string chain;
-                for (const auto& fr2 : p->parkedVm->frames_) {
+                for (const auto& fr2 : p->parkedVm->es_->frames) {
                     if (!chain.empty()) chain += "<-";
                     chain += fr2.fn ? fr2.fn->name : "<ctx>";
                     if (chain.size() > 200) break;
@@ -15979,13 +15940,13 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 };
                 if (relO(rvm->objName())) {
                     std::string ch3;
-                    for (const auto& fr : rvm->frames_) {
+                    for (const auto& fr : rvm->es_->frames) {
                         if (!ch3.empty()) ch3 += "<-";
                         ch3 += fr.fn ? fr.fn->name : "<ctx>";
                         if (ch3.size() > 160) break;
                     }
                     std::cerr << "[re3] after drain rvm=" << rvm->objName()
-                              << " frames=" << rvm->frames_.size()
+                              << " frames=" << rvm->es_->frames.size()
                               << " chain=[" << ch3 << "] ownvm="
                               << (p->vm ? p->vm->objName() : "?") << "\n";
                     std::cerr.flush();
@@ -16043,7 +16004,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 if (relO(rvo) || relO(pvo)) {
                     std::string ch;
                     if (rvm)
-                        for (const auto& fr : rvm->frames_) {
+                        for (const auto& fr : rvm->es_->frames) {
                             if (!ch.empty()) ch += "<-";
                             ch += fr.fn ? fr.fn->name : "<ctx>";
                             if (ch.size() > 160) break;
@@ -16056,7 +16017,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                     std::cerr << "[re] resume rvm=" << rvo << " ownvm=" << pvo
                               << " callerVm=" << (p->callerVm ? p->callerVm->objName() : "-")
                               << " callers=[" << cal << "]"
-                              << " frames=" << (rvm ? rvm->frames_.size() : 0)
+                              << " frames=" << (rvm ? rvm->es_->frames.size() : 0)
                               << " chain=[" << ch << "]\n";
                     std::cerr.flush();
                 }
@@ -16084,13 +16045,13 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 };
                 if (relO(rvm->objName())) {
                     std::string ch2;
-                    for (const auto& fr : rvm->frames_) {
+                    for (const auto& fr : rvm->es_->frames) {
                         if (!ch2.empty()) ch2 += "<-";
                         ch2 += fr.fn ? fr.fn->name : "<ctx>";
                         if (ch2.size() > 160) break;
                     }
                     std::cerr << "[re2] after resumeProcess rvm=" << rvm->objName()
-                              << " frames=" << rvm->frames_.size()
+                              << " frames=" << rvm->es_->frames.size()
                               << " chain=[" << ch2 << "]\n";
                     std::cerr.flush();
                 }
@@ -16130,13 +16091,13 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 };
                 if (relO(rvm->objName())) {
                     std::string ch3;
-                    for (const auto& fr : rvm->frames_) {
+                    for (const auto& fr : rvm->es_->frames) {
                         if (!ch3.empty()) ch3 += "<-";
                         ch3 += fr.fn ? fr.fn->name : "<ctx>";
                         if (ch3.size() > 160) break;
                     }
                     std::cerr << "[re3] after drain rvm=" << rvm->objName()
-                              << " frames=" << rvm->frames_.size()
+                              << " frames=" << rvm->es_->frames.size()
                               << " chain=[" << ch3 << "] ownvm="
                               << (p->vm ? p->vm->objName() : "?") << "\n";
                     std::cerr.flush();
@@ -16161,7 +16122,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             if (p->vm && p->vm != rvm && p->vm->hasActiveFrames() && !pvmChained) {
                 if (std::getenv("LPCVM_TAIL"))
                     std::cerr << "[cv1] resume own-vm " << p->vm->objName()
-                              << " frames=" << p->vm->frames_.size()
+                              << " frames=" << p->vm->es_->frames.size()
                               << " entry=" << p->entry << " tid=" << p->tid << "\n";
                 p->vm->resumeCaller(res);
                 res = p->vm->lastReturnValue();
@@ -16291,7 +16252,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                 ++mParkN;
                 std::string chain;
                 if (pv)
-                    for (const auto& fr : pv->frames_) {
+                    for (const auto& fr : pv->es_->frames) {
                         if (!chain.empty()) chain += "<-";
                         chain += fr.fn ? fr.fn->name : "<ctx>";
                         if (chain.size() > 220) break;
@@ -16317,7 +16278,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             if (relO(eo) || relO(p->vm ? p->vm->objName() : "")) {
                 std::string ch;
                 if (evm)
-                    for (const auto& fr : evm->frames_) {
+                    for (const auto& fr : evm->es_->frames) {
                         if (!ch.empty()) ch += "<-";
                         ch += fr.fn ? fr.fn->name : "<ctx>";
                         if (ch.size() > 200) break;
@@ -16335,7 +16296,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             OriginalVm* evm = p->parkedVm ? p->parkedVm.get() : p->vm.get();
             std::string chain;
             if (evm) {
-                for (const auto& fr : evm->frames_) {
+                for (const auto& fr : evm->es_->frames) {
                     std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
                     if (!chain.empty()) chain += "<-";
                     chain += fnm;
@@ -16347,25 +16308,25 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
                       << " vm=" << (p->vm ? p->vm->objName() : "?")
                       << " chain=[" << chain << "]"
                       << " what=[" << e.what() << "]\n";
-            if (evm && !evm->frames_.empty()) {
+            if (evm && !evm->es_->frames.empty()) {
                 // Stack window of the top frame so the failing locals (e.g.
                 // the empty refresh_arr in super_bossd.get_next_refresh_time)
                 // are visible without a separate ERR_TRACE run.
-                const Frame& fr = evm->frames_.back();
+                const Frame& fr = evm->es_->frames.back();
                 int bp = fr.bp;
                 std::string wnd;
                 int lo = std::max(0, bp - 14);
-                int hi = static_cast<int>(evm->stack_.size());
+                int hi = static_cast<int>(evm->es_->stack.size());
                 for (int i = lo; i < hi && i <= bp + 16; ++i) {
                     if (!wnd.empty()) wnd += " | ";
                     std::string vs;
-                    try { vs = to_string(evm->stack_[static_cast<size_t>(i)].value, false); }
+                    try { vs = to_string(evm->es_->stack[static_cast<size_t>(i)].value, false); }
                     catch (...) { vs = "<err>"; }
                     if (vs.size() > 110) vs = vs.substr(0, 110);
-                    wnd += std::to_string(i) + ":" + std::to_string(evm->stack_[static_cast<size_t>(i)].value.index()) + ":" + vs;
+                    wnd += std::to_string(i) + ":" + std::to_string(evm->es_->stack[static_cast<size_t>(i)].value.index()) + ":" + vs;
                 }
                 std::cerr << "[sched-err-stack] fn=" << (fr.fn ? fr.fn->name : "?")
-                          << " bp=" << bp << " sz=" << evm->stack_.size()
+                          << " bp=" << bp << " sz=" << evm->es_->stack.size()
                           << " [" << wnd << "]\n";
             }
         }
