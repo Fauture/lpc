@@ -228,3 +228,36 @@ A4“确定性回归”的结论不成立——A4b 与 A6 在正确计数下几�
 3. 下一批改动（Step C 的正式落地）：删掉 `execMutex_`/`execDepth_`/`ExecGuard` 与
    `runDetached` 的解锁/重锁逻辑，只保留 `es_->detachedStack` 的语义；然后处理那 3 处线程。
    每批仍按"编译 → 起服 → 3 个不同账号（9112=0）"验收。
+
+## 12. Step C2：剩下的 OS 线程入口只在 telnet 路径上
+
+对 3 处残留入口逐个查证（不是猜）：
+
+| 入口 | 谁调用 | 真实游戏路径是否触发 |
+|---|---|---|
+| `drainPendingOriginalThreads`（builtins.cpp:1299） | **只有 telnet 新客户端**接入时（`telnet_new_client`） | 否 |
+| `runPendingOriginalThreads`（original_vm.cpp:16922） | **没有任何调用者**（仓库内全量搜索） | 否 |
+| `pendingThreads()` 队列 | **没有任何 push**（全量搜索 `push_back/emplace` 为 0） | 否 |
+| `create_thread` 的 `isTelnetThread` 回退分支 | telnet 守护线程（`telnet_daemon` / `buildin_telnet_daemon`） | 否 |
+
+日志佐证：`vLock` / `vEntry` / `vA6c` / `stepA6` 四份真机日志里
+`pending-thr=0`、`pending threads=0`、`[thread] run=0`。
+
+结论：
+1. **游戏客户端路径上已经没有非调度线程进入 VM**（与第 11 节 `noteVmEntry` 的
+   40/40 + 全部真实负载为 0 一致）；
+2. 仅存的非调度入口是 **telnet（GM 后台）**，它在调度器线程之外进 VM 是设计遗留；
+3. 因此 Step C1 的"锁只在非调度线程加"正好覆盖 telnet，而游戏路径不再付锁开销——
+   这就是当前能安全达到的最优形态；
+4. 若要彻底删掉锁，必须先把 telnet 入口改成调度器进程（`spawn` + 在进程上携带
+   telnet client id），并用 `noteVmEntry` 复测"非调度进入=0"。那是有独立风险的
+   一步（telnet 的 `input_string()` 走 thread-local client id），留待单独做。
+
+### 现在还留着的多线程机制（及其存在理由）
+| 机制 | 现状 |
+|---|---|
+| `execMutex_` / `execDepth_` | 仅 telnet 路径实际加锁；游戏路径空操作 |
+| `runDetached` 的解锁/重取 | 已按"实际持锁次数"重写，锁为 0 时自动跳过 |
+| `objVarsSnapshot` | 仅上面那些 pending 线程用；游戏路径不走 |
+| `create_thread` telnet 回退分支 | telnet 专用 |
+| 每连接一个 recv 线程、每服务一个 accept 线程 | 网络层遗留，Step F |
