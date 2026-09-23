@@ -13341,6 +13341,9 @@ void feedClient(GameClient& cl, const char* data, size_t n) {
 
 } // namespace
 
+// The per-connection handler lives in this translation unit only.
+static void processGameConnection(unsigned int fd);
+
 int startGameService(int port) {
     ensureWsaGame();
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -13419,217 +13422,230 @@ int startGameService(int port) {
                 pIn = nIn; pOut = nOut; fIn = nFIn; fOut = nFOut; si = nSi; sf = nSf;
             }
         }).detach();
-        while (true) {
-            SOCKET c = accept(s, nullptr, nullptr);
-            if (c == INVALID_SOCKET) {
-                if (WSAGetLastError() == WSAEINTR) continue;
-                break;
+    }).detach();
+
+    // The DRIVER owns the listening socket: the original main loop scans it
+    // together with the connected sockets and accepts ON THE DRIVER THREAD,
+    // so a connection no longer waits for a dedicated accept() thread to be
+    // scheduled.  Each accepted socket still gets its own handler thread
+    // (the login path calls into the VM and must not block the driver).
+    registerServiceSocket(static_cast<int>(s), [](unsigned int fd) -> bool {
+        std::thread(processGameConnection, fd).detach();
+        return true;
+    });
+    std::cout << "Service started on port " << port << "\n";
+    std::cout.flush();
+    return 1;
+}
+
+// ---- accepted-connection handler -----------------------------------------
+// One thread per accepted socket: the accept-thread lambda body, moved out
+// verbatim (leading indentation only).
+static void processGameConnection(unsigned int fdRaw) {
+    SOCKET c = static_cast<SOCKET>(fdRaw);
+    // The listener is non-blocking (the driver's scan drains it), and an
+    // accepted socket INHERITS that mode on Windows.  The reader below wants
+    // a blocking socket, exactly as the old blocking accept() produced, so
+    // reset the flag here.
+    {
+        u_long blockingMode = 0;
+        ioctlsocket(c, FIONBIO, &blockingMode);
+    }
+            int clientNo = nextGameClientNo().fetch_add(1);
+            if (std::getenv("LPCVM_TRACE"))
+                std::cerr << "[game] accepted client no=" << clientNo << "\n";
+            GameClient cl;
+            cl.fd = static_cast<int>(c);
+            cl.clientNo = clientNo;
+            cl.attrib = ATTRIB_CLIENT_USER;  // CLIENT_USER initially
+            cl.status = 1;
+            cl.timeStamp = time(nullptr);
+            cl.timeRecvEcho = cl.timeStamp;
+            {
+                std::lock_guard<std::mutex> lk(gameMutex());
+                gameClients()[clientNo] = std::move(cl);
+            }
+            // vm_gameListenSocketCallback: after binding the client slot,
+            // notify the LPC master: vm_apply("cmd_new_connection", clientNo)
+            // -> cmd_new_connection -> threadd dispatch -> post_new_connection
+            // (creates/registers the client agent).
+            try {
+                callMasterProgramFunction("cmd_new_connection", {make_int(clientNo)},
+                                          lpc::masterSearchRoot());
+            } catch (...) {
+            }
+            // The original driver is a cooperative single-threaded
+            // scheduler: the new-connection callback runs to completion
+            // (agent cloned + set_client_agent registered) BEFORE the
+            // socket is read.  Our port runs the callback on the
+            // connectiond queue thread, so wait here until the agent for
+            // this client exists before feeding any packet - otherwise the
+            // first packet's process_command -> find_agent_by_client races
+            // the registration and the command is silently dropped.
+            int waitMs = 0;
+            int agentType = 0;
+            int userType = 0;
+            {
+                // The original driver is single threaded: the listen
+                // callback (cmd_new_connection -> logind::new_user ->
+                // comm::set_client -> set_client_user) completes BEFORE the
+                // first packet is parsed.  Here cmd_new_connection only
+                // QUEUES the dispatch on the scheduler thread, so the socket
+                // thread must wait for the registration itself or the first
+                // packet (0x4124 login) finds no user object.
+                //
+                // TWO registries exist and they must not be confused:
+                //   client_users[cno]  <- find_user_by_client: every player
+                //                         connection (logind::new_user)
+                //   client_agents[cno] <- find_agent_by_client: INTERNAL
+                //                         comm agents (feature/common/
+                //                         agent.c::comm_set_client_no)
+                // Waiting on the agent alone (the previous code) never
+                // matched for a player: the loop burnt all 200 iterations
+                // (200 x 5ms + one LPC round trip each ~10ms = ~3.1s) before
+                // every read, which is exactly the "first packet after a new
+                // connection takes ~3.6s" the client reported.
+                auto root = lpc::masterSearchRoot();
+                uint64_t waitStart = GetTickCount64();
+                // Hard cap: 20 x 5ms = 100ms.  The registry checks below already
+                // break as soon as the client is known, and the queued
+                // cmd_new_connection dispatch (which is what a login connection
+                // actually needs before its first packet) completes in a few ms -
+                // a 200-iteration cap let the wait run the full 3.2s again whenever
+                // the pending-service counter was stuck ("[accept] ... wait=3219ms
+                // user-type=0", i.e. the ~3s login delay coming back). 100ms is
+                // ample for the dispatch and bounds the worst case.
+                for (int tries = 0; tries < 20; ++tries) {
+                    Value u = callMasterProgramFunction("find_user_by_client",
+                                                        {make_int(clientNo)}, root);
+                    userType = static_cast<int>(u.index());
+                    if (u.index() == 7) break;   // login object registered
+                    Value a = callMasterProgramFunction("find_agent_by_client",
+                                                        {make_int(clientNo)}, root);
+                    agentType = static_cast<int>(a.index());
+                    if (a.index() == 7) break;   // internal comm agent
+                    // Neither registry has this client - and for a LOGIN connection
+                    // that is the normal state, not a pending one: logind only
+                    // registers a "user" for a client AFTER it authenticates, which
+                    // cannot happen before this thread reads its first packet
+                    // (0x4124).  Polling the registries alone therefore burnt all
+                    // 200 iterations (200 x 5ms + one LPC round trip each) on EVERY
+                    // login - measured as "[accept] ... wait=3390ms user-type=0" -
+                    // while the CPU stayed near idle.  The thing actually worth
+                    // waiting for is the queued cmd_new_connection dispatch (it runs
+                    // on the scheduler thread): once the service queue is idle that
+                    // dispatch has completed, so reading the first packet is safe.
+                    if (tries >= 1 && lpc::serviceQueueIdle()) break;
+                    if (std::getenv("LPCVM_TRACE"))
+                        std::cerr << "[game] waiting client=" << clientNo
+                                  << " try=" << tries << " user=" << userType
+                                  << " agent=" << agentType << "\n";
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                waitMs = static_cast<int>(GetTickCount64() - waitStart);
             }
             {
-                char nd = 1;
-                setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &nd, static_cast<int>(sizeof(nd)));
+                std::string peer = "?";
+                sockaddr_in sin{};
+                int slen = static_cast<int>(sizeof(sin));
+                if (getpeername(c, reinterpret_cast<sockaddr*>(&sin), &slen) == 0) {
+                    char pbuf[64];
+                    snprintf(pbuf, sizeof(pbuf), "%s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+                    peer = pbuf;
+                }
+                std::cerr << "[accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
+                          << " wait=" << waitMs << "ms user-type=" << userType
+                          << " agent-type=" << agentType
+                          << " peer=" << peer << "\n";
             }
-            std::thread([c]() {
-                int clientNo = nextGameClientNo().fetch_add(1);
-                if (std::getenv("LPCVM_TRACE"))
-                    std::cerr << "[game] accepted client no=" << clientNo << "\n";
-                GameClient cl;
-                cl.fd = static_cast<int>(c);
-                cl.clientNo = clientNo;
-                cl.attrib = ATTRIB_CLIENT_USER;  // CLIENT_USER initially
-                cl.status = 1;
-                cl.timeStamp = time(nullptr);
-                cl.timeRecvEcho = cl.timeStamp;
+            char buf[4096];
+            for (;;) {
+                int n = recv(c, buf, sizeof(buf), 0);
                 {
-                    std::lock_guard<std::mutex> lk(gameMutex());
-                    gameClients()[clientNo] = std::move(cl);
+                    std::string hex;
+                    static const char* hx = "0123456789ABCDEF";
+                    for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
+                    // Same shared clock as [send]/[life], so the
+                    // login -> 0x211B/0xF061 latency is measurable.
+                    std::cerr << "[recv-accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
+                              << " n=" << n << " " << hex << "\n";
                 }
-                // vm_gameListenSocketCallback: after binding the client slot,
-                // notify the LPC master: vm_apply("cmd_new_connection", clientNo)
-                // -> cmd_new_connection -> threadd dispatch -> post_new_connection
-                // (creates/registers the client agent).
-                try {
-                    callMasterProgramFunction("cmd_new_connection", {make_int(clientNo)},
-                                              lpc::masterSearchRoot());
-                } catch (...) {
-                }
-                // The original driver is a cooperative single-threaded
-                // scheduler: the new-connection callback runs to completion
-                // (agent cloned + set_client_agent registered) BEFORE the
-                // socket is read.  Our port runs the callback on the
-                // connectiond queue thread, so wait here until the agent for
-                // this client exists before feeding any packet - otherwise the
-                // first packet's process_command -> find_agent_by_client races
-                // the registration and the command is silently dropped.
-                int waitMs = 0;
-                int agentType = 0;
-                int userType = 0;
-                {
-                    // The original driver is single threaded: the listen
-                    // callback (cmd_new_connection -> logind::new_user ->
-                    // comm::set_client -> set_client_user) completes BEFORE the
-                    // first packet is parsed.  Here cmd_new_connection only
-                    // QUEUES the dispatch on the scheduler thread, so the socket
-                    // thread must wait for the registration itself or the first
-                    // packet (0x4124 login) finds no user object.
-                    //
-                    // TWO registries exist and they must not be confused:
-                    //   client_users[cno]  <- find_user_by_client: every player
-                    //                         connection (logind::new_user)
-                    //   client_agents[cno] <- find_agent_by_client: INTERNAL
-                    //                         comm agents (feature/common/
-                    //                         agent.c::comm_set_client_no)
-                    // Waiting on the agent alone (the previous code) never
-                    // matched for a player: the loop burnt all 200 iterations
-                    // (200 x 5ms + one LPC round trip each ~10ms = ~3.1s) before
-                    // every read, which is exactly the "first packet after a new
-                    // connection takes ~3.6s" the client reported.
-                    auto root = lpc::masterSearchRoot();
-                    uint64_t waitStart = GetTickCount64();
-                    // Hard cap: 20 x 5ms = 100ms.  The registry checks below already
-                    // break as soon as the client is known, and the queued
-                    // cmd_new_connection dispatch (which is what a login connection
-                    // actually needs before its first packet) completes in a few ms -
-                    // a 200-iteration cap let the wait run the full 3.2s again whenever
-                    // the pending-service counter was stuck ("[accept] ... wait=3219ms
-                    // user-type=0", i.e. the ~3s login delay coming back). 100ms is
-                    // ample for the dispatch and bounds the worst case.
-                    for (int tries = 0; tries < 20; ++tries) {
-                        Value u = callMasterProgramFunction("find_user_by_client",
-                                                            {make_int(clientNo)}, root);
-                        userType = static_cast<int>(u.index());
-                        if (u.index() == 7) break;   // login object registered
-                        Value a = callMasterProgramFunction("find_agent_by_client",
-                                                            {make_int(clientNo)}, root);
-                        agentType = static_cast<int>(a.index());
-                        if (a.index() == 7) break;   // internal comm agent
-                        // Neither registry has this client - and for a LOGIN connection
-                        // that is the normal state, not a pending one: logind only
-                        // registers a "user" for a client AFTER it authenticates, which
-                        // cannot happen before this thread reads its first packet
-                        // (0x4124).  Polling the registries alone therefore burnt all
-                        // 200 iterations (200 x 5ms + one LPC round trip each) on EVERY
-                        // login - measured as "[accept] ... wait=3390ms user-type=0" -
-                        // while the CPU stayed near idle.  The thing actually worth
-                        // waiting for is the queued cmd_new_connection dispatch (it runs
-                        // on the scheduler thread): once the service queue is idle that
-                        // dispatch has completed, so reading the first packet is safe.
-                        if (tries >= 1 && lpc::serviceQueueIdle()) break;
-                        if (std::getenv("LPCVM_TRACE"))
-                            std::cerr << "[game] waiting client=" << clientNo
-                                      << " try=" << tries << " user=" << userType
-                                      << " agent=" << agentType << "\n";
-                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                    }
-                    waitMs = static_cast<int>(GetTickCount64() - waitStart);
-                }
-                {
-                    std::string peer = "?";
-                    sockaddr_in sin{};
-                    int slen = static_cast<int>(sizeof(sin));
-                    if (getpeername(c, reinterpret_cast<sockaddr*>(&sin), &slen) == 0) {
-                        char pbuf[64];
-                        snprintf(pbuf, sizeof(pbuf), "%s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-                        peer = pbuf;
-                    }
-                    std::cerr << "[accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
-                              << " wait=" << waitMs << "ms user-type=" << userType
-                              << " agent-type=" << agentType
-                              << " peer=" << peer << "\n";
-                }
-                char buf[4096];
-                for (;;) {
-                    int n = recv(c, buf, sizeof(buf), 0);
-                    {
-                        std::string hex;
-                        static const char* hx = "0123456789ABCDEF";
-                        for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
-                        // Same shared clock as [send]/[life], so the
-                        // login -> 0x211B/0xF061 latency is measurable.
-                        std::cerr << "[recv-accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
-                                  << " n=" << n << " " << hex << "\n";
-                    }
-                    if (n <= 0) {
-                        // Why did the peer hang up?  The real client drops the
-                        // link a few hundred ms after its own echo when it stops
-                        // getting MSG_REPLY_ECHO, so a close is only diagnosable
-                        // with the echo state printed next to it.
-                        static const std::atomic<bool>& echoCloseFlag = dynProbeFlag("LPCVM_ECHO");
-                        if (echoCloseFlag.load(std::memory_order_relaxed)) {
-                            std::lock_guard<std::mutex> lk(gameMutex());
-                            auto it = gameClients().find(clientNo);
-                            if (it != gameClients().end())
-                                std::cerr << "[echo-state] cno=" << clientNo << " n=" << n
-                                          << " lastEchoTick=" << it->second.tickLastRecvLastEcho
-                                          << " tickServer=" << it->second.tickServer
-                                          << " echoAge=" << (time(nullptr) - it->second.timeRecvEcho)
-                                          << "s t=" << lpc::msSinceStart() << "ms\n";
-                        }
-                        break;
-                    }
-                    GameClient* cur;
-                    {
+                if (n <= 0) {
+                    // Why did the peer hang up?  The real client drops the
+                    // link a few hundred ms after its own echo when it stops
+                    // getting MSG_REPLY_ECHO, so a close is only diagnosable
+                    // with the echo state printed next to it.
+                    static const std::atomic<bool>& echoCloseFlag = dynProbeFlag("LPCVM_ECHO");
+                    if (echoCloseFlag.load(std::memory_order_relaxed)) {
                         std::lock_guard<std::mutex> lk(gameMutex());
                         auto it = gameClients().find(clientNo);
-                        if (it == gameClients().end()) break;
-                        cur = &it->second;
+                        if (it != gameClients().end())
+                            std::cerr << "[echo-state] cno=" << clientNo << " n=" << n
+                                      << " lastEchoTick=" << it->second.tickLastRecvLastEcho
+                                      << " tickServer=" << it->second.tickServer
+                                      << " echoAge=" << (time(nullptr) - it->second.timeRecvEcho)
+                                      << "s t=" << lpc::msSinceStart() << "ms\n";
                     }
-                    // The original driver is cooperative: a dispatched service
-                    // (e.g. _check_client_data) runs to completion - including
-                    // its lite_set_temp("antibot_answer") AFTER the reply - before
-                    // the client's NEXT packet is read.  Wait here until the
-                    // threadd service queue drains so the account packet doesn't
-                    // race that tail and see antibot_answer still unset.
-                    if (cur->attrib & ATTRIB_CLIENT_USER) {
-                        // Enqueue and drain in order (see the queue comment):
-                        // never two commands at once, never a dropped packet.
-                        queuePacket(clientNo, buf, static_cast<size_t>(n));
-                        std::string one;
-                        while (takePacket(clientNo, one)) {
-                            GameClient* c2;
-                            {
-                                std::lock_guard<std::mutex> lk(gameMutex());
-                                auto it2 = gameClients().find(clientNo);
-                                if (it2 == gameClients().end()) break;
-                                c2 = &it2->second;
-                            }
-                            feedClient(*c2, one.data(), one.size());
-                            waitFlowSettled(clientNo);
-                        }
-                        continue;
-                    }
-                    feedClient(*cur, buf, static_cast<size_t>(n));
+                    break;
                 }
-                closesocket(c);
-                // Driver-side disconnect notification.  The original driver
-                // applies cmd_disconnected(cno, where) when the socket goes
-                // away; start_gs::_cmd_disconnected -> user.o::disconnected ->
-                // (no logout) 180s timer -> time_expired -> destruct ->
-                // userd::destroy_user -> me->save(0, cb), which is the ONLY
-                // path that writes the character's dbase back to the ddb.  Our
-                // port used to drop the client slot silently, so a character
-                // was written once at creation and never again: level, items
-                // and the "newbie" flag were lost on every re-login (so the
-                // newbie story re-ran and the newbie gift looked empty, making
-                // apply rebuild a NEW gift instead of listing its items).
-                // 2 = "driver_callback" per start_gs::stat_disconnect(34691).
-                // Called while the client slot is still registered: the LPC
-                // looks the user up with find_user_by_client(cno).
-                try {
-                    callMasterProgramFunction("cmd_disconnected",
-                                              {make_int(clientNo), make_int(2)},
-                                              lpc::masterSearchRoot());
-                } catch (...) {
-                }
+                GameClient* cur;
                 {
                     std::lock_guard<std::mutex> lk(gameMutex());
-                    gameClients().erase(clientNo);
+                    auto it = gameClients().find(clientNo);
+                    if (it == gameClients().end()) break;
+                    cur = &it->second;
                 }
-            }).detach();
-        }
-        closesocket(s);
-    }).detach();
-    return 1;
+                // The original driver is cooperative: a dispatched service
+                // (e.g. _check_client_data) runs to completion - including
+                // its lite_set_temp("antibot_answer") AFTER the reply - before
+                // the client's NEXT packet is read.  Wait here until the
+                // threadd service queue drains so the account packet doesn't
+                // race that tail and see antibot_answer still unset.
+                if (cur->attrib & ATTRIB_CLIENT_USER) {
+                    // Enqueue and drain in order (see the queue comment):
+                    // never two commands at once, never a dropped packet.
+                    queuePacket(clientNo, buf, static_cast<size_t>(n));
+                    std::string one;
+                    while (takePacket(clientNo, one)) {
+                        GameClient* c2;
+                        {
+                            std::lock_guard<std::mutex> lk(gameMutex());
+                            auto it2 = gameClients().find(clientNo);
+                            if (it2 == gameClients().end()) break;
+                            c2 = &it2->second;
+                        }
+                        feedClient(*c2, one.data(), one.size());
+                        waitFlowSettled(clientNo);
+                    }
+                    continue;
+                }
+                feedClient(*cur, buf, static_cast<size_t>(n));
+            }
+            closesocket(c);
+            // Driver-side disconnect notification.  The original driver
+            // applies cmd_disconnected(cno, where) when the socket goes
+            // away; start_gs::_cmd_disconnected -> user.o::disconnected ->
+            // (no logout) 180s timer -> time_expired -> destruct ->
+            // userd::destroy_user -> me->save(0, cb), which is the ONLY
+            // path that writes the character's dbase back to the ddb.  Our
+            // port used to drop the client slot silently, so a character
+            // was written once at creation and never again: level, items
+            // and the "newbie" flag were lost on every re-login (so the
+            // newbie story re-ran and the newbie gift looked empty, making
+            // apply rebuild a NEW gift instead of listing its items).
+            // 2 = "driver_callback" per start_gs::stat_disconnect(34691).
+            // Called while the client slot is still registered: the LPC
+            // looks the user up with find_user_by_client(cno).
+            try {
+                callMasterProgramFunction("cmd_disconnected",
+                                          {make_int(clientNo), make_int(2)},
+                                          lpc::masterSearchRoot());
+            } catch (...) {
+            }
+            {
+                std::lock_guard<std::mutex> lk(gameMutex());
+                gameClients().erase(clientNo);
+            }
 }
 
 void gameServiceFeed(int clientNo, const char* data, size_t len) {

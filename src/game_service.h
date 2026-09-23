@@ -8,12 +8,20 @@
 //   - attrib permission check (CLIENT_USER=1, INTERNAL_COMM=2, FROM_SERVER=4)
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "value.h"
 
 namespace lpc {
+
+// The driver's main loop owns the listening sockets: the original scans
+// them with the connected ones and accepts on the driver thread.  `cb`
+// runs on the scheduler thread, receives the accepted socket and must not
+// call into the VM; returning false drops the listener.
+void registerServiceSocket(int fd,
+                           std::function<bool(unsigned int fd)> cb);
 
 // Wire packet header (12 bytes, all multi-byte fields big-endian on the wire).
 struct GamePacketHeader {

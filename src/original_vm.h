@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <functional>
 #include <iosfwd>
 
 #include "o_loader.h"
@@ -204,6 +205,16 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
 // Cooperative scheduler main loop (stage B): drives daemon processes, wake
 // timers and queue/event wakeups.  Replaces main()'s idle sleep loop.
 void schedulerRun();
+
+// The driver's main loop owns the LISTENING sockets too: the original scans
+// them together with the connected ones and accepts on the driver thread,
+// so a listener must be handed to it instead of parking a dedicated
+// accept() thread (which the scheduler can neither wake nor account for).
+// `cb` runs ON THE SCHEDULER THREAD, receives the accepted socket and must
+// not call into the VM; returning false drops the listener.
+void registerServiceSocket(int fd,
+                           std::function<bool(unsigned int fd)> cb);
+
 
 // Canonical registry key for an object path.  LPC addresses rooms and daemons
 // by their program path ("/gs/zone/lanxianzhen/lanxianzhen.c") while the

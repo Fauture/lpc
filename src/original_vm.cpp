@@ -39,6 +39,14 @@ extern "C" char __ImageBase;
 #include "pak_loader.h"
 #include "value.h"
 #include "xdbc.h"
+// The driver's main loop owns the listening sockets (see addServiceSocket):
+// winsock must come before windows.h pulls it in, and NOMINMAX keeps the
+// min/max macros away from std::min/std::max in this file.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 namespace fs = std::filesystem;
 
@@ -1592,6 +1600,24 @@ public:
                       std::vector<Value> args, int64_t atMs,
                       std::shared_ptr<TimerEntry> timerEntry = nullptr);
 
+    // ---- service (listening) sockets, scanned by run() ------------------
+    // The original driver owns EVERY socket of the process: its main loop
+    // scans the listening sockets together with the connected ones and calls
+    // the "new connection" hook inline, on the driver thread.  A dedicated
+    // blocking accept() thread cannot be woken by the scheduler, so the
+    // connection became visible to the VM only after the OS scheduled that
+    // thread; here the accept itself is an event of the main loop.
+    // The callback runs ON THE SCHEDULER THREAD and must not call into the
+    // VM (the login handshake stays on the connection's own thread).
+    // It returns false when the listener must be dropped.
+    // Callback the main loop runs (scheduler thread) when a registered
+    // listener is readable; false drops the listener.
+    using ServiceSocketCallback = std::function<bool(uintptr_t fd)>;
+    void addServiceSocket(int fd, ServiceSocketCallback cb);
+    // True while a listening socket is registered: the idle wait must keep
+    // polling then (only consulted at the bottom of run(), lock held).
+    bool anyServiceSocket() const { return !serviceSockets_.empty(); }
+
     // Re-queue a process whose wake condition fired.
     void wake(std::shared_ptr<Process> p);
 
@@ -1662,6 +1688,11 @@ public:
 private:
     static int64_t nowMs();
     void runProcess(std::shared_ptr<Process> p);
+    // Accept whatever a registered service socket has pending (called from
+    // run(), scheduler thread).  Returns true when the loop may go back to
+    // sleep: a READY listener records that here, so an idle driver still
+    // notices a connecting client immediately instead of parking forever.
+    bool scanServiceSockets();
 
 public:
     // The tid of the LPC process currently executing (get_thread_id()).
@@ -1883,6 +1914,14 @@ public:
     std::unordered_map<std::string, uintptr_t> wdogWho_;
     // fd -> processes parked in connect()/recv() (kind 5).  Polled by run().
     std::unordered_map<int, std::deque<std::shared_ptr<Process>>> sockWaiters_;
+    // Listening sockets owned by the driver's main loop (see
+    // addServiceSocket).  Guarded by mtx_.
+    std::vector<std::pair<int, ServiceSocketCallback>> serviceSockets_;
+    // Set by scanServiceSockets when a listener was READY.  The accept itself
+    // runs right there, so this only feeds the [svcsock] trace: it records
+    // that the connection became visible to the DRIVER, not to a helper
+    // thread's scheduler slot.
+    bool serviceSocketReady_ = false;
     std::vector<std::shared_ptr<Process>> parkedList_;   // no automatic wakeup
     // The process currently executing (set by runProcess / execOnMain).  Used
     // by get_thread_id() to return a per-PROCESS id on the single scheduler
@@ -15320,6 +15359,12 @@ void Scheduler::run() {
                 if (r || w) wakeSocket(fd, r, w);
             }
         }
+        // Listening sockets (the game service's port) are part of the SAME
+        // scan in the original driver: this is the "ready to accept" event of
+        // the main loop, and the accept runs here, on the scheduler thread.
+        // Cheap (one zero-timeout WSAPoll over 1-2 fds) and only reached when
+        // a listener is registered.
+        scanServiceSockets();
         std::shared_ptr<Process> p;
         int64_t now = nowMs();
         {
@@ -15703,12 +15748,19 @@ void Scheduler::run() {
             // Idle wait: sleep until the next timer, but never longer than the
             // socket-poll interval when sockets are parked (the poll at the top
             // of this loop notices connect/recv completion).
+            //
+            // A registered LISTENING socket is a wakeup source too, and it was
+            // just polled at the top of this iteration: sleeping here until the
+            // next timer would hide a client that connects while the driver has
+            // no other work (the boot's "listening on 8160" state), so the
+            // service-socket case uses the same short tick as parked sockets.
+            bool scanSockets = !sockWaiters_.empty() || anyServiceSocket();
             if (!timers_.empty()) {
                 int64_t w = timers_.begin()->first - nowMs();
                 if (w < 0) w = 0;
-                if (!sockWaiters_.empty() && w > 20) w = 20;
+                if (scanSockets && w > 20) w = 20;
                 cv_.wait_for(lk, std::chrono::milliseconds(w));
-            } else if (!sockWaiters_.empty()) {
+            } else if (scanSockets) {
                 cv_.wait_for(lk, std::chrono::milliseconds(2));   // was 20ms: every socket wakeup (filed<->dba request/reply) waited up to 20ms, which is the bulk of the 2769 x ~36ms round-trips during boot
             } else {
                 cv_.wait(lk);
@@ -15728,6 +15780,107 @@ void Scheduler::requestShutdown() {
 void Scheduler::parkForever(std::shared_ptr<Process> p) {
     std::lock_guard<std::mutex> lk(mtx_);
     parkedList_.push_back(std::move(p));
+}
+
+// ---- listening sockets: accepted by the main loop -------------------------
+// The original driver is a single-threaded scanner: the listening socket is
+// just another fd in its socket set, and the accept() + the "new connection"
+// callback run on the driver thread.  Our port used to block a dedicated
+// thread in accept(), so the scheduler could neither wake it nor run the
+// connection's VM callback at a defined point.  Registering the listener here
+// moves the ACCEPT itself onto the scheduler thread; what the accepted
+// connection runs (the login handshake) still gets its own thread, so the
+// scheduler never blocks on LPC work driven by a remote peer.
+void Scheduler::addServiceSocket(int fd, ServiceSocketCallback cb) {
+    if (fd < 0) return;
+    // The listener must be non-blocking: scanServiceSockets drains the backlog
+    // until accept() reports WSAEWOULDBLOCK, and a blocking listener would
+    // park the whole driver in that loop.
+    u_long nb = 1;
+    ioctlsocket(static_cast<SOCKET>(fd), FIONBIO, &nb);
+    bool added = false;
+    size_t n = 0;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        size_t i = 0;
+        for (; i < serviceSockets_.size(); ++i) {
+            if (serviceSockets_[i].first == fd) {
+                serviceSockets_[i].second = std::move(cb);
+                break;
+            }
+        }
+        if (i == serviceSockets_.size()) {
+            serviceSockets_.emplace_back(fd, std::move(cb));
+            added = true;
+        }
+        n = serviceSockets_.size();
+    }
+    if (vmEnvTrace())
+        std::cerr << "[svcsock] " << (added ? "register" : "re-register")
+                  << " fd=" << fd << " n=" << n << "\n";
+    cv_.notify_all();
+}
+
+bool Scheduler::scanServiceSockets() {
+    std::vector<std::pair<int, ServiceSocketCallback>> svc;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        svc = serviceSockets_;
+        serviceSocketReady_ = false;
+    }
+    if (svc.empty()) return false;
+    // WSAPoll has no FD_SETSIZE limit, and the driver's own socket layer
+    // already uses it for the parked fds.  Zero timeout: the main loop must
+    // never block here (parked processes and timers share this thread).
+    std::vector<WSAPOLLFD> pfds;
+    pfds.reserve(svc.size());
+    for (const auto& e : svc) {
+        WSAPOLLFD p{};
+        p.fd = static_cast<SOCKET>(e.first);
+        p.events = POLLRDNORM;
+        pfds.push_back(p);
+    }
+    int rc = WSAPoll(pfds.data(), static_cast<ULONG>(pfds.size()), 0);
+    if (rc <= 0) return false;
+    bool anyNew = false;
+    for (size_t i = 0; i < svc.size(); ++i) {
+        if ((pfds[i].revents & (POLLRDNORM | POLLERR | POLLHUP | POLLNVAL)) == 0) continue;
+        SOCKET lfd = static_cast<SOCKET>(svc[i].first);
+        // Drain the whole backlog: one accept per wakeup would leave queued
+        // clients waiting for the next 2ms tick each.
+        for (;;) {
+            SOCKET c = accept(lfd, nullptr, nullptr);
+            if (c == INVALID_SOCKET) {
+                int err = WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) break;
+                if (err == WSAEINTR) continue;
+                std::cerr << "[accept-err] fd=" << svc[i].first << " err=" << err
+                          << " t=" << msSinceStart() << "ms\n";
+                break;
+            }
+            anyNew = true;
+            bool keep = true;
+            if (svc[i].second) keep = svc[i].second(static_cast<uintptr_t>(c));
+            if (!keep) {
+                closesocket(c);
+                // Drop the listener.  Re-lock: the callback may have run LPC
+                // code that registered/unregistered sockets.
+                std::lock_guard<std::mutex> lk(mtx_);
+                for (auto it = serviceSockets_.begin(); it != serviceSockets_.end(); ++it) {
+                    if (it->first == svc[i].first) {
+                        serviceSockets_.erase(it);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+    }
+    if (anyNew) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        serviceSocketReady_ = true;
+    }
+    return anyNew;
 }
 
 int64_t Scheduler::nowMs() {
@@ -16377,6 +16530,7 @@ Scheduler& scheduler() {
     static Scheduler s;
     return s;
 }
+
 
 // Mutable registry instance that owns fn (the closure-dispatch path calls
 // callFunctionPointer on it; originalHomeVmOf returns the const view).
@@ -19306,3 +19460,15 @@ bool waitClientCommandIdle(int64_t clientNo, int timeoutMs) {
     }
 }
 }  // namespace lpc
+
+namespace lpc {
+
+// Public entry point (declared in original_vm.h): hand a LISTENING socket to
+// the driver's main loop, which scans it together with the connected sockets
+// and accepts on the scheduler thread.  The Scheduler type lives in this
+// file's anonymous namespace, so other translation units cannot reach it.
+void registerServiceSocket(int fd, std::function<bool(unsigned int fd)> cb) {
+    scheduler().addServiceSocket(fd, std::move(cb));
+}
+
+} // namespace lpc
