@@ -115,18 +115,37 @@
 **仍未解决**：9101 还有 6–8 次。链路已经收敛到一点：客户端在 create 进行中
 会自行重发 `create_new_char`，而 `login.o::_process_command` 的重入标记
 （`lite_set_temp("operating",1)`）在这时**仍然是 1**（日志里 `[login-flow] … op=1`
-紧接 9101）。
+紧接 9101）。chain9 的时间线把最后一块拼图摆出来了：
 
-* 已实现"驱动读 LPC 标记"的通道：`OriginalVm::liteTempTruthy("operating")` +
-  `registerClientScriptVm` + 门里的 `clientLpcBusy`，但实测该读取返回 **false**
-  ——说明这个标记**不在对象的 temp 映射里**。
-* 下一步（明确的单点任务）：定位 `lite_set_temp("operating", …)` 在
-  `OriginalVm` 里的真实落点（`LPCVM_TEMPKEY` / dump 登录 clone 的 objVars，
-  或按 `logind.o`/`login.o` 的 `_process_command` 调用点反查），把
-  `liteTempTruthy` 指到正确的存储上；之后门就能在 LPC 自己认为"忙"时拦住包，
-  9101 应归零。
-* 另一个已排除的方向：这不是"门放行太早"（active=0、live=0、overlap=0 都成立），
-  也不是"门拦多了"（drops=0）。
+```
+1116316  [chain] ev=BEGIN  cno=15 key=27163 entry=cmd_create_new_char     ← 命令开始
+1116571  [chain] ev=PARK   cno=-1 key=154 obj=/gs/clone/char/user.o       ← 它的续跑在
+         wait=event key=ev_filed0   do_operate create_content save save      别的链上挂着
+1116575  [lg] process_command create_new_char … op=1                      ← 标记仍为 1
+         [send] 0x1fe5 9101 「正在处理中」
+```
+
+即：**续跑链是另一个对象（user.o）的 daemon 建出来的，从来没有归属到这个连接**，
+所以门（只数"已归属的链"）看到的是"连接空闲"。
+
+### 已试过但不可用的两条收尾路线（别再重复）
+
+| 路线 | 结果 |
+|---|---|
+| 读对象 temp 映射 `liteTempTruthy("operating")` | 实测恒为 false —— 该标记不在 objVars 的映射里 |
+| 记录 `lite_query_temp("operating")` 的观测值（`lpcGuardBusy`） | 采样只在 `[login-flow]` 打印时发生（那是 trace，不是每次判定），1s 时效内读不到"忙" |
+| 按 VM 归属续跑链（`noteVmClient`/`vmClientOf`，park 时认领） | **回归**：门把登录包本身也拦住，真机停在 login(5)、0xF061 body=4 —— 说明有长命链（daemon/构造）也落在这些 VM 上，不能按 VM 一刀切 |
+
+### 下一步（收敛后的单点任务）
+
+1. **给命令一个世代号（epoch）**：门放行时给连接打一个 epoch，`filed` 往返/续跑链
+   认领时带上 epoch；门只等"同一 epoch 内未结束的链"。这样既覆盖续跑链，又不会
+   把登录前/无关的长命链算进来（VM 归属那条路失败的原因）。
+2. 或者**在 VM 层直接拦截重入判定**：找到 `lite_set_temp`/`lite_query_temp` 的真正落点
+   （`LPCVM_TEMPKEY` 需要在启动时设 env；也可 dump 登录 clone 的 `objVars` 找那个映射），
+   把 `liteTempTruthy` 指到正确存储；门即可在 LPC 自己认为"忙"时拦住包。
+3. 验收仍然是：`chainOverlap == 0`、`overlap events == 0`、`[chain-gate] == 0`、
+   四项检查全过（9112=0 且 9101=0 且 9113 允许）、客户端进游戏。
 
 ## 验收（每阶段必跑，缺一不可）
 
