@@ -130,16 +130,31 @@ def focus():
     return client()
 
 
-def shot(out, maxw=800, quality=60):
+def shot(out, maxw=800, quality=60, retries=3):
+    """Capture the client area to `out`.  Returns the path, or None on failure.
+
+    VALIDATED on purpose: the old version printed "shot x.jpg" without checking
+    anything, so a failed capture was invisible and the verdict that followed it
+    read a STALE file (or reported `unreadable`) - that is exactly how account 35
+    of the 2026-09-24 fair run got a FAIL that said nothing about the server.
+    """
     c = focus()
     if not c:
         print('no client window')
         return None
     x, y, w, h = c[2]
-    subprocess.run([sys.executable, '-X', 'utf8', '_shot.py', out, str(maxw), str(quality),
-                    str(x), str(y), str(w), str(h)], capture_output=True)
-    print('shot %s (%dx%d window at %d,%d)' % (out, w, h, x, y))
-    return out
+    for attempt in range(retries):
+        r = subprocess.run([sys.executable, '-X', 'utf8', '_shot.py', out, str(maxw),
+                            str(quality), str(x), str(y), str(w), str(h)],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if os.path.exists(out) and os.path.getsize(out) > 1000:
+            print('shot %s (%dx%d window at %d,%d, %d bytes)' %
+                  (out, w, h, x, y, os.path.getsize(out)))
+            return out
+        print('shot %s FAILED (attempt %d): %s' %
+              (out, attempt + 1, (r.stdout or r.stderr or '').strip()[:120]))
+        time.sleep(0.6)
+    return None
 
 
 def click_frac(fx, fy):

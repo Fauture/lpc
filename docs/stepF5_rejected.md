@@ -132,5 +132,34 @@ ENTER**（列表页底部的「进入游戏」）。所以"20 次回车建角进
 也就是说：**通过线目前仍以 `_rapid2.py` + `_ingame_sig` 三账号 3/3 为准**，
 上面那张对照表来自同一批服务端日志，是可靠的。
 
+### 装置已修 + 公平连击三账号通过（vF13，2026-09-24 06:20~06:25）
+
+`_rdp.shot()` 现在**校验产物**（文件存在且 >1KB，失败重拍 3 次并打印原因），
+不再静默返回一个陈旧/缺失的截图。修好后 `_rapid_fair.py` 三账号结果：
+
+```
+acct=37 rfEa  after form submit: not-ingame(94.3) -> enter: INGAME(0.2) -> hammer: INGAME(0.1)  PASS
+acct=38 rfEb  after form submit: not-ingame(94.3) -> enter: INGAME(25.5) -> hammer: INGAME(0.1) PASS
+acct=39 rfEc  after form submit: not-ingame(94.3) -> enter: INGAME(21.9) -> hammer: INGAME(0.1) PASS
+```
+
+服务端同一批（`_acc6.py`）：`rfEa/rfEb/rfEc` 各 `creates=1 loads=1
+dialogs[9101=0 9113=0 9112=0]`。**3/3 进游戏、18 次游戏内连击后会话存活、
+零弹窗。**
+
+（说明：进游戏那一刻的判据距离 21.9~25.5 是"刚过场还没渲染完"的中间帧，轮询
+2 秒后即落到 0.1~0.2；所以判据必须**轮询**而不是取单帧 —— 这也是 `_rapid2.py`
+早先误报的来源之一。）
+
+### 修正后的通过线（建议纳入规程）
+
+1. `python -X utf8 _rapid_fair.py <acct> <name> 20` × 3 个**不同**账号：
+   三个都要 `after enter: INGAME` 且 `after hammer: INGAME`；
+2. `python -X utf8 _acc6.py <logdir>`：三个账号 `creates=1 loads=1`、
+   `9101=0 9113=0 9112=0`；
+3. 旧的 `_rapid2.py`（20 连击全打在表单上）保留为**压力变体**，它的
+   `creates≈11 / 9101≈6 / 9113≈3` 是装置的已知产物，不作通过判据。
+
+
 
 
