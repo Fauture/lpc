@@ -179,5 +179,8 @@ int64_t dispatchCno();
 // client-visible result has been delivered and the flow went quiet).
 void noteClientSend(int64_t cno);
 int64_t clientSendIdleMs(int64_t cno);
+// Event-driven version of the per-packet flow gate: blocks until the connection
+// has been quiet for `idleMs` or `timeoutMs` elapsed (see its definition).
+bool waitClientSendIdle(int64_t cno, int64_t idleMs, int timeoutMs);
 
 } // namespace lpc

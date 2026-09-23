@@ -86,9 +86,15 @@ static bool takePacket(int cno, std::string& out) {
 }
 
 static void waitFlowSettled(int cno) {
-    for (int i = 0; i < 200; ++i) {          // bounded (~1s per packet)
-        if (lpc::serviceQueueIdle() && lpc::clientSendIdleMs(cno) >= 50) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    // Bounded (~1s per packet) and EVENT DRIVEN: lpc::waitClientSendIdle blocks
+    // until this connection's send flow has been quiet for 50ms (the send path
+    // notifies a condition variable), instead of polling every 5ms.
+    for (int i = 0; i < 200; ++i) {
+        if (!lpc::serviceQueueIdle()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        if (lpc::waitClientSendIdle(cno, 50, 1000)) break;
     }
 }
 

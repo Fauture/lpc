@@ -520,6 +520,9 @@ int64_t dispatchCno() { return t_dispatchCno; }
 // reaches enter-game, so the new character is never linked to the account).
 static std::mutex g_clientSendMtx;
 static std::map<int64_t, int64_t> g_clientLastSendMs;
+// Woken whenever a packet is sent to ANY client, so a connection waiting for its
+// own flow to go quiet does not have to poll (see waitClientSendIdle).
+static std::condition_variable g_clientSendCv;
 
 static int64_t steadyNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -528,8 +531,37 @@ static int64_t steadyNowMs() {
 
 void noteClientSend(int64_t cno) {
     if (cno < 0) return;
-    std::lock_guard<std::mutex> lk(g_clientSendMtx);
-    g_clientLastSendMs[cno] = steadyNowMs();
+    {
+        std::lock_guard<std::mutex> lk(g_clientSendMtx);
+        g_clientLastSendMs[cno] = steadyNowMs();
+    }
+    g_clientSendCv.notify_all();
+}
+
+// Wait until `cno` has been quiet for `idleMs`, or `timeoutMs` elapsed.  Returns
+// true when it went quiet.  This replaces the old "poll every 5 ms for up to 1 s"
+// loop in game_service's per-packet flow gate: the wait is now event driven (the
+// send path notifies), with the same idle window and the same bound.
+bool waitClientSendIdle(int64_t cno, int64_t idleMs, int timeoutMs) {
+    if (cno < 0) return true;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs > 0 ? timeoutMs : 1000);
+    std::unique_lock<std::mutex> lk(g_clientSendMtx);
+    for (;;) {
+        auto it = g_clientLastSendMs.find(cno);
+        const int64_t idle = (it == g_clientLastSendMs.end()) ? (int64_t(1) << 30)
+                                                              : (steadyNowMs() - it->second);
+        if (idle >= idleMs) return true;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) return false;      // bound reached, flow still busy
+        // Wake up when this connection is quiet, and at the deadline regardless:
+        // whichever comes first.
+        auto waitFor = std::chrono::milliseconds(idleMs - idle);
+        const auto untilDeadline = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - now);
+        if (untilDeadline < waitFor) waitFor = untilDeadline;
+        g_clientSendCv.wait_for(lk, waitFor);
+    }
 }
 
 // ms since the last packet was sent to this client; a large value when we have
