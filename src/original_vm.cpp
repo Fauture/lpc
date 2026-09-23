@@ -1543,6 +1543,11 @@ public:
         // reported by the chain probe on PARK/RESUME/END, so an overlap is
         // attributable to one connection.
         int64_t clientNo = -1;
+        // Telnet client this process serves (-1 = none).  The telnet efuns route
+        // through a thread-local client id; with every LPC on the scheduler thread
+        // that id must travel with the PROCESS, and runProcess publishes it around
+        // this process's run.
+        int telnetCno = -1;
         // True while this process sits in ready_.  Multiple wake sources (a
         // real event raise + its stale timeout timer, the construct watchdog
         // + the late reply, two timers firing in the same tick) used to
@@ -1569,6 +1574,10 @@ public:
     // scheduler thread via run().
     void spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
                std::vector<Value> args);
+    // Same, but the process serves a telnet client: the id is pinned for the run
+    // (see Process::telnetCno) so the LPC telnet efuns keep routing to its socket.
+    void spawnTelnet(std::shared_ptr<OriginalVm> vm, const std::string& entry,
+                     std::vector<Value> args, int telnetCno);
 
     // Spawn an object-construction process (entry "__init__"): runs the
     // object's global init code + create() cooperatively (yields/park resume
@@ -5679,57 +5688,29 @@ private:
                     scheduler().spawn(vm, funName, threadArgs);
                     return make_int(1);
                 }
-                std::thread([objPtr, owner, funName, threadArgs, root, isTelnetThread, telnetCno,
-                             objVarsSnapshot = std::move(objVarsSnapshot)]() {
-                    if (isTelnetThread && telnetCno >= 0)
-                        setThreadTelnetClient(telnetCno);
-                    if (vmEnvTrace())
-                        std::cerr << "[thread] run " << funName << " args=" << threadArgs.size() << "\n";
-                    // The original driver's create_thread shares the creator's
-                    // thisObject: the new PCB runs on the same object, so
-                    // instance variables (configd's config_list, etc.) are
-                    // shared with the creator and with other threads of the
-                    // same object.  Each process still has its OWN stack /
-                    // frame context, so we run on a fresh VM whose objVars
-                    // SHARE the owner's objVars storage instead of copying.
-                    try {
-                        OriginalVm vm(*objPtr, root);
-                        // Share the owner's instance-variable storage: point
-                        // this VM's objVars at the registry owner's vector so
-                        // update_config() writes are visible to get_my_info()
-                        // callers (post_init do_init etc.).
-                        {
-                            auto& reg = objectRegistry();
-                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                            for (auto& kv : reg.vms) {
-                                if (&kv.second->object() == owner) {
-                                    vm.shareObjVars(kv.second.get());
-                                    if (vm.thisObjectName() == "<this>")
-                                        vm.setThisObjectName(kv.second->thisObjectName());
-                                    break;
-                                }
+                // Telnet daemons are ordinary scheduler processes now (Step C2):
+                // the client id travels with the process, so LPC keeps running on
+                // the one scheduler thread and no OS thread is created here.
+                {
+                    auto vm = std::make_shared<OriginalVm>(objPtr, root);
+                    {
+                        auto& reg = objectRegistry();
+                        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                        for (auto& kv : reg.vms) {
+                            if (&kv.second->object() == owner) {
+                                vm->shareObjVars(kv.second.get());
+                                if (vm->thisObjectName() == "<this>")
+                                    vm->setThisObjectName(kv.second->thisObjectName());
+                                break;
                             }
                         }
-                        // First update_config_daemon iteration populates the
-                        // shared config tables; post_init's do_init callbacks
-                        // wait for that data with their own retry loops
-                        // (while(!is_mapping) sleep(3)) exactly like the
-                        // original driver - they only keep printing when the
-                        // MySQL data cannot be fetched, not due to a race.
-                        vm.callFunctionByName(funName, threadArgs);
-                    } catch (const TelnetClosedError&) {
-                        // Client disconnected: end the daemon thread quietly
-                        // (matches the original driver killing the pended
-                        // process on session close).
-                        if (vmEnvTrace())
-                            std::cerr << "[thread] " << funName << " client closed\n";
-                    } catch (const std::exception& e) {
-                        std::cerr << "[thread] " << funName << " error: " << e.what() << "\n";
-                    } catch (...) {
-                        std::cerr << "[thread] " << funName << " error: unknown\n";
                     }
-                    setThreadTelnetClient(-1);
-                }).detach();
+                    if (vmEnvTrace())
+                        std::cerr << "[sched] spawn telnet " << funName
+                                  << " cno=" << telnetCno << "\n";
+                    scheduler().spawnTelnet(vm, funName, threadArgs, telnetCno);
+                    return make_int(1);
+                }
                 return make_int(1);
             }  // nm == "create_thread"
             if (h == 0xC161F892ED78AE9Cull) {
@@ -14572,6 +14553,25 @@ void Scheduler::spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
     cv_.notify_one();
 }
 
+// A telnet daemon used to be its own OS thread; it is an ordinary scheduler
+// process now (Step C2), with its client id pinned for the run.
+void Scheduler::spawnTelnet(std::shared_ptr<OriginalVm> vm, const std::string& entry,
+                           std::vector<Value> args, int telnetCno) {
+    auto p = std::make_shared<Process>();
+    p->vm = std::move(vm);
+    p->homeVm = p->vm;
+    p->entry = entry;
+    p->args = std::move(args);
+    p->telnetCno = telnetCno;
+    p->clientNo = -1;
+    p->tid = allocTid();
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        ready_.push_back(p);
+    }
+    cv_.notify_one();
+}
+
 void Scheduler::spawnConstruction(std::shared_ptr<OriginalVm> vm, std::vector<Value> args,
                                   std::string doneEvent) {
     auto p = std::make_shared<Process>();
@@ -15809,6 +15809,21 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
     // Pin the chain-owner tid for this run: get_thread_id() must return the same
     // tid for the process that owns the executing frame chain (see chainTid()).
     if (p->tid >= 0) setChainTid(p->tid);
+    // Publish this process's telnet client id for its whole run and restore the
+    // previous value on every exit path: the telnet efuns read a thread-local
+    // slot, and with all LPC on one thread that slot must follow the PROCESS.
+    struct TelnetCnoScope {
+        int prev;
+        bool armed;
+        TelnetCnoScope() : prev(lpc::threadTelnetClient()), armed(false) {}
+        ~TelnetCnoScope() {
+            if (armed) lpc::setThreadTelnetClient(prev);
+        }
+    } telnetCnoScope;
+    if (p->telnetCno >= 0) {
+        lpc::setThreadTelnetClient(p->telnetCno);
+        telnetCnoScope.armed = true;
+    }
     // The chain key selects the per-chain execution state at the interpreter's
     // entry points.  It is CLEARED (not restored to the previous process's key)
     // when this run returns: an entry with no key of its own then starts from a
