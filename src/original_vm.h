@@ -181,7 +181,6 @@ std::string objVarsToString(const Value& obj);
 // Spawn threads queued at runtime by create_thread (e.g. the telnet daemon
 // thread created when a client connects).  Startup threads are drained by
 // runOriginalObject itself; this drains the runtime ones.
-void drainPendingOriginalThreads(const std::string& searchRoot);
 
 // Driver-side object loader used by the load_object / safe_load_object efuns:
 // loads the .o for a virtual path (e.g. "/aaa/daemons/configd.c"), registers

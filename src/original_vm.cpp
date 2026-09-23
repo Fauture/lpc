@@ -1302,13 +1302,13 @@ bool regHasKeySuffix(const std::string& suffix) {
 // Registry maps that maintain the index from their own operations, so no
 // registration site can forget to update it.
 std::recursive_mutex& registryMutex();
-std::vector<PendingThread>& pendingThreads();
-std::mutex& pendingThreadsMutex();
-std::vector<PendingThread>& postInitFuncs();
-void runPendingOriginalThreads(const std::string& searchRoot);
-void runPostInitFunctions(const std::string& searchRoot);
 bool isObjectInitialized(const OriginalObject* obj);
 bool isMasterObject(const OriginalObject* obj);
+// Runs the registered post_init closures as sequential scheduler processes.  The
+// pending-thread queue that used to be declared next to this is gone:
+// create_thread spawns a scheduler process directly (Step C2/C3 in
+// docs/scheduler_refactor_plan.md), so LPC only runs on the scheduler thread.
+void runPostInitFunctions(const std::string& searchRoot);
 // Register the object's VM in the registry WITHOUT running its initializer
 // (used by load_object's cooperative construction).  Returns the key ("" on
 // failure); defined below the class alongside loadObjectIntoRegistry.
@@ -14491,32 +14491,32 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
 };
 
 
-
-// ---- Stage 1 migration shims (see docs/scheduler_refactor_plan.md) ----
-// The VM's execution state now lives in the per-chain ExecState reached
-// through `es_`; these bind the old member names to it so ONE compile
-// verifies all of their uses.  Stage 2 rewrites the uses in batches
-// (frames first, then stack, ...) and deletes each macro as it goes.
-
-#define frames_ es_->frames
-#define stack_ es_->stack
-#define detachedStack_ es_->detachedStack
-#define savedObjVarsForNextCall_ es_->savedObjVarsForNextCall
-#define funcLookup_ es_->funcLookup
-#define lastOp_ es_->lastOp
-#define lastEfunIndex_ es_->lastEfunIndex
-#define lastIp_ es_->lastIp
-#define returnValue_ es_->returnValue
-#define returned_ es_->returned
-#define catchDepth_ es_->catchDepth
-#define catches_ es_->catches
-#define code_ es_->code
-#define meta_ es_->meta
-#define ip_ es_->ip
-#define cond_ es_->cond
-#define parked_ es_->parked
-#define resumeValue_ es_->resumeValue
-#define onResume_ es_->onResume
+
+// ---- Stage 1 migration shims (see docs/scheduler_refactor_plan.md) ----
+// The VM's execution state now lives in the per-chain ExecState reached
+// through `es_`; these bind the old member names to it so ONE compile
+// verifies all of their uses.  Stage 2 rewrites the uses in batches
+// (frames first, then stack, ...) and deletes each macro as it goes.
+
+#define frames_ es_->frames
+#define stack_ es_->stack
+#define detachedStack_ es_->detachedStack
+#define savedObjVarsForNextCall_ es_->savedObjVarsForNextCall
+#define funcLookup_ es_->funcLookup
+#define lastOp_ es_->lastOp
+#define lastEfunIndex_ es_->lastEfunIndex
+#define lastIp_ es_->lastIp
+#define returnValue_ es_->returnValue
+#define returned_ es_->returned
+#define catchDepth_ es_->catchDepth
+#define catches_ es_->catches
+#define code_ es_->code
+#define meta_ es_->meta
+#define ip_ es_->ip
+#define cond_ es_->cond
+#define parked_ es_->parked
+#define resumeValue_ es_->resumeValue
+#define onResume_ es_->onResume
 // Scheduler member definitions (OriginalVm is complete here).
 
 namespace {
@@ -16527,10 +16527,6 @@ std::recursive_mutex& registryMutex() {
     return m;
 }
 
-std::vector<PendingThread>& pendingThreads() {
-    static std::vector<PendingThread> threads;
-    return threads;
-}
 
 std::mutex& pendingThreadsMutex() {
     static std::mutex m;
@@ -16908,57 +16904,6 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     return make_int(0);
 }
 
-void runPendingOriginalThreads(const std::string& searchRoot) {
-    std::vector<PendingThread> snapshot;
-    {
-        std::lock_guard<std::mutex> lk(pendingThreadsMutex());
-        snapshot.swap(pendingThreads());
-    }
-    if (vmEnvTrace()) std::cerr << "[orig] pending threads=" << snapshot.size() << "\n";
-    // Run each thread concurrently so a long-running loop (e.g. a service loop)
-    // does not block the other threads.
-    std::vector<std::thread> workers;
-    for (auto& th : snapshot) {
-        PendingThread copy = th;   // capture by value; the vector is cleared below
-        workers.emplace_back([copy, searchRoot]() {
-            if (vmEnvTrace())
-                std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
-            // A telnet daemon thread serves one client; tell the builtins layer
-            // which client it is so input_string()/printf route to the socket.
-            bool isTelnet = copy.fun == "telnet_daemon" || copy.fun == "buildin_telnet_daemon";
-            if (isTelnet && !copy.args.empty() && copy.args[0].index() == 2) {
-                setThreadTelnetClient(static_cast<int>(std::get<int64_t>(copy.args[0])));
-            }
-            try {
-                OriginalVm vm(*copy.obj, searchRoot);
-                // Like the original driver, a thread shares the object context
-                // of its creator: we never re-run the initializer here (that
-                // would re-run create() and re-register threads/timers).  The
-                // thread VM gets the initialized instance variables instead.
-                {
-                    auto& reg = objectRegistry();
-                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                    for (auto& kv : reg.vms) {
-                        if (&kv.second->object() == copy.obj) {
-                            auto& src = kv.second->objVars();
-                            auto& dst = vm.objVars();
-                            if (dst.size() < src.size()) dst.resize(src.size());
-                            for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
-                            break;
-                        }
-                    }
-                }
-                vm.callFunctionByName(copy.fun, copy.args);
-            } catch (const std::exception& e) {
-                std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";
-            } catch (...) {
-                std::cerr << "[thread] " << copy.fun << " error: unknown\n";
-            }
-            setThreadTelnetClient(-1);
-        });
-    }
-    for (auto& w : workers) w.detach();
-}
 
 void runPostInitFunctions(const std::string& searchRoot) {
     auto& funcs = postInitFuncs();
@@ -17768,71 +17713,6 @@ Value callMasterProgramFunction(const std::string& funName, const std::vector<Va
     return scheduler().execOnMain(target, funName, args);
 }
 
-void drainPendingOriginalThreads(const std::string& searchRoot) {
-    // Snapshot the queue under the lock, then run outside it so the spawned
-    // threads (which may themselves create_thread) can enqueue freely.
-    std::vector<PendingThread> snapshot;
-    {
-        std::lock_guard<std::mutex> lk(pendingThreadsMutex());
-        snapshot.swap(pendingThreads());
-    }
-    if (snapshot.empty()) return;
-    if (vmEnvTrace())
-        std::cerr << "[orig] runtime pending threads=" << snapshot.size() << "\n";
-    std::vector<std::thread> workers;
-    for (auto& th : snapshot) {
-        PendingThread copy = th;
-        workers.emplace_back([copy, searchRoot]() {
-            if (vmEnvTrace())
-                std::cerr << "[thread] run " << copy.fun << " args=" << copy.args.size() << "\n";
-            bool isTelnet = copy.fun == "telnet_daemon" || copy.fun == "buildin_telnet_daemon";
-            if (isTelnet && !copy.args.empty() && copy.args[0].index() == 2) {
-                setThreadTelnetClient(static_cast<int>(std::get<int64_t>(copy.args[0])));
-            }
-            try {
-                OriginalVm vm(*copy.obj, searchRoot);
-                // Never re-run the initializer (would restart the driver).
-                // The thread's VM must SHARE the object's variable block with
-                // its registry instance (the original has exactly one variable
-                // instance per object).  A value COPY gave the thread a stale
-                // snapshot: filed.o's daemon threads read an undefined
-                // service_flag, so do_operate returned -2 without queueing and
-                // the logout's runtime delete never reached the DBA (the
-                // account then stayed stunned with 9026).
-                bool sharedVars = false;
-                {
-                    auto& reg = objectRegistry();
-                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                    for (auto& kv : reg.vms) {
-                        if (kv.second && &kv.second->object() == copy.obj) {
-                            vm.adoptObjVars(kv.second->ownObjVarsShared());
-                            sharedVars = true;
-                            break;
-                        }
-                    }
-                    if (!sharedVars) {
-                        for (auto& kv : reg.vms) {
-                            if (&kv.second->object() == copy.obj) {
-                                auto& src = kv.second->objVars();
-                                auto& dst = vm.objVars();
-                                if (dst.size() < src.size()) dst.resize(src.size());
-                                for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
-                                break;
-                            }
-                        }
-                    }
-                }
-                vm.callFunctionByName(copy.fun, copy.args);
-            } catch (const std::exception& e) {
-                std::cerr << "[thread] " << copy.fun << " error: " << e.what() << "\n";
-            } catch (...) {
-                std::cerr << "[thread] " << copy.fun << " error: unknown\n";
-            }
-            setThreadTelnetClient(-1);
-        });
-    }
-    for (auto& w : workers) w.detach();
-}
 
 
 // ---- object-environment helpers (per-registry-VM field) ----

@@ -1294,9 +1294,10 @@ void acceptTelnetClient(SOCKET c) {
     try {
         Value r = callMasterProgramFunction("telnet_new_client", {make_int(cno)}, vfsRoot());
         (void)r;
-        // telnet_new_client usually calls create_thread(0, (: telnet_daemon, fd :));
-        // spawn that runtime thread now.
-        drainPendingOriginalThreads(vfsRoot());
+        // NOTE: this used to drain the pending-thread queue into OS
+        // threads.  create_thread spawns a scheduler process directly now
+        // (Step C2/C3), so there is nothing to drain - LPC only ever runs
+        // on the scheduler thread.
     } catch (const std::exception& e) {
         std::cerr << "[telnet] master telnet_new_client error: " << e.what() << "\n";
         closeTelnetClient(cno);
