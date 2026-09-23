@@ -2445,7 +2445,7 @@ public:
         // forever, so the service never reached "listening".  Interleaving a
         // second process on top of a parked chain is ALREADY safe: the entry
         // pushes a Frame that saves code_/meta_/ip_ (and the operand stack is
-        // balanced), and ExecGuard keeps the VM single-threaded.  Only the
+        // balanced), and the single scheduler thread keeps the VM single-threaded.
         // get_thread_id() flip needed fixing, and that is done by pinning the
         // chain tid (see chainTid()).
         {
@@ -3144,7 +3144,6 @@ public:
     // duration in the guardian's menu, exactly like the original.
 
     int runInit(const std::vector<Value>& createArgs = {}) {
-        std::lock_guard<std::recursive_mutex> lock(execMutex_);
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         if (std::getenv("LPCVM_LOCK_TRACE"))
             std::cerr << "[runinit] enter obj=" << obj_.sourceName
@@ -3577,17 +3576,12 @@ private:
     friend class Scheduler;
 
     // The original driver is a single-threaded program: one global program and
-    // cooperatively scheduled lightweight threads.  We model threads with real
-    // OS threads, so a shared VM (the registry copies used for cross-object
-    // calls, e.g. the "<main>" copy) can be entered concurrently by several
-    // threads.  Serialize execution per VM with a recursive mutex (recursive
-    // because one VM's execute() may re-enter itself through closures/calls).
-    mutable std::recursive_mutex execMutex_;
-    // Recursion depth of execMutex_ for the CURRENT holder thread (only the
-    // holder touches it).  runDetached() releases all of these to make a
-    // cross-object call without holding this VM's lock, avoiding the AB-BA
-    // deadlock between two threads calling into each other's objects.
-    int execDepth_ = 0;
+    // cooperatively scheduled lightweight threads on ONE OS thread.  Every LPC
+    // entry goes through the scheduler (create_thread/timers/replies ->
+    // scheduler().spawn*, network packets -> execOnMain), so a VM is never
+    // entered concurrently and there is no per-VM execution mutex any more - the
+    // measurement that justified removing it is in docs/scheduler_refactor_plan.md
+    // (sections 11-13).
 
     const OriginalObject& obj_;
     // Keeps the referenced object alive when this VM was built from a
@@ -6804,54 +6798,6 @@ private:
 
     // RAII reentrant execution lock that also tracks the recursion depth so
     // runDetached() can fully release it around a cross-object call.
-    // How many times THIS thread actually holds a VM execution lock.  All LPC
-    // runs on the scheduler thread (measured: 0 non-scheduler entries), so on
-    // that thread the count stays 0 and runDetached() has nothing to release.
-    static int& tlsExecLocksHeld() {
-        static thread_local int n = 0;
-        return n;
-    }
-    struct ExecGuard {
-        std::recursive_mutex& m;
-        int& depth;
-        std::string tag;
-        bool locked = false;
-        ExecGuard(std::recursive_mutex& m_, int& d_, std::string tag_ = "")
-            : m(m_), depth(d_), tag(std::move(tag_)) {
-            // The scheduler thread is the ONLY thread that runs LPC, so taking a
-            // recursive mutex there is pure overhead (and the reason
-            // runDetached needed its unlock/relock dance).  Off it - a telnet or
-            // pending-thread entry - the lock is still taken, so nothing changes
-            // for those paths.
-            const bool needLock = !lpc::scheduler().isSchedulerThread();
-            if (std::getenv("LPCVM_LOCK_TRACE"))
-                std::cerr << "[lock+] try " << tag << " need=" << (needLock ? 1 : 0)
-                          << " t=" << std::this_thread::get_id() << "\n";
-            if (needLock) {
-                m.lock();
-                locked = true;
-                ++tlsExecLocksHeld();
-            }
-            ++depth;
-            if (std::getenv("LPCVM_LOCK_TRACE"))
-                std::cerr << "[lock+] got " << tag << " depth=" << depth
-                          << " held=" << tlsExecLocksHeld()
-                          << " t=" << std::this_thread::get_id() << "\n";
-        }
-        ~ExecGuard() {
-            --depth;
-            if (locked) {
-                --tlsExecLocksHeld();
-                m.unlock();
-            }
-            if (std::getenv("LPCVM_LOCK_TRACE"))
-                std::cerr << "[lock-] rel " << tag << " depth=" << depth
-                          << " held=" << tlsExecLocksHeld()
-                          << " t=" << std::this_thread::get_id() << "\n";
-        }
-        ExecGuard(const ExecGuard&) = delete;
-        ExecGuard& operator=(const ExecGuard&) = delete;
-    };
 
     // Run a cross-object call WITHOUT holding this VM's execution lock, so two
     // threads that call into each other's objects (A->B on the game thread,
@@ -6862,7 +6808,6 @@ private:
     template <typename F>
     Value runDetached(F&& fn) {
         VmNestGuard nestGuardDetached("detached");
-        int d = execDepth_;
         // Preserve an outer detached layer (re-entrant runDetached on the same
         // VM) so the inner window doesn't clobber the outer caller's slots.
         std::vector<StackItem> outerDetached = std::move(es_->detachedStack);
@@ -6881,21 +6826,18 @@ private:
         es_->funcLookup = nullptr;
         es_->returnValue = make_int(0);
         es_->returned = false;
-        execDepth_ = 0;
         // The caller's continuation (this VM's stream at the call site): a
         // SAME-VM detached callee that parks must return into it (see the
         // SuspendSignal branch below).
         const std::vector<OriginalInsn>* savedCode = es_->code;
         const std::vector<uint8_t>* savedMeta = es_->meta;
         size_t savedIp = es_->ip;
-        for (int i = 0; i < d; ++i) { if (tlsExecLocksHeld() > 0) { --tlsExecLocksHeld(); execMutex_.unlock(); } }
         Value r;
         try {
             r = fn();
         } catch (const ThreadExitSignal&) {
             // exit/exit_thread/clear_env inside the detached callee:
             // restore the exec locks and report a normal finish.
-            for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
             abortThreadForExit();
             return make_int(0);
         } catch (const SuspendSignal&) {
@@ -6906,8 +6848,6 @@ private:
             // stream (savedCode/savedIp).  For a CROSS-VM callee the parked
             // state lives on the other VM and this VM's frames are simply
             // restored (the scheduler resumes the caller via callerVm).
-            for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
-            execDepth_ = d;
             if (!es_->frames.empty()) {
                 size_t calleeStart = f.size();
                 int shift = static_cast<int>(es_->detachedStack.size());
@@ -6963,8 +6903,6 @@ private:
             es_->returned = rd;
             throw;
         } catch (...) {
-            for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
-            execDepth_ = d;
             es_->stack = std::move(es_->detachedStack);
             es_->detachedStack = std::move(outerDetached);
             es_->frames = std::move(f);
@@ -6973,8 +6911,6 @@ private:
             es_->returned = rd;
             throw;
         }
-        for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
-        execDepth_ = d;
         es_->stack = std::move(es_->detachedStack);
         es_->detachedStack = std::move(outerDetached);
         es_->frames = std::move(f);
@@ -6998,7 +6934,6 @@ private:
         if (diagMe)
             std::cerr << "[lock] TRY obj=" << objName_ << " fn=" << fn.name
                       << " t=" << std::this_thread::get_id() << "\n";
-        ExecGuard lock(execMutex_, execDepth_, ("fromOutside " + objName_ + "/" + fn.name).c_str());
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         if (diagMe)
             std::cerr << "[lock] GOT obj=" << objName_ << " fn=" << fn.name
@@ -7580,7 +7515,6 @@ private:
                 std::cerr.flush();
             }
         }
-        ExecGuard lock(execMutex_, execDepth_, "onStack " + objName_ + "/" + fn.name);
         noteVmEntry("onStack", objName_.c_str());
         bool probeCd = (fn.name == "create_data") && constructDiagOn();
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
@@ -7858,7 +7792,6 @@ private:
     // or re-throws SuspendSignal if it parks again (the scheduler re-parks).
     // resumeValue must be a fresh value; the caller owns any stack effects.
     void resumeProcess(Value /*resumeValue ignored*/) {
-        ExecGuard lock(execMutex_, execDepth_, "resume " + objName_);
         noteVmEntry("resume", objName_.c_str());
         // Record (and report) which process owns this VM's chain: entering the
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
@@ -7917,7 +7850,6 @@ private:
     // single-thread cooperative scheduler: a yield inside a closure parks
     // that closure's own execution and resumes the SAME frames later.
     void resumeRunLoop() {
-        ExecGuard lock(execMutex_, execDepth_, "resumeRunLoop " + objName_);
         noteVmEntry("resumeRunLoop", objName_.c_str());
         switchToChain(lpc::scheduler().chainKey());   // per-chain frame stack (see VmRunState)
         runLoop();
@@ -7932,7 +7864,6 @@ private:
     // callee's result and continue the caller's stream from the saved ip_
     // (the op after the case-8 call site).
     void resumeCaller(Value result) {
-        ExecGuard lock(execMutex_, execDepth_, "resumeCaller " + objName_);
         noteVmEntry("resumeCaller", objName_.c_str());
         // Keep get_thread_id() on the OWNER of this caller chain while it runs.
         // A caller VM is resumed from the finishing process's caller-chain drain,
