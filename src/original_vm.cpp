@@ -6823,25 +6823,49 @@ private:
 
     // RAII reentrant execution lock that also tracks the recursion depth so
     // runDetached() can fully release it around a cross-object call.
+    // How many times THIS thread actually holds a VM execution lock.  All LPC
+    // runs on the scheduler thread (measured: 0 non-scheduler entries), so on
+    // that thread the count stays 0 and runDetached() has nothing to release.
+    static int& tlsExecLocksHeld() {
+        static thread_local int n = 0;
+        return n;
+    }
     struct ExecGuard {
         std::recursive_mutex& m;
         int& depth;
         std::string tag;
+        bool locked = false;
         ExecGuard(std::recursive_mutex& m_, int& d_, std::string tag_ = "")
             : m(m_), depth(d_), tag(std::move(tag_)) {
+            // The scheduler thread is the ONLY thread that runs LPC, so taking a
+            // recursive mutex there is pure overhead (and the reason
+            // runDetached needed its unlock/relock dance).  Off it - a telnet or
+            // pending-thread entry - the lock is still taken, so nothing changes
+            // for those paths.
+            const bool needLock = !lpc::scheduler().isSchedulerThread();
             if (std::getenv("LPCVM_LOCK_TRACE"))
-                std::cerr << "[lock+] try " << tag << " t=" << std::this_thread::get_id() << "\n";
-            m.lock();
+                std::cerr << "[lock+] try " << tag << " need=" << (needLock ? 1 : 0)
+                          << " t=" << std::this_thread::get_id() << "\n";
+            if (needLock) {
+                m.lock();
+                locked = true;
+                ++tlsExecLocksHeld();
+            }
             ++depth;
             if (std::getenv("LPCVM_LOCK_TRACE"))
                 std::cerr << "[lock+] got " << tag << " depth=" << depth
+                          << " held=" << tlsExecLocksHeld()
                           << " t=" << std::this_thread::get_id() << "\n";
         }
         ~ExecGuard() {
             --depth;
-            m.unlock();
+            if (locked) {
+                --tlsExecLocksHeld();
+                m.unlock();
+            }
             if (std::getenv("LPCVM_LOCK_TRACE"))
                 std::cerr << "[lock-] rel " << tag << " depth=" << depth
+                          << " held=" << tlsExecLocksHeld()
                           << " t=" << std::this_thread::get_id() << "\n";
         }
         ExecGuard(const ExecGuard&) = delete;
@@ -6883,14 +6907,14 @@ private:
         const std::vector<OriginalInsn>* savedCode = es_->code;
         const std::vector<uint8_t>* savedMeta = es_->meta;
         size_t savedIp = es_->ip;
-        for (int i = 0; i < d; ++i) execMutex_.unlock();
+        for (int i = 0; i < d; ++i) { if (tlsExecLocksHeld() > 0) { --tlsExecLocksHeld(); execMutex_.unlock(); } }
         Value r;
         try {
             r = fn();
         } catch (const ThreadExitSignal&) {
             // exit/exit_thread/clear_env inside the detached callee:
             // restore the exec locks and report a normal finish.
-            for (int i = 0; i < d; ++i) execMutex_.lock();
+            for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
             abortThreadForExit();
             return make_int(0);
         } catch (const SuspendSignal&) {
@@ -6901,7 +6925,7 @@ private:
             // stream (savedCode/savedIp).  For a CROSS-VM callee the parked
             // state lives on the other VM and this VM's frames are simply
             // restored (the scheduler resumes the caller via callerVm).
-            for (int i = 0; i < d; ++i) execMutex_.lock();
+            for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
             execDepth_ = d;
             if (!es_->frames.empty()) {
                 size_t calleeStart = f.size();
@@ -6958,7 +6982,7 @@ private:
             es_->returned = rd;
             throw;
         } catch (...) {
-            for (int i = 0; i < d; ++i) execMutex_.lock();
+            for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
             execDepth_ = d;
             es_->stack = std::move(es_->detachedStack);
             es_->detachedStack = std::move(outerDetached);
@@ -6968,7 +6992,7 @@ private:
             es_->returned = rd;
             throw;
         }
-        for (int i = 0; i < d; ++i) execMutex_.lock();
+        for (int i = 0; i < d; ++i) { if (i < d && tlsExecLocksHeld() < i + 1) { execMutex_.lock(); ++tlsExecLocksHeld(); } }
         execDepth_ = d;
         es_->stack = std::move(es_->detachedStack);
         es_->detachedStack = std::move(outerDetached);
