@@ -165,6 +165,15 @@ int64_t schedulerCurrentTid();
 // scheduler's reply-then-cleanup ordering).
 bool serviceQueueIdle();
 
+// The connection number of the client command currently being dispatched by
+// THIS thread (-1 = none).  game_service sets it around feedClient(); the VM
+// dispatch (Scheduler::execOnMain) reads it to attribute the command chain to
+// a connection, so the chain-timeline probe (original_vm.h) can prove whether
+// two commands of one connection ever overlap - the LPC re-entrancy guard
+// answers 9101 「正在处理中」 exactly when they do.
+void setDispatchCno(int64_t cno);
+int64_t dispatchCno();
+
 // Per-connection flow gate: ms since the last packet was sent to that client
 // (used by pkt_protocol.cpp to keep a connection busy until its command's
 // client-visible result has been delivered and the flow went quiet).

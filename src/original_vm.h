@@ -44,8 +44,87 @@ struct LivenessCounters {
     std::atomic<uint64_t> filedOut{0};     // ... and out
     std::atomic<uint64_t> sendFail{0};     // gameServiceSend failures
     std::atomic<uint64_t> threads{0};      // detached worker threads spawned
+    // ---- per-connection command-chain counters (see the chain probe below) --
+    // The 9101 「正在处理中」 regression could not be attributed with the
+    // counters we had (socket frames, scheduler iterations): what matters is how
+    // many COMMAND CHAINS one connection has in flight at once.  These are
+    // bumped by the probe's call sites, so they are always on - an atomic add is
+    // far cheaper than the diagnosis of a missing END.
+    std::atomic<uint64_t> chainBegin{0};   // commands handed to the VM
+    std::atomic<uint64_t> chainEnd{0};     // command chains finished
+    std::atomic<uint64_t> chainPark{0};    // chains parked on a blocking efun
+    std::atomic<uint64_t> chainResume{0};  // parked chains woken
+    std::atomic<uint64_t> chainOverlap{0}; // !!! command started while one was live
 };
 LivenessCounters& liveness();
+
+// ---- per-connection command-chain timeline probe -------------------------
+// The public drivers give ONE user command at a time to the interpreter:
+// LDMud's backend loop calls get_message() only when the interactive has no
+// running command_giver, and FluffOS buffers input the same way.  Our port
+// reads each socket in its own thread and dispatches every parsed packet as
+// soon as it arrives, so one connection can have several commands in flight -
+// and the LPC re-entrancy guard (login.o `_process_command` ->
+// lite_set_temp("operating",1)) answers 9101 「正在处理中」 exactly then.
+//
+// Four speculative fixes for that symptom failed because they were verified
+// against a dialog COUNT scraped from the client, which cannot say WHICH chain
+// overlapped WHICH.  This probe is the direct observation instead:
+// vmchainBegin/vmchainEnd bracket every client command, the scheduler loop
+// reports PARK/RESUME/END of the chains it runs, and OVERLAP is emitted
+// exactly when a command starts while the same connection still has an
+// unfinished chain (chainOverlap counts them).  Acceptance for the
+// per-connection gate is therefore "OVERLAP == 0, chainOverlap == 0", not a
+// dialog guess.
+//
+// Implemented at the end of original_vm.cpp (it needs the scheduler's process
+// and VM types).  Enable with env LPCVM_CHAINTRACE=1 or the marker file
+// _probe_on\LPCVM_CHAINTRACE (runtime-armed, see dynProbeFlag).
+void vmchainBegin(int64_t clientNo, int64_t chainKey, const void* vm,
+                  const std::string& entry);
+void vmchainEnd(int64_t clientNo, int64_t chainKey, const void* vm,
+                const std::string& entry, bool completed);
+void vmchainPark(int64_t clientNo, int64_t chainKey, const void* vm,
+                 const std::string& entry, int condKind, const std::string& condKey);
+// Scheduler-loop hooks: vmchainRun() before a queued chain runs (closes the
+// previous PARK with its RESUME), vmchainRunExit() when the run returned
+// (records whether it parked/yielded instead of finishing).
+void vmchainRun(int64_t chainKey, const void* vm);
+void vmchainRunExit(int64_t chainKey, bool parked);
+// A continuation chain (spawned by the command via thread_*/dispatch_service)
+// joins the connection of the command it continues, so the gate sees one
+// command per connection instead of a tagged chain plus an untagged one.
+void vmchainTagLive(int64_t clientNo, int64_t chainKey);
+void vmchainMailbox(int64_t clientNo, int64_t chainKey, const char* what);
+// Live (unfinished) command chains of one connection.  >1 means overlap.
+int vmchainLiveChains(int64_t clientNo);
+// Frame-chain text for the probe's "[chain] ..." field (implementation sits at
+// the end of original_vm.cpp, where class OriginalVm is complete).
+std::string vmchainTextOf(const void* vm);
+// ---- per-connection command gate ----------------------------------------
+// Blocks while the connection still has an unfinished command chain, i.e. it
+// makes the reader/dispatch thread obey the public drivers' rule: ONE command
+// per interactive at a time (LDMud's backend loop, FluffOS's comm.c).  Call it
+// BEFORE dispatching a packet of that connection.  Woken by the probe when a
+// chain ends; bounded by timeoutMs so a stuck command cannot wedge the reader
+// thread forever (returns false on timeout).
+bool waitClientCommandIdle(int64_t clientNo, int timeoutMs);
+// Signalled by the probe whenever a command chain ends (used by the gate).
+void chainWaitNotify();
+// Active-command reference counting (see the comment on the implementation):
+// a client command's LPC continuation may run on a chain the driver command has
+// already returned from, so the gate counts COMMANDS, not driver chains.
+// cmdActiveAttach/Detach bracket a process's run (scheduler loop) and an inline
+// dispatch (execOnMain).
+void cmdActiveAttach(int64_t clientNo);
+void cmdActiveDetach(int64_t clientNo);
+// The script's own re-entrancy marker.  login.o::_process_command keeps
+// `lite_set_temp("operating",1)` set while a command is between phases, on chains
+// the driver's process table does not associate with the connection; the gate
+// therefore also reads that marker from the VM the connection's commands run on
+// (registered here at every dispatch).
+void registerClientScriptVm(int64_t cno, const void* vm);
+bool clientLpcBusy(int64_t cno);
 
 // Runs the original action-bytecode VM for a parsed .o object.
 // Currently supports the common global-initializer opcodes and stubs efun/user

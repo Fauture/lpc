@@ -1538,6 +1538,11 @@ public:
         // promise until the process's whole call chain completes; runProcess
         // sets it (exactly once) when the process finishes.
         std::shared_ptr<std::promise<Value>> resultPromise;
+        // Connection this command chain belongs to (-1 = not a client command:
+        // boot/daemon/timer chains).  Set by the dispatcher (execOnMain) and
+        // reported by the chain probe on PARK/RESUME/END, so an overlap is
+        // attributable to one connection.
+        int64_t clientNo = -1;
         // True while this process sits in ready_.  Multiple wake sources (a
         // real event raise + its stale timeout timer, the construct watchdog
         // + the late reply, two timers firing in the same tick) used to
@@ -2136,6 +2141,30 @@ public:
             out += (it->fn ? it->fn->name : std::string("<ctx>"));
         }
         return out;
+    }
+    // The per-connection gate asks whether this VM's script still considers
+    // itself busy: `lite_set_temp("operating", 1)` in login.o::_process_command
+    // stays set while a command is between phases, on chains the driver counts
+    // separately.  Reads the temp mapping WITHOUT running LPC; called from a
+    // reader thread while the scheduler owns the VM, so it never throws.
+    bool liteTempTruthy(const char* key) const {
+        if (!objVars_) return false;
+        for (const auto& v : *objVars_) {
+            if (v.index() != 6) continue;              // only a mapping can be a dbase
+            auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+            if (!mp) continue;
+            Value* hit = mp->find(make_string(key));
+            if (!hit) continue;
+            switch (hit->index()) {
+                case 0: return false;                  // undefined
+                case 1: return std::get<int64_t>(*hit) != 0;
+                case 4: return !std::get<SharedString>(*hit).str().empty();
+                case 6: return true;                   // non-null mapping
+                case 7: return std::get<std::shared_ptr<ObjectValue>>(*hit) != nullptr;
+                default: return true;
+            }
+        }
+        return false;
     }
     const OriginalFunction* functionByIndex(int index) const {
         auto it = funcsByIndex_.find(index);
@@ -14484,6 +14513,25 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
 
 
 // Scheduler member definitions (OriginalVm is complete here).
+
+namespace {
+// Connection whose command is running on the scheduler thread right now (-1 if
+// none).  Chains spawned BY a client command (thread_*/dispatch_service set up
+// its continuation) inherit it, so the per-connection gate sees that the
+// connection is still busy although its driver chain already returned.
+thread_local int64_t t_schedClientNo = -1;
+// Set by the scheduler loop to the connection of the process it is running, so
+// spawns made DURING that run inherit it even when the spawning thread is not
+// the dispatching one (a timer firing while a client command runs).  Cleared
+// before runProcess() to stop inherited values from leaking into nested chains.
+thread_local int64_t t_procClientNo = -1;
+int64_t currentClientNo() {
+    if (t_schedClientNo >= 0) return t_schedClientNo;
+    if (t_procClientNo >= 0) return t_procClientNo;
+    return lpc::dispatchCno();
+}
+}  // namespace
+
 void Scheduler::spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
                       std::vector<Value> args) {
     auto p = std::make_shared<Process>();
@@ -14491,6 +14539,7 @@ void Scheduler::spawn(std::shared_ptr<OriginalVm> vm, const std::string& entry,
     p->homeVm = p->vm;
     p->entry = entry;
     p->args = std::move(args);
+    p->clientNo = currentClientNo();
     p->tid = allocTid();
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -14566,6 +14615,11 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
     p->entry = entry;
     p->args = std::move(args);
     p->timerEntry = std::move(timerEntry);
+    // Deliberately NOT tagged with the creating command's connection: a timer
+    // (e.g. the 180s logout timer) fires long after its command and would
+    // otherwise keep that connection "busy" forever.  It picks up the
+    // connection when it actually runs (see t_schedClientNo in runProcess).
+    p->clientNo = -1;
     p->tid = allocTid();
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -14656,6 +14710,12 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond) 
     // own reply arrived).
     const ResumeCond& c = cond;
     p->cond = c;
+    // Chain-timeline probe: this chain is now parked on `c` (kind/key say what
+    // for).  vmchainRun() prints the matching RESUME when it runs again.
+    lpc::vmchainPark(p->clientNo, p->chainSeq,
+                     p->parkedVm ? (const void*)p->parkedVm.get()
+                                 : (const void*)p->vm.get(),
+                     p->entry, c.kind, c.qkey.empty() ? c.ename : c.qkey);
     if (std::getenv("LPCVM_TAIL")) {
         auto relO = [](const std::string& o) {
             return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
@@ -15052,15 +15112,37 @@ Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::st
             runVm->setThisObjectName(vm->thisObjectName());   // instance identity
         }
     }
-    if (isSchedulerThread()) return runVm->callFunctionByName(funName, args);
+    // Chain-timeline probe: attribute this command to its connection.  `dcno`
+    // is set by game_service around feedClient() (see builtins.h).  The public
+    // drivers hand ONE command at a time to a connection's interactive, so two
+    // un-finished chains on one connection mean the driver broke that model -
+    // which is exactly what makes the LPC answer 9101 「正在处理中」.
+    const int64_t dcno = lpc::dispatchCno();
+    const void* runVmRaw = runVm.get();
+    if (isSchedulerThread()) {
+        // Nested/inline: the command runs on THIS thread (and may park out of
+        // the nested call), so bracket it here around the whole call.
+        const int64_t inlineKey = runVm->activeChainKey();
+        lpc::vmchainBegin(dcno, inlineKey, runVmRaw, funName);
+        try {
+            Value r = runVm->callFunctionByName(funName, args);
+            lpc::vmchainEnd(dcno, inlineKey, runVmRaw, funName, true);
+            return r;
+        } catch (...) {
+            lpc::vmchainEnd(dcno, inlineKey, runVmRaw, funName, false);
+            throw;
+        }
+    }
     auto p = std::make_shared<Process>();
     p->vm = runVm;
     p->homeVm = runVm;
     p->entry = funName;
     p->args = args;
+    p->clientNo = dcno;
     p->resultPromise = std::make_shared<std::promise<Value>>();
     p->tid = allocTid();
     auto fut = p->resultPromise->get_future();
+    lpc::vmchainBegin(dcno, p->chainSeq, runVmRaw, funName);
     {
         std::lock_guard<std::mutex> lk(mtx_);
         ready_.push_back(p);
@@ -15455,8 +15537,21 @@ void Scheduler::run() {
             if (vmEnvTrace())
                 std::cerr << "[sched-pop] " << p->entry << " first=" << (p->firstRun ? 1 : 0)
                           << " vm=" << p->vm.get() << "\n";
-            runProcess(p);
+            lpc::vmchainRun(p->chainSeq, p->vm ? (const void*)p->vm.get() : nullptr);
+            lpc::cmdActiveAttach(p->clientNo);
+            {
+                // Chains spawned by this process inherit the connection, so the
+                // gate keeps it busy until the whole command is over.
+                const int64_t prevSched = t_schedClientNo;
+                t_schedClientNo = p->clientNo;
+                runProcess(p);
+                t_schedClientNo = prevSched;
+            }
+            lpc::cmdActiveDetach(p->clientNo);
             if (p->done) {
+                lpc::vmchainRunExit(p->chainSeq, false);
+                lpc::vmchainEnd(p->clientNo, p->chainSeq,
+                                p->vm ? (const void*)p->vm.get() : nullptr, p->entry, true);
                 if (std::getenv("LPCVM_TAIL")) {
                     auto relO = [](const std::string& o) {
                         return o.find("login.o") != std::string::npos ||
@@ -16104,6 +16199,9 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             p->timerEntry.reset();
         }
         if (p->vm) p->vm->abortThreadForExit();
+        lpc::vmchainRunExit(p->chainSeq, false);
+        lpc::vmchainEnd(p->clientNo, p->chainSeq,
+                        p->vm ? (const void*)p->vm.get() : nullptr, p->entry, false);
         if (p->resultPromise) p->resultPromise->set_value(make_int(0));
     } catch (const TimeSliceSignal& sig) {
         if (sig.vm && sig.vm != p->vm.get()) {
@@ -19005,4 +19103,346 @@ bool antiCheatCheckServer(const std::string& cryptedBuf, int& x, int& y, int& an
     return true;
 }
 
+// ==== LPCVM_CHAINTRACE probe ====
+// Per-connection command-chain timeline (see the block comment in
+// original_vm.h).  Appended at the END of namespace lpc on purpose: class
+// OriginalVm and Scheduler::Process are complete here, so the probe needs no
+// forward declarations of its own.
+namespace {
+
+struct ChainLive {
+    int64_t clientNo = -1;
+    int64_t chainKey = -1;
+    const void* vm = nullptr;
+    std::string entry;
+    int64_t beginMs = 0;
+    // `exited` = this chain's current RUN returned without finishing (it parked
+    // on a blocking efun or yielded its time slice); `parked` says which.  The
+    // next vmchainRun() prints the matching RESUME, so the PARK/RESUME pair is
+    // produced by the scheduler loop instead of by every requeue site.
+    bool parked = false;
+    bool exited = false;
+};
+
+std::mutex& chainLiveMtx() { static std::mutex m; return m; }
+std::map<int64_t, ChainLive>& chainLive() { static std::map<int64_t, ChainLive> m; return m; }
+
+bool chainTraceOn() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_CHAINTRACE");
+    return f.load(std::memory_order_relaxed);
+}
+
+const char* chainKindName(int k) {
+    switch (k) {
+        case 0: return "runtime";
+        case 1: return "timer";
+        case 2: return "queue";
+        case 3: return "event";
+        case 4: return "object";
+        case 5: return "socket";
+        case 6: return "mutex";
+        case 7: return "service";
+        default: return "?";
+    }
+}
+
+void chainEmit(const char* ev, int64_t cno, int64_t key, const void* vm,
+               const std::string& entry, const std::string& extra,
+               const std::string& chain) {
+    std::cerr << "[chain] t=" << lpc::msSinceStart() << "ms ev=" << ev
+              << " cno=" << cno << " key=" << key << " vm=" << vm;
+    if (!entry.empty()) std::cerr << " entry=" << entry;
+    if (!extra.empty()) std::cerr << " " << extra;
+    std::cerr << " live=" << lpc::vmchainLiveChains(cno)
+              << " chain=[" << chain << "]\n";
+    std::cerr.flush();
+}
+
+}  // namespace
+
+void vmchainBegin(int64_t clientNo, int64_t chainKey, const void* vm,
+                  const std::string& entry) {
+    liveness().chainBegin.fetch_add(1, std::memory_order_relaxed);
+    std::string overlap;
+    {
+        std::lock_guard<std::mutex> lk(chainLiveMtx());
+        auto& m = chainLive();
+        if (clientNo >= 0) {
+            // THE invariant of the public driver model: one connection runs one
+            // command at a time (LDMud's backend loop hands the interpreter the
+            // next input line of an interactive only after its command_giver
+            // finished; FluffOS buffers input the same way).  Any other
+            // un-ENDed chain of this connection is the 9101 「正在处理中」 cause.
+            for (const auto& kv : m) {
+                if (kv.second.clientNo != clientNo) continue;
+                if (kv.second.chainKey == chainKey) continue;
+                overlap = "OVERLAP_WITH key=" + std::to_string(kv.second.chainKey) +
+                          " vm=" + std::to_string(reinterpret_cast<uintptr_t>(kv.second.vm)) +
+                          " entry=" + kv.second.entry +
+                          " ageMs=" + std::to_string(lpc::msSinceStart() - kv.second.beginMs);
+                break;
+            }
+        }
+        ChainLive cl;
+        cl.clientNo = clientNo;
+        cl.chainKey = chainKey;
+        cl.vm = vm;
+        cl.entry = entry;
+        cl.beginMs = lpc::msSinceStart();
+        m[chainKey] = cl;
+    }
+    if (!overlap.empty()) {
+        liveness().chainOverlap.fetch_add(1, std::memory_order_relaxed);
+        if (chainTraceOn())
+            chainEmit("OVERLAP", clientNo, chainKey, vm, entry, overlap, vmchainTextOf(vm));
+    } else if (chainTraceOn()) {
+        chainEmit("BEGIN", clientNo, chainKey, vm, entry, std::string(), vmchainTextOf(vm));
+    }
+}
+
+void vmchainEnd(int64_t clientNo, int64_t chainKey, const void* vm,
+                const std::string& entry, bool completed) {
+    if (completed) liveness().chainEnd.fetch_add(1, std::memory_order_relaxed);
+    const bool traced = chainTraceOn();
+    int64_t age = 0;
+    bool known = false;
+    int64_t emitCno = clientNo;
+    std::string emitEntry = entry;
+    {
+        std::lock_guard<std::mutex> lk(chainLiveMtx());
+        auto& m = chainLive();
+        auto it = m.find(chainKey);
+        if (it != m.end()) {
+            age = lpc::msSinceStart() - it->second.beginMs;
+            known = it->second.clientNo >= 0;
+            emitCno = it->second.clientNo;
+            emitEntry = it->second.entry;
+            m.erase(it);
+        }
+    }
+    if (!traced) return;
+    std::string extra = "completed=" + std::to_string(completed ? 1 : 0);
+    if (age > 0) extra += " ageMs=" + std::to_string(age);
+    chainEmit(completed ? "END" : "DROP", known ? emitCno : -1, chainKey, vm,
+              emitEntry, extra, vmchainTextOf(vm));
+    // Wake the per-connection gate (waitClientCommandIdle): a connection may
+    // dispatch its next command only when this one is really over.
+    chainWaitNotify();
+}
+
+void vmchainPark(int64_t clientNo, int64_t chainKey, const void* vm,
+                 const std::string& entry, int condKind, const std::string& condKey) {
+    liveness().chainPark.fetch_add(1, std::memory_order_relaxed);
+    const bool traced = chainTraceOn();
+    {
+        std::lock_guard<std::mutex> lk(chainLiveMtx());
+        auto& m = chainLive();
+        auto it = m.find(chainKey);
+        if (it != m.end()) {
+            it->second.parked = true;
+            it->second.exited = true;
+        } else {
+            ChainLive cl;
+            cl.clientNo = clientNo;
+            cl.chainKey = chainKey;
+            cl.vm = vm;
+            cl.entry = entry;
+            cl.beginMs = lpc::msSinceStart();
+            cl.parked = true;
+            cl.exited = true;
+            m[chainKey] = cl;
+        }
+    }
+    if (!traced) return;
+    std::string what = std::string("wait=") + chainKindName(condKind) + " key=" + condKey;
+    chainEmit("PARK", clientNo, chainKey, vm, entry, what, vmchainTextOf(vm));
+}
+
+void vmchainRun(int64_t chainKey, const void* vm) {
+    int64_t resumeCno = -1;
+    bool wasParked = false;
+    std::string resumeEntry;
+    const bool traced = chainTraceOn();
+    {
+        std::lock_guard<std::mutex> lk(chainLiveMtx());
+        auto it = chainLive().find(chainKey);
+        if (it != chainLive().end() && it->second.exited) {
+            wasParked = it->second.parked;
+            resumeCno = it->second.clientNo;
+            resumeEntry = it->second.entry;
+            it->second.parked = false;
+            it->second.exited = false;
+        }
+    }
+    if (!wasParked) return;
+    liveness().chainResume.fetch_add(1, std::memory_order_relaxed);
+    if (traced) chainEmit("RESUME", resumeCno, chainKey, vm, resumeEntry, std::string(),
+                          vmchainTextOf(vm));
+}
+
+void vmchainRunExit(int64_t chainKey, bool parked) {
+    std::lock_guard<std::mutex> lk(chainLiveMtx());
+    auto it = chainLive().find(chainKey);
+    if (it == chainLive().end()) return;
+    it->second.exited = true;
+    it->second.parked = parked;
+}
+
+// A continuation chain joins the connection of the command that spawned it, so
+// the gate ("no un-finished chain of this connection") sees ONE command, not a
+// tagged driver chain plus an untagged continuation.
+void vmchainTagLive(int64_t clientNo, int64_t chainKey) {
+    if (clientNo < 0 || chainKey < 0) return;
+    std::lock_guard<std::mutex> lk(chainLiveMtx());
+    auto it = chainLive().find(chainKey);
+    if (it != chainLive().end()) it->second.clientNo = clientNo;
+}
+
+void vmchainMailbox(int64_t clientNo, int64_t chainKey, const char* what) {
+    if (!chainTraceOn()) return;
+    chainEmit("MAILBOX", clientNo, chainKey, nullptr, std::string(),
+              std::string(what ? what : ""), std::string());
+}
+
+int vmchainLiveChains(int64_t clientNo) {
+    if (clientNo < 0) return 0;
+    std::lock_guard<std::mutex> lk(chainLiveMtx());
+    int n = 0;
+    for (const auto& kv : chainLive())
+        if (kv.second.clientNo == clientNo && !kv.second.exited) ++n;
+    return n;
+}
+
+// ==== end LPCVM_CHAINTRACE probe ====
+
 } // namespace lpc
+
+// ==== LPCVM_CHAINTRACE helper: frame-chain text ====
+// Appended AFTER `} // namespace lpc` on purpose: class OriginalVm lives in the
+// file's anonymous namespace, which reopens here, so this is the only place
+// where the class is both visible and available to a helper the probe (in
+// namespace lpc, further up) can call.  The public wrapper is what the probe
+// uses; the helper stays anonymous.
+#include "original_vm.h"
+
+namespace lpc {
+namespace {
+std::string chainTextOfVm(const void* vm) {
+    const OriginalVm* v = static_cast<const OriginalVm*>(vm);
+    return v ? v->frameChainDump(48) : std::string();
+}
+}  // namespace
+
+std::string vmchainTextOf(const void* vm) { return chainTextOfVm(vm); }
+}  // namespace lpc
+
+// ==== LPCVM_CHAINTRACE: LPC-side busy marker (clientLpcBusy) ====
+// The script's own re-entrancy guard (`lite_set_temp("operating",1)` in
+// login.o::_process_command) can outlive the driver's bookkeeping for a command:
+// its phases run on chains the driver tags separately.  The per-connection gate
+// therefore also asks the VM the connection's commands run on.
+namespace lpc {
+namespace {
+std::mutex& cliScriptMtx() { static std::mutex m; return m; }
+std::map<int64_t, const void*>& cliScriptVms() {
+    static std::map<int64_t, const void*> m;
+    return m;
+}
+}  // namespace
+
+void registerClientScriptVm(int64_t cno, const void* vm) {
+    if (cno < 0 || !vm) return;
+    std::lock_guard<std::mutex> lk(cliScriptMtx());
+    cliScriptVms()[cno] = vm;
+}
+
+bool clientLpcBusy(int64_t cno) {
+    if (cno < 0) return false;
+    const void* v = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(cliScriptMtx());
+        auto it = cliScriptVms().find(cno);
+        if (it == cliScriptVms().end()) return false;
+        v = it->second;
+    }
+    const OriginalVm* vm = static_cast<const OriginalVm*>(v);
+    return vm ? vm->liteTempTruthy("operating") : false;
+}
+}  // namespace lpc
+
+// ==== LPCVM_CHAINTRACE active-command marker ====
+// The per-connection gate must follow a command's WHOLE LPC lifetime, not just
+// the driver chain its dispatch returned from.  Measured: cmd_create_new_char
+// returned after 339ms while its LPC continuation
+// (create_new_char -> check_valid_name -> get_gid -> do_operate) kept running on
+// a separate chain, so the next packet of a 20x ENTER burst met the LPC
+// re-entrancy guard -> 9101 「正在处理中」.
+//
+// The marker is reference counted per connection:
+//   * +1 while a command is being dispatched on a thread (execOnMain),
+//   * +1 for every process that belongs to the connection while it runs
+//     (cmdActiveAttach from the scheduler loop; processes inherit clientNo when
+//     they park, so a parked continuation keeps counting),
+//   * cleared when the count drops to zero, which wakes waitClientCommandIdle.
+#include <chrono>
+#include <condition_variable>
+
+namespace lpc {
+namespace {
+std::mutex& chainGateMtx() { static std::mutex m; return m; }
+std::condition_variable& chainGateCv() { static std::condition_variable cv; return cv; }
+std::atomic<int>& cmdActiveCount(int64_t cno) {
+    static std::mutex m;
+    static std::map<int64_t, std::atomic<int>*> tbl;
+    std::lock_guard<std::mutex> lk(m);
+    auto it = tbl.find(cno);
+    if (it != tbl.end()) return *it->second;
+    auto* p = new std::atomic<int>(0);
+    tbl[cno] = p;
+    return *p;
+}
+}  // namespace
+
+void chainWaitNotify() { chainGateCv().notify_all(); }
+
+void cmdActiveAttach(int64_t cno) {
+    if (cno < 0) return;
+    cmdActiveCount(cno).fetch_add(1, std::memory_order_acq_rel);
+}
+
+void cmdActiveDetach(int64_t cno) {
+    if (cno < 0) return;
+    if (cmdActiveCount(cno).fetch_sub(1, std::memory_order_acq_rel) <= 1) {
+        // Last reference gone: the connection is idle again.
+        chainGateCv().notify_all();
+    }
+}
+
+bool waitClientCommandIdle(int64_t clientNo, int timeoutMs) {
+    if (clientNo < 0) return true;
+    const int64_t totalMs = timeoutMs > 0 ? timeoutMs : 20000;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(totalMs);
+    // The "still busy" state changes in several places (driver bookkeeping, the
+    // LPC's own `operating` marker, a parked continuation being resumed) and not
+    // all of them can notify.  Notifications therefore only shorten the wait:
+    // after each one the state is RE-CHECKED, and a 100ms poll bounds how long a
+    // missed notification can delay a packet.
+    const auto pollMs = std::chrono::milliseconds(100);
+    for (;;) {
+        const int active = cmdActiveCount(clientNo).load(std::memory_order_acquire);
+        const int live = vmchainLiveChains(clientNo);
+        const bool lpc = clientLpcBusy(clientNo);
+        if (active <= 0 && live <= 0 && !lpc) return true;
+        if (std::chrono::steady_clock::now() >= deadline) {
+            std::cerr << "[chain-gate] cno=" << clientNo << " still busy after "
+                      << totalMs << "ms (active=" << active << ", liveChains=" << live
+                      << ", lpcOperating=" << (lpc ? 1 : 0) << ")\n";
+            std::cerr.flush();
+            return false;
+        }
+        std::unique_lock<std::mutex> lk(chainGateMtx());
+        chainGateCv().wait_for(lk, pollMs);
+    }
+}
+}  // namespace lpc

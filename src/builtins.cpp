@@ -502,6 +502,13 @@ bool serviceQueueIdle() {
     return g_pendingServices.load(std::memory_order_acquire) == 0;
 }
 
+// The connection whose client command this thread is dispatching (see
+// builtins.h).  thread_local: the reader/dispatch thread sets it around
+// feedClient() and the VM dispatch on that same thread reads it.
+static thread_local int64_t t_dispatchCno = -1;
+void setDispatchCno(int64_t cno) { t_dispatchCno = cno; }
+int64_t dispatchCno() { return t_dispatchCno; }
+
 // ---- per-connection flow bookkeeping ---------------------------------------
 // The client-packet dispatch gate (pkt_protocol.cpp) keeps a connection busy
 // until the command's CLIENT-VISIBLE result has been delivered and the flow has

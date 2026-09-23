@@ -12137,6 +12137,33 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
+    // ---- per-connection command gate (public-driver rule) -------------------
+    // LDMud's backend loop hands the interpreter the next input line of an
+    // interactive only after that interactive's previous command finished, and
+    // FluffOS buffers input the same way.  Our reader thread can deliver several
+    // packets in ONE recv() chunk, and feedClient() dispatches every complete
+    // packet of the chunk in that single call - so the gate has to sit HERE, on
+    // the one path every inbound packet takes, not around the chunk loop.
+    // Waiting longer than this is pointless: the client already retries.
+    static const int64_t kGateTimeoutMs = 20000;
+    const int64_t gateCno = cl.clientNo;
+    const bool gateNeeded = (cl.attrib & ATTRIB_CLIENT_USER) != 0;
+    if (gateNeeded) {
+        lpc::vmchainMailbox(gateCno, -1, "dispatch-wait");
+        if (!lpc::waitClientCommandIdle(gateCno, kGateTimeoutMs)) {
+            // The connection's previous command never finished.  Dropping this
+            // packet is the honest option (the client retries); dispatching it
+            // would re-enter the LPC and answer 9101 anyway.
+            static int gateDrops = 0;
+            if (gateDrops++ < 20)
+                std::cerr << "[chain-gate] cno=" << gateCno << " cmd=0x" << std::hex << cmdNo
+                          << std::dec << " dropped: previous command still running\n";
+            return;
+        }
+        lpc::vmchainMailbox(gateCno, -1, "dispatch-go");
+        // Attribute the LPC chain(s) this packet starts to this connection.
+        lpc::setDispatchCno(gateCno);
+    }
     // LPCVM_RECV2: one line per inbound command (no body) - enough to see which
     // client request the server never answers.
     {
