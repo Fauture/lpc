@@ -261,3 +261,41 @@ A4“确定性回归”的结论不成立——A4b 与 A6 在正确计数下几�
 | `objVarsSnapshot` | 仅上面那些 pending 线程用；游戏路径不走 |
 | `create_thread` telnet 回退分支 | telnet 专用 |
 | 每连接一个 recv 线程、每服务一个 accept 线程 | 网络层遗留，Step F |
+
+## 13. Step C 完成：多线程机制全部拆掉（C1–C4）
+
+| 批次 | 提交 | 内容 | 依据 |
+|---|---|---|---|
+| C1 | `f4f3724` | `ExecGuard` 改为只在**非调度线程**加锁，`runDetached` 的释放/重取按"实际持锁次数" | 第 11 节测量：非调度进入 0 |
+| C2 | `2b6f52c` | telnet 守护线程 → `Scheduler::spawnTelnet`（client id 随**进程**走，`runProcess` 作用域守卫发布/恢复） | 第 12 节：唯一剩下的非调度入口是 telnet |
+| C3 | `c336b6b` | 删除 pending-thread 死代码（两个 worker 池、队列、声明、builtins 调用） | 队列无写入者、无调用者、日志 0 次 |
+| C4 | `6732054` | **删除 `execMutex_`/`execDepth_`/`ExecGuard`/6 处 guard/`runDetached` 的锁循环** | C2+C3 之后本文件不再创建会进 VM 的线程 |
+
+保留的东西（不是遗留，是语义）：
+* `runDetached` 把调用者 stack/frames 移入/移出 `es_->detachedStack`——让嵌套跨对象调用
+  拿到干净栈，属**状态**语义；
+* 4 处 `std::thread`（xdbc 探测/守护、调试钩子）都不进入 VM；
+* `noteVmEntry` 探针（`LPCVM_ENTRYDBG`）留着，用于后续任何改动后复测"非调度进入=0"。
+
+验收（每个批次都是 3 个不同账号、各一次 20 连击建号）：`9112` 恒为 0、
+`9101` 0~9（随客户端重发次数波动）、`9113` 0~4，客户端能进游戏。
+源文件 `original_vm.cpp` 从 19,460 行降到 19,308 行。
+
+## 14. Step F（网络层）现状与下一步
+
+现状（`game_service.cpp`）：
+* 每服务一个 accept 线程 + 每连接一个 recv 线程；recv 循环已是
+  "100ms select + 非阻塞 recv"（无空转），错误/关闭路径有明确日志；
+* 客户端包在 recv 线程解析，`dispatchCommand` 先过连接级命令门
+  （`waitClientCommandIdle`：驱动链/脚本 `operating`/settle），再
+  `feedClient -> execOnMain`，由 `fut.get()` 阻塞到该命令链结束——即
+  "一个连接一次命令"由**阻塞**实现，`ev=OVERLAP` 恒为 0。
+
+下一步（需要独立一轮起服+验收，风险中等）：
+1. 把 accept 与每连接读取改成调度器 socket 扫描（对齐原版
+   `vm_scanSocketInMainLoop`）：调度器循环里 `select` 监听 socket 与客户端 socket，
+   读到的字节放进连接缓冲；
+2. 包解析留在缓冲之上，命令派发改为"投递到调度器邮箱"，由调度器在
+   上一命令链结束后派发下一包（邮箱版门，取代 `fut.get()` 阻塞）；
+3. 验收：`ev=OVERLAP=0`、`[chain-gate]=0`、3 个账号 `9112=0` 且能进游戏，
+   并复测 `noteVmEntry` 非调度进入=0。
