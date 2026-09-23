@@ -78,3 +78,40 @@ python -X utf8 _acc.py <dir> <name>         # 四项：弹窗 / 0xF061 body / gi
 * 任何改动只要**启动到不了 listening** 或**登录失败**，立刻整体回退（本轮 VM 注册、settle 窗口都是这样被否掉的）。
 * 不要用逐段 Python 字符串替换去"修"已损坏的文件：一旦锚点错位就把类头切碎（本轮发生过一次），直接 `git checkout HEAD -- src/original_vm.cpp` 重来。
 * 改源码必须保持 CRLF（用 `_patch_src.py`），否则 MSVC 吞花括号、报假错。
+
+## 7. Step A（执行态进 ExecState）本轮进展与可复现配方
+
+目标：把 `OriginalVm` 的 19 个执行态成员（`frames_/stack_/detachedStack_/code_/meta_/ip_/
+cond_/parked_/catches_/catchDepth_/returnValue_/returned_/funcLookup_/lastOp_/lastIp_/
+lastEfunIndex_/savedObjVarsForNextCall_/onResume_/resumeValue_`）搬进 `struct ExecState`，
+VM 只留 `ExecState* es_`，于是 `switchToChain()` 从"搬 19 个成员"变成指针转移，
+`runStates_` 也不再需要转存（这是"冲突 / 无法共享数据"的结构性解法）。
+
+**已经跑通的部分（`_vmchain_codegen/refactor_stepA_v2.py`）**
+
+1. 只替换 **Scheduler 类体之外** 与 **OriginalVm 成员块之外** 的引用
+   （关键教训：无差别替换会把结构体成员声明一起改掉，例如
+   `std::vector<std::shared_ptr<Process>> parked_;`、`sockWaiters_`、`timers_` ⇒ 调度器被摧毁，
+   报 C2065 "未声明的标识符" 一堆）；
+2. 于是 1242 处成员引用改成 `es_->member`，54 处"通过别的 VM 指针访问"
+   （`vm->frames_`、`p->parkedVm->frames_`）改走 `->es_->member`；
+3. `VmRunState` 缩减为 `std::shared_ptr<ExecState> es; int64_t ownerTid;`；
+4. `stashRunState/restoreRunState/switchToChain` 重写为所有权转移（shared_ptr），
+   不再逐个 `std::move` 19 个字段；
+5. 剩余编译错误：**2 个**（两处裸 `!parked_` 位于 lambda 内，需要写成 `!es_->parked`），
+   另需把调度器自己的 `parked_`（vector）声明补回类作用域。
+
+**为什么本轮没有落地**：最后两次修补又引入了新的破坏（这类文本手术一次只能动一个
+语义单元），而仓库红线是"每一步都要能起服、能登录"。因此本轮结束在**已验证可用的
+提交状态**（`git checkout HEAD -- src/original_vm.cpp` 后重建通过），Step A 的配方与
+脚本留给下一次以"小步 + 每步编译 + 起服验收"的方式落地。
+
+**下一次的正确做法**
+
+* 用宏过渡一次到位：在 `ExecState` 之上加
+  `#define frames_ es_->frames`（19 个），Scheduler 类体用 `#undef`/`#define` 单独处理
+  它自己的 `parked_`。这样"搬移"只需一次编译即可验证语义，之后的 `es_->` 明文替换是
+  纯机械重命名，可以分多次提交、每次都能起服。
+* 或者按成员分批：先搬 `frames_`（611 处），再搬 `stack_`（315 处）… 每批一次构建+验收。
+* 无论哪种，**保护区间必须按行号集合计算**（Scheduler 类体、VM 成员块、结构体定义），
+  不能用全局正则。
