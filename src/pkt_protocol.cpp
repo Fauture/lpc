@@ -400,17 +400,17 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
         if ((cmdNo & 0xFF00) == 0x2300 || (cmdNo & 0xFF00) == 0x2400 || cmdNo == 0x3A01 || cmdNo == 0x3A02)
             std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                       << " NO INTERFACE\n";
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                       << " no interface\n";
         return 0;   // not handled -> cmdIndex
     }
     const PktInterface& pi = it->second;
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                   << " iface=" << pi.name << " flag=" << pi.flag
                   << " attrib=" << attrib << " fields=" << pi.fields.size() << "\n";
-    if (std::getenv("LPCVM_TRACE") && pi.name == "cmd_l_account") {
+    if (LPCVM_GETENV("LPCVM_TRACE") && pi.name == "cmd_l_account") {
         std::string hex;
         static const char* hx = "0123456789ABCDEF";
         for (size_t i = 0; i < len; ++i) { hex += hx[(body[i] >> 4) & 0xF]; hex += hx[body[i] & 0xF]; }
@@ -418,7 +418,7 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     }
     // cmdFilter check: (attrib & cmdFilter & 7) != 0  (vm_clientSocketCallback)
     if ((attrib & pi.flag & 7) == 0) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                       << " denied attrib=" << attrib << " flag=" << pi.flag << "\n";
         return 0;
@@ -432,13 +432,13 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     for (const auto& f : pi.fields) {
         Value v;
         if (!decodeField(f, body, len, off, v)) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[pkt] analyse field '" << f.name << "' decode failed at off=" << off << "\n";
             return -1;
         }
         fieldVals.push_back(v);
     }
-    if (std::getenv("LPCVM_TRACE") &&
+    if (LPCVM_GETENV("LPCVM_TRACE") &&
         (pi.name == "cmd_cfg_get_aaa_list" || pi.name == "cmd_internal_auth" ||
          pi.name == "cmd_cfg_get_my_info" || pi.name == "cmd_cfg_get_dba_list")) {
         std::string dbg;
@@ -460,7 +460,7 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     std::vector<Value> args;
     args.push_back(make_int(clientNo));   // implicit first argument
     args.push_back(collection);
-    if (std::getenv("LPCVM_TRACE")) {
+    if (LPCVM_GETENV("LPCVM_TRACE")) {
         std::string fdbg;
         for (size_t i = 0; i < pi.fields.size() && i < fieldVals.size(); ++i) {
             if (i) fdbg += " | ";
@@ -490,7 +490,7 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     // connection gates), not here.
     if (func.index() == 8) {
         auto cl = std::get<std::shared_ptr<ClosureValue>>(func);
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[pkt] calling closure " << cl->functionName
                       << " boundArgs=" << cl->boundArgs.size() << "\n";
         std::vector<Value> all = cl->boundArgs;
@@ -502,14 +502,14 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
         return 1;
     }
     if (func.index() == 4) {
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[pkt] calling string fn " << std::get<SharedString>(func).str() << "\n";
         callMasterProgramFunction(std::get<SharedString>(func), args, lpc::masterSearchRoot());
         if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
             std::cerr << "[pkt-filed] string fn " << std::get<SharedString>(func).str() << " returned\n";
         return 1;
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[pkt] func type=" << static_cast<int>(func.index()) << " not callable\n";
     return 1;
 }

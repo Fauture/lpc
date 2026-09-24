@@ -61,4 +61,9 @@ if(WIN32)
     # create_thread threads" is no longer true - create_thread goes through
     # scheduler().spawn() (single-threaded) too.
     target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x2000000)
+    # Release keeps /O2 but also emits a PDB, so crash dumps and ETW/xperf CPU
+    # samples resolve to function names (boot profiling).  /OPT:REF,ICF restore
+    # the linker defaults that /DEBUG would otherwise turn off.
+    target_compile_options(lpcvm PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(lpcvm PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
 endif()

@@ -1148,7 +1148,7 @@ void handleMsgLAuth(GameClient& cl, const uint8_t* body, size_t len) {
         uint16_t nlen = rd16be(body + 8);
         if (nlen <= len - 10) name.assign(reinterpret_cast<const char*>(body + 10), nlen);
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] msg_l_auth client=" << cl.clientNo << " result=" << result
                   << " authKey=" << authKey << " name='" << name << "'\n";
     applyLpc("msg_l_auth", {make_int(cl.clientNo), make_int(result), make_int(authKey), make_string(name)});
@@ -1288,7 +1288,7 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
     frame.push_back(static_cast<char>((tick >> 16) & 0xFF));
     frame.push_back(static_cast<char>((tick >> 8) & 0xFF));
     frame.push_back(static_cast<char>(tick & 0xFF));
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] echo reply client=" << cl.clientNo << " tick=" << tick << "\n";
     if (echoProbe)
         std::cerr << "[echo] reply cno=" << cl.clientNo << " tick=" << tick
@@ -1309,7 +1309,7 @@ void handleCmdEcho(GameClient& cl, const uint8_t* body, size_t len) {
 void handleMsgReplyEcho(GameClient& cl, const uint8_t* body, size_t len) {
     if (len < 4) return;
     uint32_t tick = rd32be(body);
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] reply_echo client=" << cl.clientNo << " tick=" << tick << "\n";
     applyLpc("msg_reply_echo", {make_int(cl.clientNo), make_int(tick)});
 }
@@ -1353,11 +1353,11 @@ void handleMsgCfgMyInfo(GameClient& cl, const uint8_t* body, size_t len) {
         std::string v = r.str();
         m->insert(make_string(k), make_string(v));
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] msg_cfg_my_info client=" << cl.clientNo << " name='" << name
                   << "' port=" << port << " dist='" << dist << "' id=" << id
                   << " distId=" << distId << " settings=" << m->size();
-    if (std::getenv("LPCVM_TRACE")) {
+    if (LPCVM_GETENV("LPCVM_TRACE")) {
         auto items = m->items();
         std::string ks;
         for (auto& kv : items) {
@@ -1365,7 +1365,7 @@ void handleMsgCfgMyInfo(GameClient& cl, const uint8_t* body, size_t len) {
             ks += to_string(kv.first, false) + "=" + to_string(kv.second, false).substr(0, 20);
         }
         std::cerr << " keys=[" << ks << "]\n";
-    } else if (std::getenv("LPCVM_TRACE"))
+    } else if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "\n";
     applyLpc("msg_cfg_my_info",
              {make_int(cl.clientNo), make_string(dist), make_string(name),
@@ -1380,7 +1380,7 @@ void handleMsgCfgSpaInfo(GameClient& cl, const uint8_t* body, size_t len) {
     std::string name = r.str();
     std::string ip = r.str();
     int port = r.u16();
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] msg_cfg_spa_info client=" << cl.clientNo << " name='" << name
                   << "' ip='" << ip << "' port=" << port << "\n";
     applyLpc("msg_cfg_spa_info",
@@ -1410,7 +1410,7 @@ void handleMsgCfgGameServerList(GameClient& cl, const uint8_t* body, size_t len)
         arr->items.push_back(make_int(ids[i]));
         arr->items.push_back(make_int(enables[i]));
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] msg_cfg_game_server_list client=" << cl.clientNo
                   << " total=" << total << "\n";
     applyLpc("msg_cfg_game_server_list", {make_int(cl.clientNo), arr});
@@ -1427,7 +1427,7 @@ void handleMsgCfgDbaList(GameClient& cl, const uint8_t* body, size_t len, const 
         arr->items.push_back(make_string(r.str()));   // ip
         arr->items.push_back(make_int(r.u16()));      // port
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] " << fun << " client=" << cl.clientNo << " count=" << count << "\n";
     applyLpc(fun, {make_int(cl.clientNo), arr});
 }
@@ -1446,7 +1446,7 @@ void handleMsgCfgCtaList(GameClient& cl, const uint8_t* body, size_t len) {
         arr->items.push_back(make_string(r.str()));   // pass
         arr->items.push_back(make_string(r.str()));   // privilege
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] msg_cfg_cta_list client=" << cl.clientNo << " count=" << count << "\n";
     applyLpc("msg_cfg_cta_list", {make_int(cl.clientNo), arr});
 }
@@ -4438,7 +4438,7 @@ void handle_vm_cmdLockAccount(GameClient& cl, const uint8_t* body, size_t len)
 
 void handle_vm_cmdLogin(GameClient& cl, const uint8_t* body, size_t len)
 {
-    if (std::getenv("LPCVM_TAIL"))
+    if (LPCVM_GETENV("LPCVM_TAIL"))
         std::cerr << "[cmdLogin] cno=" << cl.clientNo << " bodylen=" << len << " first="
                   << (len ? static_cast<unsigned>(body[0]) : 0) << "\n";
     size_t off = 0;
@@ -4470,7 +4470,7 @@ void handle_vm_cmdLogin(GameClient& cl, const uint8_t* body, size_t len)
     if (off + computerIdLen > len) return;
     std::string computerId((const char*)body + off, computerIdLen);
     off += computerIdLen;
-    if (std::getenv("LPCVM_TAIL"))
+    if (LPCVM_GETENV("LPCVM_TAIL"))
         std::cerr << "[cmdLogin] cno=" << cl.clientNo << " account=\"" << account
                   << "\" authKey=" << authKey << " seed=" << seed
                   << " version=\"" << version << "\" clientType=" << clientType
@@ -11272,7 +11272,7 @@ void handle_vm_msgCfgEtcPageData(GameClient& cl, const uint8_t* body, size_t len
     if (off + 4 > len) return;
     uint32_t dataLen = rd32be(body, off); off += 4;
     if (dataLen > len - off) return;
-    if (std::getenv("LPCVM_TAIL"))
+    if (LPCVM_GETENV("LPCVM_TAIL"))
         std::cerr << "[cfg-pg] cookie=" << pageNo << " rawlen=" << (len - off) << "\n";
     applyLpc("msg_cfg_etc_page_data", {make_int(cl.clientNo), make_int(pageNo), make_buffer(body + off, len - off)});
 }
@@ -11298,7 +11298,7 @@ void handle_vm_msgCfgReadEtc(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 8 > len) return;
     uint32_t cookie = rd32be(body, off); off += 4;
     uint32_t result = rd32be(body, off); off += 4;
-    if (std::getenv("LPCVM_TAIL"))
+    if (LPCVM_GETENV("LPCVM_TAIL"))
         std::cerr << "[cfg-res] cookie=" << cookie << " result=" << result << "\n";
     applyLpc("msg_cfg_read_etc", {make_int(cl.clientNo), make_int(cookie), make_int(result)});
 }
@@ -12210,7 +12210,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
         if (recvFlag.load(std::memory_order_relaxed)) {
             static int rN = 0;
             static const int rMax = [] {
-                const char* v = std::getenv("LPCVM_RECV_MAX");
+                const char* v = LPCVM_GETENV("LPCVM_RECV_MAX");
                 return v ? std::atoi(v) : 60000;
             }();
             if (rN++ < rMax) {
@@ -12237,8 +12237,8 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     if (cmdNo == 0x3400 || cmdNo == 0x3411 || cmdNo == 0x4401 || cmdNo == 0x2403 ||
         cmdNo == 0x2405 || cmdNo == 0x2407 || cmdNo == 0x236F)
         liveness().filedIn.fetch_add(1, std::memory_order_relaxed);
-    if (std::getenv("LPCVM_TAIL") ||
-        std::getenv("LPCVM_DBGLINK")) {
+    if (LPCVM_GETENV("LPCVM_TAIL") ||
+        LPCVM_GETENV("LPCVM_DBGLINK")) {
         if (cmdNo == 0x3400 || cmdNo == 0x3411 || cmdNo == 0x4401 || cmdNo == 0x2403 ||
             cmdNo == 0x2405 || cmdNo == 0x2407 || cmdNo == 0x236F) {
             std::string hex;
@@ -12251,7 +12251,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
             std::cerr.flush();
         }
     }
-    if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE")) {
+    if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_EVENT_TRACE")) {
         std::string hex;
         static const char* hx = "0123456789ABCDEF";
         for (size_t i = 0; i < len && i < 24; ++i) { hex += hx[body[i] >> 4]; hex += hx[body[i] & 15]; }
@@ -12259,7 +12259,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
                   << " client=" << cl.clientNo << " attrib=" << cl.attrib
                   << " len=" << len << " body=" << hex << "\n";
     }
-    if (std::getenv("LPCVM_TAIL")) {
+    if (LPCVM_GETENV("LPCVM_TAIL")) {
         // Same clock as [send]/[recv-accept] (lpc::msSinceStart) so the
         // request->reply round trip of a filed operation can be computed by
         // subtracting the [send] timestamp; GetTickCount64 has a different base
@@ -12287,7 +12287,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     // Fallback: cmdList/cmdIndex dispatch.
     const CmdEntry* e = findCmd(cmdNo);
     if (!e) {
-        if (std::getenv("LPCVM_TRACE") || (std::getenv("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
+        if (LPCVM_GETENV("LPCVM_TRACE") || (LPCVM_GETENV("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
             std::cerr << "[game] bad command 0x" << std::hex << cmdNo << std::dec
                       << " from client " << cl.clientNo << " (len=" << len << ")\n";
         ++cl.recvBadPkts;
@@ -12295,14 +12295,14 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     }
     // attrib permission check: (attrib & type & 7) != 0
     if ((cl.attrib & e->type & 7) == 0) {
-        if (std::getenv("LPCVM_TRACE") || (std::getenv("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
+        if (LPCVM_GETENV("LPCVM_TRACE") || (LPCVM_GETENV("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
             std::cerr << "[game] denied cmd 0x" << std::hex << cmdNo << std::dec
                       << " client=" << cl.clientNo << " attrib=" << cl.attrib
                       << " type=" << e->type << "\n";
         ++cl.recvBadPkts;
         return;
     }
-    if (std::getenv("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473))
+    if (LPCVM_GETENV("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473))
         std::cerr << "[game] dispatch cmd=0x" << std::hex << cmdNo << std::dec
                   << " client=" << cl.clientNo << " attrib=" << cl.attrib
                   << " type=" << e->type << " OK\n";
@@ -13245,7 +13245,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x4419: handleMsgGotGidArr(cl, body, len); break;
     case 0x4417: handleMsgGotGidInfo(cl, body, len); break;
     default:
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[game] cmd 0x" << std::hex << cmdNo << std::dec
                       << " handler not implemented\n";
         break;
@@ -13264,7 +13264,7 @@ void feedClient(GameClient& cl, const char* data, size_t n) {
     if ((cl.attrib & ATTRIB_CLIENT_USER) == 0 && n > 0)
         lpc::flowProbeReply(cl.clientNo, cl.pendingCmd, static_cast<int64_t>(n));
     liveness().pktsIn.fetch_add(1, std::memory_order_relaxed);
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[game] feed client=" << cl.clientNo << " n=" << n
                   << " status=" << static_cast<int>(cl.status) << "\n";
     size_t off = 0;
@@ -13409,7 +13409,7 @@ int startGameService(int port) {
         // daemon spins once a second and the client still never receives a
         // challenge.  Keep it OFF by default; arm explicitly with LPCVM_HB=1
         // while debugging that path.
-        static const bool hbOn = (std::getenv("LPCVM_HB") != nullptr);
+        static const bool hbOn = (LPCVM_GETENV("LPCVM_HB") != nullptr);
         if (hbOn) {
             std::thread([port]() {
                 for (;;) {
@@ -13479,7 +13479,7 @@ static void processGameConnection(unsigned int fdRaw) {
         ioctlsocket(c, FIONBIO, &blockingMode);
     }
             int clientNo = nextGameClientNo().fetch_add(1);
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[game] accepted client no=" << clientNo << "\n";
             GameClient cl;
             cl.fd = static_cast<int>(c);
@@ -13563,7 +13563,7 @@ static void processGameConnection(unsigned int fdRaw) {
                     // on the scheduler thread): once the service queue is idle that
                     // dispatch has completed, so reading the first packet is safe.
                     if (tries >= 1 && lpc::serviceQueueIdle()) break;
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (LPCVM_GETENV("LPCVM_TRACE"))
                         std::cerr << "[game] waiting client=" << clientNo
                                   << " try=" << tries << " user=" << userType
                                   << " agent=" << agentType << "\n";
@@ -13726,7 +13726,7 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
             std::cerr << "[send-fail] cno=" << clientNo << " not-found t="
                       << lpc::msSinceStart() << "ms\n";
-            if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n";
+            if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n";
             return false;
         }
         fd = it->second.fd;
@@ -13735,7 +13735,7 @@ bool gameServiceSend(int clientNo, const std::string& data) {
         liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
         std::cerr << "[send-fail] cno=" << clientNo << " bad-fd t="
                   << lpc::msSinceStart() << "ms\n";
-        if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " bad-fd\n";
+        if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " bad-fd\n";
         return false;
     }
     int sent = 0;
@@ -13752,12 +13752,12 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             std::cerr << "[send-fail] cno=" << clientNo << " fd=" << fd << " n=" << n
                       << " err=" << err << " len=" << data.size()
                       << " t=" << lpc::msSinceStart() << "ms\n";
-            if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " fail n=" << n << " err=" << err << "\n";
+            if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " fail n=" << n << " err=" << err << "\n";
             return false;
         }
         sent += n;
     }
-    if (std::getenv("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " sent=" << sent << "\n";
+    if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " sent=" << sent << "\n";
     return true;
 }
 

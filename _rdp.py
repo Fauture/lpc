@@ -338,6 +338,21 @@ def auto(acct, pwd, name, tag='auto'):
             print('  after creds: %s(%d)' % (k, int(d)))
             if k in ('charsel', 'createchar', 'ingame'):
                 break
+            if k == 'dialog':
+                # The character list of an account opens with the 「帐号安全级别」
+                # notice on top; its signature is nearest to 'dialog' and ENTER
+                # does not clear it.  Re-typing the credentials there (the old
+                # behaviour) typed into the character screen.  Only a real
+                # login screen gets the credentials again.
+                keys('{ENTER}')
+                time.sleep(1.5)
+                k, d = screen_kind()
+                print('  after dismiss: %s(%d)' % (k, int(d)))
+                if k != 'login':
+                    if k == 'dialog':
+                        k = 'createchar'   # char list behind the notice
+                    break
+                continue
             keys('{ENTER}')
             time.sleep(1.0)
     if k == 'createchar':

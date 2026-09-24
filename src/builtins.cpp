@@ -363,7 +363,7 @@ void eventDelete(const std::string& name) {
 }
 
 int64_t eventRaise(const Value& ref, uint32_t mask) {
-    if (std::getenv("LPCVM_EVENT_TRACE"))
+    if (LPCVM_GETENV("LPCVM_EVENT_TRACE"))
         std::cerr << "[event-raise] ref=" << to_string(ref, false)
                   << " mask=0x" << std::hex << mask << std::dec << "\n";
     auto& reg = eventRegistry();
@@ -386,7 +386,7 @@ int64_t eventRaise(const Value& ref, uint32_t mask) {
 }
 
 int64_t eventWait(const Value& ref, uint32_t mask, double timeoutSecs) {
-    if (std::getenv("LPCVM_EVENT_TRACE"))
+    if (LPCVM_GETENV("LPCVM_EVENT_TRACE"))
         std::cerr << "[event-wait] ref=" << to_string(ref, false)
                   << " mask=0x" << std::hex << mask << std::dec
                   << " timeout=" << timeoutSecs << "\n";
@@ -592,7 +592,7 @@ bool queueSend(int64_t qid, const Value& v) {
         q->items.push_back(v);
     }
     if (v.index() == 8) g_pendingServices.fetch_add(1, std::memory_order_acq_rel);
-    if (std::getenv("LPCVM_QUEUE_TRACE")) {
+    if (LPCVM_GETENV("LPCVM_QUEUE_TRACE")) {
         std::lock_guard<std::mutex> lk2(reg.mtx);
         std::cerr << "[q-push] qid=" << qid << " depth=" << q->items.size()
                   << " cls=" << (v.index() == 8 ? 1 : 0) << "\n";
@@ -935,7 +935,7 @@ void mysqlKeepAliveStart() {
                             MysqlClient::Result r;
                             std::string err;
                             ok = it.client->execute("SELECT 1", r, err);
-                            if (!ok && std::getenv("LPCVM_SQL_TRACE"))
+                            if (!ok && LPCVM_GETENV("LPCVM_SQL_TRACE"))
                                 std::cerr << "[mysql] ping cno=" << it.cno << " err=" << err << "\n";
                         }
                     }
@@ -1218,7 +1218,7 @@ void telnetSend(int cno, const std::string& data) {
         if (it == telnetClients().end()) return;
         s = it->second.sock;
     }
-    if (std::getenv("LPCVM_TRACE")) {
+    if (LPCVM_GETENV("LPCVM_TRACE")) {
         std::string hex;
         for (unsigned char c : data) {
             if (hex.size() > 120) { hex += "..."; break; }
@@ -1305,7 +1305,7 @@ void closeTelnetClient(int cno) {
         telnetClients().erase(it);
     }
     if (tlsCurrentClient == cno) tlsCurrentClient = -1;
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[telnet] client " << cno << " closed\n";
 }
 
@@ -1319,7 +1319,7 @@ void acceptTelnetClient(SOCKET c) {
         TelnetClient& tc = telnetClients()[cno];
         tc.sock = c;
     }
-    if (std::getenv("LPCVM_TRACE"))
+    if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[telnet] new client no=" << cno << "\n";
     // Notify the LPC master program: telnet_new_client(fd) decides between
     // the LPC telnet_daemon (create_thread) and the builtin telnet shell.
@@ -1393,7 +1393,7 @@ std::string readVfsFile(const std::string& vpath) {
     if (vpath.rfind(etcPrefix, 0) == 0) {
         std::string name = vpath.substr(etcPrefix.size());
         std::string etc = etcRoot();
-        if (std::getenv("LPCVM_TRACE") && name == "valid_chinese.list")
+        if (LPCVM_GETENV("LPCVM_TRACE") && name == "valid_chinese.list")
             std::cerr << "[etc-read] name=" << name << " etcRoot=" << (etc.empty() ? "<empty>" : etc)
                       << "\n";
         if (!etc.empty()) {
@@ -1403,12 +1403,12 @@ std::string readVfsFile(const std::string& vpath) {
                 if (in) {
                     std::ostringstream ss;
                     ss << in.rdbuf();
-                    if (std::getenv("LPCVM_TRACE") && name == "valid_chinese.list")
+                    if (LPCVM_GETENV("LPCVM_TRACE") && name == "valid_chinese.list")
                         std::cerr << "[etc-read] OK bytes=" << ss.str().size() << "\n";
                     return ss.str();
                 }
             }
-            if (std::getenv("LPCVM_TRACE") && name == "valid_chinese.list")
+            if (LPCVM_GETENV("LPCVM_TRACE") && name == "valid_chinese.list")
                 std::cerr << "[etc-read] not a regular file: " << alt.string() << "\n";
         }
     }
@@ -1433,7 +1433,7 @@ std::string readVfsFile(const std::string& vpath) {
                 try {
                     lpc::PakFile pak = lpc::loadPak(pakPath);
                     const lpc::PakEntry* e = lpc::findPakEntry(pak, entry);
-                    if (std::getenv("LPCVM_TRACE") && (vpath.find("etc.pak/") != std::string::npos ||
+                    if (LPCVM_GETENV("LPCVM_TRACE") && (vpath.find("etc.pak/") != std::string::npos ||
                                                        vpath.find("server_maps.pak/") != std::string::npos))
                         std::cerr << "[readvfs] pak=" << pakPath << " entry=" << entry
                                   << " found=" << (e ? "Y" : "N") << " isDir=" << (e && e->isDir)
@@ -1453,12 +1453,12 @@ std::string readVfsFile(const std::string& vpath) {
                                              data.begin() + e->offset + e->compSize);
                     std::vector<uint8_t> out;
                     if (lzssDecompress(src, e->origSize, out)) {
-                        if (std::getenv("LPCVM_TRACE") && vpath.find("etc.pak/") != std::string::npos)
+                        if (LPCVM_GETENV("LPCVM_TRACE") && vpath.find("etc.pak/") != std::string::npos)
                             std::cerr << "[readvfs] decompress OK orig=" << e->origSize
                                       << " got=" << out.size() << "\n";
                         return std::string(out.begin(), out.end());
                     }
-                    if (std::getenv("LPCVM_TRACE") && vpath.find("etc.pak/") != std::string::npos)
+                    if (LPCVM_GETENV("LPCVM_TRACE") && vpath.find("etc.pak/") != std::string::npos)
                         std::cerr << "[readvfs] decompress FAIL comp=" << e->compSize
                                   << " orig=" << e->origSize << "\n";
                     if (e->compSize == e->origSize) {
@@ -2145,7 +2145,7 @@ static void sqlLoadAll() {
             sqlLoadFile(fs::path("linux/new_sql") / f);
             sqlLoadFile(fs::path("new_sql") / f);
         }
-        if (std::getenv("LPCVM_TRACE")) {
+        if (LPCVM_GETENV("LPCVM_TRACE")) {
             std::cerr << "[sql] loaded " << sqlDb().size() << " tables\n";
             for (const auto& kv : sqlDb())
                 std::cerr << "  " << kv.first << ": cols=" << kv.second.cols.size()
@@ -2805,9 +2805,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty()) {
             std::vector<Value> rest(args.begin() + 1, args.end());
             std::string out = formatLpc(as_string(args[0]), rest);
-            if (std::getenv("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
+            if (LPCVM_GETENV("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
                 std::cerr << "[printf-badline] out=[" << out.substr(0, 80) << "]\n";
-            if (std::getenv("LPCVM_TAIL") && out.find("to be scanned, interval") != std::string::npos) {
+            if (LPCVM_GETENV("LPCVM_TAIL") && out.find("to be scanned, interval") != std::string::npos) {
                 std::cerr << "[banner-src] obj=" << stubCallCtx().obj << " fn=" << stubCallCtx().fn
                           << " tel=" << threadTelnetClient() << "\n";
                 std::cerr.flush();
@@ -2821,7 +2821,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             }
             fputs(out.c_str(), stdout);
             fflush(stdout);
-            if (std::getenv("LPCVM_MEM2") && out.compare(0, 6, "Load: ") == 0) {
+            if (LPCVM_GETENV("LPCVM_MEM2") && out.compare(0, 6, "Load: ") == 0) {
                 static long lArr = -1, lMap = -1;
                 long aL, mL, aC, mC;
                 lpc::liveHeapSnapshot(aL, mL, aC, mC);
@@ -2839,7 +2839,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_string("");
         std::vector<Value> rest(args.begin() + 1, args.end());
         std::string out = formatLpc(as_string(args[0]), rest);
-        if (std::getenv("LPCVM_CONSTRUCT_TRACE") && out.size() >= 4 &&
+        if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && out.size() >= 4 &&
             out.compare(out.size() - 2, 2, "_0") == 0) {
             std::cerr << "[sprintf0] fmt=[";
             const std::string& fss = as_string(args[0]);
@@ -2935,7 +2935,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<BufferValue>>(v)->data.size()));
         return make_int(0);
     }
-    if (name == "strlen" && std::getenv("LPCVM_NAMERULE")) {
+    if (name == "strlen" && LPCVM_GETENV("LPCVM_NAMERULE")) {
         const std::string av = args.empty() ? std::string() : as_string(args[0]);
         std::cerr << "[namerule] strlen(" << av << ") -> " << av.size() << " bytes"
                   << " ischinese_first=" << (av.empty() ? 0 : (static_cast<unsigned char>(av[0]) >= 0x80 ? 1 : 0))
@@ -3107,7 +3107,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return arr;
         std::string s = as_string(args[0]);
         std::string sep = args.size() >= 2 ? as_string(args[1]) : "\n";
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
             std::cerr << "[explode] len=" << s.size() << " sep=" << (args.size() >= 2 ? "explicit" : "newline")
                       << " first8=[" << s.substr(0, 8) << "]\n";
         if (sep.empty()) {
@@ -3124,7 +3124,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             arr->items.push_back(make_string(s.substr(start, p - start)));
             start = p + sep.size();
         }
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE")) {
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE")) {
             std::string dbg;
             for (size_t i = 0; i < arr->items.size() && i < 4; ++i) {
                 if (!dbg.empty()) dbg += "|";
@@ -3313,7 +3313,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 k = std::get<SharedString>(args[0]).str();
                 if (k.empty() || k == "<this>") k = stubCallCtx().key;
             }
-            static const bool lifeProbe = (std::getenv("LPCVM_LIFE") != nullptr);
+            static const bool lifeProbe = (LPCVM_GETENV("LPCVM_LIFE") != nullptr);
             bool ok = false;
             if (!k.empty()) ok = lpc::destructObjectByKey(k);
             if (lifeProbe)
@@ -3329,7 +3329,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // close_client) relies on this to actually sever the TCP connection.
         if (!args.empty()) {
             int clientNo = static_cast<int>(as_int(args[0]));
-            if (std::getenv("LPCVM_TAIL"))
+            if (LPCVM_GETENV("LPCVM_TAIL"))
                 std::cerr << "[close_client] cno=" << clientNo << "\n";
             gameServiceDisconnect(clientNo);
         }
@@ -3452,7 +3452,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // master program's defines the same way.
             std::string expansion;
             bool found = masterDefineLookup(key, expansion);
-            if (std::getenv("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
+            if (LPCVM_GETENV("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
                 std::cerr << "[expand_macro] " << key << " found=" << found
                           << " exp='" << (found ? expansion : "<none>") << "'\n";
             if (found) {
@@ -3491,17 +3491,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "trim") {
         if (args.empty()) return make_string("");
         std::string s = as_string(args[0]);
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
             std::cerr << "[trim] in=[" << s.substr(0, 16) << "] len=" << s.size() << "\n";
         size_t b = s.find_first_not_of(" \t\r\n");
         if (b == std::string::npos) {
-            if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+            if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
                 std::cerr << "[trim] -> empty\n";
             return make_string("");
         }
         size_t e = s.find_last_not_of(" \t\r\n");
         std::string r = s.substr(b, e - b + 1);
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
             std::cerr << "[trim] -> [" << r.substr(0, 16) << "]\n";
         return make_string(r);
     }
@@ -3609,7 +3609,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // wrapper itself; do not duplicate it here.
         if (args.empty()) return make_int(0);
         std::string vpath = normalizeSlashes(as_string(args[0]));
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[load_object] " << vpath << " nargs=" << args.size()
                       << " a1=" << (args.size() >= 2 ? to_string(args[1], false).substr(0, 40) : "-") << "\n";
         // The second argument (when present) is the object-creation context
@@ -3693,11 +3693,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     std::string trimS = (b0 == std::string::npos) ? "" : es.substr(b0, e0 - b0 + 1);
                     cmdNo = std::strtoll(trimS.c_str(), nullptr, 0);
                 }
-                if (std::getenv("LPCVM_TRACE"))
+                if (LPCVM_GETENV("LPCVM_TRACE"))
                     std::cerr << "[pkt] add_interface " << name << " macro=" << macro
                               << " cmdNo=" << cmdNo << " mvIndex=" << static_cast<int>(mv.index())
                               << " filter=" << cmdFilter << " encap=" << encap << "\n";
-                if (std::getenv("LPCVM_TAIL")) {
+                if (LPCVM_GETENV("LPCVM_TAIL")) {
                     static int pktAdds = 0;
                     if (++pktAdds <= 400)
                         std::cerr << "[pkt-add] " << name << " cmdNo=" << cmdNo
@@ -3755,7 +3755,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // wire body), returns a buffer.
         std::string out;
         for (const auto& a : args) padVariableValue(a, out);
-        if (std::getenv("LPCVM_TRACE")) {
+        if (LPCVM_GETENV("LPCVM_TRACE")) {
             std::string hex;
             static const char* hx = "0123456789ABCDEF";
             for (unsigned char c : out) { hex += hx[c >> 4]; hex += hx[c & 15]; }
@@ -3865,14 +3865,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 return make_buffer(rv);
             return make_string(rv);
         }
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[read_file] path=" << vpath << "\n";
         std::string content = readVfsFile(vpath);
-        if (std::getenv("LPCVM_CONSTRUCT_TRACE") &&
+        if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") &&
             (vpath.find("hero.list") != std::string::npos || vpath.find("onlinemall") != std::string::npos))
             std::cerr << "[hprobe] read_file path=" << vpath << " -> " << content.size()
                       << " bytes head=[" << content.substr(0, 16) << "]\n";
-        if (std::getenv("LPCVM_TRACE") && std::getenv("LPCVM_TRACE_EXPLODE"))
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
             std::cerr << "[read_file] -> " << content.size() << " bytes, head=["
                       << content.substr(0, 20) << "]\n";
         // mode "b" (buffer): the original returns a real buffer (Vm_Buffer_T)
@@ -4167,7 +4167,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // telnet_on() handles the telnet port separately.
         int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
         int rc = lpc::startGameService(port);
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[start_service_on] port=" << port << " args=" << args.size()
                       << " rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
         return make_int(rc);
@@ -4193,7 +4193,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
                 for (auto& kv : mysqlHandles()) {
                     if (kv.second.db == key && kv.second.client && kv.second.client->isConnected()) {
-                        if (std::getenv("LPCVM_TRACE"))
+                        if (LPCVM_GETENV("LPCVM_TRACE"))
                             std::cerr << "[mysql_connect] reuse cno=" << kv.first << " for " << key << "\n";
                         return make_int(kv.first);
                     }
@@ -4203,7 +4203,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string err;
             int cno = nextMysqlCno();
             bool ok = client->connect(host, port, user, pass, db, err);
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_connect] host=" << host << ":" << port << " db=" << db
                           << " user=" << user << " ok=" << ok
                           << (ok ? "" : (" err=" + err)) << " cno=" << cno << "\n";
@@ -4265,7 +4265,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t e = rest.find_first_of(" ;`");
                 table = rest.substr(0, e);
             }
-            if (std::getenv("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
+            if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
                 std::cerr << "[data-herod] q cno=" << cno << " sql_head_hex:";
                 size_t hz = sql.size() < 240 ? sql.size() : 240;
                 for (size_t z = 0; z < hz; ++z)
@@ -4273,8 +4273,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr << std::dec << " tot=" << sql.size() << "\n";
                 std::cerr.flush();
             }
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE") ||
-                (std::getenv("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos))
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE") ||
+                (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos))
                 std::cerr << "[mysql_query] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
             MysqlClient::Result res;
             std::string err;
@@ -4300,10 +4300,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         mysqlCursor()[arr.get()] = -1;   // before the first record
                         mysqlRecords()[arr.get()] = make_int(0);
                     }
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (LPCVM_GETENV("LPCVM_TRACE"))
                         std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
                                   << " ptr=" << arr.get() << " (live)\n";
-                    if (std::getenv("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos) {
+                    if (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos) {
                         std::cerr << "[pwd-diag] account select rows=" << arr->items.size() << "\n";
                         for (size_t ri = 0; ri < arr->items.size() && ri < 1; ++ri) {
                             auto mp = std::get<std::shared_ptr<MappingValue>>(arr->items[ri]);
@@ -4323,7 +4323,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 // for writes): surface affected rows as a plain int.
                 return make_int(static_cast<int64_t>(res.affectedRows));
             }
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_query] ERR cno=" << cno << " err=" << err << " -> in-memory fallback\n";
             // Fall back to the in-memory tables (offline or SQL error).
             if (!table.empty()) {
@@ -4335,7 +4335,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         mysqlCursor()[arr.get()] = -1;
                         mysqlRecords()[arr.get()] = make_int(0);
                     }
-                    if (std::getenv("LPCVM_TRACE"))
+                    if (LPCVM_GETENV("LPCVM_TRACE"))
                         std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
                                   << " ptr=" << arr.get() << " (memory)\n";
                 }
@@ -4347,11 +4347,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "mysql_num_records") {
         if (!args.empty() && args[0].index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[mysql_num_records] ptr=" << arr.get() << " size=" << arr->items.size() << "\n";
             return make_int(static_cast<int64_t>(arr->items.size()));
         }
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[mysql_num_records] NOT-ARRAY index=" << (args.empty() ? -1 : static_cast<int>(args[0].index())) << "\n";
         return make_int(0);
     }
@@ -4369,7 +4369,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 else
                     mysqlRecords()[arr.get()] = make_int(0);
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[mysql_fetch_record] ptr=" << arr.get() << " cur=" << cur
                           << " size=" << arr->items.size() << "\n";
             return cur < static_cast<int>(arr->items.size()) ? make_int(0) : make_int(1);
@@ -4420,7 +4420,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 size_t e = rest.find_first_of(" ;`");
                 table = rest.substr(0, e);
             }
-            if (std::getenv("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
+            if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
                 std::cerr << "[data-herod] cno=" << cno << " sql_head_hex:";
                 size_t hz = sql.size() < 240 ? sql.size() : 240;
                 for (size_t z = 0; z < hz; ++z)
@@ -4431,12 +4431,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr << "[data-herod] gbk=" << gk << "\n";
                 std::cerr.flush();
             }
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_execute] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
             MysqlClient::Result res;
             std::string err;
             if (mysqlExecReal(cno, sql, res, err)) {
-                if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+                if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                     std::cerr << "[mysql_execute] OK cno=" << cno << " affected=" << res.affectedRows
                               << " resultSet=" << (res.hasResultSet ? 1 : 0) << "\n";
                 if (res.hasResultSet) {
@@ -4456,7 +4456,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 }
                 return make_int(static_cast<int64_t>(res.affectedRows));
             }
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_SVC_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_execute] ERR cno=" << cno << " err=" << err << "\n";
             return make_int(0);
         }
@@ -4560,8 +4560,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() < 2) return make_array();
         int cno = static_cast<int>(as_int(args[0]));
         std::string sql = as_string(args[1]);
-        bool sqlTrace = std::getenv("LPCVM_SQL_TRACE") || std::getenv("LPCVM_TRACE") ||
-                        std::getenv("LPCVM_SVC_TRACE");
+        bool sqlTrace = LPCVM_GETENV("LPCVM_SQL_TRACE") || LPCVM_GETENV("LPCVM_TRACE") ||
+                        LPCVM_GETENV("LPCVM_SVC_TRACE");
         if (sqlTrace)
             std::cerr << "[mysql_select] cno=" << cno << " sql=" << sql << "\n";
         std::string table;
@@ -4619,7 +4619,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string section = as_string(args[0]);
             std::string key = as_string(args[1]);
             std::string path = resolveVfsPath(as_string(args[2]));
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[read_ini] section=" << section << " key=" << key
                           << " file=" << as_string(args[2]) << " -> " << path << "\n";
             std::ifstream in(path);
@@ -4822,7 +4822,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 clientType = static_cast<uint32_t>(std::get<int64_t>(args[1]));
             uintptr_t sock = xdbcDetachSocket(fd);
             if (!sock) return make_int(-1);
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[bind_to_client] fd=" << fd << " sock=" << sock
                           << " type=" << clientType << "\n";
             return make_int(gameServiceBindClient(static_cast<int>(sock), clientType));
@@ -4846,7 +4846,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             int64_t msgNo = 0;
             if (args.size() >= 3) {
                 msgNo = as_int(args[1]);
-                if (std::getenv("LPCVM_TAIL") && msgNo == 17520) {
+                if (LPCVM_GETENV("LPCVM_TAIL") && msgNo == 17520) {
                     auto sv = [](const Value& v) { return v.index() == 4 ? std::get<SharedString>(v).str() : to_string(v, false); };
                     std::cerr << "[cfg-req] dist=" << sv(args[2])
                               << " section=" << sv(args[3])
@@ -4870,7 +4870,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         std::string hex;
                         static const char* hx = "0123456789ABCDEF";
                         for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
-                        if (std::getenv("LPCVM_TAIL") && (m2 == 0x3400 || m2 == 0x4401)) {
+                        if (LPCVM_GETENV("LPCVM_TAIL") && (m2 == 0x3400 || m2 == 0x4401)) {
                             uint64_t n = GetTickCount64();
                             std::cerr << "[filed-rtt] send0x"
                                       << (m2 == 0x3400 ? "3400" : "4401") << " t=" << n
@@ -4888,7 +4888,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
                 for (unsigned char c : data) { hex += hx[c >> 4]; hex += hx[c & 15]; }
-                if (std::getenv("LPCVM_TAIL") && (msgNo == 0x3400 || msgNo == 0x4401)) {
+                if (LPCVM_GETENV("LPCVM_TAIL") && (msgNo == 0x3400 || msgNo == 0x4401)) {
                     uint64_t n = GetTickCount64();
                     std::cerr << "[filed-rtt] send0x"
                               << (msgNo == 0x3400 ? "3400" : "4401") << " t=" << n
@@ -4906,7 +4906,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             pkt.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
             pkt.push_back(static_cast<char>(msgLen & 0xFF));
             pkt += data;
-            if (std::getenv("LPCVM_MALL")) {
+            if (LPCVM_GETENV("LPCVM_MALL")) {
                 uint16_t mc = 0;
                 if (args.size() >= 3) {
                     mc = static_cast<uint16_t>(msgNo & 0xFFFF);
@@ -4934,7 +4934,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     std::cerr.flush();
                 }
             }
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[send_to_client] cno=" << cno << " body=" << data.size()
                           << " total=" << pkt.size() << "\n";
             // LPCVM_SEND: full outbound packet audit (cmd + size + head bytes +
@@ -4951,7 +4951,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 if (sendProbe) {
                     static int sN = 0;
                     static const int sMax = [] {
-                        const char* v = std::getenv("LPCVM_SEND_MAX");
+                        const char* v = LPCVM_GETENV("LPCVM_SEND_MAX");
                         return v ? std::atoi(v) : 8000;
                     }();
                     static const char* hx3 = "0123456789ABCDEF";
@@ -4985,7 +4985,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     }
                 }
             }
-            if (std::getenv("LPCVM_SQL_TRACE")) {
+            if (LPCVM_GETENV("LPCVM_SQL_TRACE")) {
                 std::string hex;
                 static const char* hx = "0123456789ABCDEF";
                 size_t cap = (msgNo == 0x6377 || msgNo == 0x6373) ? data.size() : 40;
@@ -5073,7 +5073,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 2) {
             std::string str = as_string(args[0]);
             std::string pat = as_string(args[1]);
-            if (std::getenv("LPCVM_TRACE_CASE"))
+            if (LPCVM_GETENV("LPCVM_TRACE_CASE"))
                 std::cerr << "[regexp] '" << pat << "' on '" << str << "'\n";
             return mini_regex::regexpMatch(str, pat);
         }
@@ -5116,7 +5116,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // "x + 1", etc. all work like the original driver's shell).
         if (args.empty()) return make_int(0);
         std::string cmd = as_string(args[0]);
-        if (std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[execute_data] '" << cmd << "'\n";
         std::string t = cmd;
         size_t b = t.find_first_not_of(" \t\r\n");
@@ -5132,7 +5132,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             lpc::Interpreter interp(prog);
             lpc::Environment env;
             Value result = interp.eval(expr, env);
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[execute_data] => " << to_string(result, false) << "\n";
             // Echo non-trivial results back to the telnet client.
             if (result.index() != 0 && result.index() != 1) {
@@ -5143,7 +5143,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         } catch (const std::exception& e) {
             telnetSend(threadTelnetClient(),
                        telnetLineEnd("Error: " + std::string(e.what()) + "\r\n"));
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[execute_data] error: " << e.what() << "\n";
             return make_int(0);
         }
@@ -5230,7 +5230,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // Always log a failure, and log every call under LPCVM_EVDBG.
         if (args.empty()) return make_int(-101);
         int64_t qid = queueResolveId(args[0]);
-        if (qid < 0 || std::getenv("LPCVM_EVDBG")) {
+        if (qid < 0 || LPCVM_GETENV("LPCVM_EVDBG")) {
             std::cerr << "[q-send] qid=" << qid
                       << " arg0t=" << static_cast<int>(args[0].index())
                       << " arg0=" << to_string(args[0], false).substr(0, 20)
@@ -5331,7 +5331,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // wait/raise event name from get_thread_id(); if the tid seen here
             // differs from the one the parked process used, the raise targets a
             // bit nobody waits on and the operation stalls to -2 (通讯故障).
-            if (std::getenv("LPCVM_EVDBG") &&
+            if (LPCVM_GETENV("LPCVM_EVDBG") &&
                 (stubCallCtx().obj.find("filed") != std::string::npos ||
                  stubCallCtx().fn == "do_operate"))
                 std::cerr << "[ev] get_thread_id -> " << pid
@@ -5439,7 +5439,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             t.tm_min = get("min", 0);
             t.tm_sec = get("sec", 0);
             std::time_t result = std::mktime(&t);
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[mktime] year=" << t.tm_year + 1900 << " mon=" << t.tm_mon + 1
                           << " mday=" << t.tm_mday << " hour=" << t.tm_hour
                           << " -> " << static_cast<int64_t>(result) << "\n";
@@ -5460,7 +5460,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty() && args[0].index() == 4) qname = std::get<SharedString>(args[0]);
         if (name == "create_queue") lpc::queueCreate(qid, qname);
         else if (!qname.empty()) lpc::eventCreate(qname, qid);
-        if (std::getenv("LPCVM_EVENT_TRACE") || std::getenv("LPCVM_TRACE"))
+        if (LPCVM_GETENV("LPCVM_EVENT_TRACE") || LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[create_" << (name == "create_queue" ? "queue" : "event")
                       << "] id=" << qid << " name='" << qname << "'\n";
         return make_int(qid);
@@ -5489,7 +5489,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty() && args[0].index() == 4) {
             Value out;
             bool ok = restoreValueAscii(std::get<SharedString>(args[0]), out);
-            if (std::getenv("LPCVM_MALL")) {
+            if (LPCVM_GETENV("LPCVM_MALL")) {
                 // The online-mall precost round trip (buy_from_mall_vsucc ->
                 // accountd -> aaa -> do_when_got_precost_coin) carries the
                 // purchase record as save_string(mapping) and restores it here;
@@ -5501,7 +5501,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                           << " head=" << rvs.substr(0, 90) << "\n";
                 std::cerr.flush();
             }
-            if (ok && out.index() == 6 && std::getenv("LPCVM_KEYT")) {
+            if (ok && out.index() == 6 && LPCVM_GETENV("LPCVM_KEYT")) {
                 auto mp = std::get<std::shared_ptr<MappingValue>>(out);
                 dumpDbaseKeys(out, "restore");
                 for (const char* k : {"task", "carry", "achieve"}) {
@@ -5539,7 +5539,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::string data = as_string(args[0]);
         int action = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
         std::string key = args.size() >= 3 ? as_string(args[2]) : "01234567";
-        if (std::getenv("LPCVM_TRACE") && key == "abcdef") {
+        if (LPCVM_GETENV("LPCVM_TRACE") && key == "abcdef") {
             std::string dbg;
             for (unsigned char c : data) {
                 if (c >= 0x20 && c < 0x7F) dbg += static_cast<char>(c);
@@ -5548,7 +5548,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::cerr << "[des-abcdef] action=" << action << " in=" << dbg
                       << " len=" << data.size() << "\n";
         }
-        bool pwdDiag = std::getenv("LPCVM_PWD_DIAG") && action != 0;
+        bool pwdDiag = LPCVM_GETENV("LPCVM_PWD_DIAG") && action != 0;
         if (pwdDiag) {
             auto hexdump = [](const std::string& s) {
                 std::string h;
@@ -5650,7 +5650,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         hex.reserve(32);
         for (unsigned char c : digest) { hex += hx[c >> 4]; hex += hx[c & 0xF]; }
         // calc_password_new_md5(account,pwd) hashes "<account><pwd>20070201".
-        if (std::getenv("LPCVM_PWD_DIAG") && data.size() > 8 &&
+        if (LPCVM_GETENV("LPCVM_PWD_DIAG") && data.size() > 8 &&
             data.compare(data.size() - 8, 8, "20070201") == 0)
             std::cerr << "[pwd-diag] md5 in=\"" << data << "\" out=" << hex << "\n";
         return make_string(hex);
@@ -5824,7 +5824,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int((!args.empty() && args[0].index() == 10) ? 1 : 0);
     }
     if (name == "save_string" && !args.empty() && args[0].index() == 6 &&
-        std::getenv("LPCVM_KEYT")) {
+        LPCVM_GETENV("LPCVM_KEYT")) {
         auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
         dumpDbaseKeys(args[0], "save");
         for (const char* k : {"task", "carry", "achieve"}) {
@@ -6678,7 +6678,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // bail before moving anyone ("过图" silently does nothing), so log only
         // the failures - that is cheap and pinpoints a room whose map_index was
         // zeroed (build_map used to answer 0 for an already-registered name).
-        static const bool roomProbe = (std::getenv("LPCVM_ROOM") != nullptr);
+        static const bool roomProbe = (LPCVM_GETENV("LPCVM_ROOM") != nullptr);
         if (roomProbe && as_int(r) < 0) {
             static int rbN = 0;
             if (rbN++ < 4000)
@@ -6699,7 +6699,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // object - observed as get_name() -> 0 ("你使用了0"), env_object() ->
         // 0 and get_pos() -> (0,0) ("距离NPC过远"), empty NPC name/portrait in
         // menus and pets created without their level.
-        if (std::getenv("LPCVM_IDDBG")) {
+        if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
             if (!args.empty() && args[0].index() == 7)
                 key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
@@ -6717,7 +6717,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "get_object_by_id") {
         Value r = lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
-        if (std::getenv("LPCVM_IDDBG")) {
+        if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
             if (r.index() == 7) key = std::get<std::shared_ptr<ObjectValue>>(r)->programName;
             std::cerr << "[iddbg] get_object_by_id id="
@@ -6726,7 +6726,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                       << " callerKey=[" << stubCallCtx().key << "]\n";
             std::cerr.flush();
         }
-        if (std::getenv("LPCVM_NEAR") &&
+        if (LPCVM_GETENV("LPCVM_NEAR") &&
             (stubCallCtx().obj.find("open_menu") != std::string::npos ||
              stubCallCtx().fn == "main")) {
                 std::cerr << "[near-gob] id=" << (args.empty() ? -1 : as_int(args[0]))
@@ -6804,7 +6804,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "calc_offset") {
         Value r = lpc::mapModule().calcOffset(args);
-        if (std::getenv("LPCVM_NEAR") && stubCallCtx().fn == "is_near") {
+        if (LPCVM_GETENV("LPCVM_NEAR") && stubCallCtx().fn == "is_near") {
                 std::cerr << "[near-off] (" << (args.size() > 0 ? as_int(args[0]) : -1) << ","
                           << (args.size() > 1 ? as_int(args[1]) : -1) << ")->("
                           << (args.size() > 2 ? as_int(args[2]) : -1) << ","
@@ -6816,7 +6816,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_check_steps: validate a movement path (move_v37.multi_move_to).
         // A stub returning 0 blocked every move.
         Value r = lpc::mapModule().checkSteps(args);
-        if (std::getenv("LPCVM_MOVE")) {
+        if (LPCVM_GETENV("LPCVM_MOVE")) {
             static int csN = 0;
             if (csN++ < 80) {
                 int n = (args.size() >= 4 && args[3].index() == 5)
@@ -6957,7 +6957,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             }
         }
         illegalWordsAdd(h, ws);
-        if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_BAN")) {
+        if (LPCVM_GETENV("LPCVM_TAIL") && LPCVM_GETENV("LPCVM_BAN")) {
             static int baN = 0;
             if (baN++ < 40) {
                 std::string head;
@@ -6985,7 +6985,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (args[1].index() == 4) text = std::get<SharedString>(args[1]).str();
             else text = to_string(args[1], false);
             int res = illegalWordsFind(h, text);
-            if (std::getenv("LPCVM_TAIL") && std::getenv("LPCVM_BAN")) {
+            if (LPCVM_GETENV("LPCVM_TAIL") && LPCVM_GETENV("LPCVM_BAN")) {
                 static int bfN = 0;
                 if (bfN++ < 200)
                     std::cerr << "[ban-find] h=" << h << " text=[" << text
@@ -7003,20 +7003,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return Value{};
     }
     if (name == "set_obj_var") {
-        // vm_f_set_obj_var: set_obj_var(obj, name, value[, progName]) -> value.
-        // Used by the object-dbase restore path; returning without writing used
-        // to lose every restored field (e.g. login's "chars" list).
-        if (args.size() >= 3) {
-            std::string vn = as_string(args[1]);
-            if (args.size() >= 4 && args[2].index() == 4) {
-                // (obj, progName, varName, value) form
-                vn = as_string(args[2]);
-                if (lpc::objVarSet(args[0], vn, args[3])) return args[3];
-                return Value{};
-            }
-            if (lpc::objVarSet(args[0], vn, args[2])) return args[2];
-        }
-        return Value{};
+        // vm_f_set_obj_var (IDA 0x80f8658): set_obj_var(obj|name, varName,
+        // value[, progName]) -> value.  The 4th argument is the PROGRAM name
+        // that disambiguates an inherited variable (the old code read the
+        // 4-arg form as (obj, prog, var, value)).  An unknown object or
+        // variable is an LPC error.  progName is not used for the lookup yet:
+        // objVarSet resolves by variable name (see _ida_missing/set_obj_var.txt).
+        if (args.size() > 4) throw std::runtime_error("Too many arguments to set_obj_var.");
+        if (args.size() < 3) throw std::runtime_error("Miss argument, expected (object|string, string, mixed).");
+        if (args[0].index() != 7 && args[0].index() != 4)
+            throw std::runtime_error("Not found the object for set_obj_var.");
+        const std::string vn = as_string(args[1]);
+        if (!lpc::objVarSet(args[0], vn, args[2]))
+            throw std::runtime_error("No such variable " + vn + " in the object.");
+        return args[2];
     }
     if (name == "save_object") {
         // vm_f_save_object: save_object(obj) -> "prog::var=value\n" text.
@@ -7030,7 +7030,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // no-op here lost every restored field (login's "chars" stayed
         // undefined, the character list after a create came back empty and the
         // client never reached the character-selection screen).
-        if (args.size() < 2 || args[0].index() != 7 || args[1].index() != 4)
+        // IDA 0x80f7c4c: argument 1 is "object | string" (a name resolves like
+        // vm_lookupObjectByName).
+        if (args.size() < 2 || (args[0].index() != 7 && args[0].index() != 4) ||
+            args[1].index() != 4)
             return make_int(0);
         const std::string text = std::get<SharedString>(args[1]).str();
         std::function<Value(const std::string&, size_t&)> pv =
@@ -7112,7 +7115,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "get_function_owner") return make_int(0);
     if (name == "move_object") {
-        if (std::getenv("LPCVM_TAIL")) {
+        if (LPCVM_GETENV("LPCVM_TAIL")) {
             static int bmvN = 0;
             if (bmvN++ < 60) {
                 std::string dk;
@@ -7177,7 +7180,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "get_all_global_vars") return make_array();
     if (name == "get_obj_function") return make_int(0);
     if (name == "env_object") {
-        if (std::getenv("LPCVM_TAIL")) {
+        if (LPCVM_GETENV("LPCVM_TAIL")) {
             static int bevN = 0;
             if (bevN++ < 80) {
                 std::string qk;
@@ -7226,7 +7229,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         auto c = std::make_shared<SqliteConn>();
         c->uri = real;
         if (!sqliteConnFor(c, GetCurrentThreadId())) {
-            if (std::getenv("LPCVM_TRACE"))
+            if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[sql_open_db] failed for " << real << "\n";
             return make_int(-1);
         }
@@ -7236,7 +7239,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             id = sqliteNextConn().fetch_add(1);
             sqliteConns()[id] = c;
         }
-        if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_EVENT_TRACE"))
+        if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_EVENT_TRACE"))
             std::cerr << "[sql_open_db] '" << path << "' -> " << id << " real=" << real << "\n";
         return make_int(id);
     }
@@ -7275,11 +7278,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             fprintf(stderr, "[sql-slow] %llums db=%d sql=%s\n", (unsigned long long)stDt,
                     (int)id, sql.substr(0, 90).c_str());
         if (rc != SQLITE_OK) {
-            if (std::getenv("LPCVM_TRACE") || std::getenv("LPCVM_TAIL"))
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_TAIL"))
                 std::cerr << "[sql_execute] err " << rc << ": " << (err ? err : "?")
                           << " sql=" << sql << "\n";
             if (err) sqlite3_free(err);
-        } else if (std::getenv("LPCVM_SQL_TRACE") || std::getenv("LPCVM_TAIL")) {
+        } else if (LPCVM_GETENV("LPCVM_SQL_TRACE") || LPCVM_GETENV("LPCVM_TAIL")) {
             static std::atomic<int64_t> sqlCnt{0};
             int64_t n = ++sqlCnt;
             if (n <= 200 || (n % 500) == 0)
@@ -7318,7 +7321,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 if (a != std::string::npos) sql = sql.substr(0, a);
             }
         }
-        if (std::getenv("LPCVM_MEM2")) {
+        if (LPCVM_GETENV("LPCVM_MEM2")) {
             std::string low = sql;
             for (auto& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             if (low.find("from scan") != std::string::npos || low.find("scan ") != std::string::npos)
@@ -7333,13 +7336,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
         if (!db) {
-            if (std::getenv("LPCVM_TAIL"))
+            if (LPCVM_GETENV("LPCVM_TAIL"))
                 std::cerr << "[sqlq] no db for id=" << id << " sql=" << sql.substr(0, 90) << "\n";
             return make_int(-1);
         }
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-            if (std::getenv("LPCVM_TRACE") || (std::getenv("LPCVM_TAIL") &&
+            if (LPCVM_GETENV("LPCVM_TRACE") || (LPCVM_GETENV("LPCVM_TAIL") &&
                 sql.find("from scan") == std::string::npos))
                 std::cerr << "[sql_query] err: " << sqlite3_errmsg(db) << " sql=" << sql << "\n";
             return make_int(-1);
@@ -7372,7 +7375,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (rc != SQLITE_ROW) return make_int(0);
         int n = sqlite3_column_count(q->stmt);
         auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(n));
-        if (std::getenv("LPCVM_TAIL") && q->sql.find("('monster')") != std::string::npos &&
+        if (LPCVM_GETENV("LPCVM_TAIL") && q->sql.find("('monster')") != std::string::npos &&
             q->sql.find("sub_type") != std::string::npos) {
             static int monRows = 0;
             if (monRows < 60) {

@@ -48,6 +48,19 @@ for f in ('src/builtins.cpp', 'src/original_vm.cpp', 'src/interpreter.cpp',
         continue
     impl |= names_in(f, r'(?<![A-Za-z0-9_])(?:name|nm|efun)\s*[=!]=\s*"([A-Za-z_][A-Za-z0-9_]*)"')
     impl |= names_in(f, r'names\[efun\]\s*[=!]=\s*"([A-Za-z_][A-Za-z0-9_]*)"')
+# The efun dispatch in original_vm.cpp (EFUN_HASH_DISPATCH) tests most names
+# as `h == 0x...ull` - the 64-bit FNV-1a hash of the efun name - instead of a
+# string compare, so the patterns above miss them.  Hash every efun name the
+# same way and count a name as implemented when its hash appears in a branch.
+def fnv1a64(s):
+    h = 1469598103934665603
+    for c in s.encode('utf-8'):
+        h ^= c
+        h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return h
+hashes = set(int(x, 16) for x in re.findall(r'\bh\s*==\s*0x([0-9A-Fa-f]+)ull',
+                                             read('src/original_vm.cpp')))
+impl |= set(n for n in names if fnv1a64(n) in hashes)
 impl &= set(names)
 stub = [n for n in names if n not in impl]
 
@@ -65,7 +78,7 @@ if missing:
     print('SANITY FAIL - these should NOT be stubs:', missing)
 
 inc = os.path.join(ROOT, 'src', 'stub_efuns.inc')
-with open(inc, 'w', encoding='utf-8') as f:
+with open(inc, 'w', encoding='utf-8', newline='\r\n') as f:
     for n in stub:
         f.write('            "%s",\n' % n)
 print('wrote %s (%d entries)' % (inc, len(stub)))

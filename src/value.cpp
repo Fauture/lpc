@@ -126,7 +126,7 @@ inline void appendReal64(std::string& out, double d) {
 // against the ostringstream reference over an integer corpus plus a sweep of
 // the float32 space, then reports any mismatch once to stderr.
 bool fmtSelfCheckOnce() {
-    static const bool on = (std::getenv("LPCVM_FMT_CHECK") != nullptr);
+    static const bool on = (LPCVM_GETENV("LPCVM_FMT_CHECK") != nullptr);
     static bool done = [] {
         if (!on) return false;
         int mism = 0, tested = 0;
@@ -289,7 +289,7 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
 // fix every such lookup was a guaranteed miss, so a non-zero "found" count is
 // the direct proof that item-by-iid resolution works again.
 void iidProbeCount(bool found) {
-    static const bool on = (std::getenv("LPCVM_IIDDBG") != nullptr);
+    static const bool on = (LPCVM_GETENV("LPCVM_IIDDBG") != nullptr);
     if (!on) return;
     static std::atomic<int64_t> hits{0};
     static std::atomic<int64_t> miss{0};
@@ -307,7 +307,7 @@ void iidProbeCount(bool found) {
 // bufKeys=0 means the iid_map WRITE never happened; a map with buffered keys
 // that still misses means the key contents differ.
 void iidProbeOp(const char* what, const Value& key, const MappingValue& m, bool found, bool haveKey) {
-    static const bool on = (std::getenv("LPCVM_IIDDBG") != nullptr);
+    static const bool on = (LPCVM_GETENV("LPCVM_IIDDBG") != nullptr);
     if (!on) return;
     static std::atomic<int64_t> ops{0};
     static std::atomic<int64_t> hits{0};

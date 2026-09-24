@@ -6,6 +6,17 @@
 #include "o_loader.h"
 #include "value.h"
 
+// LPCVM_GETENV("NAME"): std::getenv looked up ONCE per call site.  The
+// process environment never changes after start-up, but MSVC's getenv takes
+// the CRT environment lock and walks environ on EVERY call, and the
+// interpreter tested dozens of LPCVM_* switches that way on per-opcode paths
+// (op 23, the cross-object call_other, ...): an xperf profile of a quiet gs
+// boot put ~15% of all gs CPU in ucrtbase called straight from runLoop.
+// (Not a `#define getenv`: MSVC's <stdlib.h> already defines that macro.)
+#include <cstdlib>
+#define LPCVM_GETENV(name) \
+    ([]() -> const char* { static const char* const lpcvmEnvV_ = std::getenv(name); return lpcvmEnvV_; }())
+
 namespace lpc {
 
 // ---- runtime-toggleable diagnostics -------------------------------------
