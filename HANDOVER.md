@@ -102,6 +102,8 @@
 → 注册表索引（修好后）不破坏功能；建角弹窗能收到 `9111 不合格的名字` 说明建角逻辑真的跑了。
 
 1. **启动速度**：`8160` 必须在 **600s 内**打开；**不开日志时 300s 内**。
+   - **2026-09-24 最新：无探针 312s**（`22a15ad` 内部连接免 50ms 流控门 + `ef4da68` case 8 后缀扫描记忆化 / getenv 缓存），
+     详见文末「2026-09-24 启动 312s + efun 补全」。下面几条是更早的历史数据。
    - **口径先说清**：`_run_keep2.py` 第 18-19 行**硬编码** `LPCVM_TAIL=1` + `LPCVM_MEM2=1`，所以用它跑=**开日志**；"不开日志"=这两个探针都不设。
    - 本轮实测（同一份代码，先杀净残留服务再计时）：
      - **不开日志（无探针）：532s**（起点基线 792s → -33%）
@@ -2326,3 +2328,73 @@ DBA 那条唯一的 ddb 服务线程就永久卡住，之后所有 filed 命令�
 * `_filed_trace.py <logdir>` / `_filed_balance.py <logdir>`：gs→dba 的 filed 请求与回复时间线，
   用来确认「DBA 从某一刻起不再回包」；
 * `_dbhealth.py`：MySQL 只读体检（wait_timeout、各连接空闲时长）。
+
+
+## 2026-09-24 启动 312s + efun 补全（`22a15ad`、`ef4da68`）
+
+### 结果（全部实测）
+
+| 构建 | 探针 | 8160 打开 |
+|---|---|---|
+| 会话开始（hashfix / memofix / cpuprof，同为 HEAD 前后） | SEND（+CPUPROF_MS） | 729–861s |
+| `22a15ad` 内部连接免流控门 | SEND | 641s |
+| + efun 修复 | 无探针（带 xperf 采样） | 616s |
+| `ef4da68` + case 8 记忆化 + getenv 缓存 | **无探针** | **312s**（第二次复测 **349s**） |
+
+真机验收（RDP，`_rdp.py auto`）：账号 12/13/14 各建新角色 perfa/perfb/perfc → 进游戏
+（标题 `[一线] [角色名]`，揽仙镇外，任务追踪【新手】寻访王老板），`_ingame_sig.py` 三张 INGAME；
+`_bagtask_probe.py 12 12 perfa` 首登/重登都从库载入到原位置，0x2603/0x5103/0x1155 齐全；
+4 个 lpcvm 存活，无 `[crash]`/`[efun-stub]`；启动后 `dl_ddb_1_test.data` 2828 行。
+第二次复测启动（349s）后账号 15 建角 perfd 进游戏同样通过（第一次尝试是装置点「创建角色」太早、名字没输进去，
+客户端本地提示「名字长度不合格」，服务端没收到建角请求；已给 `_rdp.py` 加等待后重跑通过）。
+
+### 三个根因
+
+1. **内部链路被 50ms 流控门限流**（`src/game_service.cpp`，`flowGated()`）：`88ba918` 的
+   `waitFlowSettled()`（连接发送静默 50ms 才读下一包）按 `CLIENT_USER` 位判定，而 accept 的连接
+   都带这个位、`set_client_attrib("internal")` 只 OR 0x302（IDA `vm_f_set_client_attrib`
+   @0x804d0ac 原版也是 OR），于是 gs→dba/aaa 的链路（0x303）被当玩家连接，启动期 ~5000 次串行
+   filed 往返每次 ≥54ms。现在只对「CLIENT_USER 且非 INTERNAL_COMM」的连接等待。
+2. **case 8 按路径跨对象调用每次整表后缀扫描**（`regFirstVmBySuffix`）：xperf 显示 hasSuffix 占
+   gs 启动 CPU 20%，全部来自 runLoop 内联的这段；与 2a45de1 已记忆化的 tryCallOtherObject 是同一
+   扫描的第二份拷贝。现在两处共用同一个按 rel 的记忆化（regGeneration 失效，扫描顺序/首个命中不变）。
+3. **热路径上未缓存的 getenv**（`LPCVM_GETENV` 宏，`src/original_vm.h`）：MSVC getenv 每次加锁遍历
+   environ，op 23/case 8 等每次都调；xperf 里 ucrtbase 从 runLoop 直接调用约占 15%。
+
+### 如何复现剖析（本轮新增能力）
+
+Release 现在带 PDB（CMake `/Zi /DEBUG /OPT:REF /OPT:ICF`，仍 `/O2`）。整段启动的 CPU 采样：
+```
+"C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\xperf.exe" -on PROC_THREAD+LOADER+PROFILE -stackwalk Profile -SetProfInt 100000 -BufferSize 1024 -MinBuffers 256 -MaxBuffers 1024 -f _xp_boot.etl
+python -X utf8 _run_probe.py <dir> 86400          # 等 8160 OPEN
+xperf -d _xp_boot_m.etl
+set _NT_SYMBOL_PATH=C:/Users/Administrator\Desktop\lpc\build\Release
+xperf -i _xp_boot_m.etl -symbols -a profile -detail > prof.txt          # 按函数（权重单位 µs）
+xperf -i _xp_boot_m.etl -symbols -a stack -butterfly 200 -pid <gs pid> > bfly.html   # 调用者/被调者
+```
+注意：`LPCVM_CPUPROF` 只在调度器循环里 dump，master 的 post_init 同步执行期间不会输出，所以它看不到启动期。
+`/OPT:ICF` 会把相同的 `std::map<int,T>` 实例折叠，符号名可能张冠李戴（看调用者判断）。
+
+剩余热点（312s 之后还没动的，按 xperf 份额）：`callFunctionByName` 里遍历 std::map（~12s）、
+`ownsFunction` 的 map 查找（~11s）、`findObjectInRegistry`（call_builtin 调，~21s）、
+`findFunctionAny`（~18s）、`spawnDelayed`（~10s）。
+
+### efun（全部按 IDA；未完全还原的项见 `_ida_missing/_PENDING_2026-09-24.md`）
+
+| efun | IDA | 之前 | 现在 |
+|---|---|---|---|
+| select / recv | 0x80e7348 / 0x80e80c8 | 拦截代码写在 sscanf 分支内部，永远执行不到（落到兜底返回 0），且参数被 reverse | 独立分支：select 总是挂起（定时器+socket），0 超时轮询、trim、>0 写回、超时 -126；recv 写回 buffer，无数据挂起 |
+| lodger_object | 0x80f41c8 | 常量 0（gs 278 处 loop 空转） | 容器→寄居对象有序索引（move_object 0x80f5348：摘下后追加到链尾） |
+| objects / child_objects | 0x80f4d40 / 0x80f5d9c | `({})` | 全部存活对象 / 同程序对象（含克隆，可排除原始对象） |
+| set_obj_var | 0x80f8658 | 4 参数顺序读反 | (obj\|name, var, value[, prog])，未知变量报错 |
+| save/restore_object、set_obj_var | — | 被 stub 追踪器提前 return 0（真实现是死代码） | 已从 stub 列表移除；四个 objvar efun 都接受对象名字符串 |
+
+调度器改动：`ResumeCond` kind 5（socket）现在支持 `wakeAtMs` 定时器（与 kind 6 同一套 token 取消），
+socket 唤醒会标记 `eventWoken`，过期定时器不会再把进程重复入队。
+
+`tools/gen_stubset.py` 已能识别 `h == 0x…ull` 哈希分支，重跑与当前 `stub_efuns.inc`（51 项）一致。
+
+### 测试装置修正
+
+`_rdp.py auto`：新账号的角色列表上叠着「帐号安全级别」提示，签名最近的是 `dialog`，旧逻辑会把账号
+密码又敲进角色界面。现在 dialog 只按一次 ENTER，仍非登录界面就当作角色列表继续建角。

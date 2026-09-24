@@ -357,8 +357,13 @@ def auto(acct, pwd, name, tag='auto'):
             time.sleep(1.0)
     if k == 'createchar':
         print('  creating character %s' % name)
+        # The character list must have finished drawing, or this click is
+        # swallowed and the name is typed into nothing (the client then
+        # rejects the empty name: 人物角色名字长度不合格).
+        time.sleep(1.5)
+        focus()
         click_frac(*CHAR_CREATE_OK)          # 创建角色 -> the school/name form
-        time.sleep(1.0)
+        time.sleep(1.5)
         focus()
         click_frac(*SCHOOL_FIRST)            # 门派
         time.sleep(0.4)
