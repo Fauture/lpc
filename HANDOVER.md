@@ -2532,4 +2532,50 @@ buffer 分支对 `number > v4` 给空 buffer，0x808fd04）⇒ `args` = 一串�
 原版 `vm_queryMemberPtr`（0x808f8e4）对 type 5（buffer）是有分支的，以后遇到"往字符串/缓冲区里写字节无效"
 的现象可以顺着这条查。
 
+### 2026-09-25 追加：急急如律令复制道具，点「再来一份」不出货 —— 已修，真机验证
+
+**现象**：`急急如律令 → 复制道具1 → 输入「血池」` 第一份正常进包；随后菜单里的
+「再来一份血池」点了**什么都不发生**（无道具、无对话框、无提示）。日志里 `admin_clone_item` 只被派发一次。
+
+**链路（逐指令 trace 取证）**：客户端点菜单发 `0x30ca`，body=`00000001 0F "复制道具1(血池)" 00`
+（`!复制道具1` 那种提示输入式则发 item=`!复制道具1` + para=`血池`，这种是好的）。
+`cmd_select_menu_item → user.o::select_menu_item`（`menu.c`）→
+`sscanf(item,"%s(%s)")` 拆出 `item=复制道具1`/`item_cookie=血池` → `current_menu["复制道具1"]` 命中 ✔ →
+**extra-para 守卫**：
+```c
+if (check_extra_para_menu_action()) {
+    if (is_mapping(extra_para_action) && extra_para_action[item]) extra_para_flag = 1;
+    if ((item_cookie && !extra_para_flag) || (!item_cookie && extra_para_flag)) return;   // ← 静默返回
+}
+```
+实测（`[insn]` 逐指令）走到 `ip=149→156→157 return`：**cookie 有值、`extra_para_action` 是 mapping、
+但查不到 `复制道具1`** ⇒ 返回。回到 `do_select_item_menu`：`menu_renew` 没被置位 ⇒
+`destroy_menu()` 发出 `0x2DD3`（客户端还显示着菜单，服务端状态已被销毁）⇒ 之后再点只会更没反应。
+
+**根因（IDA 0x808fd04 + 逐指令对照）**：`extra_para_action` 由 `menu.c::set_menu_item` 扫描菜单正文生成。
+它用 `strlen` + 逐字节索引（`ischinese()` 跳双字节），并 **按字节偏移**切出命令名：
+`menu_item = temp_content[k..(k1-1)]`。而我们的字符串范围切片是**按 GBK 字符**切的
+（`gbkCharCount` / `gbkByteOffsetOfChar`），于是切出来的是垃圾片段 —— 实测写进映射的键是
+`1(x1`（应为 `复制道具1`），守卫自然永不匹配。原版是**纯字节**：
+```c
+// vm_queryRange (0x808fd04)
+v18 = (char *)(pString->ptr + number);   // 字节指针
+strncpy(str, v18, v16);                  // v16 个字节
+```
+当初改成按字符，是为了 9111 名字长度规则；但那条规则本身用的就是 `name[i..(i+2)-1]`（一个汉字 = 两个字节），
+**字节语义才是它要的** —— 所以那次是误诊。
+
+**修复**（`src/original_vm.cpp::queryRangeValue`）：字符串范围默认按**字节**切（与原版一致），
+`LPCVM_CHARRANGE=1` 可回退到旧的按字符切做 A/B。
+
+**真机验证（gm9）**：`admin_clone_item` 被派发 **2 次** —— 第二次正是点击「再来一份」触发的 ✔。
+
+**新增工具（本轮为了不再刷爆启动日志加的）**：
+* `LPCVM_INSN` + `_probe_on\LPCVM_INSN_FN.txt`（内容=函数名）：**运行时可开**的逐指令 trace
+  （`type nul > _probe_on\LPCVM_INSN` + `echo 函数名 > _probe_on\LPCVM_INSN_FN.txt`），
+  每秒重读一次函数名，启动期零输出。
+* `_run_keep2.py`：`LPCVM_QUIET=1` 时不再默认打开 `LPCVM_TAIL`/`LPCVM_MEM2`
+  （这两个是启动日志 250MB+ 的元凶；注意它们只判"是否设置"，设 0 无效）。
+
+
 

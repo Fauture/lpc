@@ -5677,24 +5677,41 @@ private:
                 return tryCallOtherObject(searchRoot_, path, funName, callArgs, thisObjectName_);
             }
             if (nm == "call_other_arg" && args.size() >= 3) {
-                // vm_f_call_other_arg (0x80f5afc): call_other(ob, fun,
-                // para_list...) where para_list is an ARRAY expanded into
-                // individual arguments (handler_module's process_command calls
-                // call_other_arg(entry, "main", [agent, ...cmdargs])).  The
-                // array is the LAST argument; the caller passes ob + fun.
-                // Cross-object: run the callee INLINE on this VM's stack with
-                // objVars switched (original driver switches constitution on
-                // the same process; a blocking efun parks the whole process).
+                // vm_f_call_other_arg (0x80f5afc): call_other(ob, fun, a1..aN)
+                // where the PARAMETER LIST is the **LAST** argument
+                // (vm_getArgument(argNum - 1)).  If that last argument is an
+                // ARRAY its elements REPLACE that one slot:
+                //     totalArgNum = argNum + N - 3
+                // i.e. the fixed arguments before it are kept and the array is
+                // spliced after them:
+                //     call_other_arg(file, "func_entry", from_info, args)
+                //       -> func_entry(from_info, args[0], args[1], ...)
+                //     call_other_arg(bonusd, "do_easy_bonus", ob, 1, descs)
+                //       -> do_easy_bonus(ob, 1, descs[0], descs[1], ...)
+                // (IDA: vm_insertValueIntoStack(argNum-1, v12-1) shifts the
+                // array's elements into the slot.)  The previous code hardcoded
+                // the array at index 2, so every call that puts fixed arguments
+                // BEFORE the array lost the parameter list: admincommandd's
+                // process_admin_cmd -> call_other_arg(pure_file, "func_entry",
+                // from_info, args) handed func_entry a 2-element argument list
+                // (from_info, <array>), so its `name` parameter was undefined,
+                // find_user_by_name(undefined) answered 0, and EVERY targeted GM
+                // command replied "XXX目前不在线。".
                 auto& reg0 = objectRegistry();
                 const Value& obv = args[0];
                 const Value& funv = args[1];
-                const Value& listv = args[2];
+                const Value& listv = args.back();
                 std::string funName = funv.index() == 4 ? std::get<SharedString>(funv) : "";
                 std::vector<Value> callArgs;
                 if (listv.index() == 5) {
                     auto arr = std::get<std::shared_ptr<ArrayValue>>(listv);
-                    callArgs = arr->items;
+                    for (size_t i = 2; i + 1 < args.size(); ++i) callArgs.push_back(args[i]);
+                    callArgs.insert(callArgs.end(), arr->items.begin(), arr->items.end());
                 } else {
+                    // Not an array: the original requires int + start_argument
+                    // ("push my own arguments as para_list", vm_funCp-1's frame);
+                    // no gs call site uses that branch, so keep the historical
+                    // verbatim behaviour rather than guessing at it.
                     for (size_t i = 2; i < args.size(); ++i) callArgs.push_back(args[i]);
                 }
                 std::shared_ptr<OriginalVm> targetVm;
@@ -9005,10 +9022,35 @@ private:
             // LPCVM_INSN_FN=<fn>: every instruction of that one LPC function with
             // the stack top BEFORE it (unlike LPCVM_TRACE_FN it does not need
             // LPCVM_TRACE, which crashes gs during boot).
+            //
+            // Runtime-armed form (so the boot log stays quiet, see dynProbeFlag):
+            //     type nul > _probe_on\LPCVM_INSN
+            //     echo select_menu_item > _probe_on\LPCVM_INSN_FN.txt
+            // The name file is re-read at most once a second.  `echo` writes a
+            // trailing CRLF, which is trimmed here.
             {
                 static const char* const insnFn = LPCVM_GETENV("LPCVM_INSN_FN");
-                if (insnFn && !es_->frames.empty() && es_->frames.back().fn &&
-                    es_->frames.back().fn->name == insnFn) {
+                static const std::atomic<bool>& insnDyn = dynProbeFlag("LPCVM_INSN");
+                static std::string dynFn;
+                static int64_t dynFnAt = -1000;
+                if (insnDyn.load(std::memory_order_relaxed)) {
+                    int64_t nowMs = lpc::msSinceStart();
+                    if (nowMs - dynFnAt >= 1000) {
+                        dynFnAt = nowMs;
+                        dynFn.clear();
+                        std::ifstream f("_probe_on/LPCVM_INSN_FN.txt");
+                        if (f) {
+                            std::getline(f, dynFn);
+                            size_t b = dynFn.find_first_not_of(" \t\r\n");
+                            size_t e = dynFn.find_last_not_of(" \t\r\n");
+                            dynFn = (b == std::string::npos) ? std::string() : dynFn.substr(b, e - b + 1);
+                        }
+                    }
+                }
+                const std::string& want = !dynFn.empty() ? dynFn : std::string();
+                const char* target = want.empty() ? insnFn : want.c_str();
+                if (target && *target && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == target) {
                     std::string top = "-";
                     if (!es_->stack.empty()) {
                         const StackItem& t = es_->stack.back();
@@ -9016,7 +9058,7 @@ private:
                                       : "t" + std::to_string(t.value.index()) + ":" +
                                         to_string(resolveCrossVmRef(t.value), false).substr(0, 40);
                     }
-                    std::cerr << "[insn] " << objName_ << "::" << insnFn << " ip=" << (es_->ip - 1)
+                    std::cerr << "[insn] " << objName_ << "::" << target << " ip=" << (es_->ip - 1)
                               << " op=" << in.op << " " << actionInfo(in.op).name << " a=" << in.a
                               << " b=" << in.b << " sp=" << es_->stack.size() << " top=" << top << "\n";
                 }
@@ -15084,11 +15126,28 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
         int64_t a = toInt(from);
         int64_t b = toInt(to);
         size_t len = 0;
+        // String ranges are BYTE based, exactly like the original:
+        //   vm_queryRange (0x808fd04) does
+        //       v18 = (char *)(pString->ptr + number);
+        //       strncpy(str, v18, v16);
+        //   i.e. byte pointer arithmetic over pString->len BYTES.  LPC code
+        // relies on that everywhere it computes its own offsets with strlen /
+        // byte indexing - e.g. menu.c::set_menu_item scans the menu text byte
+        // by byte (ischinese() to step over GBK pairs) and then slices
+        // temp_content[k..(k1-1)] to get a command name; with character based
+        // slicing that substring came out as garbage ("1(x1"), so the
+        // extra_para_action map was keyed wrongly and EVERY menu item written as
+        // [label/cmd(para)] was silently swallowed by
+        // menu.c::select_menu_item's extra-para guard ("再来一份" in the GM
+        // 急急如律令 menu did nothing).  The 9111 name rule agrees:
+        // punishd::check_name_length_legal takes a whole GBK character with
+        // name[i..(i+2)-1], i.e. two BYTES.
+        // LPCVM_CHARRANGE=1 restores the old character-wise slicing (A/B).
+        static const bool charRange = (LPCVM_GETENV("LPCVM_CHARRANGE") != nullptr);
         if (container.index() == 5) len = std::get<std::shared_ptr<ArrayValue>>(container)->items.size();
         else if (container.index() == 4)
-            len = LPCVM_GETENV("LPCVM_BYTERANGE")
-                      ? std::get<SharedString>(container).size()
-                      : gbkCharCount(std::get<SharedString>(container));
+            len = charRange ? gbkCharCount(std::get<SharedString>(container))
+                            : std::get<SharedString>(container).size();
         else if (container.index() == 10)
             len = std::get<std::shared_ptr<BufferValue>>(container)->data.size();
         if (flag & 1) { if (b <= 0) b = 1; b = static_cast<int64_t>(len) - b; }
@@ -15106,10 +15165,8 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
         }
         if (container.index() == 4) {
             const std::string& s = std::get<SharedString>(container);
-            const size_t b0 = LPCVM_GETENV("LPCVM_BYTERANGE")
-                                  ? static_cast<size_t>(a) : gbkByteOffsetOfChar(s, a);
-            const size_t b1 = LPCVM_GETENV("LPCVM_BYTERANGE")
-                                  ? static_cast<size_t>(b + 1) : gbkByteOffsetOfChar(s, b + 1);
+            const size_t b0 = charRange ? gbkByteOffsetOfChar(s, a) : static_cast<size_t>(a);
+            const size_t b1 = charRange ? gbkByteOffsetOfChar(s, b + 1) : static_cast<size_t>(b + 1);
             std::string out = s.substr(b0, b1 > b0 ? b1 - b0 : 0);
             if (LPCVM_GETENV("LPCVM_RANGE2")) {
                 static int rngN = 0;
