@@ -110,6 +110,14 @@ std::string vmchainTextOf(const void* vm);
 // chain ends; bounded by timeoutMs so a stuck command cannot wedge the reader
 // thread forever (returns false on timeout).
 bool waitClientCommandIdle(int64_t clientNo, int timeoutMs);
+// Wall clock in MICROseconds for the reply-delivery probes (LPCVM_FLOW).
+int64_t usNow();
+// The reply-delivery state machine (LPCVM_FLOW=1): one line per park, wake
+// and inbound internal packet, microsecond stamped so "how long did the
+// parked chain wait for THIS reply" is a number instead of a theory.
+void flowProbePark(const char* key, const char* fn);
+void flowProbeWake(const char* key, const char* fn);
+void flowProbeReply(int64_t cno, int64_t cmd, int64_t len);
 // Signalled by the probe whenever a command chain ends (used by the gate).
 void chainWaitNotify();
 // Active-command reference counting (see the comment on the implementation):

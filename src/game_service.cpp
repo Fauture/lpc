@@ -13236,6 +13236,12 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
 // 4=WAIT_BODY.  The receiver reads the 12-byte header (Code/checkSum/tickCount/
 // msgLen/cmdNo), then msgLen-12 body bytes, then dispatches.
 void feedClient(GameClient& cl, const char* data, size_t n) {
+    // Reply-delivery probe (LPCVM_FLOW): a packet on an INTERNAL connection
+    // (dba/ccs/aaa link) is the reply that resumes a parked chain.  Logged at
+    // the moment it reaches the packet layer, so the park/wake/reply lines can
+    // be put on one timeline.
+    if ((cl.attrib & ATTRIB_CLIENT_USER) == 0 && n > 0)
+        lpc::flowProbeReply(cl.clientNo, cl.pendingCmd, static_cast<int64_t>(n));
     liveness().pktsIn.fetch_add(1, std::memory_order_relaxed);
     if (std::getenv("LPCVM_TRACE"))
         std::cerr << "[game] feed client=" << cl.clientNo << " n=" << n
