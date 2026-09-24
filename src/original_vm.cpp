@@ -277,6 +277,8 @@ std::vector<std::string> envLodgerKeys(const std::string& containerKey);
 size_t envCountObjKeys();
 // Registry-key normalizer used by destructObjectByKey (defined far below).
 namespace { std::string canonicalObjKey(const std::string& key); }
+// Frees objects whose destruct_object was deferred while they were executing.
+void flushPendingFrees(const void* proc);
 
 namespace {
 // aggregates wall time of the whole lookup helpers to size the linear suffix
@@ -1112,6 +1114,9 @@ struct PendingThread {
     std::shared_ptr<ClosureValue> closure;
 };
 class OriginalVm;
+// The VM that issued the builtin efun being executed (set next to
+// stubCallCtx); destruct_object uses it for the execRef test.
+thread_local const OriginalVm* t_efunCallerVm = nullptr;
 // Registry reverse index (implemented after ObjectRegistry; declared
 // here because the registry maps below maintain it from their own
 // operations, so no registration site can forget to update it).
@@ -2590,6 +2595,16 @@ public:
         if (!es_->frames.empty() && !es_->frames.back().thisNameOverride.empty())
             return es_->frames.back().thisNameOverride;
         return thisObjectName_;
+    }
+    // vm_destructObject's execRef > 0 test: is `key` the identity of this VM
+    // or of any frame on its stack (cross-object calls run INLINE with a
+    // per-frame this-object override)?
+    bool stackRunsAs(const std::string& key) const {
+        if (!es_) return false;
+        if (!es_->frames.empty() && thisObjectName_ == key) return true;
+        for (const auto& fr : es_->frames)
+            if (fr.thisNameOverride == key) return true;
+        return false;
     }
     const OriginalObject* currentThisObj() const {
         if (!es_->frames.empty() && es_->frames.back().thisObjOverride)
@@ -6594,6 +6609,7 @@ private:
                                    ? "<global>" : es_->frames.back().fn->name;
             // ... and its exact instance key (destruct_object(this_object())).
             stubCallCtx().key = thisObjectName_;
+            t_efunCallerVm = this;
             if (envFlagTail() && nm == "printf" && !args.empty() &&
                 args[0].index() == 4 &&
                 std::get<SharedString>(args[0]).str().find("to be scanned, interval") != std::string::npos) {
@@ -16026,6 +16042,8 @@ void Scheduler::run() {
                 t_schedClientNo = prevSched;
             }
             lpc::cmdActiveDetach(p->clientNo);
+            // vm_endForBackend: free what destruct_object deferred while it ran.
+            if (p->done) flushPendingFrees(p.get());
             if (p->done) {
                 lpc::vmchainRunExit(p->chainSeq, false);
                 lpc::vmchainEnd(p->clientNo, p->chainSeq,
@@ -18527,6 +18545,62 @@ std::vector<std::shared_ptr<OriginalVm>>& destroyedVmPark() {
     return v;
 }
 
+// The pending-free list of vm_destructObject (0x80b1894): an object that is
+// still executing (execRef > 0) is NOT freed by destruct_object - only flagged
+// (0x4000); it stays in the object hash table with its variables until it has
+// left every stack, and vm_freeObjectsInDestructingList frees it at the end
+// of the backend cycle (vm_endForBackend).  So code that runs AFTER
+// destruct_object(this_object()) in the same thread still works: charge
+// items' apply() does consume_amount(1) (-> set_amount(0) ->
+// destruct_object(this_object())) and THEN
+//     send_text(0, sprintf("你使用了#R%s#n。", get_name()))
+// Unregistering at once made get_name() (this_object()->query("name"))
+// return 0, so using the LAST item of a stack printed "你使用了0".
+// Here: the destructors run at once (vm_f_destruct_object2), only the
+// registry removal waits for the scheduler process that issued it to finish.
+struct PendingFree {
+    std::string key;
+    const void* proc;
+};
+static std::vector<PendingFree>& pendingFrees() {
+    static std::vector<PendingFree> v;
+    return v;
+}
+static void unregisterDestructed(const std::string& key, const std::shared_ptr<OriginalVm>& vm) {
+    auto& reg = objectRegistry();
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        auto it = reg.vms.find(key);
+        if (it == reg.vms.end() || it->second != vm) return;   // re-registered meanwhile
+        reg.vms.erase(key);          // IndexedVmMap::erase(const std::string&)
+        reg.objects.erase(key);      // IndexedObjMap::erase(const std::string&)
+        reg.initialized.erase(key);
+    }
+    regIndexUnregister(key);
+    auto& park = destroyedVmPark();
+    park.push_back(vm);
+    if (park.size() > 512) park.erase(park.begin(), park.begin() + 256);
+}
+void flushPendingFrees(const void* proc) {
+    auto& pf = pendingFrees();
+    if (pf.empty()) return;
+    std::vector<PendingFree> now;
+    for (auto it = pf.begin(); it != pf.end();) {
+        if (it->proc == proc) { now.push_back(*it); it = pf.erase(it); }
+        else ++it;
+    }
+    auto& reg = objectRegistry();
+    for (auto& e : now) {
+        std::shared_ptr<OriginalVm> vm;
+        {
+            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+            auto it = reg.vms.find(e.key);
+            if (it != reg.vms.end()) vm = it->second;
+        }
+        if (vm) unregisterDestructed(e.key, vm);
+    }
+}
+
 bool destructObjectByKey(const std::string& keyIn) {
     if (keyIn.empty()) return false;
     auto& reg = objectRegistry();
@@ -18562,18 +18636,14 @@ bool destructObjectByKey(const std::string& keyIn) {
         // EVERY inherited destructor must run (see callDestructors).
         vm->callDestructors(lifeOn);
     }
-    {
-        std::lock_guard<std::recursive_mutex> rl(registryMutex());
-        reg.vms.erase(key);          // IndexedVmMap::erase(const std::string&)
-        reg.objects.erase(key);      // IndexedObjMap::erase(const std::string&)
-        reg.initialized.erase(key);
+    const void* proc = scheduler().currentProcessShared().get();
+    const bool executing = proc &&
+        ((t_efunCallerVm && t_efunCallerVm->stackRunsAs(key)) || vm->stackRunsAs(key));
+    if (executing) {
+        pendingFrees().push_back(PendingFree{key, proc});
+        return true;
     }
-    regIndexUnregister(key);
-    {
-        auto& park = destroyedVmPark();
-        park.push_back(vm);
-        if (park.size() > 512) park.erase(park.begin(), park.begin() + 256);
-    }
+    unregisterDestructed(key, vm);
     return true;
 }
 

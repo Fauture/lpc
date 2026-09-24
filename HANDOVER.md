@@ -2398,3 +2398,16 @@ socket 唤醒会标记 `eventWoken`，过期定时器不会再把进程重复入
 
 `_rdp.py auto`：新账号的角色列表上叠着「帐号安全级别」提示，签名最近的是 `dialog`，旧逻辑会把账号
 密码又敲进角色界面。现在 dialog 只按一次 ENTER，仍非登录界面就当作角色列表继续建角。
+
+### 2026-09-24 追加：用完最后一个血池提示「你使用了0」（已修，真机验证）
+
+根因：charge 道具的 `apply()` 先 `consume_amount(1)`（数量到 0 → `set_amount(0)` → `destruct_object(this_object())`），
+**之后**才 `send_text(0, sprintf("你使用了#R%s#n。", get_name()))`；我们的 destruct 立刻把对象从注册表删掉，
+`get_name()`（= `this_object()->query("name")`）拿到 0。法灵珑一类先把名字存进局部变量再扣数量，所以不受影响——
+这就是“只有部分道具”的原因，而且只在用掉**最后一个**时出现。
+原版（IDA `vm_destructObject` 0x80b1894）：对象还在执行（execRef>0）时只打 0x4000 标记，不释放、不出哈希表，
+等离开所有栈后由 `vm_freeObjectsInDestructingList` 在 `vm_endForBackend` 统一释放。
+修复（`src/original_vm.cpp`）：析构函数照旧立即执行；若对象还在当前执行栈上（`OriginalVm::stackRunsAs`，
+含内联跨对象调用的 per-frame this 覆盖），注册表摘除推迟到发起它的调度器进程结束（`flushPendingFrees`）。
+真机：账号 16 角色 xuechia 商城买血池（数量 1）→ 右键使用 → 聊天「你使用了血池。」，背包格子消失；
+服务端 `[send] … user.o::send_text` 正文 `你使用了#R血池#n。`。
