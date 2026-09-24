@@ -2477,6 +2477,16 @@ name.c/import.c 的前向声明…）在里面是**零字节 dlt 占位条目**�
 `LPCVM_CFUDBG=<函数名子串>`（该函数里每次 `call_in_user_fun` 的 raw/off/解析到的名字+字节数）、
 `LPCVM_OPOBJ`/`LPCVM_OPMAX`（把 `LPCVM_OPFN` 的逐指令跟踪限定到某个对象/放大行数上限）。
 
-**待办**：真机在王老板处再买 100 棵止血草 —— 预期 `have_same_iid` 不再出现、第二件正常入包（客户端 100 个，
-`0x5103` 两次），且背包/仓库/商城等依赖 iid 的链路无回归。
+**真机验证（fix3，用户真实客户端，同一构建）**：用户连续在王老板处购买多次/多件均正常（「现在已经可以购买多个了」）。
+服务端日志：`buy_goods` 命中 18 次；`put_in_container` HIT=23 / MISS=0、`separate` HIT=34 / MISS=0、
+`move_to_bag` HIT=191 / MISS=0、`set_amount` HIT=30 —— 拆分出来的第二堆正常走完 `put_in_container`；
+**`have_same_iid` = 0**（重复 iid 守卫一次都没触发），整份日志 **MISS = 0**（修复前这类静默丢调用是固定出现的）。
+（注：该次启动只开了 `LPCVM_IIDQ`，没开 `LPCVM_SEND`/`LPCVM_FNTRACE`，所以没有 `[send] cmd=0x5103` 与
+`[fn] ENTER put_in_container` 明细行；包级证据见 buy3 对照。）
+
+**顺带记下的另一条（本次未改，与本 bug 不冲突）**：`buy3` 里 #17472 是在**自己的 `move_to_bag` 帧仍在栈上**时
+被 `destruct_object` 掉的，注册表条目却是**立刻**消失的 —— 说明 `destructObjectByKey` 里那个
+`executing`（`stackRunsAs`）判定在这次调用形态下没命中。原版（IDA `vm_destructObject` 0x80b1894）此时只打
+0x4000 标记、对象仍留在哈希表里可被 call_other 找到。iid 修好后这条路径不再被触发，但两版语义仍有差距，
+值得以后单独核对（尤其是"从别的对象发起、目标对象在自己栈上"这种形态）。
 
