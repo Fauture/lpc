@@ -2490,3 +2490,46 @@ name.c/import.c 的前向声明…）在里面是**零字节 dlt 占位条目**�
 0x4000 标记、对象仍留在哈希表里可被 call_other 找到。iid 修好后这条路径不再被触发，但两版语义仍有差距，
 值得以后单独核对（尤其是"从别的对象发起、目标对象在自己栈上"这种形态）。
 
+### 2026-09-25 追加：GM 操作全部无效（查询在线 / 切换隐身…）——已修，真机验证
+
+**现象**：客户端 GM 面板点任何指令都没反应，服务端**没有任何报错**。日志里能看到客户端确实发了
+`[pkt] analyse cmd=0x2314 NO INTERFACE`（`0x2314 = vm_cmdAdminCommonCommand`，5 次）。
+
+**链路**（先排除掉不相关的两处）：
+`0x2314 → game_service 的 kCmdList（有 `handle_vm_cmdAdminCommonCommand`，attrib=CLIENT_USER 不拦）
+→ start_gs.c::cmd_admin_common_command → admincommandd.c::dispatch_command`
+→ `find_user_by_client` → `me->valid_grant()`（`grantd::valid_grant(me, 0)`，任何在线玩家都过）
+→ `get_args(buf)` → `gmthreadd.c::invoke(closure)` → `commandd::process_command(me, args[0], ...)`。
+
+**根因（IDA 核对 + 真机取证）**：`admincommandd.c::get_args()` 靠**buffer 的索引与范围切片**拆参数：
+```c
+len = buf[used_len];
+arg = (string)buf[(used_len + 1)..(used_len + len)];
+```
+原版 `vm_queryMember`（0x808fa60）里有明确的 `if (type == 5)`（buffer）分支：
+`v2[1].v.number = pBuffer->ptr[idx]; v2[1].type = 2;` —— **buffer 取值返回该字节的整数**。
+我们的 `queryMemberValue()` 只处理了 mapping / array / string，**漏了 buffer**，于是 `buf[i]` 恒为
+`undefined` ⇒ `len` 恒为 0 ⇒ `arg` 每次都是 `buf[i+1 .. i]` 这个**倒序空区间**（原版 `vm_queryRange` 的
+buffer 分支对 `number > v4` 给空 buffer，0x808fd04）⇒ `args` = 一串空串 ⇒ `args[0] == ""` ⇒
+`process_command` 按名查不到任何指令 ⇒ **整条 GM 链路静默什么都不做**。
+（这也解释了为什么"没报错"：空指令名既不抛错也不回包。）
+
+**修复**（`src/original_vm.cpp` `queryMemberValue()`）：补上 buffer 分支，`buf[i]` 返回该字节的 int，
+与 string 索引同语义；越界仍按本引擎既有约定返回 undefined（原版此处 `vm_error("Index out of range")`，
+已在注释里写明差异）。
+
+**真机验证（gm1，用户真实客户端）**：切换隐身恢复正常。日志直接给出 `get_args` 的解析结果：
+```
+[fn] ENTER  get_args a0=t10::1161646D696E5F736861646F775F73656C66:      ← 11 "admin_shadow_self"
+[fn] RETURN get_args ret=({"admin_shadow_self"})
+[fn] RETURN get_args ret=({"admin_set_attrib", "awfGM", "26748", "icon", "6002"})
+[fn] RETURN get_args ret=({"admin_query_big_icon", "awfGM", "26748"})
+```
+（修前同一探针下 `args[0]` 只会是空串。）启动正常、4 进程、8160 监听、无 `[crash]`、MISS=0。
+
+**同族未完项（记下）**：`makeMemberRef()` 只支持 array / mapping，string 与 buffer 的**成员写入**
+（`s[i] = c` / `buf[i] = n`，opcode 68 query_member_ptr）仍无对应实现 —— 本次只修了读路径（GM 链路只用读）。
+原版 `vm_queryMemberPtr`（0x808f8e4）对 type 5（buffer）是有分支的，以后遇到"往字符串/缓冲区里写字节无效"
+的现象可以顺着这条查。
+
+

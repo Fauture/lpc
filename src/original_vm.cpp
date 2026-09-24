@@ -15029,6 +15029,26 @@ private:
                 return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
             return Value{};   // OOB -> original type 0 "undefined"
         }
+        if (container.index() == 10) {
+            // BUFFER indexing yields the BYTE as an int, exactly like string
+            // indexing - vm_queryMember (0x808fa60) has an explicit
+            // `if (type == 5)` (buffer) branch doing
+            // `v2[1].v.number = pBuffer->ptr[idx]; v2[1].type = 2;`.
+            // Without it a buffer read answered undefined, so
+            // admincommandd::get_args()'s
+            //     len = buf[used_len];
+            //     arg = (string)buf[(used_len + 1)..(used_len + len)];
+            // read len=0 for every segment: each argument became an empty
+            // string, `commandd::process_command(me, "", ...)` matched no
+            // command, and EVERY GM command (查询在线 / 隐身 / ...) silently did
+            // nothing with no error anywhere.
+            const std::string& s = std::get<std::shared_ptr<BufferValue>>(container)->data;
+            int64_t i = toInt(key);
+            if (i >= 0 && i < static_cast<int64_t>(s.size()))
+                return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
+            return Value{};   // OOB -> undefined (the original vm_errors here;
+                              // undefined matches this engine's array/string OOB)
+        }
         return Value{};
     }
 
