@@ -254,6 +254,13 @@ bool destructObjectByKey(const std::string& key);
 // destruct_object(this_object())).
 std::string regKeyOfObjectPtr(const void* objPtr);
 
+// object_template()'s template key for a registered object ("" when unknown or
+// when the object has no template).  Diagnostic accessor: a clone must be built
+// with the BASIC OBJECT as its template - basic_object.c::create() takes
+// my_import_name from it, and iid.c::create_iid()'s `query("combined")` guard
+// resolves through basic_object() -> find_basic_object_by_import_name(name).
+std::string objectTemplateKey(const std::string& key);
+
 // Milliseconds since this process started, from ONE shared origin so that
 // timestamps printed by different probes ([recv-accept] in game_service.cpp,
 // [send] in builtins.cpp, [life]/[room] in original_vm.cpp) are directly

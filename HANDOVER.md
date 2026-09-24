@@ -131,8 +131,7 @@
   - 它会先跑 `_dbclear.py` 清库；`env['LPCVM_TAIL']='1'`、`env['LPCVM_MEM2']='1'` **强制打开**（想关日志要改脚本）
   - 额外探针通过 `$env:EXTRA_LPCVM='A,B,C=value'`（支持 `KEY=VALUE`，已改）
 - MySQL：`192.168.200.128:3306` root/123456，库 `dl_ddb_1_test`（每轮清库重建）
-- 账号：GM `a/a`、`b/b`、`11/1`、`12/1`、`23/1`（privilege 1000，登录后 set_privilege=300）；普通 `1/1`
-  - 密码公式：`md5(account + MD5hex(pwd) + "20070201")` 大写
+- 账号：GM `a/a`、`b/b`、`1-100/账号即密码`（privilege 1000，登录后 set_privilege=300）；普通 `1/1`
 - 编译（**必须先杀进程，exe 会被锁**）：
   ```powershell
   Get-Process lpcvm,cl,MSBuild | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 3
@@ -357,7 +356,6 @@ string create_menu_content(mixed default_content, object me, object ob) {
 
 **辅助结论（顺手修好的，别回退）**：
 - `queryRangeValue` 原来按**字节**切字符串 → 名字校验 `punishd.check_name_length_legal` 的 `name[i..i]` 拿不到整字，查 `str_digit_num` 永远失配 → **任何中文名都报 9111**。已改为按 GBK 字符切（`gbkCharLenAt`/`gbkCharCount`/`gbkByteOffsetOfChar`；可用 `LPCVM_BYTERANGE=1` 回退对比）。
-- 登录被拒 `9007 服务期已到` 的根因：**`dl_mdb_1.acc_info` 表是空的**。已给 `1/11/12/23/a/b` 插入 `expired_time='20301231235959'`（脚本 `_dbaccfix.py`）。GM 账号另有「GM必用字符」要求，用普通账号 `1/1` 建角即可（角色名在 `_login_full2.py` 里，成功判据：`F061 count=1` 且重名回 `9113`）。
 - **测试脚本端口**：`_enter_probe.py`/`_login_full2.py`/`_talk_test.py` 连 **aaa 8001**（不是 8160），登录链路全在 aaa。
 - **单实例守卫**：所有启动器（`_run_bench/_run_func/_run_talk/_npc_run/_run_keep2/_run_probe`）启动前先杀残留 + 检查 8001/8110/8120/8160 是否被占，被占则拒绝启动。两组实例并存会互相清库，曾导致一次错误的根因结论。
 
@@ -1910,6 +1908,8 @@ python -X utf8 _run_keep2.py regressXXX > _bootXXX.txt 2>&1   # 后台跑，~15 
 - 复跑测量命令（本轮用的）：`python -X utf8 _run_bench.py <logdir> <秒数>`，它自己清库、起 4 个服务、每 15s 打一次 `8160=` 和 gs 内存。
 
 
+> **调试方法（探针速查、定位思路、协议复现脚本、xperf 剖析、编辑坑）见 `docs/调试方法.md`。**
+
 > IDA MCP 的用法见 `docs/ida_mcp_使用.md`（连接 127.0.0.1:13337、`_idamcp.py`、efun 地址表 `_efun_table.txt`、反编译流程与示例）。
 
 
@@ -1958,11 +1958,13 @@ python -X utf8 _run_keep2.py regressXXX > _bootXXX.txt 2>&1   # 后台跑，~15 
 
 **必须先对客户端操作**（RDP 已连接、客户端窗口存在时，一律先用真实客户端跑登录/游戏内验证）：
 
+
 1. 判断 RDP 是否可用：`qwinsta` 能看到 `rdp-tcp#` 会话、且 `_rdp.py rect` 能找到客户端窗口；
 2. **可用 → 走客户端**：`python -X utf8 _rdp.py auto <账号> <密码> <角色名>`（起客户端→登录→建角→进游戏），
    截图用 `python -X utf8 _shot.py out.jpg 800 60 client`（压缩后再看）；
 3. **只有 RDP 没连接、或反复确认客户端操作必定做不到时**（例如客户端窗口不存在、
    反外挂弹窗无法越过、注入输入被拒），才退回**模拟脚本**验证登录：
+4. 测试账号为1-100共100个账号,密码则是账号,即1密码为1 100密码为100
 
 ```
 python -X utf8 _login_full.py 192.168.200.1 8001 <账号> <密码>      # 建号/登录/进图
@@ -2427,3 +2429,54 @@ socket 唤醒会标记 `eventWoken`，过期定时器不会再把进程重复入
 新增探针：`LPCVM_INSN_FN=<函数名>`（该函数逐指令 + 栈顶值，不依赖会让 gs 崩的 LPCVM_TRACE）；
 `_probe_on\LPCVM_CVREF`（运行时开关，CrossVmRef 每次读写的目标 VM/槽/栈大小/格子形态）。
 真机：用户在钱老板处存入药品×20 与天道神符后取出，均回到背包（日志 can_carry=1 → separate → move_to_bag）。
+
+### 2026-09-25 追加：王老板处买 100 棵止血草只到 99（钱照扣）——已修（机制已实测，待真机复买）
+
+**日志口径（buy3）**：不是「查到了但执行被吞掉」，而是**查不到对象**：
+`[callother] clone key=clone:gs/clone/item/medicine/basic.o#17472 fn=put_in_container -> MISS (not registered: call dropped)`。
+该克隆在 `67107–67149` 还是 HIT，`67151` 起全部 MISS —— 它在自己的 `move_to_bag` 帧里被
+`destruct_object` 掉了（`67148` 打出 `have_same_iid`，level=3/type=item 正是
+`itemcheckd::do_when_iid_duplicated` 那一行；重复的另一件是 99 个那堆 #17471）。
+
+**链条**：`dealer.c::buy_goods_ex` 的可叠加分支把库存对象的 dbase 整份复制给每一件
+（`dup(obj->query_entire_dbase())` + `replace_entire_dbase`），它与不可叠加分支（1139 行
+`dup_dbase["iid"] = ob->query("iid")`）不同，**不重盖自己的 iid** —— 因为按设计可叠加道具本来就不该有 iid
+（`item.c::save_to_text` 里 `if (query("combined")) { if (get_iid()) delete("iid"); }`，
+`iid.c::repair_iid` 同）。两件因此共用一个 iid → 第二件被判重复 → 销毁 → 后续 `new_item->put_in_container()`
+查注册表 MISS → 静默返回 0，而 `move_to_dest` 仍返回 1 → 提示「购买成功」，钱扣了、件丢了。
+
+**根因（本次实测，不是推断）**：`iid.c::create_iid()` 的守卫 `if (query("combined")) return;` 在**调用解析**上就是坏的。
+`.o` 的函数表是「整个 constitution 的表」，只*引用*别处定义的函数（iid.c 的 `query`/`lite_set`、
+name.c/import.c 的前向声明…）在里面是**零字节 dlt 占位条目**；`call_in_user_fun` 用 `raw + frame.funOffset`
+直接查这张表，落到占位条目上就等于**什么都不做**。实测（`LPCVM_CFUDBG=create_iid`）：
+
+```
+[cfu] fn=create_iid raw=2 off=72 idx=74 -> query    bytes=0     ← 空壳：守卫恒不成立
+[cfu] fn=create_iid raw=5 off=72 idx=77 -> lite_set bytes=0     ← 空壳：iid 根本没写进 dbase
+（真实实现：idx=7 query bytes=30 = dbase.c，idx=67 query bytes=50 = basic_object.c 的覆盖版）
+```
+
+于是每个 item 克隆的 `create_iid` 都会 `make_iid()` 拿到一个 iid：`LPCVM_IIDQ` 实测
+**345 个 medicine/basic.o 克隆里 344 个被发了 iid**（含商店库存那种「从 basic object 克隆」的对象），
+所以 `dup(obj->query_entire_dbase())` 复制出来的每一件都带同一个 iid。原版驱动会把这类 dlt 引用解析到
+定义它的 constitution 的真实函数，所以原版守卫成立、可叠加道具没有 iid、也不会触发这条销毁路径。
+
+**修复**（`src/original_vm.cpp` `mergeInheritedFunctions()`）：走完 inherit 之后，
+把每个**零字节**条目按**同名**重指到真实实现（优先对象自身/root 表里的定义，其次 ancestors-first
+遍历中最后合并的那个 = 最派生），与既有「前向声明不得遮蔽实现」同一原则。
+`LPCVM_NO_DLTFIX=1` 可回退到旧行为做 A/B。
+
+**验证（fix2/fix3 清库启动）**：`[cfu] … idx=74 -> query bytes=50`、`idx=77 -> lite_set bytes=10`
+（空壳已重指到真实实现）；被发 iid 的 medicine 克隆 **344 → 70**，且那 70 个是**同一段连续 id（84..153）**，
+即 `basic_objectd` 用「裸程序对象」克隆出来的 70 个 basic object 原型——它们在 create 阶段本来就拿不到
+`combined`（定义是 create 之后由 `init_basic_object` 并进 dbase 的），两个引擎都一样，且永远不发到玩家手里；
+商店库存/玩家道具那一类「从 basic object 克隆」的对象**已经完全不发 iid**。
+启动 447s、4 进程、8160 监听、`_login_full.py` 0x4124→0x211B→0xF061 正常、无 `[crash]`、MISS=0。
+
+**探针**（都 env 开关）：`LPCVM_IIDQ`（谁在拿 iid + 它的 template，含一次性 `[qidx]`/`[qbind]` 绑定转储）、
+`LPCVM_CFUDBG=<函数名子串>`（该函数里每次 `call_in_user_fun` 的 raw/off/解析到的名字+字节数）、
+`LPCVM_OPOBJ`/`LPCVM_OPMAX`（把 `LPCVM_OPFN` 的逐指令跟踪限定到某个对象/放大行数上限）。
+
+**待办**：真机在王老板处再买 100 棵止血草 —— 预期 `have_same_iid` 不再出现、第二件正常入包（客户端 100 个，
+`0x5103` 两次），且背包/仓库/商城等依赖 iid 的链路无回归。
+

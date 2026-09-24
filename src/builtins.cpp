@@ -6313,6 +6313,30 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         out += static_cast<char>((seq >> 16) & 0xFF);
         out += static_cast<char>((seq >> 8) & 0xFF);
         out += static_cast<char>(seq & 0xFF);
+        // LPCVM_IIDQ: who is being handed an IID, from which LPC function.
+        // iid.c::create_iid() is guarded by `if (query("combined")) return;`, so
+        // a line naming a *combined* item here means that guard let it through.
+        if (LPCVM_GETENV("LPCVM_IIDQ")) {
+            static const char* const hxq = "0123456789ABCDEF";
+            std::string h;
+            for (unsigned char c : out) { h += hxq[c >> 4]; h += hxq[c & 0xF]; }
+            // Also report the object's TEMPLATE: basic_object.c::create() takes
+            // my_import_name from object_template(), and iid.c::create_iid()'s
+            // `if (query("combined")) return;` guard resolves through
+            // basic_object() -> find_basic_object_by_import_name(my_import_name).
+            // A template that is the bare program ("pak:...") instead of the
+            // BASIC OBJECT clone leaves my_import_name empty, so the guard sees
+            // no `combined` and hands a stackable item an IID it must not have.
+            std::string tmpl = "-";
+            {
+                std::string t = lpc::objectTemplateKey(stubCallCtx().key);
+                tmpl = t.empty() ? "<none>" : t;
+            }
+            std::cerr << "[iidq] make_iid by=" << stubCallCtx().key
+                      << "::" << stubCallCtx().fn << " iid=" << h
+                      << " tmpl=" << tmpl << "\n";
+            std::cerr.flush();
+        }
         return make_buffer(out);
     }
     if (name == "isupper") {

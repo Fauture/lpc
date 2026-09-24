@@ -4106,6 +4106,18 @@ private:
             return std::make_shared<OriginalObject>(loadOriginalObject(cand));
         };
         std::map<std::string, std::shared_ptr<OriginalObject>> loaded;
+        // Code-bearing implementations by NAME: the constitution's function
+        // table also carries zero-byte DLT placeholders for functions defined in
+        // ANOTHER constitution, and a call site can land on a placeholder (see
+        // the repointing pass after the walk).
+        //   ownByName  - the object's own (root-table) definitions, most derived;
+        //   inhByName  - inherited ones; the walk is ancestors-first, so the
+        //                LAST one merged is the most derived implementation.
+        std::map<std::string, const OriginalFunction*> ownByName;
+        for (auto& kv : funcsByIndex_)
+            if (kv.second && !kv.second->code.empty())
+                ownByName.emplace(kv.second->name, kv.second);
+        std::map<std::string, const OriginalFunction*> inhByName;
         std::function<void(const OriginalObject&, int, int)> walk;
         walk = [&](const OriginalObject& parent, int accFun, int accVar) {
             for (const auto& inh : parent.inherits) {
@@ -4151,6 +4163,7 @@ private:
                         inhFn->funOffset = funOff;
                         inheritedFuncs_.push_back(inhFn);
                         funcsByIndex_[childIndex] = inhFn.get();
+                        if (!inhFn->code.empty()) inhByName[inhFn->name] = inhFn.get();
                     } else if (!fn.code.empty() && existing->second->code.empty()) {
                         // An inherited forward declaration (empty code, e.g.
                         // name.c/import.c declaring `mapping query_entire_dbase();`
@@ -4169,11 +4182,78 @@ private:
                         inhFn->funOffset = funOff;
                         inheritedFuncs_.push_back(inhFn);
                         existing->second = inhFn.get();
+                        if (!inhFn->code.empty()) inhByName[inhFn->name] = inhFn.get();
                     }
                 }
             }
         };
         walk(obj_, 0, 0);
+        // Repoint every zero-byte entry that has a real implementation of the
+        // SAME NAME.  The .o's function table is the whole constitution's table:
+        // a program that merely REFERENCES a function defined in another
+        // constitution (iid.c's `query` / `lite_set` / `query_entire_dbase`,
+        // name.c's forward declarations, ...) contributes a ZERO-BYTE
+        // placeholder for it, and call_in_user_fun resolves the raw operand
+        // against exactly that table.  A call site that lands on a placeholder
+        // silently does nothing - measured on iid.c::create_iid():
+        //     [cfu] fn=create_iid raw=2 off=72 idx=74 -> query    bytes=0
+        //     [cfu] fn=create_iid raw=5 off=72 idx=77 -> lite_set bytes=0
+        // so `if (query("combined")) return;` never fired and `lite_set("iid",
+        // make_iid(...))` wrote nothing.  The original driver resolves these DLT
+        // references to the defining constitution's function; substitute the
+        // real implementation here (own/root definitions first, then the
+        // most-derived inherited one - the same precedence as an override).
+        // LPCVM_NO_DLTFIX restores the old (placeholder-hits-stub) behaviour for
+        // A/B, matching the other LPCVM_NO_* switches.
+        static const bool noDltFix = (LPCVM_GETENV("LPCVM_NO_DLTFIX") != nullptr);
+        if (!noDltFix)
+        for (auto& kv : funcsByIndex_) {
+            const OriginalFunction* f = kv.second;
+            if (!f || !f->code.empty()) continue;
+            auto own = ownByName.find(f->name);
+            if (own != ownByName.end()) { kv.second = own->second; continue; }
+            auto inh = inhByName.find(f->name);
+            if (inh != inhByName.end()) kv.second = inh->second;
+        }
+        // LPCVM_IIDQ (item objects): which implementation of `query` /
+        // `query_entire_dbase` actually WON each merged index.  Many programs
+        // in the item chain declare the same name (basic_object.c::query is the
+        // override with the basic-object fallback, dbase.c::query the base
+        // implementation); the merged table keeps only ONE per index, and
+        // iid.c::create_iid()'s `query("combined")` is compiled to a fixed
+        // index - so the winner decides whether a `combined` item is spared an
+        // IID at creation time.
+        if (LPCVM_GETENV("LPCVM_IIDQ") && obj_.sourceName.find("item/medicine/basic") != std::string::npos) {
+            static bool dumped = false;
+            if (!dumped) {
+                dumped = true;
+                // Low indices first: iid.c's bytecode calls inherited functions
+                // by small absolute indices, so name them explicitly.
+                for (int i = 0; i <= 12; ++i) {
+                    auto it = funcsByIndex_.find(i);
+                    std::cerr << "[qidx] idx=" << i << " "
+                              << (it == funcsByIndex_.end() || !it->second
+                                      ? std::string("<none>")
+                                      : it->second->name + " bytes=" +
+                                            std::to_string(it->second->code.size()) +
+                                            " funOff=" + std::to_string(it->second->funOffset))
+                              << "\n";
+                }
+                for (auto& kv : funcsByIndex_) {
+                    const OriginalFunction* f = kv.second;
+                    if (!f) continue;
+                    if (f->name != "query" && f->name != "query_entire_dbase" &&
+                        f->name != "query_temp" && f->name != "lite_query")
+                        continue;
+                    std::cerr << "[qbind] idx=" << kv.first << " " << f->name
+                              << " bytes=" << f->code.size()
+                              << " funOff=" << f->funOffset
+                              << " varOff=" << f->varOffset
+                              << " src=" << obj_.sourceName << "\n";
+                }
+                std::cerr.flush();
+            }
+        }
     }
 
     // ---- stack primitives (top = back of vector) ----
@@ -9121,21 +9201,49 @@ private:
             }
             // LPCVM_OPFN=<substr>: per-instruction trace (operand + stack top)
             // of matching LPC functions.  Diagnostic only; capped per function.
+            // LPCVM_OPOBJ=<substr>[,<substr>...]: extra object-name filter, so
+            // the cap is spent on the object under investigation instead of on
+            // whichever object happened to be constructed first (create_iid runs
+            // for every item/monster clone, and the first 20 calls ate the whole
+            // 400-line budget before any medicine clone appeared).
+            // LPCVM_OPMAX=<n>: per-function line cap (default 400).
             {
                 static const bool opFnOn = (LPCVM_GETENV("LPCVM_OPFN") != nullptr);
                 if (opFnOn && !es_->frames.empty() && es_->frames.back().fn) {
                     static const char* const opFnFlt = LPCVM_GETENV("LPCVM_OPFN");
+                    static const char* const opObjFlt = LPCVM_GETENV("LPCVM_OPOBJ");
+                    static const int opMax = [] {
+                        const char* v = LPCVM_GETENV("LPCVM_OPMAX");
+                        return v ? std::atoi(v) : 400;
+                    }();
                     const std::string& tfn = es_->frames.back().fn->name;
-                    if (opFnFlt && *opFnFlt && tfn.find(opFnFlt) != std::string::npos) {
+                    bool objOk = true;
+                    if (opObjFlt && *opObjFlt) {
+                        objOk = false;
+                        const char* p = opObjFlt;
+                        while (*p) {
+                            const char* comma = std::strchr(p, ',');
+                            size_t n = comma ? static_cast<size_t>(comma - p) : std::strlen(p);
+                            if (n && (objName_.find(p, 0, n) != std::string::npos ||
+                                      thisObjectName_.find(p, 0, n) != std::string::npos)) {
+                                objOk = true;
+                                break;
+                            }
+                            if (!comma) break;
+                            p = comma + 1;
+                        }
+                    }
+                    if (objOk && opFnFlt && *opFnFlt && tfn.find(opFnFlt) != std::string::npos) {
                         static std::map<std::string, int> opFnCount;
                         int& oc = opFnCount[tfn];
-                        if (oc < 400) {
+                        if (oc < opMax) {
                             ++oc;
                             std::string topS = "<empty>";
                             if (!es_->stack.empty())
                                 topS = "t" + std::to_string(es_->stack.back().value.index()) + ":" +
                                        to_string(es_->stack.back().value, false).substr(0, 70);
-                            std::cerr << "[op] fn=" << tfn << " ip=" << es_->ip << " op=" << in.op
+                            std::cerr << "[op] fn=" << tfn << " this=" << thisObjectName_
+                                      << " ip=" << es_->ip << " op=" << in.op
                                       << " a=" << in.a << " b=" << in.b;
                             if (fromMeta) std::cerr << " m0=" << m0 << " m1=" << m1;
                             std::cerr << " sp=" << es_->stack.size() << " top=" << topS << "\n";
@@ -11646,6 +11754,30 @@ private:
                 if ((flags & 0x80) == 0) {
                     off = es_->frames.empty() ? 0 : es_->frames.back().funOffset;
                     if (off != 0) funIndex += off;
+                }
+                // LPCVM_CFUDBG=<fnsubstr>: name the function each
+                // call_in_user_fun actually resolves to, with the raw operand
+                // and the baseFunOffset that was added.  A raw index that names
+                // the wrong function (or NOT-FOUND) is a merged-table layout
+                // mismatch, not a logic error in the LPC being traced.
+                {
+                    static const char* const cfuFlt = LPCVM_GETENV("LPCVM_CFUDBG");
+                    if (cfuFlt && *cfuFlt && !es_->frames.empty() &&
+                        es_->frames.back().fn &&
+                        es_->frames.back().fn->name.find(cfuFlt) != std::string::npos) {
+                        auto itc = funcsByIndex_.find(funIndex);
+                        std::cerr << "[cfu] fn=" << es_->frames.back().fn->name
+                                  << " this=" << thisObjectName_
+                                  << " raw=" << (fromMeta ? m0 : static_cast<int>(static_cast<int16_t>(in.a)))
+                                  << " off=" << off << " idx=" << funIndex
+                                  << " -> " << (itc != funcsByIndex_.end() ? itc->second->name
+                                                                          : std::string("NOT-FOUND"))
+                                  << " bytes=" << (itc != funcsByIndex_.end()
+                                                       ? std::to_string(itc->second->code.size())
+                                                       : std::string("-"))
+                                  << " flags=0x" << std::hex << flags << std::dec << "\n";
+                        std::cerr.flush();
+                    }
                 }
                 if (vmEnvTrace() && !es_->frames.empty() && es_->frames.back().fn &&
                     es_->frames.back().fn->name == "save_to_text") {
@@ -17468,6 +17600,10 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
         if (vmEnvTrace() && funName == "lite_query_temp")
             std::cerr << "[lqt] tryCallOtherObject clone path=" << objectPath
                       << " hit=" << (hit ? "YES" : "NO") << "\n";
+        static const std::atomic<bool>& missOn = dynProbeFlag("LPCVM_CALLMISS");
+        if (missOn.load(std::memory_order_relaxed))
+            std::cerr << "[callother] clone key=" << objectPath << " fn=" << funName
+                      << (hit ? " -> HIT" : " -> MISS (not registered: call dropped)") << "\n";
         if (hit) return hit->callFunctionByName(funName, args);
         return make_int(0);
     }
@@ -18669,6 +18805,17 @@ void flushPendingFrees(const void* proc) {
         }
         if (vm) unregisterDestructed(e.key, vm);
     }
+}
+
+// object_template()'s template key for a registered object ("" when unknown or
+// when the object was not cloned).  Diagnostic only - see original_vm.h.
+std::string objectTemplateKey(const std::string& key) {
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    auto it = reg.vms.find(key);
+    if (it == reg.vms.end() || !it->second) return std::string();
+    auto t = it->second->templateVm();
+    return t ? t->thisObjectName() : std::string();
 }
 
 bool destructObjectByKey(const std::string& keyIn) {
