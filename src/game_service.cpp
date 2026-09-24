@@ -106,6 +106,19 @@ static void waitFlowSettled(int cno) {
 constexpr uint32_t ATTRIB_INTERNAL_COMM = 2;   // INTERNAL_COMM
 constexpr uint32_t ATTRIB_FROM_SERVER = 4;     // FROM_SERVER
 
+// Only player connections are flow-gated.  Accepted sockets start as
+// CLIENT_USER and set_client_attrib only ORs bits in (IDA
+// vm_f_set_client_attrib @0x804d0ac: newAttrib = attrib | 0x302), so a
+// server-to-server link (gs -> dba/aaa, attrib 0x303) still carries the
+// CLIENT_USER bit.  The original driver has no send-quiet wait at all (nor do
+// LDMud/FluffOS backends); the gate exists only to keep a player's next
+// command from re-entering a running one (9101/9112).  Gating internal links
+// put a >=50ms floor under every boot-time filed round trip (~5000 of them).
+static bool flowGated(uint32_t attrib) {
+    return (attrib & ATTRIB_CLIENT_USER) && !(attrib & ATTRIB_INTERNAL_COMM);
+}
+static bool clientFlowGated(int cno);   // defined after gameClients()
+
 std::mutex& gameMutex() {
     static std::mutex m;
     return m;
@@ -117,6 +130,14 @@ std::unordered_map<int, GameClient>& gameClients() {
 std::atomic<int>& nextGameClientNo() {
     static std::atomic<int> n{1};
     return n;
+}
+
+// Re-read under the lock: the packet just fed may itself have been the one
+// whose handler called set_client_attrib("internal").
+static bool clientFlowGated(int cno) {
+    std::lock_guard<std::mutex> lk(gameMutex());
+    auto it = gameClients().find(cno);
+    return it != gameClients().end() && flowGated(it->second.attrib);
 }
 
 uint16_t rd16be(const uint8_t* p) {
@@ -13621,7 +13642,7 @@ static void processGameConnection(unsigned int fdRaw) {
                             c2 = &it2->second;
                         }
                         feedClient(*c2, one.data(), one.size());
-                        waitFlowSettled(clientNo);
+                        if (clientFlowGated(clientNo)) waitFlowSettled(clientNo);
                     }
                     continue;
                 }
@@ -13874,7 +13895,7 @@ int gameServiceBindClient(int fd, uint32_t clientType) {
                         c2 = &it2->second;
                     }
                     feedClient(*c2, one.data(), one.size());
-                    waitFlowSettled(clientNo);
+                    if (clientFlowGated(clientNo)) waitFlowSettled(clientNo);
                 }
                 continue;
             }
