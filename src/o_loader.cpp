@@ -150,6 +150,15 @@ std::string actionName(uint8_t op) {
     return "unknown";
 }
 
+uint64_t lpcNameHash(const std::string& s) {
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char ch : s) {
+        h ^= ch;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
 OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
     Reader r{data};
     OriginalObject obj;
@@ -280,6 +289,9 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
         for (auto& fn : obj.functions)
             if (!fn.strings) fn.strings = ownTable;
     }
+    // Fill the name hash for every function (single place where the function
+    // list is final), so findFunctionAny can pre-filter on an integer compare.
+    for (auto& fn : obj.functions) fn.nameHash = lpcNameHash(fn.name);
     return obj;
 }
 

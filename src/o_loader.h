@@ -14,6 +14,11 @@ struct OriginalInsn {
 
 struct OriginalFunction {
     std::string name;
+    // FNV-1a 64 of `name`, filled once by the loader.  findFunctionAny() scans
+    // every function of the constitution twice per name lookup; comparing this
+    // hash first turns ~all of those std::string compares into an integer
+    // compare (measured 43us -> a few us per lookup) without per-VM containers.
+    uint64_t nameHash = 0;
     int index = -1;
     int argCount = 0;
     int localCount = 0;
@@ -77,6 +82,10 @@ struct OriginalObject {
     };
     std::vector<ProgVarRec> progVars;
 };
+
+// FNV-1a 64 over the bytes of `s` (the efun dispatcher uses the same
+// construction, so a missing hash is easy to spot: 0 means "not computed").
+uint64_t lpcNameHash(const std::string& s);
 
 OriginalObject loadOriginalObject(const std::string& path);
 OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data);

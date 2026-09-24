@@ -104,6 +104,109 @@ const std::atomic<bool>& dynProbeFlag(const char* name) {    static std::mutex r
     return s->on;
 }
 
+// ---------------------------------------------------------------------------
+// LPCVM_CPUPROF: inclusive per-call-site CPU profiler.
+//
+// Why it exists: [op-prof] charges the gap between two interpreter iterations
+// to the PREVIOUS opcode, and that gap includes any park/resume (scheduler and
+// DB wait) - so its numbers cannot separate CPU from waiting.  This profiler
+// times NAMED C++ scopes with a RAII guard and dumps calls / total ms / avg ns
+// for each site every 5s while the (dyn-switchable) probe is armed.
+// ---------------------------------------------------------------------------
+namespace {
+struct CpuProfSlot {
+    const char* name;
+    std::atomic<int64_t> calls{0};
+    std::atomic<int64_t> ns{0};      // inclusive: this scope plus everything it called
+    std::atomic<int64_t> self{0};    // exclusive: this scope minus instrumented children
+    std::atomic<int64_t> extra{0};   // site-specific counter (loop iterations, ...)
+};
+std::vector<CpuProfSlot*>& cpuProfSlots() { static std::vector<CpuProfSlot*> v; return v; }
+std::mutex& cpuProfMx() { static std::mutex m; return m; }
+
+CpuProfSlot* cpuProfGet(const char* n) {
+    std::lock_guard<std::mutex> lk(cpuProfMx());
+    for (CpuProfSlot* s : cpuProfSlots())
+        if (std::strcmp(s->name, n) == 0) return s;
+    CpuProfSlot* s = new CpuProfSlot{n, {}, {}, {}, {}};
+    cpuProfSlots().push_back(s);
+    return s;
+}
+inline int64_t cpuProfNowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
+// Active guard stack, so a site's SELF time can exclude the children it
+// called (the inclusive totals alone over-count heavily: one login window
+// reported 15.8s of "op8" inside 5s of wall clock because every nested
+// cross-object call is counted again).
+struct CpuProfFrame {
+    CpuProfSlot* slot;
+    int64_t startNs;
+    int64_t childNs;
+};
+std::vector<CpuProfFrame>& cpuProfStack() { static thread_local std::vector<CpuProfFrame> v; return v; }
+
+struct CpuProfGuard {
+    CpuProfSlot* s = nullptr;
+    explicit CpuProfGuard(const char* n) {
+        static const std::atomic<bool>& on = dynProbeFlag("LPCVM_CPUPROF");
+        if (!on.load(std::memory_order_relaxed)) return;
+        s = cpuProfGet(n);
+        cpuProfStack().push_back(CpuProfFrame{s, cpuProfNowNs(), 0});
+    }
+    ~CpuProfGuard() {
+        if (!s) return;
+        int64_t now = cpuProfNowNs();
+        CpuProfFrame f = cpuProfStack().back();
+        cpuProfStack().pop_back();
+        int64_t d = now - f.startNs;
+        int64_t selfNs = d - f.childNs;
+        if (selfNs < 0) selfNs = 0;
+        s->calls.fetch_add(1, std::memory_order_relaxed);
+        s->ns.fetch_add(d, std::memory_order_relaxed);
+        s->self.fetch_add(selfNs, std::memory_order_relaxed);
+        if (!cpuProfStack().empty()) cpuProfStack().back().childNs += d;
+    }
+};
+
+// Bare counter (same switch) for work that is not a scope (loop iterations).
+struct CpuProfExtra {
+    CpuProfSlot* s = nullptr;
+    explicit CpuProfExtra(const char* n) {
+        static const std::atomic<bool>& on = dynProbeFlag("LPCVM_CPUPROF");
+        if (on.load(std::memory_order_relaxed)) s = cpuProfGet(n);
+    }
+    inline void add(int64_t k = 1) { if (s) s->extra.fetch_add(k, std::memory_order_relaxed); }
+};
+
+std::atomic<int64_t> g_insnCount{0};
+
+void cpuProfDump() {
+    int64_t insns = g_insnCount.exchange(0, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(cpuProfMx());
+    if (cpuProfSlots().empty()) return;
+    std::vector<CpuProfSlot*> v = cpuProfSlots();
+    std::sort(v.begin(), v.end(), [](CpuProfSlot* a, CpuProfSlot* b) {
+        return a->ns.load() > b->ns.load();
+    });
+    std::cerr << "[cpuprof] --- per-site inclusive CPU (last window), insns="
+              << insns << " ---\n";
+    for (CpuProfSlot* s : v) {
+        int64_t c = s->calls.exchange(0), ns = s->ns.exchange(0), ex = s->extra.exchange(0);
+        int64_t selfNs = s->self.exchange(0);
+        if (!c && !ex) continue;
+        std::cerr << "  " << s->name << ": incl " << (ns / 1000000) << "ms / self "
+                  << (selfNs / 1000000) << "ms over " << c
+                  << " calls, avg " << (c ? ns / c : 0) << "ns";
+        if (ex) std::cerr << ", extra=" << ex;
+        std::cerr << "\n";
+    }
+    std::cerr.flush();
+}
+
 // Cached copies of the LPCVM_* trace/diagnostic environment switches.  The
 // interpreter consults these on per-opcode / per-efun hot paths; std::getenv
 // itself is expensive (locked environ scan; the boot notes measured ~0.5-1.5us
@@ -1141,6 +1244,13 @@ struct GsRegIndex {
 };
 GsRegIndex& regIndex() { static GsRegIndex i; return i; }
 
+// Bumped by every register/unregister.  A memo of a registry-wide scan is only
+// valid while this value is unchanged.
+std::atomic<uint64_t>& regGeneration() {
+    static std::atomic<uint64_t> g{1};
+    return g;
+}
+
 namespace {
 struct RegIdxGuard {
     std::lock_guard<std::recursive_mutex> lg;
@@ -1192,8 +1302,10 @@ void regIndexRegister(const std::string& key, const std::shared_ptr<OriginalVm>&
             idx.objByStem.emplace(stem.substr(sl + 1), op);
         idx.objBySuffix[nk] = nk;
     }
+    regGeneration().fetch_add(1, std::memory_order_relaxed);
 }
 void regIndexUnregister(const std::string& key) {
+    regGeneration().fetch_add(1, std::memory_order_relaxed);
     std::string nk, stem;
     normKeyInto(key, nk);
     stem = stemOfNorm(nk);
@@ -1306,6 +1418,51 @@ bool regHasKeySuffix(const std::string& suffix) {
     }
     return false;
 }
+
+// Memo for tryCallOtherObject's suffix fallback: key -> (VM or "no match").
+// The scan itself stays byte-for-byte the original one; only its result is
+// cached, and any registry change (regGeneration) invalidates the whole memo.
+struct SuffixMemoEntry {
+    std::weak_ptr<OriginalVm> vm;
+    bool found = false;
+    uint64_t gen = 0;
+};
+std::unordered_map<std::string, SuffixMemoEntry>& suffixMemo() {
+    static std::unordered_map<std::string, SuffixMemoEntry> m;
+    return m;
+}
+std::mutex& suffixMemoMx() {
+    static std::mutex m;
+    return m;
+}
+
+// The memoized suffix fallback below is the DEFAULT.  Together with the two
+// indexed lookups (ownsFunctionFast / findFunctionAnyIdx, see heavyIdxFixOn)
+// they remove an O(registry) / O(constitution) walk from the hottest
+// cross-object path.  Measured on the real client:
+//   build_magic_pennant_skills 853ms -> 242ms (all three on)
+//   callOther self 664ms -> 6ms, callOther.suffixScan 10,258,680 -> ~1 per 1s
+// LPCVM_NO_OBJIDX restores the un-memoized suffix scan for A/B.
+bool objIdxFixOn() {
+    static const std::atomic<bool>& off = dynProbeFlag("LPCVM_NO_OBJIDX");
+    return !off.load(std::memory_order_relaxed);
+}
+
+// The two O(constitution) rewrites (own-function range test, name index) are
+// default ON too; the boot hang attributed to "the heavier rewrites" turned out
+// to come from the suffix-index rewrite, which is gone (see the memo above).
+// LPCVM_NO_HOMEFIX restores the linear paths for A/B.
+bool heavyIdxFixOn() {
+    static const std::atomic<bool>& off = dynProbeFlag("LPCVM_NO_HOMEFIX");
+    return !off.load(std::memory_order_relaxed);
+}
+
+// NOTE: an index-based rewrite of the suffix fallback (regFindVmByKeySuffix via
+// GsRegIndex::objBySuffix / vmsByKey) was tried here and DELETED: those indexes
+// are keyed by the NORMALIZED key, so "/gs/x.o" (live) and "pak:gs/x.o" (proto)
+// collapse to one entry and the lookup returned the wrong instance - the boot
+// hung at "还没有从 CONFIG_D 取得服务器所在区组名".  The registry iteration
+// order of the original scan is part of its semantics; memoize it instead.
 
 // Registry maps that maintain the index from their own operations, so no
 // registration site can forget to update it.
@@ -2156,9 +2313,26 @@ public:
     const std::vector<OriginalInsn>* code() const { return es_->code; }
     size_t ip() const { return es_->ip; }
     // Public lookups for cross-object inline calls (case 8).
+    // findFunctionAny() walks EVERY function of the constitution TWICE per
+    // lookup (obj_.functions plus the whole funcsByIndex_ map, and the second
+    // pass has no early exit) and runs on every cross-object call resolved by
+    // name - the hottest path of a login.  A per-VM name index was tried and
+    // reverted: ~23k VMs x their own map added ~400MB (gs 1080MB -> 1500MB).
+    // Instead the loader stores a 64-bit name hash on each function and the two
+    // scans below pre-filter on it; the scan ORDER and the std::string compare
+    // as final arbiter are unchanged, so first-match / last-match semantics are
+    // identical.
     const OriginalFunction* findFunctionAny(const std::string& name) const {
-        for (const auto& fn : obj_.functions)
-            if (fn.name == name && fn.index >= 0) return &fn;
+        CpuProfGuard _cpuProfFind("findFunctionAny");
+        const bool hashFilter = heavyIdxFixOn();
+        const uint64_t wantHash = hashFilter ? lpcNameHash(name) : 0;
+        CpuProfExtra _cpuProfFindScan("findFunctionAny.scan");
+        for (const auto& fn : obj_.functions) {
+            _cpuProfFindScan.add();
+            if (fn.index < 0) continue;
+            if (hashFilter && wantHash && fn.nameHash != wantHash) continue;
+            if (fn.name == name) return &fn;
+        }
         // Inherited functions: prefer a REAL implementation over a forward
         // declaration.  Inherit order gives each parent a distinct
         // baseFunOffset, so name.c's empty `mapping query_entire_dbase();`
@@ -2171,9 +2345,14 @@ public:
         // implementation: later inherits override earlier ones, matching the
         // original driver's name resolution.
         const OriginalFunction* impl = nullptr;
-        for (const auto& kv : funcsByIndex_)
-            if (kv.second->name == name && kv.second->index >= 0 && !kv.second->code.empty())
-                impl = kv.second;   // keep the last (highest-key) implementation
+        for (const auto& kv : funcsByIndex_) {
+            _cpuProfFindScan.add();
+            const OriginalFunction* f = kv.second;
+            if (!f || f->index < 0 || f->code.empty()) continue;
+            if (hashFilter && wantHash && f->nameHash != wantHash) continue;
+            if (f->name == name)
+                impl = f;   // keep the last (highest-key) implementation
+        }
         return impl;
     }
     // Public efun dispatch used by runPostInitFunctions for post-init closures
@@ -2248,6 +2427,18 @@ public:
     bool ownsFunction(const OriginalFunction* fn) const {
         for (const auto& f : obj_.functions)
             if (&f == fn) return true;
+        auto it = funcsByIndex_.find(fn->index);
+        return it != funcsByIndex_.end() && it->second == fn;
+    }
+    // Same predicate, O(1): OriginalObject::functions is a contiguous vector, so
+    // "is fn one of MY functions" is a pointer-range test instead of a walk over
+    // every function of the constitution.  ownsFunction() is called once per
+    // registered VM by originalHomeVmOf(), whose loop runs over the WHOLE
+    // registry (~23k VMs), so the linear form costs ~100ns x 23k per lookup.
+    bool ownsFunctionFast(const OriginalFunction* fn) const {
+        if (!fn) return false;
+        const auto& v = obj_.functions;
+        if (!v.empty() && fn >= v.data() && fn < v.data() + v.size()) return true;
         auto it = funcsByIndex_.find(fn->index);
         return it != funcsByIndex_.end() && it->second == fn;
     }
@@ -2472,6 +2663,7 @@ public:
     }
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
+        CpuProfGuard _cpuProfByName("callByName");
         // Per-process run state (the original's per-PCB frame stack).
         // REMOVED (2026-09-22, boot regression): this used to STASH the parked
         // chain aside when a different process entered the object (probe-gated
@@ -4311,6 +4503,7 @@ private:
 
     // Call an efun by index with already-collected arguments.
     Value callEfunWithArgs(int efunIndex, const std::vector<Value>& args) {
+        CpuProfGuard _cpuProfEfun("efun");
         stackDbgCheck("efun");
         // Keep get_thread_id() stable for the caller's step: an efun may wake or park
         // processes, which changes the scheduler's current process.  filed.c::do_operate
@@ -7029,6 +7222,7 @@ private:
     }
 
     Value executeFunctionFromOutsideLocked(const OriginalFunction& fn, const std::vector<Value>& args) {
+        CpuProfGuard _cpuProfEfo("execOutside");
         VmNestGuard nestGuard("outside");
         {
             static const std::atomic<bool>& depthOn = dynProbeFlag("LPCVM_DEPTH");
@@ -7400,6 +7594,7 @@ private:
         // home VM and switch to it.  Master-program global functions (they run
         // inline on every VM against the driver's shared global space) are
         // excluded - switching them would break their caller's context.
+        CpuProfGuard _cpuProfInline("startInline");
         checkCallDepth(fn.name);
         std::shared_ptr<std::vector<Value>> autoVars;
         const std::vector<std::string>* autoStrings = nullptr;
@@ -8437,7 +8632,19 @@ private:
         static int64_t sampleN = 0;
         static int64_t sampleLastMs = 0;
         static std::unordered_map<std::string, int64_t>* sampleMap = nullptr;
-        static const bool slowOpOn = (std::getenv("LPCVM_SLOW_OP") != nullptr);
+        // LPCVM_SLOW_OP is now a DYN probe (armable on a running server via
+        // _probe_on\LPCVM_SLOW_OP) with a configurable threshold and no 100ms
+        // rate limit: inside the 718ms build_magic_pennant_skills window the old
+        // rate limit reported only 6 of the thousands of slow calls.
+        static const std::atomic<bool>& slowOpFlag = dynProbeFlag("LPCVM_SLOW_OP");
+        const bool slowOpOn = slowOpFlag.load(std::memory_order_relaxed);
+        static const std::atomic<bool>& insnCntFlag = dynProbeFlag("LPCVM_CPUPROF");
+        const bool insnCntOn = insnCntFlag.load(std::memory_order_relaxed);
+        static const int64_t slowOpMinNs = [] {
+            const char* v = std::getenv("LPCVM_SLOW_OP_US");
+            return v ? std::atoll(v) * 1000 : 8000;
+        }();
+        static const bool slowOpNoLimit = (std::getenv("LPCVM_SLOW_OP_NOLIMIT") != nullptr);
         static int64_t slowOpPrevNs = 0;
         static int64_t slowOpLastReport = 0;
         // std::getenv is expensive (locked environ scan); these run once per
@@ -8507,12 +8714,13 @@ private:
             // duration (the loop body runs straight through).  Report any
             // single instruction > 8us - that identifies the exact op/ip
             // burning the CPU in a crawl (importd convert_to_value etc.).
+            if (insnCntOn) g_insnCount.fetch_add(1, std::memory_order_relaxed);
             if (slowOpOn) {
                 using namespace std::chrono;
                 int64_t nowNs = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
                 int64_t prevDur = nowNs - slowOpPrevNs;
                 slowOpPrevNs = nowNs;
-                if (prevDur > 8000 && (nowNs - slowOpLastReport) > 100000000) {
+                if (prevDur > slowOpMinNs && (slowOpNoLimit || (nowNs - slowOpLastReport) > 100000000)) {
                     slowOpLastReport = nowNs;
                     std::string cur = "<global>";
                     if (!es_->frames.empty() && es_->frames.back().fn) cur = es_->frames.back().fn->name;
@@ -10281,6 +10489,7 @@ private:
                 break;
             }
             case 6: { // call_in_efun
+                CpuProfGuard _cpuProfOp6("op6");
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
                 es_->lastEfunIndex = efun;
@@ -10962,6 +11171,11 @@ private:
                         std::cerr << "[ev] wait-probe " << ename << " mask=0x" << std::hex
                                   << mask << std::dec << " -> " << probe
                                   << " tid=" << scheduler().currentProcessTid() << "\n";
+                    if (probe < 0) {
+                        const std::string wfn2 = es_->frames.empty() || !es_->frames.back().fn
+                                                     ? "<global>" : es_->frames.back().fn->name;
+                        lpc::flowProbePark(ename.c_str(), wfn2.c_str());
+                    }
                     if (probe == -101) {
                         // The event token does not resolve to a REGISTERED event
                         // (an int oid with no create_event mapping, e.g. a
@@ -11090,6 +11304,7 @@ private:
                 break;
             }
             case 7: { // call_in_user_fun
+                CpuProfGuard _cpuProfOp7("op7");
                 // Diagnostic switches are read ONCE (see the vmEnv*/envFlag* helpers
                 // above): call_in_user_fun runs ~44k times per 5s during startup and
                 // each raw std::getenv here is a linear scan of the process
@@ -11184,6 +11399,7 @@ private:
                 break;
             }
             case 8: { // call_in_other_fun_ex
+                CpuProfGuard _cpuProfOp8("op8");
                 static const bool ncOn8 = (std::getenv("LPCVM_NAMECHAIN") != nullptr);
                 if (ncOn8) {
                     Value pv = pop().value;   // path
@@ -12084,6 +12300,7 @@ private:
                 break;
             }
             case 5: { // call_fun_ptr
+                CpuProfGuard _cpuProfOp5("op5");
                 static const bool mcOn5 = (std::getenv("LPCVM_MENUCLOSURE") != nullptr);
                 if (mcOn5) {
                     bool inTalk3 = false;
@@ -14925,6 +15142,7 @@ void Scheduler::wakeQueue(const std::string& qkey) {
 }
 
 void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
+    lpc::flowProbeWake(ename.c_str(), "wakeEvent");
     std::deque<std::shared_ptr<Process>> hits;
     std::deque<std::shared_ptr<Process>> keep;
     uint32_t consumed = 0;
@@ -15150,6 +15368,7 @@ Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::st
 // inline, so its "Load: ... OK" print comes before any processes spawned
 // during create() get to run).
 void Scheduler::wakeEventFront(const std::string& ename) {
+    lpc::flowProbeWake(ename.c_str(), "wakeEvent");
     std::deque<std::shared_ptr<Process>> hits;
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -15522,6 +15741,21 @@ void Scheduler::run() {
                         std::cerr << "[census] SOCK " << kv.first << " entry=" << w->entry
                                   << " chain=[" << chainOf(w) << "]\n";
                 std::cerr.flush();
+            }
+        }
+        // LPCVM_CPUPROF: dump the per-site inclusive CPU profiler every 5s.
+        if (dynProbeFlag("LPCVM_CPUPROF").load(std::memory_order_relaxed)) {
+            static const int64_t profWinMs = [] {
+                const char* v = std::getenv("LPCVM_CPUPROF_MS");
+                int64_t n = v ? std::atoll(v) : 5000;
+                return n < 200 ? 200 : n;
+            }();
+            static int64_t cpuProfLastMs = 0;
+            int64_t nowP = nowMs();
+            if (cpuProfLastMs == 0) cpuProfLastMs = nowP;
+            if (nowP - cpuProfLastMs >= profWinMs) {
+                cpuProfLastMs = nowP;
+                cpuProfDump();
             }
         }
         // LPCVM_MEMSTAT: once per second, census the big allocators.
@@ -16535,11 +16769,15 @@ Scheduler& scheduler() {
 // Mutable registry instance that owns fn (the closure-dispatch path calls
 // callFunctionPointer on it; originalHomeVmOf returns the const view).
 std::shared_ptr<OriginalVm> homeVmMutable(const OriginalFunction* fn) {
+    CpuProfGuard _cpuProfHomeMut("homeVmMutable");
+    CpuProfExtra _cpuProfHomeMutScan("homeVmMutable.scan");
     const OriginalVm* h = originalHomeVmOf(fn);
     if (!h) return nullptr;
     std::lock_guard<std::recursive_mutex> rl(registryMutex());
-    for (auto& kv : objectRegistry().vms)
+    for (auto& kv : objectRegistry().vms) {
+        _cpuProfHomeMutScan.add();
         if (kv.second.get() == h) return kv.second;
+    }
     return nullptr;
 }
 
@@ -16550,13 +16788,18 @@ const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {
     // mutex (registryMutex may be held by the caller's thread already; using
     // the recursive registry mutex for the scan is fine too but the cache
     // must not grow unboundedly - functions are a bounded static set).
+    CpuProfGuard _cpuProfHome("homeVm");
+    CpuProfExtra _cpuProfMiss("homeVm.miss");
+    CpuProfExtra _cpuProfScan("homeVm.scan");
     static std::unordered_map<const OriginalFunction*, const OriginalVm*> cache;
     static std::mutex mtx;
+    const bool homeFix = heavyIdxFixOn();
     {
         std::lock_guard<std::mutex> lk(mtx);
         auto it = cache.find(fn);
         if (it != cache.end()) return it->second;
     }
+    _cpuProfMiss.add();
     const OriginalVm* hit = nullptr;
     {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
@@ -16573,7 +16816,10 @@ const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {
         // non-undefined globals and take the richest one.
         int bestInit = -1;
         for (auto& kv : objectRegistry().vms) {
-            if (!kv.second || !kv.second->ownsFunction(fn)) continue;
+            _cpuProfScan.add();
+            if (!kv.second) continue;
+            if (!(homeFix ? kv.second->ownsFunctionFast(fn)
+                          : kv.second->ownsFunction(fn))) continue;
             if (!hit) { hit = kv.second.get(); bestInit = -1; }
             int inited = 0;
             auto blk = kv.second->ownObjVarsShared();
@@ -16585,6 +16831,10 @@ const OriginalVm* originalHomeVmOf(const OriginalFunction* fn) {
     }
     std::lock_guard<std::mutex> lk(mtx);
     cache[fn] = hit;
+    // NOTE: an "warm every function of the winning object" shortcut was tried
+    // here and REMOVED: it assumed all functions of one OriginalObject resolve
+    // to the same VM, which is false when several VMs share that object (proto
+    // vs live instance), so it could bind a callee to the wrong instance.
     return hit;
 }
 
@@ -16865,6 +17115,7 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args,
                          const std::string& callerThisName) {
+    CpuProfGuard _cpuProfOther("callOther");
     RegScanT _regScan;
     if (vmEnvTrace())
         std::cerr << "[call_other] " << objectPath << " -> " << funName
@@ -16934,15 +17185,47 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     // absolute pak paths) - mirrors findObjectInRegistry's resolution.
     {
         std::shared_ptr<OriginalVm> hit;
-        {
-            std::lock_guard<std::recursive_mutex> rl(registryMutex());
-            for (auto& kv : reg.vms) {
-                if (hasSuffix(kv.first, rel)) {
-                    if (vmEnvTrace() && funName == "get_my_info")
-                        std::cerr << "[call_other] -> " << kv.first << " (suffix)\n";
-                    hit = kv.second;
-                    break;
+        CpuProfExtra _cpuProfSuffix("callOther.suffixScan");
+        // LPCVM_NO_OBJIDX restores the un-memoized scan (A/B).
+        const uint64_t regGen = regGeneration().load(std::memory_order_relaxed);
+        bool haveMemo = false;
+        if (objIdxFixOn()) {
+            std::lock_guard<std::mutex> lk(suffixMemoMx());
+            auto mit = suffixMemo().find(rel);
+            if (mit != suffixMemo().end()) {
+                if (mit->second.gen == regGen) {
+                    if (!mit->second.found) {
+                        haveMemo = true;             // memoized "no match at all"
+                    } else {
+                        hit = mit->second.vm.lock();
+                        haveMemo = (hit != nullptr);
+                    }
+                } else {
+                    suffixMemo().erase(mit);
                 }
+            }
+        }
+        if (!haveMemo) {
+            hit.reset();
+            {
+                std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                for (auto& kv : reg.vms) {
+                    _cpuProfSuffix.add();
+                    if (hasSuffix(kv.first, rel)) {
+                        if (vmEnvTrace() && funName == "get_my_info")
+                            std::cerr << "[call_other] -> " << kv.first << " (suffix)\n";
+                        hit = kv.second;
+                        break;
+                    }
+                }
+            }
+            if (objIdxFixOn()) {
+                std::lock_guard<std::mutex> lk(suffixMemoMx());
+                SuffixMemoEntry e;
+                e.vm = hit;
+                e.found = (hit != nullptr);
+                e.gen = regGen;
+                suffixMemo()[rel] = e;
             }
         }
         if (vmEnvTrace() && funName == "process_command" &&
@@ -17235,6 +17518,7 @@ int runOriginalObjectInit(const OriginalObject& obj, const std::string& searchRo
 
 int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& searchRoot,
                            const std::vector<Value>& createArgs) {
+    CpuProfGuard _cpuProfLoadObj("loadObject");
     if (searchRoot.empty() || virtualPath.empty()) return 0;
     // Register the object's VM (load the .o, create the VM, insert into the
     // registry) WITHOUT running its initializer; the caller then runs
@@ -17918,6 +18202,62 @@ int64_t msSinceStart() {
     static const auto t0 = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now() - t0).count();
+}
+
+// Microsecond wall clock for the flow probe (see original_vm.h).
+int64_t usNow() {
+    using namespace std::chrono;
+    return duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+namespace {
+bool flowOn() {
+    static const bool on = (std::getenv("LPCVM_FLOW") != nullptr);
+    return on;
+}
+// one entry per parked waiter: name -> park stamp
+std::map<std::string, std::pair<int64_t, std::string>>& flowParks() {
+    static std::map<std::string, std::pair<int64_t, std::string>> m;
+    return m;
+}
+std::mutex& flowMtx() { static std::mutex m; return m; }
+}  // namespace
+
+void flowProbePark(const char* key, const char* fn) {
+    if (!flowOn() || !key) return;
+    std::lock_guard<std::mutex> lk(flowMtx());
+    flowParks()[key] = {usNow(), fn ? fn : "?"};
+    std::cerr << "[flow] t=" << usNow() << " ev=PARK cno=" << lpc::dispatchCno()
+              << " tid=" << scheduler().currentProcessTid()
+              << " key=" << key << " fn=" << (fn ? fn : "?") << "\n";
+    std::cerr.flush();
+}
+
+void flowProbeWake(const char* key, const char* fn) {
+    if (!flowOn() || !key) return;
+    int64_t waited = -1;
+    std::string pfn = "?";
+    {
+        std::lock_guard<std::mutex> lk(flowMtx());
+        auto it = flowParks().find(key);
+        if (it != flowParks().end()) {
+            waited = usNow() - it->second.first;
+            pfn = it->second.second;
+            flowParks().erase(it);
+        }
+    }
+    std::cerr << "[flow] t=" << usNow() << " ev=WAKE cno=" << lpc::dispatchCno()
+              << " tid=" << scheduler().currentProcessTid()
+              << " key=" << key << " fn=" << (fn ? fn : "?")
+              << " parkedFn=" << pfn << " waited=" << waited << "us\n";
+    std::cerr.flush();
+}
+
+void flowProbeReply(int64_t cno, int64_t cmd, int64_t len) {
+    if (!flowOn()) return;
+    std::cerr << "[flow] t=" << usNow() << " ev=REPLY cno=" << cno
+              << " cmd=0x" << std::hex << cmd << std::dec << " len=" << len << "\n";
+    std::cerr.flush();
 }
 
 // destruct_object(ob): the game's object destructor efun.  It was a NO-OP
