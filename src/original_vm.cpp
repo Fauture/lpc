@@ -4328,21 +4328,7 @@ private:
                             std::cerr.flush();
                         }
                     }
-                    if (vm) {
-                        StackItem* cslot = nullptr;
-                        if (r->slotIndex >= 0) {
-                            if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
-                                cslot = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
-                            else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
-                                cslot = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];
-                        }
-                        if (cslot) {
-                            cslot->value = v;
-                        } else if (r->objIndex >= 0 &&
-                                   static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
-                            vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = v;
-                        }
-                    }
+                    if (vm) writeCrossVmRef(r, v);
                     // leave slot.value as the CrossVmRef
                 } else {
                     slot.value = v;
@@ -4383,6 +4369,90 @@ private:
         return resolveCrossVmRef(it.value);
     }
 
+    // Write through a CrossVmRef argument - the exact mirror of
+    // resolveCrossVmRef.  The caller's slot can itself be a reference (a
+    // by-ref parameter forwarded again: store.c store_move_to_bag's local
+    // `ret` -> user.o can_carry(.., &ret) -> carryd.o can_carry(.., &ret)).
+    // Assigning to that slot's .value used to overwrite the reference item
+    // instead of the variable it points at, while reads kept following the
+    // chain - so the callee could never see its own writes (`ret += capacity`
+    // then `return num <= ret` was always 0: nothing could be taken out of a
+    // warehouse) and the caller never got the value back.
+    // The cell a CrossVmRef slot index names on THIS (caller) VM.  While the
+    // caller is parked by runDetached its frames live in detachedStack and
+    // stack is empty - the same precedence resolveCrossVmRef always used.
+    StackItem* cvCell(int idx) {
+        if (idx < 0) return nullptr;
+        if (static_cast<size_t>(idx) < es_->stack.size()) return &es_->stack[static_cast<size_t>(idx)];
+        if (static_cast<size_t>(idx) < es_->detachedStack.size())
+            return &es_->detachedStack[static_cast<size_t>(idx)];
+        return nullptr;
+    }
+    // Walk slot-ref -> slot-ref on this VM (ref parameters forwarded again,
+    // e.g. user.o can_carry's `ret` -> store_move_to_bag's local `ret`) and
+    // return the final cell.  deref()/writeThrough() only look at es_->stack,
+    // so with the caller detached (stack empty) the second hop read 0 and the
+    // write was dropped: carryd.can_carry's `ret += capacity` never stuck and
+    // nothing could be taken out of a warehouse.
+    StackItem* cvFinalCell(int idx) {
+        StackItem* cell = cvCell(idx);
+        for (int guard = 0; cell && cell->isRef && cell->slotIndex >= 0 && guard < 32; ++guard) {
+            StackItem* next = cvCell(cell->slotIndex);
+            if (!next) break;
+            cell = next;
+        }
+        return cell;
+    }
+    static bool cvrefProbeOn() {
+        static const std::atomic<bool>& f = dynProbeFlag("LPCVM_CVREF");
+        return f.load(std::memory_order_relaxed);
+    }
+    void cvrefProbe(const char* what, const std::shared_ptr<CrossVmRef>& r, const Value& v,
+                    int depth) const {
+        OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
+        std::string sl = "none";
+        if (vm && r->slotIndex >= 0) {
+            const StackItem* it = nullptr;
+            const char* where = "";
+            if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size()) {
+                it = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
+                where = "stack";
+            } else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size()) {
+                it = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];
+                where = "detached";
+            }
+            if (it)
+                sl = std::string(where) + (it->isRef ? " isRef->slot=" + std::to_string(it->slotIndex)
+                                                     : std::string(" plain")) +
+                     " t" + std::to_string(it->value.index());
+        }
+        std::cerr << "[cvref] " << what << " d=" << depth << " here=" << objName_
+                  << " es=" << (const void*)es_ << " tgtvm=" << (vm ? vm->objName() : std::string("null"))
+                  << " tgtes=" << (vm ? (const void*)vm->es_ : nullptr)
+                  << " slot=" << r->slotIndex << " obj=" << r->objIndex
+                  << " sz=" << (vm ? vm->es_->stack.size() : size_t(0))
+                  << "/" << (vm ? vm->es_->detachedStack.size() : size_t(0))
+                  << " cell=" << sl << " v=" << to_string(v, false).substr(0, 30) << "\n";
+    }
+    void writeCrossVmRef(const std::shared_ptr<CrossVmRef>& r, const Value& v, int depth = 0) {
+        if (!r || depth > 32) return;
+        OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
+        if (!vm) return;
+        if (cvrefProbeOn()) cvrefProbe("WRITE", r, v, depth);
+        StackItem* cslot = (r->slotIndex >= 0) ? vm->cvFinalCell(r->slotIndex) : nullptr;
+        if (cslot) {
+            if (cslot->isRef)
+                vm->writeThrough(*cslot, v);                  // global / obj / member ref
+            else if (cslot->value.index() == 11)
+                vm->writeCrossVmRef(std::get<std::shared_ptr<CrossVmRef>>(cslot->value), v, depth + 1);
+            else
+                cslot->value = v;
+        } else if (r->objIndex >= 0 &&
+                   static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
+            vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = v;
+        }
+    }
+
     // Resolve a CrossVmRef argument to the value in the CALLER VM's object
     // variable / local stack slot (the callee reads the ref parameter through
     // this).  Non-ref values pass through unchanged.
@@ -4392,18 +4462,13 @@ private:
             auto r = std::get<std::shared_ptr<CrossVmRef>>(v);
             OriginalVm* vm = static_cast<OriginalVm*>(r->vm);
             if (!vm) return make_int(0);
+            if (cvrefProbeOn()) cvrefProbe("READ", r, Value{}, depth);
             if (r->slotIndex >= 0) {
-                const StackItem* it = nullptr;
-                if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
-                    it = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
-                else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
-                    it = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];  // caller stack moved out by runDetached
+                // Follow ref-to-ref inside whichever array holds the caller's
+                // frames (stack, or detachedStack while runDetached parked it).
+                const StackItem* it = vm->cvFinalCell(r->slotIndex);
                 if (it) {
-                    if (it->isRef) {
-                        // ref-to-ref: the caller's slot itself is a reference
-                        // (nested case-8 ref chain); follow it on the CALLER VM.
-                        return vm->deref(*it, depth + 1);
-                    }
+                    if (it->isRef) return vm->deref(*it, depth + 1);   // global / obj / member ref
                     return vm->resolveCrossVmRef(it->value, depth + 1);
                 }
             }
@@ -8857,6 +8922,25 @@ private:
                     sampleLastMs = nowS;
                 }
             }
+            // LPCVM_INSN_FN=<fn>: every instruction of that one LPC function with
+            // the stack top BEFORE it (unlike LPCVM_TRACE_FN it does not need
+            // LPCVM_TRACE, which crashes gs during boot).
+            {
+                static const char* const insnFn = LPCVM_GETENV("LPCVM_INSN_FN");
+                if (insnFn && !es_->frames.empty() && es_->frames.back().fn &&
+                    es_->frames.back().fn->name == insnFn) {
+                    std::string top = "-";
+                    if (!es_->stack.empty()) {
+                        const StackItem& t = es_->stack.back();
+                        top = t.isRef ? std::string("ref(") + to_string(deref(t), false).substr(0, 40) + ")"
+                                      : "t" + std::to_string(t.value.index()) + ":" +
+                                        to_string(resolveCrossVmRef(t.value), false).substr(0, 40);
+                    }
+                    std::cerr << "[insn] " << objName_ << "::" << insnFn << " ip=" << (es_->ip - 1)
+                              << " op=" << in.op << " " << actionInfo(in.op).name << " a=" << in.a
+                              << " b=" << in.b << " sp=" << es_->stack.size() << " top=" << top << "\n";
+                }
+            }
             if (traceFnGated) {
                 std::string cur = "<global>";
                 if (!es_->frames.empty() && es_->frames.back().fn) cur = es_->frames.back().fn->name;
@@ -9563,21 +9647,7 @@ private:
                                 std::cerr.flush();
                             }
                         }
-                        if (vm) {
-                            StackItem* cslot = nullptr;
-                            if (r->slotIndex >= 0) {
-                                if (static_cast<size_t>(r->slotIndex) < vm->es_->stack.size())
-                                    cslot = &vm->es_->stack[static_cast<size_t>(r->slotIndex)];
-                                else if (static_cast<size_t>(r->slotIndex) < vm->es_->detachedStack.size())
-                                    cslot = &vm->es_->detachedStack[static_cast<size_t>(r->slotIndex)];
-                            }
-                            if (cslot) {
-                                cslot->value = sv;
-                            } else if (r->objIndex >= 0 &&
-                                       static_cast<size_t>(r->objIndex) < vm->ownObjVars().size()) {
-                                vm->ownObjVars()[static_cast<size_t>(r->objIndex)] = sv;
-                            }
-                        }
+                        if (vm) writeCrossVmRef(r, sv);
                     } else {
                         slot.value = sv;
                     }

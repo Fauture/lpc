@@ -2411,3 +2411,19 @@ socket 唤醒会标记 `eventWoken`，过期定时器不会再把进程重复入
 含内联跨对象调用的 per-frame this 覆盖），注册表摘除推迟到发起它的调度器进程结束（`flushPendingFrees`）。
 真机：账号 16 角色 xuechia 商城买血池（数量 1）→ 右键使用 → 聊天「你使用了血池。」，背包格子消失；
 服务端 `[send] … user.o::send_text` 正文 `你使用了#R血池#n。`。
+
+### 2026-09-24 追加：仓库存入后取不出（可叠加/不可叠加都不行）——已修，真机验证
+
+根因（`LPCVM_INSN_FN=can_carry` 逐指令 + `LPCVM_CVREF` 读写探针实测）：取出走
+`store.c::store_move_to_bag` → `me->can_carry(ob, amount, &ret)`（user.o）→ 再把引用参数 `&ret`
+转给 `carryd.o::can_carry`。carryd 执行时 user.o 的执行栈已被 runDetached 挪进 `detachedStack`
+（`stack` 为空）。CrossVmRef 第一跳会查 detachedStack，但它指向的格子本身又是一个引用（user 的 `ret` 参数
+→ store_move_to_bag 的局部 `ret`），第二跳交给 `deref`/`writeThrough`，二者只查 `stack` → 读恒为 0、写被丢弃。
+于是 carryd 里 `ret += capacity` 永远不生效，`return num <= ret` 恒为 0，取出一律失败。存入只有同对象内的
+`can_store(.., &ret)`，没有这层转发，所以正常；商城的 can_carry 目标格是普通值，也正常。
+修复（`src/original_vm.cpp`）：`cvCell`/`cvFinalCell` 在目标格所在的同一数组（stack 或 detachedStack）里
+沿引用链走到底；`resolveCrossVmRef` 与新的 `writeCrossVmRef`（`writeThrough` 与 op 77 `set_local_var`
+共用）都用它，读写完全对称。
+新增探针：`LPCVM_INSN_FN=<函数名>`（该函数逐指令 + 栈顶值，不依赖会让 gs 崩的 LPCVM_TRACE）；
+`_probe_on\LPCVM_CVREF`（运行时开关，CrossVmRef 每次读写的目标 VM/槽/栈大小/格子形态）。
+真机：用户在钱老板处存入药品×20 与天道神符后取出，均回到背包（日志 can_carry=1 → separate → move_to_bag）。
