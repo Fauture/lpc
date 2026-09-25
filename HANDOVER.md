@@ -2648,3 +2648,63 @@ IDA 侧也支持"两个都跑"：`vm_loadBinaryInherit`（0x80a2b58）把父程�
 
 
 
+
+---
+
+## 2026-09-25 方丈岛船夫「无菜单」：初始化链只跑到"实例"、没跑到"房间放置的克隆"
+
+**症状**：点方丈岛船夫（`room.list` 里 `npc$ ({ "THIS_PLACE/chuanfu", 327, 289, ... })` → `船夫10`
+→ `npc/fangzhangdao-chuanfu`）只出默认对白，`set_dynamic_menu` 从未生效。
+
+**已用日志钉死的因果链**（全部有探针实证，探针都在源码里，`_probe_on\LPCVM_INITDBG` 热开）：
+
+1. `clone/npc/basic.c::create()` 的字节码（`lpcvm disfn … create`）：
+   ```
+   2-5   ob_str = object_template(this_object());
+   7-18  if (!ob_str || !is_object(basic_ob = find_object(ob_str))) return;
+   19-24 basic_ob = basic_ob->basic_object();
+   25-29 if (!is_object(basic_ob)) return;          // ← create 链在此之后还有两步
+   30-35 line_args = basic_ob->query_entire_dbase();
+   36-38 call_init_script(line_args);               // ← 装菜单的唯一入口
+   ```
+2. `basic_object.c::create()`（克隆时把模板的导入身份抄过来）：
+   `if (is_clone()) my_import_name = object_template(this_object())->get_import_name();`
+   `basic_object()` 本身 = `find_basic_object_by_import_name(my_import_name)` = `global_basic_object[name]`。
+3. 实测（`[initscript]` / `[initsite]` / `[initguard]` 探针）：
+   - `call_init_script` 共 616 次，其中**只有 18 次带 `init_script=npc/…`**，且这 18 次全部挂在
+     **#2382–#2662 这批"基础对象实例"**上（加载器 `basic_objectd` → `clone_object` + 显式
+     `init_basic_object(m)` 路径，mapping 直接传入，所以有数据）。
+   - **房间放置的克隆（#4xxx / #16xxx）一次都没拿到带 `init_script` 的 mapping** ⇒
+     `is_string(line_args["init_script"])` 为假 ⇒ 初始化脚本从不执行 ⇒ 没菜单。
+4. 616 个克隆的 `create` 链**确实**跑到了 `basic_object()` 与 `query_entire_dbase()`（`[initsite]` 归因后确认，
+   含 319 个 #4xxx 高编号克隆）⇒ 两道守卫都过了 ⇒ 问题在 **`basic_object()` 返回的那个实例的 dbase 里没有
+   `init_script`**（`[initscript]` 里 `init_script=<absent>`；而 `[initguard]` 显示**模板实例**的 dbase 是有值的）。
+
+**本轮已做的、按原版语义的修正**（都已提交/在树下）：
+
+- `object_template(ob)` 一律返回**该克隆模板 VM 的注册键**（原来在 `<this>`/空时回退到**程序路径**，
+  程序路径不是注册键 ⇒ `find_object` 走后缀匹配 ⇒ 命中同程序的**另一个克隆**）。见 `vm_f_object_template`
+  (0x80f4b9c)：原版返回 `thisObject->pTemplateObject` **指针**，模板被析构时返回 0。
+- 对象值派发（`tryCallOtherObject`）先按**精确注册键**查表（原来只有 `clone:` 前缀走精确路径）。
+- `cloneObjectInRegistry` 的模板查找：克隆键要**带 `#seq` 精确匹配**（原代码把注册键的 `#seq` 去掉后
+  再和带 `#seq` 的 rel 比较 ⇒ 永不相等 ⇒ 后缀匹配挑到任意实例）。
+- `clone_object(<对象值>)`：**保留 `clone:` 注册键原样**（原来剥离前缀 ⇒ 变成匹配不到任何键的路径）。
+- **删除了唯一的真硬编码补偿**：`cloneObjectInRegistry` 里针对 `rel.find("npc/basic")` 的"重跑根版
+  `import`"。它绕过了 `basic_object.c` 的覆盖版 `import`（后者才做
+  `set_temp("basic_object",1)` + `register_basic_object(name, this_object())`），于是
+  `global_basic_object` 里长期留着**过期实例**。删除后启动正常（gm65 起来、NPC 名字仍在）。
+  A/B 开关 `LPCVM_NO_PREIMPORT` 等旧开关已不再需要。
+
+**仍未解决的单点**（下一步就从这里继续，不必再从头查）：
+`basic_object()` 返回的实例（`global_basic_object[name]`）的 **dbase 里没有 `init_script`**，而模板实例的
+dbase 有。两种可能，二选一即可定位：
+
+1. **dbase 两个变量块**：`init_basic_object` 里 `query_entire_dbase() << m` 的原地合并（op38 已确认是原地，
+   见 `lshValues` 注释 vm_lshValue 0x808df54）落在 `objVars_` / `ownObjVars_` 的**另一块**，之后
+   `query()`/`query_entire_dbase()` 读的是另一块 ⇒ 加一个"合并后立刻用同样路径读回"的探针即可判定；
+2. **`global_basic_object` 里是过期实例**（同名 NPC 被重复导入时 `basic_objectd` 会先
+   `destruct_object(旧)` 再新建 ⇒ 若旧条目未被清掉就指向陈旧对象）。
+
+验证入口（不用等启动完，60–90 秒时日志里就有这些行）：
+`_probe_on\LPCVM_INITDBG` 热开 ⇒ `[initscript]`（call_init_script 的实参）、`[initsite]`（create 里调了什么）、
+`[initguard]`（模板实例的 import 名 / basic_object 结果 / dbase 三个键 / alive）。

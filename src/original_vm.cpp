@@ -5504,7 +5504,23 @@ private:
                               << " -> " << (tvm ? tvm->thisObjectName_ : std::string("0"))
                               << " own=" << (templateVm_ ? templateVm_->thisObjectName_ : std::string("-")) << "\n";
                 if (tvm) {
-                    std::string tp = tvm->thisObjectName_;
+                    // object_template() must name the TEMPLATE OBJECT itself (the
+                    // registered instance, "clone:...basic.o#2647"), never a program
+                    // path.  A program path ("/gs/clone/npc/basic.o") is no registry
+                    // key, so find_object()/call_other fell back to a SUFFIX match and
+                    // picked an arbitrary clone of that program.  Measured in
+                    // clone/npc/basic.c::create - the chain that installs every NPC's
+                    // /gs/init/** menu:
+                    //     create -> #2647::get_import_name   (from_ob->get_import_name)
+                    //     create -> #4751::basic_object       (find_object(ob_str)->...)
+                    // those two answers must name the SAME object, so call_init_script
+                    // ran against the wrong instance and set_dynamic_menu never reached
+                    // the NPC placed in the room (the Fangzhang-Island boatman opened
+                    // with no menu).  The VM-pointer index is authoritative here: a
+                    // clone shares its template's program object, so the OBJECT pointer
+                    // cannot tell clones apart - the VM can.
+                    std::string tp = regKeyOfVm(tvm.get());
+                    if (tp.empty()) tp = tvm->thisObjectName_;
                     if (tp == "<this>" || tp.empty()) tp = tvm->objName();
                     return make_object(tp);
                 }
@@ -10112,6 +10128,41 @@ private:
             case 38: { // lsh_value
                 Value b = pop().value;
                 Value a = pop().value;
+                // LPCVM_INITDBG: basic_object.c::init_basic_object does
+                //     query_entire_dbase() << line_args;      // result discarded
+                // which only works when query_entire_dbase() hands back the object's
+                // OWN dbase mapping (dbase.c: `return dbase;`) - `<<` merges in place
+                // on the left shared_ptr.  If the left operand is not one of this
+                // VM's variables, the accessor produced a COPY and every such merge
+                // is silently dropped (measured: an npc/basic instance's dbase stayed
+                // empty -> basic.c::create's call_init_script found no init_script ->
+                // no /gs/init/** initialiser -> the room-placed boatmen had no menu).
+                {
+                    static const std::atomic<bool>& idbgL = dynProbeFlag("LPCVM_INITDBG");
+                    if (idbgL.load(std::memory_order_relaxed) && a.index() == 6 &&
+                        !es_->frames.empty() && es_->frames.back().fn &&
+                        es_->frames.back().fn->name == "init_basic_object") {
+                        auto lm = std::get<std::shared_ptr<MappingValue>>(a);
+                        bool aliased = false;
+                        int entries = static_cast<int>(lm ? lm->items().size() : 0);
+                        for (auto* blk : { objVars_.get(), ownObjVars_.get() }) {
+                            if (!blk) continue;
+                            for (const Value& gv : *blk) {
+                                if (gv.index() != 6) continue;
+                                if (std::get<std::shared_ptr<MappingValue>>(gv).get() == lm.get()) {
+                                    aliased = true;
+                                    break;
+                                }
+                            }
+                            if (aliased) break;
+                        }
+                        std::cerr << "[lshalias] obj=" << objName_ << " leftEntries=" << entries
+                                  << " isOwnVar=" << (aliased ? "yes" : "NO")
+                                  << " rightType=" << b.index() << " callVarOff="
+                                  << es_->frames.back().fn->varOffset << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 if (vmEnvDbgObjVar() &&
                     objName_.find("import/room") != std::string::npos)
                     std::cerr << "[lsh-import] obj=" << objName_ << " aType=" << a.index()
@@ -11834,6 +11885,49 @@ private:
                 // command returns identifies the failing one:
                 //   is_in_combat | is_deny(_menu) | is_addicted |
                 //   get_reserved_object | get_object_by_id | is_near | is_deny
+                // LPCVM_INITDBG: dump the mapping handed to call_init_script.
+                // clone/npc/basic.c::create ends with
+                //     line_args = basic_ob->query_entire_dbase();
+                //     call_init_script(line_args);
+                // and call_init_script is
+                //     (*("init_for_" + line_args["sub_type"]))(line_args);
+                //     if (is_string(line_args["init_script"])) { ob = find_object(...);
+                //                                                 ob->main(this_object()); }
+                // so a missing sub_type/init_script here silently installs nothing -
+                // which is the state every room-placed NPC is in (no /gs/init/** menu).
+                {
+                    static const std::atomic<bool>& idbg7 = dynProbeFlag("LPCVM_INITDBG");
+                    if (idbg7.load(std::memory_order_relaxed)) {
+                        int fi7 = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                        int cn7 = fromMeta ? m1 : in.b;
+                        auto fit7 = funcsByIndex_.find(fi7);
+                        const std::string fn7 = (fit7 != funcsByIndex_.end() && fit7->second)
+                                                    ? fit7->second->name : std::string("?");
+                        if (fn7 == "call_init_script") {
+                            const int si7 = static_cast<int>(es_->stack.size()) - cn7;
+                            if (si7 >= 0 && static_cast<size_t>(si7) < es_->stack.size()) {
+                                const Value& mv = es_->stack[static_cast<size_t>(si7)].value;
+                                std::string out;
+                                if (mv.index() == 6) {
+                                    auto mp = std::get<std::shared_ptr<MappingValue>>(mv);
+                                    auto getk = [&](const char* k) {
+                                        const Value* f = mp->find(make_string(k));
+                                        return f ? to_string(*f, false).substr(0, 40) : std::string("<absent>");
+                                    };
+                                    out = "sub_type=" + getk("sub_type") +
+                                          " init_script=" + getk("init_script") +
+                                          " key_name=" + getk("key_name") +
+                                          " entries=" + std::to_string(mp->items().size());
+                                } else {
+                                    out = "argType=t" + std::to_string(mv.index());
+                                }
+                                std::cerr << "[initscript] this=" << thisObjectName_
+                                          << " " << objName_ << " call_init_script " << out << "\n";
+                                std::cerr.flush();
+                            }
+                        }
+                    }
+                }
                 {
                     static const std::atomic<bool>& mdOn = dynProbeFlag("LPCVM_MENUDBG");
                     if (mdOn.load(std::memory_order_relaxed) &&
@@ -12014,6 +12108,96 @@ private:
                 }
                 Value pathVal = pop().value;
                 Value funVal = pop().value;
+                // LPCVM_INITDBG: what a npc/basic CLONE's create() actually calls.
+                // basic.c::create is
+                //     ob_str = object_template(this_object());
+                //     if (!ob_str || !is_object(basic_ob = find_object(ob_str))) return;
+                //     basic_ob = basic_ob->basic_object();
+                //     if (!is_object(basic_ob)) return;
+                //     line_args = basic_ob->query_entire_dbase();
+                //     call_init_script(line_args);
+                // Only the basic-object INSTANCE (basic_objectd's explicit
+                // ob->init_basic_object(m)) ever reached call_init_script - the clones
+                // placed by roomd::place_char never did, so every room-placed boatman
+                // came up without its menu.  Logging the calls create makes shows WHICH
+                // guard it returned at (basic_object / query_entire_dbase appear here;
+                // object_template and find_object are efuns and do not).
+                {
+                    static const std::atomic<bool>& idbgC8 = dynProbeFlag("LPCVM_INITDBG");
+                    if (idbgC8.load(std::memory_order_relaxed) &&
+                        objName_.find("npc/basic") != std::string::npos) {
+                        bool inCreate = false;
+                        for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it)
+                            if (it->fn && it->fn->name == "create") { inCreate = true; break; }
+                        if (inCreate) {
+                            const std::string fp8 = (pathVal.index() == 4)
+                                ? std::get<SharedString>(pathVal).str()
+                                : (pathVal.index() == 7
+                                       ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName
+                                       : std::string("?"));
+                            const std::string ff8 = (funVal.index() == 4)
+                                ? std::get<SharedString>(funVal).str() : std::string("?");
+                            std::cerr << "[initsite] this=" << thisObjectName_ << " " << objName_
+                                      << " create -> " << fp8 << "::" << ff8 << "\n";
+                            // basic.c::create's SECOND guard is
+                            //     basic_ob = find_object(object_template(this_object()));
+                            //     basic_ob = basic_ob->basic_object();
+                            //     if (!is_object(basic_ob)) return;          // <- bails here
+                            // and basic_object() is basic_object.c's
+                            //     find_basic_object_by_import_name(my_import_name)
+                            // i.e. a global_basic_object[<import name>] lookup.  Print
+                            // the receiver's own import name (and whether the receiver
+                            // is even the object it should be) so an EMPTY name or a
+                            // name that was never registered is directly visible.
+                            if (ff8 == "basic_object" && pathVal.index() == 7) {
+                                auto ro = std::get<std::shared_ptr<ObjectValue>>(pathVal);
+                                std::shared_ptr<OriginalVm> rvm;
+                                {
+                                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                                    auto it = objectRegistry().vms.find(ro->programName);
+                                    if (it != objectRegistry().vms.end()) rvm = it->second;
+                                }
+                                if (rvm) {
+                                    Value imp = rvm->callFunctionByName("get_import_name", {});
+                                    Value bobj = rvm->callFunctionByName("basic_object", {});
+                                    // The create-side path feeds call_init_script from the
+                                    // INSTANCE's DBASE (basic.c::create does
+                                    //     line_args = basic_ob->query_entire_dbase();
+                                    //     call_init_script(line_args);
+                                    // whereas the loader path hands its own mapping straight
+                                    // in).  If the merge inside init_basic_object
+                                    //     query_entire_dbase() << line_args;
+                                    // did not land, init_script is missing here and
+                                    // call_init_script silently does nothing for every
+                                    // room-placed NPC.
+                                    Value dis = rvm->callFunctionByName("query", { make_string("init_script") });
+                                    Value dsub = rvm->callFunctionByName("query", { make_string("sub_type") });
+                                    Value dkey = rvm->callFunctionByName("query", { make_string("key_name") });
+                                    std::cerr << "[initguard] receiver=" << ro->programName
+                                              << " import_name=[" << to_string(imp, false).substr(0, 40)
+                                              << "] basic_object=t" << bobj.index();
+                                    if (bobj.index() == 7)
+                                        std::cerr << ":"
+                                                  << std::get<std::shared_ptr<ObjectValue>>(bobj)->programName;
+                                    std::cerr << " dbase{init_script=" << to_string(dis, false).substr(0, 34)
+                                              << " sub_type=" << to_string(dsub, false).substr(0, 14)
+                                              << " key_name=" << to_string(dkey, false).substr(0, 18) << "}"
+                                              // ALIVE check: the LPC guard right after this
+                                              // call is is_type(10).  A registered basic
+                                              // object that was destructed earlier still
+                                              // sits in global_basic_object as an object
+                                              // VALUE, and our engine reports such a husk
+                                              // as NOT an object (the original keeps it
+                                              // alive while referenced) - which would be
+                                              // exactly "the lookup found an object yet
+                                              // the guard bails".
+                                              << " alive=" << (objectValueAlive(bobj) ? "yes" : "NO") << "\n";
+                                    std::cerr.flush();
+                                }
+                            }
+                        }
+                    }
+                }
                 // LPCVM_MENUDBG companion for the by-name form: open_menu's guards
                 // that take a path/name (me->is_deny(...), ob->is_deny(...),
                 // "/gs/daemons/antiaddictiond.c"->is_addicted(me)) show up here.
@@ -17921,6 +18105,44 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
                   << " args=" << args.size() << "\n";
     if (vmEnvTrace() && funName == "msg_read_content")
         std::cerr << "[co-mrc] path=" << objectPath << " root='" << searchRoot << "'\n";
+    // An OBJECT-valued target must be resolved by its EXACT registry key.  Only
+    // "clone:" names took that path below; every other object key fell through to
+    // the searchRoot candidates and finally to a SUFFIX match, which for a key
+    // like "clone:gs/clone/npc/basic.o#2647" can land on ANOTHER clone of the same
+    // program.  Measured while tracing clone/npc/basic.c::create (the chain that
+    // installs each NPC's /gs/init/** menu): basic_object() was invoked on a
+    // different instance than the one object_template() named, so the initialiser
+    // ran against the wrong object and the NPC placed in the room never got its
+    // menu (the Fangzhang-Island boatman).  Try the exact key first - for
+    // program-path callers this simply misses and the old resolution runs.
+    {
+        auto& regX = objectRegistry();
+        std::shared_ptr<OriginalVm> hitX;
+        {
+            std::lock_guard<std::recursive_mutex> rlX(registryMutex());
+            auto itX = regX.vms.find(objectPath);
+            if (itX != regX.vms.end()) hitX = itX->second;
+        }
+        if (hitX) {
+            static const std::atomic<bool>& exOn = dynProbeFlag("LPCVM_INITDBG");
+            if (!callerThisName.empty()) hitX->setPreviousObjectName(callerThisName);
+            Value rvX = hitX->callFunctionByName(funName, args);
+            // The LPC guard right after this dispatch is is_type(10); log the value
+            // the DISPATCH (not a side lookup) actually produced for basic_object.
+            if (exOn.load(std::memory_order_relaxed) && funName == "basic_object") {
+                std::cerr << "[exactkey] " << objectPath << " -> " << funName
+                          << " ret=t" << rvX.index();
+                if (rvX.index() == 7) {
+                    auto ovX = std::get<std::shared_ptr<ObjectValue>>(rvX);
+                    std::cerr << ":" << ovX->programName
+                              << " alive=" << (objectValueAlive(rvX) ? "yes" : "NO");
+                }
+                std::cerr << "\n";
+                std::cerr.flush();
+            }
+            return rvX;
+        }
+    }
     // Clone instances are registered under "clone:<rel>#<seq>"; resolve them
     // by exact key first (vm_callInOtherFun with an object value).  This must
     // run BEFORE the searchRoot check: clone keys carry no search root.
@@ -17993,6 +18215,29 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
             // executed the call_other (the current VM's this_object identity).
             
             if (!callerThisName.empty()) existing->setPreviousObjectName(callerThisName);
+            {
+                // LPCVM_INITDBG (runtime-armed): the /gs/init/** initialisers are
+                // reached as basic.c::call_init_script's `ob->main(this_object())`.
+                // Log the registry entry it resolved to AND the object it was handed.
+                // Each boatman's initialiser ran exactly ONCE - for the basic-object
+                // INSTANCE created by basic_objectd - while the clones placed into
+                // rooms got nothing, so every room-placed boatman (Fangzhang-Island
+                // included) opened without its menu.
+                static const std::atomic<bool>& idbgOn = dynProbeFlag("LPCVM_INITDBG");
+                if (idbgOn.load(std::memory_order_relaxed) &&
+                    objectPath.find("/gs/init/") != std::string::npos) {
+                    std::string a0 = "?";
+                    if (!args.empty()) {
+                        if (args[0].index() == 7)
+                            a0 = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                        else
+                            a0 = to_string(args[0], false).substr(0, 40);
+                    }
+                    std::cerr << "[initdbg] main key=" << c << " arg0=" << a0
+                              << " caller=" << callerThisName << "\n";
+                    std::cerr.flush();
+                }
+            }
             return existing->callFunctionByName(funName, args);
         }
     }
@@ -18537,14 +18782,30 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         }
         if (!tmplVm && relIsClone) {
             // Cloning an EXISTING clone instance (place_char clones the basic
-            // object: clone_object(find_basic_object_by_import_name(...)) with
-            // a "clone:...basic.o#410" object value): the template is that
-            // instance itself, so its my_import_name/name/type carry over.
+            // object: clone_object(find_basic_object_by_import_name(...)), whose
+            // value is "clone:...basic.o#2647"): the template MUST be that very
+            // instance - its dbase carries name/file_id/my_import_name and the
+            // /gs/init/** initialiser data.  Compare the FULL key including "#seq";
+            // the old code stripped "#seq" from the registry key and then compared
+            // it against the un-stripped rel, so the exact match never succeeded and
+            // the suffix loops picked an ARBITRARY instance of the same program.
+            // Consequence (measured): object_template()/basic_object() of every
+            // room-placed NPC resolved to the wrong instance, call_init_script got a
+            // dbase without init_script, and the NPC opened with no menu - the
+            // Fangzhang-Island boatman.
+            {
+                auto exact = reg.vms.find(rel);
+                if (exact != reg.vms.end()) {
+                    tmplVm = exact->second;
+                    tplKeyCache[rel] = rel;
+                }
+            }
+            if (!tmplVm)
             for (auto& kv : reg.vms) {
                 std::string key = kv.first;
                 size_t hash = key.find('#');
                 if (hash != std::string::npos) key.resize(hash);  // strip #seq
-                if (key == rel) { tmplVm = kv.second; tplKeyCache[rel] = kv.first; break; }    // exact instance
+                if (key == rel) { tmplVm = kv.second; tplKeyCache[rel] = kv.first; break; }    // program-level match
             }
             if (!tmplVm) {
                 for (auto& kv : reg.vms) {
@@ -18654,51 +18915,23 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // account_login) become create()'s arguments.
         vmPtr->runInit(createArgs);
         cpMark("init");
-        // Inherit the template's import identity.  The original driver's
-        // clone runs every constitution's create(); basic_object.c's create()
-        // sets my_import_name from object_template() so a clone's
-        // get_name()/query() fall through to its basic object's dbase.  Our
-        // multi-create chain may skip it, leaving a place_char'd NPC clone
-        // (�ػ����� etc.) with an empty my_import_name and get_name()
-        // undefined -> get_registered_name() undefined -> guardd can't find
-        // �ػ�����@��ܭ��.  Re-run the template's import on the clone (it is
-        // idempotent: re-sets my_import_name, file_id and the npc.list
-        // attributes including name).
-        if (tmplVm && rel.find("npc/basic") != std::string::npos) {
-            Value tmplImp = tmplVm->callFunctionByName("get_import_name", {});
-            if (vmEnvTrace())
-                std::cerr << "[clone-imp] " << cloneKey << " tmpl=" << tmplVm->objName()
-                          << " import=[" << to_string(tmplImp, false).substr(0, 40) << "]\n";
-            if (tmplImp.index() == 4 && !std::get<SharedString>(tmplImp).empty()) {
-                vmPtr->setPreviousObjectName(tmplVm->objName());
-                // Run the ROOT parent's import (LPC ::import semantics) instead of
-                // the most-derived one.  basic_object.c overrides import() and
-                // additionally does set_temp("basic_object", 1) +
-                // register_basic_object(name, this_object()); that filled the
-                // global basic-object name table with short-lived clones and
-                // halted the gs boot right after visual_packs (bisect: a12602c).
-                // The root import still sets my_import_name + the dbase, which is
-                // what get_name() needs (the "你使用了0" bug).
-                const OriginalFunction* baseImport = nullptr;
-                for (const auto& f : tmplVm->object().functions) {
-                    if (f.name != "import") continue;
-                    if (!baseImport || f.varOffset < baseImport->varOffset)
-                        baseImport = &f;
-                }
-                if (baseImport) {
-                    vmPtr->setPreviousObjectName(tmplVm->objName());
-                    vmPtr->callSpecificFunction(*baseImport, {tmplImp});
-                }
-                if (LPCVM_GETENV("LPCVM_TAIL")) {
-                    Value fid = vmPtr->callFunctionByName("query", {make_string("file_id")});
-                    Value nm = vmPtr->callFunctionByName("query", {make_string("name")});
-                    std::cerr << "[clone-imp2] " << cloneKey << " tmpl=" << tmplVm->objName()
-                              << " import=[" << to_string(tmplImp, false).substr(0, 24) << "]"
-                              << " file_id=[" << to_string(fid, false).substr(0, 30)
-                              << "] name=[" << to_string(nm, false).substr(0, 24) << "]\n";
-                    std::cerr.flush();
-                }
-            }
+        // The engine used to re-run the template's ROOT import here to give
+        // place_char'd NPC clones their my_import_name.  That is not what the
+        // original does: basic_object.c::create() copies the template's import
+        // identity for EVERY clone,
+        //     if (is_clone()) { from_ob = object_template(this_object());
+        //                       my_import_name = from_ob->get_import_name(); }
+        // and that create is part of the clone's own construction (as it now is
+        // here, provided cloneObjectInRegistry keeps "clone:...#<seq>" keys
+        // EXACT).  Running the ROOT import also skipped
+        // register_basic_object(name, this_object()), so global_basic_object kept
+        // pointing at an OUTDATED instance: basic.c::create's
+        //     basic_ob = basic_ob->basic_object();
+        // returned the wrong object, query_entire_dbase() carried no
+        // init_script, call_init_script installed nothing, and every room-placed
+        // NPC came up without its /gs/init/** menu - the Fangzhang-Island boatman
+        // opened with no menu at all.
+        {
             // The clone's create chain may not include id.c's create()
             // (_id = allocate_id(this_object())) when the inherited id.c
             // create collided in the merged function table.  Without an id

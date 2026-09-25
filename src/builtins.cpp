@@ -3044,14 +3044,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // THAT instance (whose dbase has name/file_id/my_import_name), not
             // the bare basic.c template - otherwise the new NPC has no name
             // and guardd can't find �ػ�����@��ܭ��.
+            // vm_f_clone_object clones the template OBJECT, so the argument's
+            // identity must survive verbatim: a "clone:<rel>#<seq>" value names an
+            // EXISTING instance and IS a registry key.  Stripping the "clone:"
+            // prefix produced "gs/clone/npc/basic.o#2647", which matches no key, so
+            // cloneObjectInRegistry fell back to a suffix scan and used an ARBITRARY
+            // instance of the same program as the template.  place_char clones exactly
+            // such an instance (clone_object(find_basic_object_by_import_name(
+            // "fangzhangdao/chuanfu"))); with a wrong template object_template() and
+            // basic_object() read the wrong dbase, call_init_script found no
+            // init_script and the NPC opened with no menu (Fangzhang-Island boatman).
             if (path.compare(0, 6, "clone:") == 0) {
-                size_t hash = path.find('#');
-                if (hash != std::string::npos) path = path.substr(6);  // keep #seq
-                else path = path.substr(6);
+                // exact registry key - keep as is
             } else if (path.compare(0, 4, "pak:") == 0) {
                 path = path.substr(4);
+                if (!path.empty() && path.front() != '/') path = "/" + path;
+            } else if (!path.empty() && path.front() != '/') {
+                path = "/" + path;
             }
-            if (!path.empty() && path.front() != '/') path = "/" + path;
         } else {
             path = as_string(args[0]);
         }
