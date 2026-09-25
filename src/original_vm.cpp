@@ -2372,6 +2372,10 @@ public:
         return std::make_shared<OriginalObject>(obj_);
     }
     const std::string& objName() const { return objName_; }
+    // The VM's own registry key ("clone:gs/clone/npc/basic.o#2647"), as opposed to
+    // objName() which is the PROGRAM path shared by every clone.  Diagnostics need
+    // it to tell an instance template from the class template.
+    const std::string& instanceName() const { return thisObjectName_; }
     const std::vector<OriginalInsn>* code() const { return es_->code; }
     size_t ip() const { return es_->ip; }
     // Public lookups for cross-object inline calls (case 8).
@@ -3290,6 +3294,14 @@ public:
         std::string relBase = rel;
         size_t hashPos = relBase.find('#');
         if (hashPos != std::string::npos) relBase.resize(hashPos);
+        // The new clone gets a FRESH instance key built from the PROGRAM path, while
+        // its template stays the object it was cloned from (the per-NPC basic-object
+        // instance).  relBase carries a "clone:" prefix whenever the template was an
+        // instance (place_char does clone_object(find_basic_object_by_import_name(...))),
+        // and prepending blindly produced "clone:clone:gs/clone/npc/basic.o#N" - a key
+        // no other lookup ever uses, so basic_object.c::create's template lookup and
+        // every later call_other through that value missed.
+        if (relBase.compare(0, 6, "clone:") == 0) relBase.erase(0, 6);
         std::string cloneKey = "clone:" + relBase + "#" + std::to_string(seq);
         std::shared_ptr<const OriginalObject> objPtr;
         std::shared_ptr<OriginalVm> vmPtr;
@@ -18855,9 +18867,16 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
     int64_t seq = cloneSeq.fetch_add(1, std::memory_order_relaxed);
     // The clone key must be the PROGRAM path (no "#<seq>" of the source clone):
     // "clone:gs/clone/npc/basic.o#410" -> "clone:gs/clone/npc/basic.o#<new>".
+    // relBase may itself be prefixed when the template was an existing instance
+    // (place_char: clone_object(find_basic_object_by_import_name(...)) passes the
+    // instance's key verbatim), so strip that prefix before prepending - otherwise
+    // the new key became "clone:clone:gs/clone/npc/basic.o#N", which no lookup ever
+    // used: basic_object.c::create's template lookup missed, call_init_script got a
+    // dbase without init_script, and every room-placed NPC came up with no menu.
     std::string relBase = rel;
     size_t hashPos = relBase.find('#');
     if (hashPos != std::string::npos) relBase.resize(hashPos);
+    if (relBase.compare(0, 6, "clone:") == 0) relBase.erase(0, 6);
     std::string cloneKey = "clone:" + relBase + "#" + std::to_string(seq);
     std::shared_ptr<const OriginalObject> objPtr;
     std::shared_ptr<OriginalVm> vmPtr;
@@ -18915,22 +18934,21 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
         // account_login) become create()'s arguments.
         vmPtr->runInit(createArgs);
         cpMark("init");
-        // The engine used to re-run the template's ROOT import here to give
-        // place_char'd NPC clones their my_import_name.  That is not what the
-        // original does: basic_object.c::create() copies the template's import
-        // identity for EVERY clone,
-        //     if (is_clone()) { from_ob = object_template(this_object());
-        //                       my_import_name = from_ob->get_import_name(); }
-        // and that create is part of the clone's own construction (as it now is
-        // here, provided cloneObjectInRegistry keeps "clone:...#<seq>" keys
-        // EXACT).  Running the ROOT import also skipped
-        // register_basic_object(name, this_object()), so global_basic_object kept
-        // pointing at an OUTDATED instance: basic.c::create's
-        //     basic_ob = basic_ob->basic_object();
-        // returned the wrong object, query_entire_dbase() carried no
-        // init_script, call_init_script installed nothing, and every room-placed
-        // NPC came up without its /gs/init/** menu - the Fangzhang-Island boatman
-        // opened with no menu at all.
+        // Template identity (LPCVM_INITDBG).  The original gives every clone its
+        // my_import_name inside basic_object.c::create():
+        //     from_ob = object_template(this_object());
+        //     my_import_name = from_ob->get_import_name();
+        // so the clone's template must be the object that was actually cloned.
+        {
+            static const std::atomic<bool>& tOn = dynProbeFlag("LPCVM_INITDBG");
+            if (tOn.load(std::memory_order_relaxed) && tmplVm &&
+                rel.find("npc/basic") != std::string::npos) {
+                std::cerr << "[tplid] clone=" << cloneKey
+                          << " template=" << regKeyOfVm(tmplVm.get())
+                          << " tplName=" << tmplVm->instanceName() << "\n";
+                std::cerr.flush();
+            }
+        }
         {
             // The clone's create chain may not include id.c's create()
             // (_id = allocate_id(this_object())) when the inherited id.c
