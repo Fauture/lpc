@@ -213,6 +213,27 @@ int loadObjectIntoRegistry(const std::string& virtualPath, const std::string& se
 // (The original driver does not auto-load here; load_object/safe_load_object
 // do the loading.)
 Value findObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot);
+// True when the value holds an object that is still alive.  Object values handed
+// out by a registry VM carry that VM's liveness flag, which unregisterDestructed()
+// clears when the object is REALLY freed (the driver's second destruct phase - the
+// first, "marked" phase only sets beingDestroyed_ and keeps the object registered
+// so its destructor chain can still call save()/get_name()).
+//
+// The original invalidates the REFERENCES on a real free: the slot holds 0 from
+// then on.  Every observable of an object value therefore has to behave as if it
+// held 0 - is_object()/is_type(10), the truth test (`if (temp("combat"))`),
+// equality (a freed reference equals 0 and equals another freed one), mapping
+// keys, object_name() and to_string().  This is what lets game code that stores an
+// object and only clears it on the normal path recover: monsterd::touch_off_combat
+// does me->set_temp("combat", cob) and can then destruct cob without ever building
+// a monster team (idle_template, the "no encounter" marker city rooms carry in
+// etc/room.list), and is_in_combat() (is_object(temp("combat")) &&
+// !cob->query_temp("finished")) must go false by itself.
+bool objectValueAlive(const Value& v);
+// True when the value is an object value that was really freed (the "reference is
+// 0 now" state).  False for every non-object value, so callers can use it to
+// substitute the int 0.
+bool objectValueFreed(const Value& v);
 
 // clone_object(virtualPath, createArgs...): find the loaded template object,
 // create a fresh instance (independent instance variables), run its create()

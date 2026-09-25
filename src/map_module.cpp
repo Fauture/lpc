@@ -137,6 +137,12 @@ Value MapModule::getObjectById(const Value& idVal) {
     if (!(idPool_[bi] & (1ULL << b))) return make_int(0);
     const std::string& key = idInfo_[static_cast<size_t>(off)];
     if (key.empty()) return make_int(0);
+    // A stored placeholder key ("<this>" / ".") cannot be resolved back to an
+    // object.  allocate_id now normalizes it away, but never hand out a value
+    // that resolves to nothing: gs's open_menu.c::main would either pass
+    // is_object(get_object_by_id(id)) and start_talk_to a broken object (menu
+    // opens with no name/text) or return silently (NPC cannot be clicked open).
+    if (key == "<this>" || key == ".") return make_int(0);
     auto ov = std::make_shared<ObjectValue>();
     ov->programName = key;
     return ov;

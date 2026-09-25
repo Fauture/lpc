@@ -3065,20 +3065,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // and does not need the search root.
         return lpc::cloneObjectInRegistry(path, "", createArgs);
     }
-    // is_object(ob): the value must hold an object that is STILL ALIVE.  The
-    // original invalidates references when an object is really freed, and
-    // is_in_combat() (is_object(temp("combat")) && !cob->...("finished")) relies
-    // on it: monsterd::touch_off_combat stores the combat object in temp("combat")
-    // and can then destruct it without building a monster team (the
-    // idle_template / "no encounter" path), which used to leave the player
-    // permanently "in combat" - NPC dialogue blocked and admin_kickoff refused
-    // with "正在战斗中，无法强踢下线".
-    if (name == "is_object") {
-        if (args.empty() || args[0].index() != 7) return make_int(0);
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
-        if (ov && ov->alive && !ov->alive->load(std::memory_order_relaxed)) return make_int(0);
-        return make_int(1);
-    }
+    // is_object(ob): true only for an object that is still alive.  A really freed
+    // object behaves as the int 0 (see objectValueFreed / original_vm.h) - the
+    // original invalidates references on a real destruct, which is what lets
+    // is_in_combat() (is_object(temp("combat")) && !cob->...("finished")) go false
+    // after monsterd::touch_off_combat destructs a combat object it could not
+    // populate with a monster team (the idle_template / "no encounter" path).
+    if (name == "is_object")
+        return make_int((!args.empty() && args[0].index() == 7 && lpc::objectValueAlive(args[0])) ? 1 : 0);
     if (name == "to_int" || name == "to_number") return args.empty() ? make_int(0) : make_int(as_int(args[0]));
     if (name == "to_string") return args.empty() ? make_string("") : make_string(as_string(args[0]));
     if (name == "to_float") return args.empty() ? make_float(0.0) : make_float(as_int(args[0]));
@@ -3633,12 +3627,55 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::vector<Value> createArgs;
         if (args.size() >= 2) createArgs.push_back(args[1]);
         int ok = loadObjectIntoRegistry(vpath, vfsRoot(), createArgs);
-        return make_int(ok);
+        // LPCVM_LOADDBG (runtime-armed): what does load_object actually return?
+        // basic.c::call_init_script assigns the result and immediately calls
+        // ob->main(this_object()) - if that value is not an object the call is
+        // dropped and the whole /gs/init/** initialiser never runs (the Fangzhang
+        // Island boatman ends up with no menu at all).
+        {
+            static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
+            if (ldOn.load(std::memory_order_relaxed)) {
+                Value rv = ok ? findObjectInRegistry(vpath, vfsRoot()) : make_int(0);
+                std::cerr << "[loaddbg] " << name << " path='" << vpath << "' ok=" << ok
+                          << " retType=" << rv.index()
+                          << " ret=" << (rv.index() == 7
+                                             ? std::get<std::shared_ptr<ObjectValue>>(rv)->programName
+                                             : to_string(rv, false).substr(0, 40))
+                          << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+                std::cerr.flush();
+            }
+        }
+        if (!ok) return make_int(0);
+        // Return the OBJECT, like the original driver does - never an int.  LPC
+        // callers assign the result and then call into it:
+        //   basic.c::call_init_script:
+        //       ob = load_object(path);  if (ob) ob->main(this_object());
+        // With an int the `ob->main(...)` was a call on a NUMBER and was dropped
+        // silently, so every /gs/init/** initialiser never ran: the Fangzhang
+        // Island boatman (init/npc/fangzhangdao-chuanfu.c -> set_dynamic_menu)
+        // opened with no menu at all, and the coachman / guild envoy kept only
+        // their built-in default menus.  The LPC safe_load_object wrapper also
+        // tests the returned object.
+        return findObjectInRegistry(vpath, vfsRoot());
     }
     if (name == "find_object") {
         // find_object(path) - object value if loaded, else 0.
         if (args.empty()) return make_int(0);
         std::string vpath = normalizeSlashes(as_string(args[0]));
+        {
+            static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
+            if (ldOn.load(std::memory_order_relaxed) &&
+                vpath.find("/gs/init/") != std::string::npos) {
+                Value rv = findObjectInRegistry(vpath, vfsRoot());
+                std::cerr << "[loaddbg] find_object '" << vpath << "' -> type=" << rv.index()
+                          << " ret=" << (rv.index() == 7
+                                             ? std::get<std::shared_ptr<ObjectValue>>(rv)->programName
+                                             : to_string(rv, false).substr(0, 40))
+                          << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+                std::cerr.flush();
+                return rv;
+            }
+        }
         return findObjectInRegistry(vpath, vfsRoot());
     }
     // ---- packet protocol analyser efuns (vm_pkt_analyser.c) ----
@@ -6756,7 +6793,33 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "allocate_id") {
         // vm_f_allocate_id: allocate an id from the pool for the given object.
-        Value r = lpc::mapModule().allocateId(args.empty() ? Value{} : args[0]);
+        // The pool stores the object's registry KEY and get_object_by_id()
+        // rebuilds the object from it, so the placeholder this_object() name
+        // ("<this>", set for a VM whose identity was never assigned) must be
+        // resolved to the CALLING instance's key first.  Storing "<this>" made
+        // every later get_object_by_id() return an object value that resolves to
+        // nothing: gs's open_menu.c::main then failed is_object(get_object_by_id(id))
+        // and returned SILENTLY (an NPC that cannot be clicked open at all), and
+        // menus built from such a value lost the NPC's name/text (get_name() -> 0,
+        // env_object() -> 0, get_pos() -> (0,0) => "距离NPC过远").  Callers reach
+        // here as allocate_id(this_object()) from id.c::create and friends, where
+        // stubCallCtx().key holds the real instance key.
+        Value idArg = args.empty() ? Value{} : args[0];
+        if (idArg.index() == 7) {
+            auto ov = std::get<std::shared_ptr<ObjectValue>>(idArg);
+            const std::string& pn = ov ? ov->programName : std::string();
+            if (pn.empty() || pn == "<this>" || pn == ".") {
+                const std::string& ck = stubCallCtx().key;
+                if (!ck.empty()) {
+                    auto fixed = std::make_shared<ObjectValue>();
+                    fixed->programName = ck;
+                    fixed->owner = ov ? ov->owner : nullptr;
+                    if (ov) fixed->alive = ov->alive;
+                    idArg = fixed;
+                }
+            }
+        }
+        Value r = lpc::mapModule().allocateId(idArg);
         // LPCVM_IDDBG: which KEY the id pool stored.  The pool remembers the
         // object's programName and get_object_by_id() rebuilds the object from
         // it, so storing the "<this>" placeholder (this_object() of a VM whose
@@ -6766,8 +6829,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // menus and pets created without their level.
         if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
-            if (!args.empty() && args[0].index() == 7)
-                key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+            if (idArg.index() == 7)
+                key = std::get<std::shared_ptr<ObjectValue>>(idArg)->programName;
             std::cerr << "[iddbg] allocate_id key=[" << key << "] caller="
                       << stubCallCtx().obj << "::" << stubCallCtx().fn
                       << " callerKey=[" << stubCallCtx().key << "] -> id="
@@ -6782,6 +6845,22 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (name == "get_object_by_id") {
         Value r = lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
+        // LPCVM_MENUDBG: open_menu.c::main resolves the clicked NPC with this efun
+        // and returns 0 SILENTLY when the id does not resolve - one of the four
+        // no-message failure paths behind "NPC 点不开".  Log id -> key here so the
+        // id pool's contents become visible for the click that failed.
+        {
+            static const std::atomic<bool>& mdOn = dynProbeFlag("LPCVM_MENUDBG");
+            if (mdOn.load(std::memory_order_relaxed) &&
+                stubCallCtx().obj.find("open_menu") != std::string::npos) {
+                std::string k;
+                if (r.index() == 7) k = std::get<std::shared_ptr<ObjectValue>>(r)->programName;
+                std::cerr << "[menudbg] get_object_by_id id="
+                          << (args.empty() ? -1 : as_int(args[0])) << " -> "
+                          << (k.empty() ? std::string("0 (NOT FOUND)") : k) << "\n";
+                std::cerr.flush();
+            }
+        }
         if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
             if (r.index() == 7) key = std::get<std::shared_ptr<ObjectValue>>(r)->programName;

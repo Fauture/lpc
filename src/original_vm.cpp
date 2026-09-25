@@ -9064,8 +9064,24 @@ private:
                 }
                 const std::string& want = !dynFn.empty() ? dynFn : std::string();
                 const char* target = want.empty() ? insnFn : want.c_str();
-                if (target && *target && !es_->frames.empty() && es_->frames.back().fn &&
-                    es_->frames.back().fn->name == target) {
+                // A target starting with '+' matches when the function is ANYWHERE
+                // on the frame stack instead of only on top.  Cross-object calls the
+                // engine runs inline (commandd -> pak:gs/cmds/normal/open_menu.o::main,
+                // closure calls like menu_clone_item1) leave no top frame of their
+                // own for the plain form, so the tracer looked blind for exactly the
+                // paths under investigation.
+                const bool anyFrame = target && *target == '+';
+                const char* wantFn = anyFrame ? (target + 1) : target;
+                bool hit = false;
+                if (wantFn && *wantFn && !es_->frames.empty()) {
+                    if (anyFrame) {
+                        for (auto it = es_->frames.rbegin(); it != es_->frames.rend(); ++it)
+                            if (it->fn && it->fn->name == wantFn) { hit = true; break; }
+                    } else {
+                        hit = es_->frames.back().fn && es_->frames.back().fn->name == wantFn;
+                    }
+                }
+                if (hit) {
                     std::string top = "-";
                     if (!es_->stack.empty()) {
                         const StackItem& t = es_->stack.back();
@@ -9073,7 +9089,9 @@ private:
                                       : "t" + std::to_string(t.value.index()) + ":" +
                                         to_string(resolveCrossVmRef(t.value), false).substr(0, 40);
                     }
-                    std::cerr << "[insn] " << objName_ << "::" << target << " ip=" << (es_->ip - 1)
+                    const std::string curFn = (!es_->frames.empty() && es_->frames.back().fn)
+                                                  ? es_->frames.back().fn->name : std::string("?");
+                    std::cerr << "[insn] " << objName_ << "::" << curFn << " ip=" << (es_->ip - 1)
                               << " op=" << in.op << " " << actionInfo(in.op).name << " a=" << in.a
                               << " b=" << in.b << " sp=" << es_->stack.size() << " top=" << top << "\n";
                 }
@@ -10757,21 +10775,18 @@ private:
                 int t = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 Value v = top().value;
                 int got = vmTypeOf(v);
-                // An object that was really freed (removed from the registry) is
-                // not an object any more.  The original invalidates references on
-                // a real destruct, and game code depends on it: is_in_combat() is
-                // is_object(temp("combat")) && !cob->query_temp("finished"), and
-                // monsterd::touch_off_combat stores the combat object in
-                // temp("combat") before it can fail - when the encounter could not
-                // build a monster team (idle_template, the "no encounter" marker
-                // city rooms carry in etc/room.list) it just destructs the combat
-                // object, so the stale reference kept the player permanently in
-                // combat.  ObjectValue::alive is the flag unregisterDestructed
-                // clears; values without one stay alive.
-                if (got == t && t == 10 && v.index() == 7) {
-                    auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
-                    if (ov && ov->alive && !ov->alive->load(std::memory_order_relaxed)) got = -1;
-                }
+                // A really freed object behaves as the int 0: the original
+                // invalidates references on a real destruct (phase 2, see
+                // objectValueAlive in original_vm.h), so is_object()/is_type(10)
+                // must report 0 for it - and LPC's is_object(x) compiles to this
+                // opcode.  is_in_combat() is is_object(temp("combat")) &&
+                // !cob->query_temp("finished"), and monsterd::touch_off_combat
+                // stores the combat object in temp("combat") before it can fail:
+                // when the encounter could not build a monster team (idle_template,
+                // the "no encounter" marker city rooms carry in etc/room.list) it
+                // only destructs the combat object, so the stale reference used to
+                // keep the player permanently in combat.
+                if (got == t && t == 10 && lpc::objectValueFreed(v)) got = -1;
                 top().value = make_int(got == t ? 1 : 0);
                 break;
             }
@@ -11810,6 +11825,63 @@ private:
                 // each raw std::getenv here is a linear scan of the process
                 // environment, i.e. pure overhead on the interpreter's hottest path.
                 static const bool ncOn7 = (LPCVM_GETENV("LPCVM_NAMECHAIN") != nullptr);
+                // LPCVM_MENUDBG (runtime-armed via _probe_on\LPCVM_MENUDBG): log
+                // every guard call gs/cmds/normal/open_menu.o::main makes, in
+                // order.  Its four failure paths are silent (no text to the
+                // client), and the per-instruction tracer cannot see this call
+                // because the engine runs it on the callee's own VM/stack without
+                // a frame of ours on top.  The LAST guard logged before the
+                // command returns identifies the failing one:
+                //   is_in_combat | is_deny(_menu) | is_addicted |
+                //   get_reserved_object | get_object_by_id | is_near | is_deny
+                {
+                    static const std::atomic<bool>& mdOn = dynProbeFlag("LPCVM_MENUDBG");
+                    if (mdOn.load(std::memory_order_relaxed) &&
+                        objName_.find("open_menu") != std::string::npos) {
+                        int fi = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                        int cn = fromMeta ? m1 : in.b;
+                        auto fit = funcsByIndex_.find(fi);
+                        std::string fn = (fit != funcsByIndex_.end()) ? fit->second->name : std::string("?");
+                        std::cerr << "[menudbg] " << objName_ << " guard=" << fn
+                                  << " argc=" << cn << "\n";
+                        // is_near(ob, talk_distance): the distance rule silently
+                        // rejects the click (open_menu's long_distance branch).
+                        // Log the two objects and their stored positions so a
+                        // teleport that desyncs the server-side coordinates is
+                        // visible.  Reading the object variables is a plain map
+                        // lookup - no LPC is executed here.
+                        if (fn == "is_near" && cn >= 1) {
+                            auto posOf = [&](const Value& ov) -> std::string {
+                                if (ov.index() != 7) return "?";
+                                auto o = std::get<std::shared_ptr<ObjectValue>>(ov);
+                                if (!o) return "?";
+                                std::shared_ptr<OriginalVm> vm;
+                                {
+                                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                                    auto it = objectRegistry().vms.find(o->programName);
+                                    if (it != objectRegistry().vms.end()) vm = it->second;
+                                }
+                                if (!vm) return o->programName + " (not registered)";
+                                auto rd = [&](const char* nm) -> std::string {
+                                    Value v = vm->objVarByName(nm);
+                                    return (v.index() == 2) ? std::to_string(std::get<int64_t>(v))
+                                                            : std::string("?");
+                                };
+                                return o->programName.substr(0, 46) + " (x=" + rd("my_x") +
+                                       ",y=" + rd("my_y") + ",map=" + rd("current_map_index") + ")";
+                            };
+                            const int bot = static_cast<int>(es_->stack.size()) - cn;
+                            std::string a0, a1;
+                            if (bot >= 0 && static_cast<size_t>(bot) < es_->stack.size())
+                                a0 = posOf(es_->stack[static_cast<size_t>(bot)].value);
+                            if (bot + 1 >= 0 && static_cast<size_t>(bot + 1) < es_->stack.size())
+                                a1 = to_string(es_->stack[static_cast<size_t>(bot + 1)].value, false).substr(0, 24);
+                            std::cerr << "[menudbg]   is_near arg0=" << a0
+                                      << " arg1(dist)=" << a1 << "\n";
+                        }
+                        std::cerr.flush();
+                    }
+                }
                 if (ncOn7) {
                     int fi = fromMeta ? m0 : static_cast<int16_t>(in.a);
                     int cn = fromMeta ? m1 : in.b;
@@ -11942,6 +12014,81 @@ private:
                 }
                 Value pathVal = pop().value;
                 Value funVal = pop().value;
+                // LPCVM_MENUDBG companion for the by-name form: open_menu's guards
+                // that take a path/name (me->is_deny(...), ob->is_deny(...),
+                // "/gs/daemons/antiaddictiond.c"->is_addicted(me)) show up here.
+                {
+                    static const std::atomic<bool>& mdOn8 = dynProbeFlag("LPCVM_MENUDBG");
+                    if (mdOn8.load(std::memory_order_relaxed) &&
+                        objName_.find("open_menu") != std::string::npos) {
+                        const std::string fp = (pathVal.index() == 4)
+                            ? std::get<SharedString>(pathVal).str()
+                            : (pathVal.index() == 7
+                                   ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName
+                                   : std::string("?"));
+                        const std::string ff = (funVal.index() == 4)
+                            ? std::get<SharedString>(funVal).str() : std::string("?");
+                        std::cerr << "[menudbg] " << objName_ << " -> " << fp << "::" << ff
+                                  << " argc=" << (fromMeta ? m1 : in.b) << "\n";
+                        // is_near(ob, talk_distance) is the guard that silently rejects
+                        // a click (open_menu's long_distance branch).  Print the two
+                        // objects' STORED positions - plain object-variable lookups, no
+                        // LPC executed - so a teleport that desyncs the server-side
+                        // coordinates becomes visible at once.
+                        if (ff == "is_near") {
+                            const int cn8 = fromMeta ? m1 : in.b;
+                            const int bot8 = static_cast<int>(es_->stack.size()) - cn8;
+                            auto varsOf8 = [](const std::string& key) -> std::string {
+                                std::shared_ptr<OriginalVm> vm8;
+                                {
+                                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                                    auto it = objectRegistry().vms.find(key);
+                                    if (it != objectRegistry().vms.end()) vm8 = it->second;
+                                }
+                                if (!vm8) return key.substr(0, 46) + " (not registered)";
+                                auto rd8 = [&](const char* nm) -> std::string {
+                                    const int slot = vm8->objVarSlotByName(nm);
+                                    if (slot < 0) return std::string("noslot");
+                                    // Clones keep their instance variables in the OWN block
+                                    // (objVars_ is the merged/shared one), so read both -
+                                    // move.c's my_x/my_y/current_map_index live in the
+                                    // clone's own block.
+                                    auto b1 = vm8->objVarsShared();
+                                    auto b2 = vm8->ownObjVarsShared();
+                                    for (auto* blk : { b1.get(), b2.get() }) {
+                                        if (!blk || static_cast<size_t>(slot) >= blk->size()) continue;
+                                        const Value& v = (*blk)[static_cast<size_t>(slot)];
+                                        if (v.index() == 2) return std::to_string(std::get<int64_t>(v));
+                                        if (v.index() != 0 && v.index() != 1)
+                                            return to_string(v, false).substr(0, 12);
+                                    }
+                                    return std::string("undef");
+                                };
+                                return key.substr(0, 46) + " my_x=" + rd8("my_x") + " my_y=" + rd8("my_y") +
+                                       " x_pos=" + rd8("x_pos") + " y_pos=" + rd8("y_pos") +
+                                       " x=" + rd8("x") + " y=" + rd8("y") +
+                                       " map=" + rd8("current_map_index") + "/" + rd8("map_index");
+                            };
+                            // The RECEIVER (me = the player) is the call path, not an
+                            // argument; the clicked NPC is the object argument.
+                            std::cerr << "[menudbg]   is_near RECEIVER " << varsOf8(fp) << "\n";
+                            for (int k = 0; k < cn8; ++k) {
+                                const int idx = bot8 + k;
+                                if (idx < 0 || static_cast<size_t>(idx) >= es_->stack.size()) continue;
+                                const Value& av = es_->stack[static_cast<size_t>(idx)].value;
+                                if (av.index() == 7) {
+                                    auto o8 = std::get<std::shared_ptr<ObjectValue>>(av);
+                                    std::cerr << "[menudbg]   is_near ARG" << k << " "
+                                              << varsOf8(o8 ? o8->programName : std::string("?")) << "\n";
+                                } else {
+                                    std::cerr << "[menudbg]   is_near ARG" << k << " = "
+                                              << to_string(av, false).substr(0, 20) << "\n";
+                                }
+                            }
+                        }
+                        std::cerr.flush();
+                    }
+                }
                 int argn = fromMeta ? m1 : in.b;
                 if (vmEnvTrace() && vmEnvTraceFn() &&
                     es_->frames.back().fn && es_->frames.back().fn->name == vmEnvTraceFn())
@@ -12247,6 +12394,25 @@ private:
                         if (targetVm) {
                             if (funName.empty()) targetFn = targetVm->functionByIndex(funIndex);
                             else targetFn = targetVm->findFunctionAny(funName);
+                        }
+                        // LPCVM_C8INIT (runtime-armed): how do the /gs/init/**
+                        // initialiser dispatches resolve?  basic.c::call_init_script
+                        // does find_object(path)/load_object(path) and then
+                        // ob->main(this_object()); when the resolution comes up empty
+                        // the call is dropped and the NPC keeps an unconfigured menu
+                        // (the Fangzhang Island boatman opens with no menu at all).
+                        {
+                            static const std::atomic<bool>& c8initOn = dynProbeFlag("LPCVM_C8INIT");
+                            if (c8initOn.load(std::memory_order_relaxed) &&
+                                path.find("/gs/init/") != std::string::npos) {
+                                std::cerr << "[c8init] from=" << objName_ << " path='" << path
+                                          << "' fn='" << funName << "' pathIdx=" << static_cast<int>(pathVal.index())
+                                          << " targetVm=" << (targetVm ? targetVm->objName() : "NULL")
+                                          << " targetFn=" << (targetFn ? targetFn->name : "NULL")
+                                          << " code=" << (targetFn ? targetFn->code.size() : -1)
+                                          << "\n";
+                                std::cerr.flush();
+                            }
                         }
                         if (constructDiagOn() && funName == "create_data") {
                             std::string cur = es_->frames.empty() || !es_->frames.back().fn
@@ -12821,11 +12987,29 @@ private:
             }
             case 5: { // call_fun_ptr
                 CpuProfGuard _cpuProfOp5("op5");
-                static const bool mcOn5 = (LPCVM_GETENV("LPCVM_MENUCLOSURE") != nullptr);
-                if (mcOn5) {
+                // LPCVM_MENUCLOSURE (env) or _probe_on\LPCVM_MENUCLOSURE (runtime):
+                // log closure calls made while a menu function is on the stack.  The
+                // dynamic-menu NPCs (etc/basic_dynamic_menu_npc.list) keep their menu
+                // CONTENT and ACTION in closures: menu.c::start_talk_to calls
+                // menu_content through call_fun_ptr and returns SILENTLY when it
+                // yields an empty result (no menu at all - the coachman that cannot
+                // be opened), and clicking an option runs the action closure from
+                // select_menu_item (the coachman whose teleport does nothing).  The
+                // per-instruction tracer keys on the top frame (the caller's) and so
+                // never shows either.
+                static const std::atomic<bool>& mcDyn5 = dynProbeFlag("LPCVM_MENUCLOSURE");
+                static const bool mcEnv5 = (LPCVM_GETENV("LPCVM_MENUCLOSURE") != nullptr);
+                if (mcEnv5 || mcDyn5.load(std::memory_order_relaxed)) {
                     bool inTalk3 = false;
-                    for (const auto& fr : es_->frames)
-                        if (fr.fn && fr.fn->name == "start_talk_to") { inTalk3 = true; break; }
+                    for (const auto& fr : es_->frames) {
+                        if (!fr.fn) continue;
+                        const std::string& n3 = fr.fn->name;
+                        if (n3 == "start_talk_to" || n3 == "select_menu_item" ||
+                            n3 == "do_select_item_menu" || n3 == "start_menu" ||
+                            n3 == "set_menu" || n3 == "_set_menu" || n3 == "main") {
+                            inTalk3 = true; break;
+                        }
+                    }
                     if (inTalk3) {
                         Value fv = es_->stack.empty() ? Value{} : es_->stack.back().value;
                         if (fv.index() == 8) {
@@ -12845,8 +13029,21 @@ private:
                         std::cerr.flush();
                     }
                 }
+                // LPCVM_FUNPTR (env) or _probe_on\LPCVM_FUNPTR (runtime): dump every
+                // call_fun_ptr argument, marking REFERENCE arguments.  This is how the
+                // dynamic-menu chain passes its accumulator:
+                //   dynamic_menu.c::create_menu_content does
+                //       (*menu_func[i][0])(&menu_content, me, ob)
+                // and the callee (moved.c::init_menu_content, chefu.o's
+                // init_menu_content, partyd.c::party_menu_content_*) APPENDS to that
+                // by-reference parameter - its return value is only an int.  If the
+                // reference is dropped at the call the appends are lost: the
+                // Fangzhang-Island boatman opens with no menu at all, the coachman
+                // keeps only its bound default text, and the guild envoy never shows
+                // the menus registered after level-up.
+                static const std::atomic<bool>& fpDyn5 = dynProbeFlag("LPCVM_FUNPTR");
                 static const bool fpOn5 = (LPCVM_GETENV("LPCVM_FUNPTR") != nullptr);
-                if (fpOn5) {
+                if (fpOn5 || fpDyn5.load(std::memory_order_relaxed)) {
                     std::string ad;
                     int n2 = fromMeta ? m1 : in.b;
                     int bot6 = static_cast<int>(es_->stack.size()) - n2 - 1;
@@ -17610,6 +17807,18 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
     std::vector<std::string> candidates;
     candidates.push_back(searchRoot + "/" + rel);
     candidates.push_back("pak:" + rel);
+    // Extension-less paths must resolve too: gs binds destinations and services as
+    // "/gs/zone/lanxianzhen/lanxianzhen" (chefu.o's carry_to_destination) and
+    // "/gs/daemons/moved" while every registry key ends in ".o" - without these
+    // retries the call_other silently missed and returned 0.
+    {
+        const size_t slash2 = rel.find_last_of('/');
+        const std::string leaf2 = (slash2 == std::string::npos) ? rel : rel.substr(slash2 + 1);
+        if (!leaf2.empty() && leaf2.find('.') == std::string::npos) {
+            candidates.push_back(searchRoot + "/" + rel + ".o");
+            candidates.push_back("pak:" + rel + ".o");
+        }
+    }
     std::string opPrefix = vfsObjPrefix() + "/";
     if (rel.compare(0, opPrefix.size(), opPrefix) == 0) {
         candidates.push_back(searchRoot + "/" + rel.substr(opPrefix.size()));
@@ -17729,6 +17938,18 @@ Value tryCallOtherObject(const std::string& searchRoot, const std::string& objec
     std::vector<std::string> candidates;
     candidates.push_back(searchRoot + "/" + rel);
     candidates.push_back("pak:" + rel);
+    // Extension-less paths must resolve too: gs binds destinations and services as
+    // "/gs/zone/lanxianzhen/lanxianzhen" (chefu.o's carry_to_destination) and
+    // "/gs/daemons/moved" while every registry key ends in ".o" - without these
+    // retries the call_other silently missed and returned 0.
+    {
+        const size_t slash2 = rel.find_last_of('/');
+        const std::string leaf2 = (slash2 == std::string::npos) ? rel : rel.substr(slash2 + 1);
+        if (!leaf2.empty() && leaf2.find('.') == std::string::npos) {
+            candidates.push_back(searchRoot + "/" + rel + ".o");
+            candidates.push_back("pak:" + rel + ".o");
+        }
+    }
     std::string opPrefix = vfsObjPrefix() + "/";
     if (rel.compare(0, opPrefix.size(), opPrefix) == 0) {
         candidates.push_back(searchRoot + "/" + rel.substr(opPrefix.size()));
@@ -18197,13 +18418,55 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
     auto& reg = objectRegistry();
     std::lock_guard<std::recursive_mutex> rl(registryMutex());
-    for (auto& kv : reg.vms) {
-        std::string key = kv.first;
-        // registry keys are real paths like "linux/aaa - bak/aaa/daemons/x.o";
-        // compare by suffix so "/aaa/daemons/x.c" matches.
-        if (hasSuffix(key, rel)) return make_object(virtualPath);
+    auto bySuffix = [&](const std::string& want) -> bool {
+        for (auto& kv : reg.vms) {
+            // registry keys are real paths like "linux/aaa - bak/aaa/daemons/x.o";
+            // compare by suffix so "/aaa/daemons/x.c" matches.
+            if (hasSuffix(kv.first, want)) return true;
+        }
+        return false;
+    };
+    if (bySuffix(rel)) return make_object(virtualPath);
+    // find_object(path) is called with EXTENSION-LESS zone paths all over the
+    // game: /gs/clone/npc/tianyongcheng/chefu.o's menu binds every destination as
+    //     (: carry_to_destination, "/gs/zone/lanxianzhen/lanxianzhen" :)
+    // and carry_to_destination opens with
+    //     if (!is_object(env = find_object(destination))) return;
+    // so a miss here is a SILENT no-op - the coachman's menu opens, the teleport
+    // option is clickable, and nothing happens ("车夫无法传送").  Registry keys
+    // always carry the .o extension, so retry with it appended (and with .c
+    // normalised the same way) when the caller passed a bare path.
+    const size_t slash = rel.find_last_of('/');
+    const std::string leaf = (slash == std::string::npos) ? rel : rel.substr(slash + 1);
+    if (!leaf.empty() && leaf.find('.') == std::string::npos) {
+        std::string withO = rel + ".o";
+        if (bySuffix(withO)) return make_object(virtualPath);
+        if (bySuffix(rel + ".c")) return make_object(virtualPath);
     }
     return make_int(0);
+}
+
+// ---- freed-object reference invalidation --------------------------------
+// Two phases, mirroring the original driver:
+//   * phase 1 "marked": destructObjectByKey -> OriginalVm::callDestructors sets
+//     beingDestroyed_.  The object stays in the registry, so every value for it
+//     reports is_object() == 1 - the destructor chain depends on it (user.o::
+//     destruct -> userd::destroy_user -> me->save() is the only dbref writer, and
+//     item destructors call get_name()/env_object() on themselves).
+//   * phase 2 "really freed": unregisterDestructed removes it from reg.vms /
+//     reg.objects and calls OriginalVm::markObjectDead(), clearing the flag that
+//     is shared with every ObjectValue this VM handed out.  From then on the value
+//     BEHAVES AS INT 0 - that is what the original does to the references.
+// objectValueAlive() is the primitive; objectValueFreed() is its negation for
+// object values, so callers can substitute make_int(0).
+bool objectValueAlive(const Value& v) {
+    if (v.index() != 7) return false;
+    auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+    if (!ov) return false;
+    return !ov->alive || ov->alive->load(std::memory_order_relaxed);
+}
+bool objectValueFreed(const Value& v) {
+    return v.index() == 7 && !objectValueAlive(v);
 }
 
 Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& searchRoot,
