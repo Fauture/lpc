@@ -3065,7 +3065,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // and does not need the search root.
         return lpc::cloneObjectInRegistry(path, "", createArgs);
     }
-    if (name == "is_object") return make_int(!args.empty() && args[0].index() == 7 ? 1 : 0);
+    // is_object(ob): the value must hold an object that is STILL ALIVE.  The
+    // original invalidates references when an object is really freed, and
+    // is_in_combat() (is_object(temp("combat")) && !cob->...("finished")) relies
+    // on it: monsterd::touch_off_combat stores the combat object in temp("combat")
+    // and can then destruct it without building a monster team (the
+    // idle_template / "no encounter" path), which used to leave the player
+    // permanently "in combat" - NPC dialogue blocked and admin_kickoff refused
+    // with "正在战斗中，无法强踢下线".
+    if (name == "is_object") {
+        if (args.empty() || args[0].index() != 7) return make_int(0);
+        auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+        if (ov && ov->alive && !ov->alive->load(std::memory_order_relaxed)) return make_int(0);
+        return make_int(1);
+    }
     if (name == "to_int" || name == "to_number") return args.empty() ? make_int(0) : make_int(as_int(args[0]));
     if (name == "to_string") return args.empty() ? make_string("") : make_string(as_string(args[0]));
     if (name == "to_float") return args.empty() ? make_float(0.0) : make_float(as_int(args[0]));
@@ -6375,6 +6388,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (randomRange <= 0) return make_int(-1);
         }
         std::vector<int64_t> rates;
+        // LPCVM_NO_RATESTR=1 restores the old behaviour (string elements count as
+        // rate 0) for A/B.
+        static const bool noRateStr = (LPCVM_GETENV("LPCVM_NO_RATESTR") != nullptr);
+        auto objectDbRate = [](const Value& obj, int64_t& out) -> bool {
+            auto ov = std::get<std::shared_ptr<ObjectValue>>(obj);
+            if (!ov) return false;
+            auto it = ov->variables.find("dbase");
+            if (it == ov->variables.end() || it->second.index() != 6) return false;
+            auto mp = std::get<std::shared_ptr<MappingValue>>(it->second);
+            if (!mp) return false;
+            const Value* rv = mp->find(make_string("rate"));
+            if (!rv) return false;
+            out = as_int(*rv);
+            return true;
+        };
         auto rateOf = [&](const Value& e, int64_t& out) -> bool {
             if (e.index() == 2) { out = std::get<int64_t>(e); return true; }
             if (e.index() == 6) {                 // mapping with "rate"
@@ -6385,17 +6413,30 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 out = as_int(*rv);
                 return true;
             }
-            if (e.index() == 7) {                 // object: dbase["rate"]
-                auto ov = std::get<std::shared_ptr<ObjectValue>>(e);
-                if (!ov) return false;
-                auto it = ov->variables.find("dbase");
-                if (it == ov->variables.end() || it->second.index() != 6) return false;
-                auto mp = std::get<std::shared_ptr<MappingValue>>(it->second);
-                if (!mp) return false;
-                const Value* rv = mp->find(make_string("rate"));
-                if (!rv) return false;
-                out = as_int(*rv);
-                return true;
+            if (e.index() == 7) return objectDbRate(e, out);   // object: dbase["rate"]
+            // STRING element: the original resolves it as an OBJECT NAME and uses
+            // that object's dbase["rate"].  IDA vm_f_random_select (0x807ceec) only
+            // accepts int / mapping / object elements, and a string value is routed
+            // through
+            //     v13 = vm_lookupObjectByCStr(value);  oid = v13;
+            //     dbase = vm_getObjVar(oid, "dbase", 0, 0);  rate = dbase["rate"];
+            // (the type=="4" test falls into the object branch and execRef==4 -
+            // this dialect's string tag - triggers the name lookup).
+            // Game code passes template NAME STRINGS here: feature/char/template.c's
+            // add_template stores object_name(ob), and monsterd::select_template does
+            //     index = random_select(user_templates);
+            //     if (!is_object(template_ob)) { ...env templates by rate... }
+            // With strings scored 0 the user branch ALWAYS returned -1, so the room
+            // template list won: a city room (etc/room.list: template: ({ "idle_template" }))
+            // then selected idle_template, whose create_monster_team() returns 0 -
+            // monsterd::touch_off_combat had already done me->set_temp("combat", cob)
+            // and only destructed the combat object, so is_in_combat() stayed true
+            // forever (NPC dialogue blocked, admin_kickoff refused).
+            if (e.index() == 4 && !noRateStr) {
+                const std::string nm = std::get<SharedString>(e).str();
+                Value ov = findObjectInRegistry(nm, vfsRoot());
+                if (ov.index() != 7) return false;
+                return objectDbRate(ov, out);
             }
             return false;
         };

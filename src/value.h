@@ -327,6 +327,13 @@ struct ObjectValue {
     // registry VM (handler.c's create calls call_other(module, ...) with a
     // captured (["module": object(<this>)])).
     const struct OriginalObject* owner = nullptr;
+    // Shared with the registry VM that owns the object (nullptr when the value
+    // was not built from a registry lookup).  Object values are created afresh
+    // on every push_this_object/clone_object, so a stale copy can outlive the
+    // object: `alive` is the flag unregisterDestructed() clears, and is_object
+    // / the is_type opcode treat a cleared flag as "not an object" - the
+    // original driver invalidates references when an object is really freed.
+    std::shared_ptr<std::atomic<bool>> alive;
     std::unordered_map<std::string, Value> variables;
 };
 struct ClosureValue {

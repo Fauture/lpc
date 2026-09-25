@@ -2579,3 +2579,72 @@ strncpy(str, v18, v16);                  // v16 个字节
 
 
 
+## 2026-09-24 城区"被战斗"、点 NPC 无对话：**已真正释放的对象仍然算对象**（本轮修好，真机确认）
+
+### 现象
+在**城区**（天墉城，`pak:gs/zone/tianyongcheng/tianyo…`）走路会被打上战斗标记：
+点 NPC 无对话、没有战斗画面/模型，且 `admin_kickoff` 拒绝（"正在战斗中，无法强踢下线"）。
+重启服务端即恢复（标记存在角色对象的临时变量里）。
+
+### 逐指令 trace 完整链条（`LPCVM_INSN` + `_probe_on\LPCVM_INSN_FN.txt = touch_off_combat` / `select_template`）
+```
+monsterd.o::touch_off_combat(me=clone:gs/clone/char/user.o#N, steps)
+  ip=33  env_object(me) ⇒ pak:gs/zone/tianyongcheng/…      ← 城区房间
+  ip=43  env->has_template() 为真（房间模板表非空）
+  ip=82  select_template(me) ⇒ /gs/daemons/template/idle_template（空闲模版）
+  ip=112 clone_object("/gs/clone/misc/combat.c") ⇒ combat.o#1748…
+  ip=137 me->set_temp("combat", combat_ob)                 ← 标记在这里打上
+  ip=208 template_ob->create_monster_team(me, cob) ⇒ 0      ← 空闲模板硬返回 0，建不出怪物队
+  ip=217 destruct_object(combat_ob)                        ← 只销毁对象，标记不回滚
+```
+`etc/room.list` 里城区房间本来就写着 `template: ({ "idle_template" })`（语义="此房间不遇敌"）；
+`idle_template` 只覆盖了 `create_monster_team`（`return 0`）和 `create`，**没有覆盖
+`satisfy_template_condition`**（基类恒返回 1），所以它能否被选中**完全取决于 `query("rate")`**。
+
+`select_template` 的选取顺序（trace 逐条对上）：
+1. `me->query_select_template()`：玩家 `all_select_template` 为空 ⇒ 跳过；
+2. 玩家模板表分支：玩家身上有 `anticheater_template`，但它在城区的
+   `satisfy_template_condition` 返回 0（该模板要求 `sizeof(room->query("monster_list")) > 0`
+   且走路步数 ≥10000）⇒ 被清成 0 ⇒ 该分支 `random_select` 返回 -1；
+3. 兜底到房间模板表：`env_template_rates[0] = idle_template->query("rate")` **实测 10000** ⇒
+   `random_select(({10000}))` ⇒ 选中空闲模板 ⇒ 触发。
+
+### 根因（引擎侧）
+`is_in_combat()`（`gs/feature/char/combat_v37.c:960`）：
+```c
+return (is_object(cob = lite_query_temp("combat")) && (!cob->lite_query_temp("finished")));
+```
+战斗对象已被 `destruct_object` 销毁，但**我们引擎的 `is_object()` 只看值的类型标签**，对"已被释放
+对象的引用"仍返回 1 ⇒ `is_in_combat()` 恒为真 ⇒ 永久"战斗中"。原版在对象**真正释放**后会失效引用。
+
+### 修复
+1. **`ObjectValue::alive`（`src/value.h`）+ 释放时置死（`src/original_vm.cpp::unregisterDestructed`
+   → `OriginalVm::markObjectDead()`）**，克隆返回值与 `push_this_object` 都会带上所属 VM 的存活标志；
+   `is_object()` efun（`src/builtins.cpp`）与 `is_type` 操作码（`op 36`，LPC 的 `is_object(x)` 编译成它，
+   `src/original_vm.cpp`）对**已释放**对象返回 0。析构链期间对象仍在注册表里 ⇒ 依旧算活着
+   （血池那种"析构中调 `get_name()`"不受影响）。
+2. **`random_select` 的字符串元素按对象名解析取 `dbase["rate"]`**（`src/builtins.cpp`）：
+   IDA `vm_f_random_select`（0x807ceec）里 `type==4`（字符串）会走
+   `vm_lookupObjectByCStr(value)` + `dbase["rate"]`；游戏里 `feature/char/template.c::add_template`
+   存的正是 `object_name(ob)` 字符串，之前一律按 0 计。`LPCVM_NO_RATESTR=1` 可回退做 A/B。
+
+### 被证伪的一条（已回退，勿再试）
+"基类 `create()` 应被派生 `create()` 遮蔽、不该跑"：实测应用后**服务端启动直接卡死**
+（623s 仍未监听 8160，日志停在 `[recv-thr]`）⇒ 基类 `create()` 确实被游戏依赖。
+IDA 侧也支持"两个都跑"：`vm_loadBinaryInherit`（0x80a2b58）把父程序的 `initOrderList` 拼进子对象，
+`vm_f_construct_object2`（0x80f90b4）会为链上每个 constitution 调一次 create。
+**所以 `idle_template` 的 `rate=10000`（来自 `template.c::create` 的 `lite_set("rate", 10000)`）
+是两边共有的行为** —— 城区那次"遇敌判定"本身仍会发生，但**不会再把人卡住**（怪物队建不出来 ⇒
+不发 `0xFFDF`、不进战斗画面、不留标记）。
+
+### 过程中确认的其它事实
+* `LPCVM_INSN` 的 `top=` 是**执行该指令前**的栈顶；`ip=217 call_in_efun a=361` 即 `destruct_object`。
+* `.o` 段序（`vm_loadIdentifiers` 0x8087fb8）：`IDENTIFIERS→NAMES→VARIABLES(PROG_VARS)→FUNCTIONS→
+  HIDDEN_FUNS→INHERITS(+`CONSTUCTION` 标记)→DLT`，**没有单独的 constitution 数据段**。
+* 战斗标记的清理只有 `combatd.c:335 do_when_remove_member()` 里的 `me->lite_delete_temp("combat")`
+  —— 走"成员被移出战斗"的路径；本次这种"战斗没起来"的情况走不到，所以原版靠"引用失效"自然解除。
+* 等待启动请用 `timeout_ms: 360000`（实测启动 ~320–350s）。
+
+
+
+

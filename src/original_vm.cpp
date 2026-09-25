@@ -2280,6 +2280,21 @@ inline void noteVmEntry(const char* site, const char* obj) {
 
 class OriginalVm {
 public:
+    // Liveness flag shared with every ObjectValue this VM handed out.  The
+    // original driver invalidates references when an object is really freed:
+    // is_object() on it stops being true, so game code that keeps the object in
+    // a temp slot (monsterd::touch_off_combat does me->set_temp("combat", cob)
+    // BEFORE it can fail, and combat.c::destruct is the only place that clears
+    // it again) sees the reference die with the object.  With a permanently
+    // "valid" stale value is_in_combat()
+    // (is_object(temp("combat")) && !cob->lite_query_temp("finished")) stayed
+    // TRUE for good: the player could not talk to NPCs and admin_kickoff refused
+    // with "正在战斗中，无法强踢下线".  unregisterDestructed() flips it.
+    std::shared_ptr<std::atomic<bool>> aliveFlag() const { return aliveFlag_; }
+    void markObjectDead() { if (aliveFlag_) aliveFlag_->store(false); }
+private:
+    std::shared_ptr<std::atomic<bool>> aliveFlag_ = std::make_shared<std::atomic<bool>>(true);
+public:
     explicit OriginalVm(const OriginalObject& obj, std::string searchRoot = "")
         : obj_(obj), searchRoot_(std::move(searchRoot)) {
         objVars_ = std::make_shared<std::vector<Value>>(static_cast<size_t>(obj.globalVarCount));
@@ -9620,8 +9635,15 @@ private:
                 pushValue(Value{});
                 break;
             case 65: // push_this_object
-                pushValue(make_object_owned(currentThisName(), currentThisObj()));
+            {
+                Value self = make_object_owned(currentThisName(), currentThisObj());
+                if (self.index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(self);
+                    if (ov && !ov->alive) ov->alive = aliveFlag_;
+                }
+                pushValue(self);
                 break;
+            }
             case 52: // push_arg_num
                 pushValue(make_int(es_->frames.empty() ? 0 : es_->frames.back().argNum));
                 break;
@@ -10734,7 +10756,23 @@ private:
                 }
                 int t = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 Value v = top().value;
-                top().value = make_int(vmTypeOf(v) == t ? 1 : 0);
+                int got = vmTypeOf(v);
+                // An object that was really freed (removed from the registry) is
+                // not an object any more.  The original invalidates references on
+                // a real destruct, and game code depends on it: is_in_combat() is
+                // is_object(temp("combat")) && !cob->query_temp("finished"), and
+                // monsterd::touch_off_combat stores the combat object in
+                // temp("combat") before it can fail - when the encounter could not
+                // build a monster team (idle_template, the "no encounter" marker
+                // city rooms carry in etc/room.list) it just destructs the combat
+                // object, so the stale reference kept the player permanently in
+                // combat.  ObjectValue::alive is the flag unregisterDestructed
+                // clears; values without one stay alive.
+                if (got == t && t == 10 && v.index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+                    if (ov && ov->alive && !ov->alive->load(std::memory_order_relaxed)) got = -1;
+                }
+                top().value = make_int(got == t ? 1 : 0);
                 break;
             }
             case 13: { // cast_type
@@ -18437,6 +18475,9 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
     }
     auto ov = std::make_shared<ObjectValue>();
     ov->programName = cloneKey;
+    // Hand the clone's liveness flag to the value: when the object is really
+    // freed the value stops counting as an object (see ObjectValue::alive).
+    if (vmPtr) ov->alive = vmPtr->aliveFlag();
     return ov;
 }
 
@@ -18850,6 +18891,10 @@ static std::vector<PendingFree>& pendingFrees() {
     return v;
 }
 static void unregisterDestructed(const std::string& key, const std::shared_ptr<OriginalVm>& vm) {
+    // The object leaves the registry here: every ObjectValue that carries this
+    // VM's flag stops being an object (ObjectValue::alive), mirroring the
+    // original driver's reference invalidation on a real free.
+    if (vm) vm->markObjectDead();
     auto& reg = objectRegistry();
     {
         std::lock_guard<std::recursive_mutex> rl(registryMutex());
