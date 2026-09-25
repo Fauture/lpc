@@ -12046,28 +12046,39 @@ private:
                                     if (it != objectRegistry().vms.end()) vm8 = it->second;
                                 }
                                 if (!vm8) return key.substr(0, 46) + " (not registered)";
-                                auto rd8 = [&](const char* nm) -> std::string {
-                                    const int slot = vm8->objVarSlotByName(nm);
-                                    if (slot < 0) return std::string("noslot");
-                                    // Clones keep their instance variables in the OWN block
-                                    // (objVars_ is the merged/shared one), so read both -
-                                    // move.c's my_x/my_y/current_map_index live in the
-                                    // clone's own block.
-                                    auto b1 = vm8->objVarsShared();
-                                    auto b2 = vm8->ownObjVarsShared();
-                                    for (auto* blk : { b1.get(), b2.get() }) {
-                                        if (!blk || static_cast<size_t>(slot) >= blk->size()) continue;
-                                        const Value& v = (*blk)[static_cast<size_t>(slot)];
-                                        if (v.index() == 2) return std::to_string(std::get<int64_t>(v));
-                                        if (v.index() != 0 && v.index() != 1)
-                                            return to_string(v, false).substr(0, 12);
+                                // Position fields live in the DBASE mapping, whose
+                                // declaring program is an ANCESTOR (objVarSlotByName
+                                // only searches the object's own progVars), so scan
+                                // both variable blocks for a mapping that carries the
+                                // position keys instead of looking them up by name.
+                                std::string out;
+                                for (auto* blk : { vm8->objVarsShared().get(),
+                                                   vm8->ownObjVarsShared().get() }) {
+                                    if (!blk) continue;
+                                    for (const Value& gv : *blk) {
+                                        if (gv.index() != 6) continue;
+                                        auto mp = std::get<std::shared_ptr<MappingValue>>(gv);
+                                        if (!mp) continue;
+                                        auto geti = [&](const char* k) -> std::string {
+                                            const Value* f = mp->find(make_string(k));
+                                            if (!f) return std::string();
+                                            if (f->index() == 2)
+                                                return std::to_string(std::get<int64_t>(*f));
+                                            return std::string();
+                                        };
+                                        std::string xs = geti("x_pos"), ys = geti("y_pos");
+                                        if (xs.empty() && ys.empty()) {
+                                            xs = geti("my_x"); ys = geti("my_y");
+                                        }
+                                        if (xs.empty() && ys.empty()) continue;
+                                        out += " dbase{x_pos=" + (xs.empty() ? "?" : xs) +
+                                               " y_pos=" + (ys.empty() ? "?" : ys) +
+                                               " map=" + (geti("map_index").empty() ? "?" : geti("map_index")) + "}";
+                                        break;
                                     }
-                                    return std::string("undef");
-                                };
-                                return key.substr(0, 46) + " my_x=" + rd8("my_x") + " my_y=" + rd8("my_y") +
-                                       " x_pos=" + rd8("x_pos") + " y_pos=" + rd8("y_pos") +
-                                       " x=" + rd8("x") + " y=" + rd8("y") +
-                                       " map=" + rd8("current_map_index") + "/" + rd8("map_index");
+                                    if (!out.empty()) break;
+                                }
+                                return key.substr(0, 46) + (out.empty() ? " <no dbase pos found>" : out);
                             };
                             // The RECEIVER (me = the player) is the call path, not an
                             // argument; the clicked NPC is the object argument.
@@ -19016,6 +19027,25 @@ std::string canonicalObjKey(const std::string& key) {
         addForm(base.substr(0, base.size() - 2) + ".o");
     else if (base.size() > 2 && base.compare(base.size() - 2, 2, ".o") == 0)
         addForm(base.substr(0, base.size() - 2) + ".c");
+    else {
+        // EXTENSION-LESS spelling: find_object("/gs/zone/tianyongcheng/tianyongcheng")
+        // hands out exactly this form, while the registry key carries ".o"
+        // ("pak:gs/zone/tianyongcheng/tianyongcheng.o").  Without these two extra
+        // forms the canonical lookup missed and the same room compared UNEQUAL to
+        // itself whenever the two spellings met - which is exactly what
+        // /gs/inherit/misc/char.c::is_near tests:
+        //     if (env_m != env_y) return 0;
+        // After a coachman teleport the player's environment is stored under the
+        // find_object() spelling and the NPC's under the registry key, so every
+        // NPC in the room became unclickable (open_menu's silent long_distance
+        // branch) until a GM teleport re-stored the room.
+        const size_t slash = base.find_last_of('/');
+        const std::string leaf = (slash == std::string::npos) ? base : base.substr(slash + 1);
+        if (!leaf.empty() && leaf.find('.') == std::string::npos) {
+            addForm(base + ".o");
+            addForm(base + ".c");
+        }
+    }
     const size_t n = forms.size();
     for (size_t i = 0; i < n; ++i) addForm("/" + forms[i]);
     const size_t n2 = forms.size();
@@ -19046,6 +19076,29 @@ std::string canonicalObjKey(const std::string& key) {
 // values that spell the same object differently (.c program path vs the
 // registered .o key).
 std::string canonicalObjectPath(const std::string& key) { return canonicalObjKey(key); }
+
+// Object IDENTITY for value comparison - what the original compares
+// (vm_compareValue 0x80bbcb4 compares the object pointer stored in the value).
+const void* objectIdentityOf(const std::string& name) {
+    if (name.empty()) return nullptr;
+    const std::string k = canonicalObjKey(name);
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    if (!k.empty()) {
+        auto it = reg.vms.find(k);
+        if (it != reg.vms.end() && it->second) return &it->second->object();
+    }
+    // Unregistered spelling: fall back to the suffix match find_object() uses.
+    std::string rel = name;
+    if (rel.rfind("pak:", 0) == 0) rel = rel.substr(4);
+    if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+    if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+    for (auto& kv : reg.vms) {
+        if (!kv.second) continue;
+        if (hasSuffix(kv.first, rel)) return &kv.second->object();
+    }
+    return nullptr;
+}
 
 // Public access to the object-pointer -> registry-key index (see the header
 // comment): this_object() built on a detached VM carries the "<this>"

@@ -262,6 +262,13 @@ void registerServiceSocket(int fd,
 // the driver treats both as the same object, so object identity and the
 // container (env) key must be normalized through this.
 std::string canonicalObjectPath(const std::string& key);
+// Identity of an object name: the registry OBJECT the name denotes, i.e. the
+// pointer the original driver compares (vm_compareValue 0x80bbcb4 compares the
+// object pointer stored in the value, cases 6..0xA).  Two spellings of one object
+// ("/gs/zone/x/x", "/gs/zone/x/x.c", "pak:gs/zone/x/x.o") yield the SAME pointer;
+// two different clones yield different ones.  Null when the name resolves to no
+// registered object.
+const void* objectIdentityOf(const std::string& name);
 
 // destruct_object(ob) support: unregister the object identified by `key`
 // (any spelling: clone key, pak: path, .c/.o program path) so it can no longer

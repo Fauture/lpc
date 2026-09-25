@@ -784,17 +784,26 @@ bool value_equal(const Value& a, const Value& b) {
         auto pb = std::get<std::shared_ptr<ObjectValue>>(b);
         if (pa == pb) return true;
         if (pa->programName == pb->programName) return true;
-        // Same object addressed differently: LPC code holds the room/daemon by
-        // its program path ("/gs/zone/x/x.c") while object()/env_object()
-        // return the registered key ("pak:gs/zone/x/x.o").  Only pay for the
-        // registry lookup when one side is a plain source path - comparing two
-        // different clones must stay a string compare.
-        auto plainSourcePath = [](const std::string& s) {
-            return s.size() > 2 && s.compare(s.size() - 2, 2, ".c") == 0;
-        };
-        if (plainSourcePath(pa->programName) || plainSourcePath(pb->programName))
-            return canonicalObjectPath(pa->programName) == canonicalObjectPath(pb->programName);
-        return false;
+        // Object IDENTITY, exactly like the original: vm_compareValue (0x80bbcb4)
+        // compares the object POINTER carried by the value (cases 6..0xA), so two
+        // spellings of one object are equal no matter how they are written -
+        // "/gs/zone/x/x" (what find_object returns for an extension-less path),
+        // "/gs/zone/x/x.c" and "pak:gs/zone/x/x.o" (the registry key).  Name
+        // canonicalisation alone was not enough: after a coachman teleport the
+        // player's environment is stored under the find_object() spelling while
+        // the NPC's carries the registry key, so
+        //     /gs/inherit/misc/char.c::is_near
+        //         if (env_m != env_y) return 0;
+        // rejected EVERY npc in the room (open_menu then takes its silent
+        // long_distance branch -> "点不开"), and only a GM teleport - which
+        // re-stores the room under the other spelling - "fixed" it.  The identity
+        // pointer is per registry entry, so two different clones stay distinct.
+        const void* ia = objectIdentityOf(pa->programName);
+        const void* ib = objectIdentityOf(pb->programName);
+        if (ia && ib) return ia == ib;
+        // At least one side is not a registered object (e.g. a "<this>"
+        // placeholder): fall back to the canonical name comparison.
+        return canonicalObjectPath(pa->programName) == canonicalObjectPath(pb->programName);
     }
     case 8: {
         auto pa = std::get<std::shared_ptr<ClosureValue>>(a);
