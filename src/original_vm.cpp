@@ -3303,6 +3303,25 @@ public:
         // every later call_other through that value missed.
         if (relBase.compare(0, 6, "clone:") == 0) relBase.erase(0, 6);
         std::string cloneKey = "clone:" + relBase + "#" + std::to_string(seq);
+        // TODO(npc-init): a room-placed NPC still gets NO /gs/init/** initialiser,
+        // so e.g. the Fangzhang-Island boatman (room.list npc$ "THIS_PLACE/chuanfu"
+        // -> 船夫10 -> npc/fangzhangdao-chuanfu) opens with the default dialogue and
+        // never gets set_dynamic_menu.  Measured with _probe_on\LPCVM_INITDBG:
+        //   [initscript] ... call_init_script sub_type=raw init_script=<absent>
+        // 616 calls, only 18 carry an init_script - all of them from the loader path
+        // (basic_objectd -> clone_object + explicit init_basic_object(m), which hands
+        // its own mapping straight to call_init_script).  The create() path
+        // (clone/npc/basic.c) instead does
+        //     line_args = basic_ob->query_entire_dbase();   // basic_ob = basic_object()
+        // and THAT object's dbase has no init_script, so nothing is installed.
+        // basic_object() is find_basic_object_by_import_name(my_import_name) =
+        // global_basic_object[name]; the clone identity fixes around here made the
+        // template/keys exact, but the registered instance handed back by that global
+        // lookup is still the wrong/stale one.  NEXT STEP (one measurement): log the
+        // object global_basic_object[name] returns (its key, id and whether it is the
+        // same instance the template lookup used) at the moment basic_object() runs
+        // for a placed clone, and check whether register_basic_object ever ran for
+        // that instance.  Full evidence chain: HANDOVER.md, 2026-09-25 entry.
         std::shared_ptr<const OriginalObject> objPtr;
         std::shared_ptr<OriginalVm> vmPtr;
         {
