@@ -3690,7 +3690,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // all, while the basic-object instances (#2528/#2647, whose template is
         // the class and therefore resolvable by name) did register theirs.
         if (args.empty()) return make_int(0);
-        if (args[0].index() == 7) {
+        // LPCVM_FO_LEGACY (env / _probe_on\LPCVM_FO_LEGACY): the engine's OLD
+        // behaviour - stringify even an object argument and look the name up.
+        // Kept as a runtime switch because turning the IDA-exact identity rule on
+        // is what let clone/npc/basic.c::create (and the item create chain) run
+        // past `find_object(object_template(this_object()))`; measured
+        // 2026-09-18 the shop stopped stacking ("buy 100 -> one item, amount 1",
+        // 89 of 89 observed stacks had amount 1) and the 赠品 flag disappeared,
+        // so both must be compared on a live server before narrowing anything.
+        static const std::atomic<bool>& foLegacy = lpc::dynProbeFlag("LPCVM_FO_LEGACY");
+        if (args[0].index() == 7 && !foLegacy.load(std::memory_order_relaxed)) {
             if (!objectValueAlive(args[0])) return make_int(0);
             return args[0];
         }
