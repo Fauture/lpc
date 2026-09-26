@@ -272,3 +272,40 @@ else { Values = vm_allocateValues(...); Memory->pObjectValues = Values; }   // �
 **已知同源缺陷**：克隆身份 —— `#4751` 的模板是另一个实例 `#2647`（clone-of-a-clone），
 `get_import_name`/`query_entire_dbase` 都读 `#2647`，`tmp_dbase`（`menu_content`/
 `menu_func`/`current_menu` 都在里面）因此是兄弟实例**共用**的（D3）。
+
+
+### 6.1 决定性证据：**房间里的船夫实例从未执行自己的 `call_init_script`**
+
+同一次会话里两类实例的对比（`[initscript]` 探针 = `create` 走到 `call_init_script`）：
+
+| 实例 | 身份 | `call_init_script` | 菜单 |
+|---|---|---|---|
+| `#2528` | 船夫的地基/basic object（启动时创建） | ✅ `init_script=npc/donghai-yucun-chuanfu key_name=船夫1` | 注册了 |
+| `#2647` | 方丈岛 basic object | ✅ `init_script=npc/fangzhangdao-chuanfu key_name=船夫10` | 注册了 |
+| **`#5109`** | **房间里被点到的东海船夫（`#2528` 的克隆）** | **❌ 一条都没有** | **空 → 客户端收不到（"点不开"）** |
+| **`#4751`** | **房间里被点到的方丈岛船夫（`#2647` 的克隆）** | **❌ 一条都没有** | 只有全局任务钩子 → "错误对话" |
+
+并且：
+```
+[initguard] receiver=#5109 import_name=[船夫1] basic_object=t7:#2528
+            dbase{init_script=npc/donghai-yucun-chuanfu sub_type=raw key_name=船夫1}
+[exactkey]  #5109 -> basic_object ret=t7:#2528 alive=yes
+[tplid]     clone=#5109 template= tplName=clone:gs/clone/npc/basic.o#2528
+[initsite]  #5109 create -> #2528::get_import_name
+            #5109 create -> #5109::basic_object
+            #5109 create -> #5109::query_entire_dbase / #2528::query_entire_dbase
+[tail]      named.o::register_npc_ob args=[#5109 | 船夫1]
+```
+即：`basic_object()` 返回的是**兄弟实例**（`#2528`）而不是"basic object"，
+`create` 走到 `query_entire_dbase()` 之后**没有** `call_init_script` 就返回了 ——
+`basic_object()` 通过 ✅、dbase 也拿到了 ✅，所以提前返回点在这两句之间（原版
+`clone/npc/basic.c::create` 的守卫链，见 `original_vm.cpp:12300-12313` 的注释重建）。
+
+`vm_f_object_template`（IDA 0x80F4B9C）已确认：返回的是 **object**（`vm_pushObject`）
+或 `0`，不是字符串 ⇒ `find_object(object_template(...))` 这一跳在原版是合法的，
+不能再按"find_object 只收字符串"处理（文档 D4 需据此修正）。
+
+**下一步（唯一未闭合点）**：在 `clone/npc/basic.c::create` 的每一个 `return` 点打点，
+看 `#5109` 这类"实例的克隆"到底在哪一句返回（预计是 `find_object(#2528)` 这一跳：
+引擎把 object 实参当路径解析/返回 0 ⇒ `!is_object(basic_ob)` ⇒ 直接 return）。
+修掉这一点，房间里的船夫就会跑自己的 `call_init_script`，菜单随之出现。
