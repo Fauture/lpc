@@ -5081,6 +5081,22 @@ private:
                 return make_int(0);
             }
             if (h == 0xAF888C6C3C418282ull) {
+                // 默认走 22a15ad 的旧行为：常量 0。
+                // 原因（实测）：ef4da68 的这个新实现会让物品进不了角色的背包列表
+                // （temp "inventory" 为空）-> 存档 carry 分支写空 -> 下线丢物品；
+                // 只把这一项搬到可保存的 22a15ad 上即可复现，两次修法（不抛错+多键形 /
+                // 索引未命中扫注册表）都没能修好。默认关闭以保住存档；
+                // 打开 _probe_on\LPCVM_LODGER_NEW（运行时热加载）才启用新实现继续查。
+                {
+                    static const std::atomic<bool>& lnew = dynProbeFlag("LPCVM_LODGER_NEW");
+                    if (!lnew.load(std::memory_order_relaxed)) {
+                        static std::atomic<int> lodOldN{0};
+                        if (lodOldN.fetch_add(1) < 50)
+                            std::cerr << "[lodger-old] lodger_object -> 0 (22a15ad 行为) obj="
+                                      << objName_ << "\n";
+                        return make_int(0);
+                    }
+                }
                 // vm_f_lodger_object (0x80f41c8): lodger_object([ob | name])
                 // -> array of the objects whose container is ob (default
                 // this_object()), in the container's pLogderObject order
