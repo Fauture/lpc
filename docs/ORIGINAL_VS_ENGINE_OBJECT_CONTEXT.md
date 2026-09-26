@@ -309,3 +309,36 @@ else { Values = vm_allocateValues(...); Memory->pObjectValues = Values; }   // �
 看 `#5109` 这类"实例的克隆"到底在哪一句返回（预计是 `find_object(#2528)` 这一跳：
 引擎把 object 实参当路径解析/返回 0 ⇒ `!is_object(basic_ob)` ⇒ 直接 return）。
 修掉这一点，房间里的船夫就会跑自己的 `call_init_script`，菜单随之出现。
+
+
+### 6.2 修复与验证（2026-09-18，已由操作者在客户端确认）
+
+**根因**：`find_object(<object>)` 被引擎字符串化后按名字查表（原版 `vm_f_find_object`
+0x80F60A4：对象实参**原样返回**，只有字符串才查表）。于是
+`clone/npc/basic.c::create` 的
+```c
+ob_str = object_template(this_object());
+if (!ob_str || !is_object(basic_ob = find_object(ob_str))) return;   // 克隆实例在这里返回 0
+line_args = basic_ob->query_entire_dbase();
+call_init_script(line_args);                                        // 永远到不了
+```
+—— 房间里的 NPC（船夫）从不注册自己的菜单。
+
+**修法**：`src/builtins.cpp` 的 `find_object` 按原版分支：`args[0].index()==7` 时
+（对象未析构则）返回该对象本身，其余仍按路径查表。提交 `8a95220`。
+
+**日志对比（同一套四服务启动）**：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| `[initscript]` 总数 | 616 | **2812** |
+| `#5109`（房间东海船夫） | 0 条 | ✅ `init_script=npc/donghai-yucun-chuanfu key_name=船夫1 entries=14` |
+| `#4751`（房间方丈岛船夫） | 0 条 | ✅ `init_script=npc/fangzhangdao-chuanfu key_name=船夫10 entries=14` |
+
+点击时 `create_menu_content` 也分别落在 `#5109` / `#4751` 上（修复前是兄弟实例）。
+
+**关卡**：aaa/dba/ccs 2 分钟启动正常（`[pkt-*]` 353/630/979、`[q-send]` 正常），
+DB `dl_ddb_1_test.data` 337 行写入正常；四服务 8160 监听正常。
+**操作者确认**：方丈岛 / 东海渔村船夫**对话出现且可以使用**。
+
+**顺带修正 D4**：原版 `find_object` 收对象是**恒等**（不是 vm_error），收非字符串非对象才报错。
