@@ -254,6 +254,20 @@ static bool vmEnvSvcTrace() {
 }
 static bool vmEnvTraceC8() { static const bool v = (LPCVM_GETENV("LPCVM_TRACE_C8") != nullptr); return v; }
 static bool vmEnvDbgObjVar() { static const bool v = (LPCVM_GETENV("LPCVM_DBG_OBJVAR") != nullptr); return v; }
+
+// LPCVM_OBJVAR_VALUENO (env, or the runtime file _probe_on\LPCVM_OBJVAR_VALUENO):
+// use the IDA-exact name -> slot rule for object variables (walk EVERY
+// constitution, slot = Vm_Prog_Var_T.valueNo + baseVarOffset - vm_getObjVar
+// 0x80BC5C0).  DEFAULT OFF: the rule itself is right, but switching it on moves
+// where every name-based read/write lands while the rest of the port still has
+// index-based assumptions.  Measured 2026-09-18 right after it went in: buying
+// 100 of a stackable item produced 2 stacks of amount 1 (shop/goods_buy) - the
+// boatman fix (find_object identity) does NOT depend on it, so it stays a
+// switch and both behaviours can be compared on a live server without a rebuild.
+static bool objVarValueNoRule() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_OBJVAR_VALUENO");
+    return f.load(std::memory_order_relaxed);
+}
 static const char* vmEnvTraceFn() { static const char* v = LPCVM_GETENV("LPCVM_TRACE_FN"); return v ? v : ""; }
 static bool constructDiagOn() { static const bool v = (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") != nullptr); return v; }
 
@@ -8905,6 +8919,18 @@ public:
     int objVarSlotByName(const std::string& q) {
         std::string wprog, wname;
         splitObjVarName(q, wprog, wname);
+        if (!objVarValueNoRule()) {
+            // Legacy rule (progVars INDEX, own program only) - see objVarValueNoRule.
+            const auto& pv = object().progVars;
+            for (size_t i = 0; i < pv.size(); ++i) {
+                std::string pprog, pname;
+                splitObjVarName(pv[i].name, pprog, pname);
+                if (pname != wname) continue;
+                if (!wprog.empty() && pprog != wprog) continue;
+                return static_cast<int>(i);
+            }
+            return -1;
+        }
         int found = -1;
         std::function<void(const OriginalObject&, int)> walk =
             [&](const OriginalObject& prog, int base) {
@@ -9033,8 +9059,9 @@ public:
         for (size_t i = 0; i < pv.size(); ++i) {
             // valueNo (Vm_Prog_Var_T +0xa) is the slot inside this program; for
             // the object's own program baseVarOffset is 0.
-            const size_t slot = static_cast<size_t>(
-                static_cast<int16_t>(pv[i].raw[0xa] | (pv[i].raw[0xb] << 8)));
+            const size_t slot = objVarValueNoRule()
+                ? static_cast<size_t>(static_cast<int16_t>(pv[i].raw[0xa] | (pv[i].raw[0xb] << 8)))
+                : i;
             if (!objVars_ || slot >= objVars_->size()) continue;
             const Value& v = (*objVars_)[slot];
             if (v.index() == 0) continue;      // undefined -> not saved
