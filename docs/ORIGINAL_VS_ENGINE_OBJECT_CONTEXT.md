@@ -342,3 +342,28 @@ DB `dl_ddb_1_test.data` 337 行写入正常；四服务 8160 监听正常。
 **操作者确认**：方丈岛 / 东海渔村船夫**对话出现且可以使用**。
 
 **顺带修正 D4**：原版 `find_object` 收对象是**恒等**（不是 vm_error），收非字符串非对象才报错。
+
+
+### 6.3 更正 D3：克隆"实例的实例"是**原版行为**（IDA `vm_f_clone_object` 0x80F8EAC）
+
+```c
+v2 = vm_cloneObject(v0->v.string);      // 按【程序】新建对象，取新 oid
+object = v0->v.object;                   // clone_object 的实参（可以是实例）
+v2->pTemplateObject = object;            // ★ 模板 = 被克隆的那个对象本身（允许是实例）
+++object->ref;
+v2->initStep = -v2->pProgram->maxConsititutionNo;
+v2->flags |= 0x1000u;                    // 克隆标记
+vm_callInInitFun(v2, *v2->pProgram->initOrderList);   // 跑全部 constitution 的初始化
+vm_hookCallbackWhenReturn(vm_f_construct_object_ok1, v2);   // 之后 create
+```
+并且 `vm_allocateObject`（0x80B1D08）给新对象分配**独立的** `pObjectValues`
+（`maxVariableNo` 槽）、`pTemplateObject = 0` 由 clone efun 随后写入。
+
+⇒ 引擎里 `#4751 template=#2647` 这种"clone-of-a-clone"**与原版一致**，不是缺陷；
+`object_template()` 返回兄弟实例也是对的。之前把"实例的实例"记成 D3 缺陷的判断**作废**。
+（房间船夫没有菜单的真正原因是 6.2 的 `find_object(object)` 被字符串化。）
+
+**D2 现状**：目前没有任何实测证据表明对象值数组被写错——
+`[objw-oob]` 全程 0 条、`[imp]` 里所有写入都是 `@own`（本对象数组）。
+`LPCVM_IMPW` / `[objw-oob]` / `[objs]` 三个诊断保留在代码里（默认关闭，env/probe 文件开启），
+一旦出现"写一块读另一块"可以立刻抓到现场；在那之前不动 `ownObjVars_` 双块。
