@@ -4355,7 +4355,11 @@ private:
             return sharedGlobal(ref.globalIndex);
         }
         if (ref.objIndex >= 0) {
-            if (static_cast<size_t>(ref.objIndex) < objVars_->size()) return (*objVars_)[ref.objIndex];
+            if (static_cast<size_t>(ref.objIndex) < objVars_->size()) {
+                impVarTrace("rR", ref.objIndex, &(*objVars_)[static_cast<size_t>(ref.objIndex)]);
+                return (*objVars_)[ref.objIndex];
+            }
+            impVarTrace("rR", ref.objIndex, nullptr);
             return make_int(0);
         }
         if (ref.arr) {
@@ -4458,7 +4462,19 @@ private:
             }
             sharedGlobal(target->globalIndex) = v;
         } else if (target->objIndex >= 0) {
-            if (static_cast<size_t>(target->objIndex) < objVars_->size()) (*objVars_)[target->objIndex] = v;
+            impVarTrace("rW", target->objIndex, &v);
+            if (static_cast<size_t>(target->objIndex) < objVars_->size()) {
+                (*objVars_)[target->objIndex] = v;
+            } else {
+                static std::atomic<int> oobW2{0};
+                if (oobW2.fetch_add(1) < 40)
+                    std::cerr << "[objw-oob] drop ref-write slot=" << target->objIndex << " fn="
+                              << (es_->frames.empty() || !es_->frames.back().fn
+                                      ? std::string("<top>") : es_->frames.back().fn->name)
+                              << " obj=" << objName_ << " key=" << thisObjectName_
+                              << " blk=" << (objVars_ ? objVars_->size() : 0)
+                              << " varOff=" << currentVarOffset() << "\n";
+            }
         } else if (target->arr) {
             int64_t i = toInt(target->key);
             auto& items = target->arr->items;
@@ -8024,6 +8040,31 @@ private:
             if (tbl->empty()) tbl = fn.strings ? fn.strings.get() : nullptr;
         }
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount, tbl};
+        // DIAG frame-slot accounting: how many slots did the caller push for a
+        // callee that declares localCount slots?  Decides whether locals live
+        // inside the pushed arg region (original: vm_stack[bp + idx]).
+        {
+            static const bool fiOn = (LPCVM_GETENV("LPCVM_FRAMEINFO") != nullptr);
+            static std::atomic<long> fiN{0};
+            long fiI = fiOn ? fiN.fetch_add(1) : -1;
+            if (fiOn && fiI < 6000) {
+                std::cerr << "[fi] " << "inline" << " fn=" << fn.name
+                          << " argCount=" << fn.argCount << " localCount=" << fn.localCount
+                          << " passedArgs=" << passedArgs << " bp=" << bp
+                          << " stack=" << es_->stack.size()
+                          << " zeroArg=" << (zeroArgPlaceholder ? 1 : 0)
+                          << " pad=" << padArgs;
+                int fLim = fn.localCount < passedArgs + 4 ? fn.localCount : passedArgs + 4;
+                for (int fi2 = passedArgs; fi2 < fLim; ++fi2) {
+                    int fiS = bp - fi2;
+                    std::cerr << " aboveslot[" << fi2 << "]=";
+                    if (fiS >= 0 && static_cast<size_t>(fiS) < es_->stack.size())
+                        std::cerr << es_->stack[static_cast<size_t>(fiS)].value.index();
+                    else std::cerr << "OOB";
+                }
+                std::cerr << "\n";
+            }
+        }
         frame.varOffset = fn.varOffset;
         frame.funOffset = fn.funOffset;
         frame.zeroArgPlaceholder = zeroArgPlaceholder;
@@ -8229,6 +8270,31 @@ private:
         checkCallDepth(fn.name);
         Frame frame{&fn, bp, passedArgs >= 0 ? passedArgs : fn.argCount, fn.localCount,
                     fn.strings ? fn.strings.get() : &obj_.strings};
+        // DIAG frame-slot accounting: how many slots did the caller push for a
+        // callee that declares localCount slots?  Decides whether locals live
+        // inside the pushed arg region (original: vm_stack[bp + idx]).
+        {
+            static const bool fiOn = (LPCVM_GETENV("LPCVM_FRAMEINFO") != nullptr);
+            static std::atomic<long> fiN{0};
+            long fiI = fiOn ? fiN.fetch_add(1) : -1;
+            if (fiOn && fiI < 6000) {
+                std::cerr << "[fi] " << "entry" << " fn=" << fn.name
+                          << " argCount=" << fn.argCount << " localCount=" << fn.localCount
+                          << " passedArgs=" << passedArgs << " bp=" << bp
+                          << " stack=" << es_->stack.size()
+                          << " zeroArg=" << (zeroArgPlaceholder ? 1 : 0)
+                          << " pad=n/a";
+                int fLim = fn.localCount < passedArgs + 4 ? fn.localCount : passedArgs + 4;
+                for (int fi2 = passedArgs; fi2 < fLim; ++fi2) {
+                    int fiS = bp - fi2;
+                    std::cerr << " aboveslot[" << fi2 << "]=";
+                    if (fiS >= 0 && static_cast<size_t>(fiS) < es_->stack.size())
+                        std::cerr << es_->stack[static_cast<size_t>(fiS)].value.index();
+                    else std::cerr << "OOB";
+                }
+                std::cerr << "\n";
+            }
+        }
         // A cross-object entry call (callFunctionByName) pre-switched
         // objVars_ to this VM's own table and parked the previous (switched)
         // table here: record it on the frame so the pop restores it.
@@ -8820,18 +8886,102 @@ public:
         if (sep == std::string::npos) { prog.clear(); name = q; }
         else { prog = q.substr(0, sep); name = q.substr(sep + 2); }
     }
+    // original vm_getObjVar (0x80BC5C0):
+    //     for (i = 0; i < pProgram->maxConsititutionNo; ++i)
+    //         for (pv = pConsititutions[i].pProgram->pProgVars; pv; pv = pv->pNext)
+    //             if (match(pv->pProgName, pv->pVarName)) return pv->valueNo
+    //                                                            + pConsititutions[i].baseVarOffset;
+    // i.e. the slot is the variable's valueNo INSIDE its own program plus that
+    // constitution's accumulated baseVarOffset - not the index in the object's
+    // own progVars list, and not limited to the object's own program:
+    //   * my_import_name is declared by basic_object.c, an ANCESTOR of
+    //     /gs/clone/npc/basic.o, so the old lookup answered -1 ("no slot") and
+    //     every name-based access silently did nothing;
+    //   * even for a program that declares the variable itself the index is
+    //     wrong: basic_object.o's my_import_name has valueNo 3 (dbase.c owns 1,2)
+    //     while its progVars index is 0.
+    // Vm_Prog_Var_T stores valueNo at offset 0xa (IDA type: pVarName 0x0,
+    // pProgName 0x4, type 0x8, attrib 0x9, valueNo 0xa, pNext 0xc).
     int objVarSlotByName(const std::string& q) {
         std::string wprog, wname;
         splitObjVarName(q, wprog, wname);
-        const auto& pv = object().progVars;
-        for (size_t i = 0; i < pv.size(); ++i) {
-            std::string pprog, pname;
-            splitObjVarName(pv[i].name, pprog, pname);
-            if (pname != wname) continue;
-            if (!wprog.empty() && pprog != wprog) continue;
-            return static_cast<int>(i);
+        int found = -1;
+        std::function<void(const OriginalObject&, int)> walk =
+            [&](const OriginalObject& prog, int base) {
+                if (found >= 0) return;
+                for (const auto& rec : prog.progVars) {
+                    std::string pprog, pname;
+                    splitObjVarName(rec.name, pprog, pname);
+                    if (pname != wname) continue;
+                    if (!wprog.empty() && pprog != wprog) continue;
+                    found = base + static_cast<int16_t>(rec.raw[0xa] | (rec.raw[0xb] << 8));
+                    return;
+                }
+                for (const auto& inh : prog.inherits) {
+                    std::shared_ptr<OriginalObject> pobj;
+                    try {
+                        std::string rel = inh.path;
+                        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+                        if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+                        if (auto p = loadOriginalObjectByRelPath(rel)) pobj = p;
+                        else {
+                            std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+                            pobj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
+                        }
+                    } catch (...) { continue; }
+                    walk(*pobj, base + inh.baseVarOffset);
+                }
+            };
+        walk(object(), 0);
+        if (found >= 0 && objVars_ && static_cast<size_t>(found) >= objVars_->size()) {
+            static std::atomic<int> oobN{0};
+            if (oobN.fetch_add(1) < 40)
+                std::cerr << "[objs] slot " << found << " for " << q << " is beyond the value array ("
+                          << objVars_->size() << " slots, program " << obj_.sourceName << ")\n";
         }
-        return -1;
+        return found;
+    }
+    // LPCVM_IMPW=<slot>: trace every read/write of one ABSOLUTE instance-variable
+    // slot together with the value array the access lands in.  Used to follow
+    // my_import_name (slot 3 of /gs/clone/npc/basic.o, globalVarCount 31) from
+    // basic_object.c::create()/import() to basic_object()'s lookup.
+    void impVarTrace(const char* what, int slot, const Value* val) const {
+        static const char* want = LPCVM_GETENV("LPCVM_IMPW");
+        if (!want || !*want) return;
+        // LPCVM_IMPW=<slot>  trace that absolute slot
+        // LPCVM_IMPW=all     trace every access of an object whose program or key
+        //                    mentions basic/clone (basic-object instances)
+        bool trace = false;
+        if (std::strcmp(want, "all") == 0) {
+            const bool interesting = objName_.find("basic") != std::string::npos ||
+                                     thisObjectName_.find("clone:") != std::string::npos ||
+                                     thisObjectName_.find("basic") != std::string::npos;
+            if (!interesting) return;
+            if (what[0] != 'r' && what[0] != 'W') return;   // writes only: pass "rW"/"W"
+            trace = true;
+        } else {
+            if (slot != std::atoi(want)) return;
+            trace = true;
+        }
+        if (!trace) return;
+        static std::atomic<int> n{0};
+        if (n.fetch_add(1) > 5000) return;
+        const Frame* f = es_->frames.empty() ? nullptr : &es_->frames.back();
+        const bool own = objVars_ && ownObjVars_ && objVars_.get() == ownObjVars_.get();
+        std::string chain;
+        for (auto it = es_->frames.rbegin(); it != es_->frames.rend() && chain.size() < 90; ++it) {
+            if (!chain.empty()) chain += "<-";
+            chain += it->fn ? it->fn->name : std::string("<ctx>");
+        }
+        std::cerr << "[imp] " << what << " slot=" << slot
+                  << " fn=" << (f && f->fn ? f->fn->name : std::string("<top>"))
+                  << " chain=[" << chain << "]"
+                  << " obj=" << objName_ << " key=" << thisObjectName_
+                  << " blk=" << (objVars_ ? objVars_->size() : 0) << (own ? "@own" : "@foreign")
+                  << " varOff=" << currentVarOffset()
+                  << " val=" << (val ? to_string(*val, false).substr(0, 40) : std::string("-"))
+                  << " vm=" << this << "\n";
+        std::cerr.flush();
     }
     // Chain ownership accessors (public: runProcess/schedulerCurrentTid use them
     // to keep get_thread_id() on the tid of the process that owns the executing
@@ -8878,10 +9028,14 @@ public:
         std::string out;
         const auto& pv = object().progVars;
         for (size_t i = 0; i < pv.size(); ++i) {
-            if (!objVars_ || i >= objVars_->size()) break;
-            const Value& v = (*objVars_)[i];
+            // valueNo (Vm_Prog_Var_T +0xa) is the slot inside this program; for
+            // the object's own program baseVarOffset is 0.
+            const size_t slot = static_cast<size_t>(
+                static_cast<int16_t>(pv[i].raw[0xa] | (pv[i].raw[0xb] << 8)));
+            if (!objVars_ || slot >= objVars_->size()) continue;
+            const Value& v = (*objVars_)[slot];
             if (v.index() == 0) continue;      // undefined -> not saved
-            out += pv[i].name.empty() ? ("::" + std::to_string(i)) : pv[i].name;
+            out += pv[i].name.empty() ? ("::" + std::to_string(slot)) : pv[i].name;
             out += "=";
             out += to_string(v, true);
             out += "\n";
@@ -9121,7 +9275,9 @@ private:
                                                   ? es_->frames.back().fn->name : std::string("?");
                     std::cerr << "[insn] " << objName_ << "::" << curFn << " ip=" << (es_->ip - 1)
                               << " op=" << in.op << " " << actionInfo(in.op).name << " a=" << in.a
-                              << " b=" << in.b << " sp=" << es_->stack.size() << " top=" << top << "\n";
+                              << " b=" << in.b << " sp=" << es_->stack.size() << " top=" << top
+                              << " bp=" << (es_->frames.empty() ? -999 : es_->frames.back().bp)
+                              << " lc=n/a\n";
                 }
             }
             if (traceFnGated) {
@@ -9767,6 +9923,8 @@ private:
                         std::cerr.flush();
                     }
                 }
+                impVarTrace("R", vi, (vi >= 0 && static_cast<size_t>(vi) < objVars_->size())
+                                               ? &(*objVars_)[static_cast<size_t>(vi)] : nullptr);
                 if (static_cast<size_t>(vi) < objVars_->size()) pushValue((*objVars_)[vi]);
                 else pushValue(make_int(0));
                 break;
@@ -9842,7 +10000,23 @@ private:
                               << (es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name)
                               << " idx=" << vi << " vars=" << objVars_->size() << "\n";
                 }
+                impVarTrace("W", vi, &sv);
                 if (static_cast<size_t>(vi) < objVars_->size()) (*objVars_)[vi] = sv;
+                else {
+                    // The original's array always has pProgram->maxVariableNo slots
+                    // (vm_allocateObject 0x80B1D08 allocates exactly that), so an
+                    // out-of-range write means the ACTIVE array is not this object's
+                    // - the write would be dropped and the variable stays empty
+                    // (measured for my_import_name basic_object.c::create()).
+                    static std::atomic<int> oobW{0};
+                    if (oobW.fetch_add(1) < 40)
+                        std::cerr << "[objw-oob] drop write slot=" << vi << " fn="
+                                  << (es_->frames.empty() || !es_->frames.back().fn
+                                          ? std::string("<top>") : es_->frames.back().fn->name)
+                                  << " obj=" << objName_ << " key=" << thisObjectName_
+                                  << " blk=" << (objVars_ ? objVars_->size() : 0)
+                                  << " varOff=" << currentVarOffset() << "\n";
+                }
                 break;
             }
             case 77: // set_local_var
