@@ -5081,52 +5081,12 @@ private:
                 return make_int(0);
             }
             if (h == 0xAF888C6C3C418282ull) {
-                // 默认走 22a15ad 的旧行为：常量 0。
-                // 原因（实测）：ef4da68 的这个新实现会让物品进不了角色的背包列表
-                // （temp "inventory" 为空）-> 存档 carry 分支写空 -> 下线丢物品；
-                // 只把这一项搬到可保存的 22a15ad 上即可复现，两次修法（不抛错+多键形 /
-                // 索引未命中扫注册表）都没能修好。默认关闭以保住存档；
-                // 打开 _probe_on\LPCVM_LODGER_NEW（运行时热加载）才启用新实现继续查。
-                {
-                    static const std::atomic<bool>& lnew = dynProbeFlag("LPCVM_LODGER_NEW");
-                    if (!lnew.load(std::memory_order_relaxed)) {
-                        static std::atomic<int> lodOldN{0};
-                        if (lodOldN.fetch_add(1) < 50)
-                            std::cerr << "[lodger-old] lodger_object -> 0 (22a15ad 行为) obj="
-                                      << objName_ << "\n";
-                        return make_int(0);
-                    }
-                }
-                // vm_f_lodger_object (0x80f41c8): lodger_object([ob | name])
-                // -> array of the objects whose container is ob (default
-                // this_object()), in the container's pLogderObject order
-                // (move order, oldest first - see envLodgerKeys).  A name that
-                // resolves to no object, or a destructed object, is an LPC
-                // error "Not found the object for lodger_object." (It was a
-                // constant-0 stub, so every `loop (ob in lodger_object(x))`
-                // silently iterated nothing.)
-                if (args.size() > 1) throw VmError("Too many arguments to lodger_object.");
-                std::string key;
-                if (args.empty()) {
-                    key = currentThisName();
-                    if (key.empty()) key = objName_;
-                } else if (args[0].index() == 7) {
-                    key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
-                } else if (args[0].index() == 4) {
-                    key = std::get<SharedString>(args[0]).str();
-                } else {
-                    throw VmError("Not found the object for lodger_object.");
-                }
-                const std::string ck = canonicalObjKey(key);
-                {
-                    auto& reg = objectRegistry();
-                    std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                    if (reg.vms.find(ck) == reg.vms.end() && reg.objects.find(ck) == reg.objects.end())
-                        throw VmError("Not found the object for lodger_object.");
-                }
-                auto out = std::make_shared<ArrayValue>();
-                for (const std::string& k : envLodgerKeys(ck)) out->items.push_back(make_object(k));
-                return out;
+                // lodger_object：保持 22a15ad 的旧行为（常量 0）。
+                // ef4da68 把它改成"返回容器里的对象"之后，物品就进不了角色的背包列表
+                // （temp "inventory" 为空）-> 存档 carry 分支写空 -> 角色下线丢物品；
+                // 只把这一项搬到可保存的 22a15ad 上即可复现，两次修法（对象实参不抛错+
+                // 多键形尝试 / 索引未命中时扫注册表）都没能修好，所以这里退回旧行为。
+                return make_int(0);
             }
             if (h == 0xD4A2D50BC20098B1ull || h == 0x8DF2E004D5C4C718ull) {
                 // vm_f_objects (0x80f4d40): objects() -> every live object.
