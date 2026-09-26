@@ -235,3 +235,40 @@ else { Values = vm_allocateValues(...); Memory->pObjectValues = Values; }   // �
   原版 gs 控制台在 `192.168.200.128:1025`（aaa 是 1024），密码 `123456`。
   实测样本：`/gs/clone/npc/basic.c#10446`，`tpl=/gs/clone/npc/basic.c#2548`，
   `basic=#2548`（**实例**，不是类），`imp/key` 均为 NPC 名。
+
+
+---
+
+## 6. 船夫点击实测（2026-09-18，运行时探针）
+
+探针：`_probe_on\LPCVM_MENUDBG`、`LPCVM_MENUCLOSURE`、`LPCVM_TEMPKEY`、`LPCVM_FUNPTR`
+（`dynProbeFlag` 1 秒轮询热加载，不用重启）+ `LPCVM_INITDBG`。
+
+**方丈岛（id 14752）**
+```
+[menudbg] get_object_by_id id=14752 -> clone:gs/clone/npc/basic.o#4751
+[menudbg] open_menu: is_in_combat / is_deny / is_addicted / is_near / is_deny 全部通过
+[menudbg] -> user::start_talk_to            (菜单确实打开了)
+[initguard] receiver=#4751 import_name=[船夫10] basic_object=#2647
+            dbase{init_script=npc/fangzhangdao-chuanfu sub_type=raw key_name=船夫10}
+[tplid] clone=#4751  template=  tplName=clone:gs/clone/npc/basic.o#2647
+[initsite] #4751 create -> #2647::get_import_name / #2647::query_entire_dbase
+[menuclo] call_fun_ptr funcName="create_menu_content" owner=/gs/clone/npc/basic.o
+          func=create_menu_content bound=1 obj=/gs/clone/char/user.o
+```
+
+**东海渔村（id 15113）**：同样全部守卫通过、`start_talk_to` 执行、`create_menu_content` 被调用
+（`#5109`）。**服务端两次都开了菜单** ⇒ "点不开/错误对话"发生在**菜单内容**这一层：
+`dynamic_menu.c::create_menu_content` 调 `(*menu_func[i][0])(&menu_content, me, ob)`，
+被调者（`init_myself_menu_content` 等）**按引用往 `&menu_content` 里追加**条目；
+引用一旦在闭包调用边界被压平，追加就丢了 ⇒ 菜单为空（客户端什么都不显示）
+或只剩闭包自带的默认文本（显示成"错误的对话"）。
+
+引擎现有实现（`case 5 call_fun_ptr`）：闭包调用时把 ref 参数转成 `CrossVmRef`，
+但条件只覆盖 `objIndex >= 0 || slotIndex >= 0`；`writeThrough`/`set_local_var` 再写穿。
+下一次点击用 `LPCVM_FUNPTR`（已热加载）抓这一层的 `REF:` 标记与闭包链，判断
+`&menu_content` 到底有没有以引用形式到达被调者、以及写穿是否落到调用者的槽。
+
+**已知同源缺陷**：克隆身份 —— `#4751` 的模板是另一个实例 `#2647`（clone-of-a-clone），
+`get_import_name`/`query_entire_dbase` 都读 `#2647`，`tmp_dbase`（`menu_content`/
+`menu_func`/`current_menu` 都在里面）因此是兄弟实例**共用**的（D3）。
