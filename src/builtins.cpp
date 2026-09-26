@@ -3669,8 +3669,31 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return findObjectInRegistry(vpath, vfsRoot());
     }
     if (name == "find_object") {
-        // find_object(path) - object value if loaded, else 0.
+        // original vm_f_find_object (0x80F60A4):
+        //   if (arg->type != 10) {                        // NOT an object:
+        //       if (type != 4) vm_error("Bad type of value, expected string, got %s");
+        //       ob = vm_lookupObjectByName(str);
+        //       push(ob && !destructed ? ob : 0);
+        //       return;
+        //   }
+        //   if (destructed) { pop; push 0; return; }
+        //   /* fall through: the OBJECT ITSELF is the result (identity) */
+        // i.e. find_object(<object>) is an identity function, only a STRING is
+        // looked up by name.  The engine stringified every argument, so
+        //     ob_str = object_template(this_object());
+        //     if (!ob_str || !is_object(basic_ob = find_object(ob_str))) return;
+        // in clone/npc/basic.c::create resolved the CLONE's path ("clone:...#N")
+        // as a NAME and answered 0 -> create returned before
+        //     line_args = basic_ob->query_entire_dbase();
+        //     call_init_script(line_args);
+        // -> every room-placed NPC (boatmen #5109/#4751) came up with NO menu at
+        // all, while the basic-object instances (#2528/#2647, whose template is
+        // the class and therefore resolvable by name) did register theirs.
         if (args.empty()) return make_int(0);
+        if (args[0].index() == 7) {
+            if (!objectValueAlive(args[0])) return make_int(0);
+            return args[0];
+        }
         std::string vpath = normalizeSlashes(as_string(args[0]));
         {
             static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
