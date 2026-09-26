@@ -2987,38 +2987,6 @@ public:
                       << " arg1=" << a1s << "\n";
             std::cerr.flush();
         }
-        // LPCVM_TEMPVAL=<key> (env): print every set/query of that ONE temp key
-        // with the value being written, the object, the executing VM, whether the
-        // active variable block is that object's own, and the frame chain.
-        // Rationale: the reference DB (dl_ddb_1) shows a character's saved
-        // backpack in the `carry` branch, while the test character's queries all
-        // answered 0 and the branch saved empty ((["carry":([]),])) - so the bag
-        // list ("inventory") write lands somewhere other than where the read
-        // looks.  This prints both sides with the identity of the sm.
-        {
-            static const char* tvKey = LPCVM_GETENV("LPCVM_TEMPVAL");
-            if (tvKey && *tvKey &&
-                (name == "set_temp" || name == "lite_set_temp" || name == "query_temp" ||
-                 name == "lite_query_temp" || name == "set" || name == "lite_set") &&
-                !args.empty() && args[0].index() == 4 &&
-                std::get<SharedString>(args[0]).str() == tvKey) {
-                std::string a1s = args.size() >= 2 ? to_string(args[1], false).substr(0, 60) : "-";
-                std::string chain;
-                for (auto it = es_->frames.rbegin();
-                     it != es_->frames.rend() && chain.size() < 90; ++it) {
-                    if (!chain.empty()) chain += "<-";
-                    chain += it->fn ? it->fn->name : std::string("<ctx>");
-                }
-                static std::atomic<int> tvN{0};
-                if (tvN.fetch_add(1) < 4000) {
-                    std::cerr << "[tv] " << name << " key=" << tvKey << " obj=" << objName_
-                              << " this=" << thisObjectName_ << " vm=" << this
-                              << " own=" << (objVars_ == ownObjVars_ ? 1 : 0)
-                              << " val=" << a1s << " chain=[" << chain << "]\n";
-                    std::cerr.flush();
-                }
-            }
-        }
         if (vmEnvTrace() && (name == "register_entry" || name == "query_entry"))
             std::cerr << "[reg] callFunctionByName vm=" << this << " obj=" << objName_
                       << " fn=" << name << " args=" << args.size() << " a0=["
@@ -6972,6 +6940,44 @@ private:
                 std::cerr << "[tempkey] IN  " << objName_ << "::" << tf->name
                           << " key=\"" << k.substr(0, 70) << "\"\n";
                 std::cerr.flush();
+            }
+        }
+        // LPCVM_TEMPVAL=<key> (env): print every write/read of that ONE temp key
+        // WITH the value being written (arg1) plus the object, VM, whether the
+        // active variable block is that object's own, and the frame chain.
+        // Used for the character's bag list: the reference DB (dl_ddb_1) shows a
+        // saved backpack in the `carry` branch, while the test character's queries
+        // answered 0 and the save produced (["carry":([]),]).
+        {
+            static const char* tvKey = LPCVM_GETENV("LPCVM_TEMPVAL");
+            if (tvKey && *tvKey) {
+                const OriginalFunction* tvf = functionByIndex(index);
+                if (tvf && (tvf->name == "set_temp" || tvf->name == "lite_set_temp" ||
+                            tvf->name == "query_temp" || tvf->name == "lite_query_temp" ||
+                            tvf->name == "set" || tvf->name == "lite_set")) {
+                    int top = static_cast<int>(es_->stack.size()) - 1;
+                    std::string k = top >= 0
+                        ? to_string(es_->stack[static_cast<size_t>(top)].value, false) : std::string();
+                    if (k == tvKey) {
+                        std::string vs = "-";
+                        if (top - 1 >= 0)
+                            vs = to_string(es_->stack[static_cast<size_t>(top - 1)].value, false).substr(0, 70);
+                        std::string chain;
+                        for (auto it = es_->frames.rbegin();
+                             it != es_->frames.rend() && chain.size() < 90; ++it) {
+                            if (!chain.empty()) chain += "<-";
+                            chain += it->fn ? it->fn->name : std::string("<ctx>");
+                        }
+                        static std::atomic<int> tvN{0};
+                        if (tvN.fetch_add(1) < 4000) {
+                            std::cerr << "[tv] " << tvf->name << " obj=" << objName_
+                                      << " this=" << thisObjectName_ << " vm=" << this
+                                      << " own=" << (objVars_ == ownObjVars_ ? 1 : 0)
+                                      << " val=" << vs << " in=[" << chain << "]\n";
+                            std::cerr.flush();
+                        }
+                    }
+                }
             }
         }
         if (LPCVM_GETENV("LPCVM_TALK")) {
