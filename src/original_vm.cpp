@@ -8957,7 +8957,10 @@ public:
                                      thisObjectName_.find("clone:") != std::string::npos ||
                                      thisObjectName_.find("basic") != std::string::npos;
             if (!interesting) return;
-            if (what[0] != 'r' && what[0] != 'W') return;   // writes only: pass "rW"/"W"
+            // writes always; READS only on an INSTANCE (key contains "clone:"),
+            // which is what a room NPC does when it evaluates basic_object().
+            const bool isWrite = (what[0] == 'r' && what[1] == 'W') || what[0] == 'W';
+            if (!isWrite && thisObjectName_.find("clone:") == std::string::npos) return;
             trace = true;
         } else {
             if (slot != std::atoi(want)) return;
