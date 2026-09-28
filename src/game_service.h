@@ -8,6 +8,7 @@
 //   - attrib permission check (CLIENT_USER=1, INTERNAL_COMM=2, FROM_SERVER=4)
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -119,6 +120,14 @@ std::vector<int> gameGetAllClientNo();
 // The caller has already built the complete frame.  Returns false when the
 // client slot is unknown.
 bool gameServiceSend(int clientNo, const std::string& data);
+
+// LPCVM_FILEDDBG support: register an outbound filed REQUEST so the
+// outstanding-request watchdog can name the request that never got its reply
+// (see the watchdog block in game_service.cpp).  No-op unless the runtime probe
+// _probe_on\LPCVM_FILEDDBG is present.  NOTE: the length parameter is
+// `unsigned int`, not size_t - this target is Win32, where the two are DIFFERENT
+// symbols (size_t is 64-bit), so the definition must match exactly.
+void filedWatchdogMarkSent(uint16_t cmdNo, const uint8_t* body, unsigned int len);
 
 // bind_to_client(fd, [type]) (vm_f_bind_to_client 0x804ee68): attach a
 // connected socket (from socket()/connect()) to a game client slot and start

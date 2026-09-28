@@ -4998,6 +4998,50 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             pkt.push_back(static_cast<char>((msgLen >> 8) & 0xFF));
             pkt.push_back(static_cast<char>(msgLen & 0xFF));
             pkt += data;
+            // LPCVM_FILEDDBG: register every outbound filed REQUEST so the
+            // outstanding-request watchdog (game_service.cpp) can tell "the peer
+            // never answered" from "the answer never arrived".  Runtime-armable.
+            {
+                uint16_t mcReq = 0;
+                if (data.size() >= 2) {
+                    mcReq = static_cast<uint16_t>((static_cast<unsigned char>(data[0]) << 8) |
+                                                  static_cast<unsigned char>(data[1]));
+                }
+                if (mcReq == 0x3400 || mcReq == 0x3411 || mcReq == 0x2403 ||
+                    mcReq == 0x2405 || mcReq == 0x2407) {
+                    lpc::filedWatchdogMarkSent(
+                        mcReq, reinterpret_cast<const uint8_t*>(data.data()), data.size());
+                }
+            }
+            // LPCVM_FILEDDBG: outbound filed frames with the FULL body.  Paired
+            // with the [filed-in]/[filed-disp] lines in game_service.cpp this
+            // answers the only question that matters for the 9030 failure class:
+            // did the peer SEND the reply for cookie X, and did the requester
+            // RECEIVE it?  Runtime-armable (type nul > _probe_on\LPCVM_FILEDDBG).
+            {
+                uint16_t mc = 0;
+                if (data.size() >= 2) {
+                    mc = static_cast<uint16_t>((static_cast<unsigned char>(data[0]) << 8) |
+                                               static_cast<unsigned char>(data[1]));
+                }
+                if (mc == 0x3400 || mc == 0x3401 || mc == 0x3411 || mc == 0x3412 ||
+                    mc == 0x4401 || mc == 0x2403 || mc == 0x2404 ||
+                    mc == 0x2405 || mc == 0x2406 || mc == 0x2407) {
+                    static const std::atomic<bool>& fdOut = dynProbeFlag("LPCVM_FILEDDBG");
+                    if (fdOut.load(std::memory_order_relaxed)) {
+                        std::string hxo;
+                        static const char* hx3 = "0123456789ABCDEF";
+                        for (size_t i = 0; i < data.size() && i < 64; ++i) {
+                            hxo += hx3[(static_cast<unsigned char>(data[i]) >> 4) & 15];
+                            hxo += hx3[static_cast<unsigned char>(data[i]) & 15];
+                        }
+                        std::cerr << "[filed-out] t=" << lpc::msSinceStart()
+                                  << " cno=" << cno << " cmd=0x" << std::hex << mc << std::dec
+                                  << " len=" << data.size() << " body=" << hxo << "\n";
+                        std::cerr.flush();
+                    }
+                }
+            }
             if (LPCVM_GETENV("LPCVM_MALL")) {
                 uint16_t mc = 0;
                 if (args.size() >= 3) {

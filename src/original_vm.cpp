@@ -354,6 +354,10 @@ struct TimerEntry {
     std::string callback;     // function name, for the get_timer mapping
     int64_t timeoutSecs = 0;  // delay in seconds
     int64_t triggerAt = 0;    // absolute trigger time (seconds since epoch)
+    // Owning object, used to scope name-based re-arm replacement (see the
+    // LPCVM_TIMER_REPLACE block in set_timer): two different objects may each
+    // own a timer with the same name and must not cancel each other.
+    const void* owner = nullptr;
     std::shared_ptr<std::atomic<bool>> cancelled;
 };
 std::mutex g_timerMtx;
@@ -6371,14 +6375,48 @@ private:
                     entry->id = g_timerSeq.fetch_add(1);
                     entry->name = timerName;
                     entry->callback = fnName;
+                    entry->owner = owner;
                     entry->timeoutSecs = timeout;
                     entry->triggerAt = static_cast<int64_t>(std::time(nullptr)) + timeout;
                     entry->cancelled = std::make_shared<std::atomic<bool>>(false);
                     {
                         // Insert into the trigger-time-ordered list (original
-                        // vm_putTimerIntoTimerList).  Same-name timers coexist;
-                        // the game's delete-then-set pattern is driven by LPC.
+                        // vm_putTimerIntoTimerList).
                         std::lock_guard<std::mutex> lk(g_timerMtx);
+                        // LPCVM_TIMER_REPLACE: re-arming a NAMED timer for the
+                        // same object cancels the older pending one instead of
+                        // letting both run.
+                        //
+                        // The game re-arms repeating timers from INSIDE their
+                        // own callback (ccs_lotteryd: do_init sets "保存彩票信息"
+                        // -> save_info -> save_info_to_db -> set_timer(same
+                        // name) again, and collect_data -> save_info_to_db(1)
+                        // does it a THIRD way).  Under pure coexist semantics
+                        // every fire adds a timer, so the population doubles
+                        // every period: measured 17632 fires of save_info in
+                        // 9008s with a median gap of 8ms (~350 live timers).
+                        // Each fire rewrites lottery_info/cur_lottery and
+                        // /his_lottery, which was 80% of ALL dba writes
+                        // (12766 of 15970) and pushed the ddb service queue to
+                        // depth 13400 - behind which filed reads were dropped by
+                        // threadd's invoke_before_timeout, producing the 9030.
+                        // Replacement is what the timer's `name` is for: it is
+                        // how LPC's delete_timer(name) finds the entry, and a
+                        // re-arm of the SAME name is that same logical timer.
+                        if (!timerName.empty() &&
+                            LPCVM_GETENV("LPCVM_TIMER_COEXIST") == nullptr) {
+                            for (auto it = g_timerList.begin(); it != g_timerList.end();) {
+                                const auto& old = *it;
+                                if (old->name == timerName && old->owner == owner &&
+                                    !old->cancelled->load()) {
+                                    old->cancelled->store(true);
+                                    g_timerById.erase(old->id);
+                                    it = g_timerList.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+                        }
                         auto it = std::lower_bound(
                             g_timerList.begin(), g_timerList.end(), entry,
                             [](const std::shared_ptr<TimerEntry>& a,
@@ -6387,6 +6425,28 @@ private:
                             });
                         g_timerList.insert(it, entry);
                         g_timerById[entry->id] = entry;
+                        // LPCVM_TIMERPOP: report the live timer population by
+                        // callback name each time it crosses a milestone (64,
+                        // 128, ...).  This is the direct answer to "which timer
+                        // is multiplying" - the population is the state that the
+                        // re-arm-from-inside-its-own-callback pattern inflates.
+                        if (LPCVM_GETENV("LPCVM_TIMERPOP")) {
+                            static int nextMilestone = 64;
+                            if (static_cast<int>(g_timerList.size()) >= nextMilestone) {
+                                std::map<std::string, int> byName;
+                                for (const auto& e : g_timerList) byName[e->callback]++;
+                                std::cerr << "[timer-pop] total=" << g_timerList.size()
+                                          << " milestone=" << nextMilestone << " top:";
+                                int shown = 0;
+                                for (const auto& kv : byName) {
+                                    if (shown++ >= 6) break;
+                                    std::cerr << " " << kv.first << "=" << kv.second;
+                                }
+                                std::cerr << "\n";
+                                std::cerr.flush();
+                                nextMilestone *= 2;
+                            }
+                        }
                     }
                     auto objPtr = std::make_shared<OriginalObject>(*owner);
                     // The timer callback runs in the object's OWN context like
@@ -16519,9 +16579,23 @@ Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::st
         // the nested call), so bracket it here around the whole call.
         const int64_t inlineKey = runVm->activeChainKey();
         lpc::vmchainBegin(dcno, inlineKey, runVmRaw, funName);
+        static const bool execDbgInl = (LPCVM_GETENV("LPCVM_EXECDBG") != nullptr);
+        const int64_t inlT0 = execDbgInl
+            ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now().time_since_epoch()).count()
+            : 0;
         try {
             Value r = runVm->callFunctionByName(funName, args);
             lpc::vmchainEnd(dcno, inlineKey, runVmRaw, funName, true);
+            if (execDbgInl) {
+                const int64_t inlMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count() - inlT0;
+                if (inlMs >= 1000)
+                    std::cerr << "[exec-slow-inline] " << inlMs << "ms fn=" << funName
+                              << " cno=" << dcno << " obj=" << runVm->objName()
+                              << " ret=" << to_string(r, false).substr(0, 40) << "\n";
+            }
             return r;
         } catch (...) {
             lpc::vmchainEnd(dcno, inlineKey, runVmRaw, funName, false);
@@ -16543,7 +16617,30 @@ Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::st
         ready_.push_back(p);
     }
     cv_.notify_one();
-    return fut.get();   // blocks until the whole call chain completes
+    // LPCVM_EXECDBG: how long the CALLER (a packet-reader thread for every
+    // filed/client command) is blocked here, and what the chain returned.
+    // pktAnalyse returns 1 = "interface handled" the moment this returns, so if
+    // a request gets no reply the answer is either "this blocked past the
+    // caller's 20s expiry" or "the chain finished without answering" - and the
+    // two need completely different fixes.  This is the measurement that tells
+    // them apart; [sched-hog] already ruled out a hogged scheduler (0 events on
+    // the dba), so the blocking, if any, happens HERE.
+    static const bool execDbg = (LPCVM_GETENV("LPCVM_EXECDBG") != nullptr);
+    const int64_t execT0 = execDbg
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count()
+        : 0;
+    Value execRet = fut.get();   // blocks until the whole call chain completes
+    if (execDbg) {
+        const int64_t execMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count() - execT0;
+        if (execMs >= 1000)
+            std::cerr << "[exec-slow] " << execMs << "ms fn=" << funName
+                      << " cno=" << dcno << " obj=" << runVm->objName()
+                      << " ret=" << to_string(execRet, false).substr(0, 40) << "\n";
+    }
+    return execRet;
 }
 
 // Construction-completion wake: the object's load_object caller resumes at the
@@ -16790,6 +16887,28 @@ void Scheduler::run() {
                               << " evWoken=" << (tp ? (int)tp->eventWoken : -1)
                               << " cancelled=" << (te.cancelled ? (int)*te.cancelled : -1)
                               << " done=" << (tp ? (int)tp->done : -1) << "\n";
+                // LPCVM_TIMER: per-callback FIRE tally.  A set_timer entry is
+                // one-shot, so a callback that is registered N times but FIRES
+                // far more than N times means the scheduler re-fires a single
+                // registration - exactly the shape that would turn a
+                // self-re-arming saver (ccs_lotteryd::save_info_to_db, which
+                // calls set_timer(180,...) again at its end) into a write flood
+                // that starves the dba until login cannot get an answer and
+                // dies with 9030.  Every fire up to 40 is printed, then every
+                // 50th: a truncated tally would hide the ratio being measured.
+                if (LPCVM_GETENV("LPCVM_TIMER") && tp && !tp->entry.empty()) {
+                    static std::mutex fireMx;
+                    static std::map<std::string, long> fireN;
+                    long k = 0;
+                    {
+                        std::lock_guard<std::mutex> fl(fireMx);
+                        k = ++fireN[tp->entry];
+                    }
+                    if (k <= 40 || k % 50 == 0)
+                        std::cerr << "[timer-fire-n] entry=" << tp->entry
+                                  << " fires=" << k << " at=" << fireAt
+                                  << " now=" << now << "\n";
+                }
                 // A re-park cancelled this wake timer (the process is now
                 // waiting on a DIFFERENT condition); drop it - it must not
                 // resume the new park.
@@ -16977,8 +17096,35 @@ void Scheduler::run() {
                 // gate keeps it busy until the whole command is over.
                 const int64_t prevSched = t_schedClientNo;
                 t_schedClientNo = p->clientNo;
+                // LPCVM_SCHED_HOG: how long the scheduler was tied up by ONE
+                // process chain.  This is the missing measurement behind the
+                // 9030 stall: packet handlers are dispatched from the reader
+                // thread through execOnMain(), which BLOCKS on the chain's
+                // promise (see execOnMain's fut.get()).  When a single chain
+                // holds the single-threaded scheduler for seconds, every packet
+                // queued behind it waits that long - and once the wait passes
+                // filed.c's `expired = time() + 20`, do_operate returns its
+                // initial -2 and the login answers 9030.
+                int64_t hogT0 = 0;
+                static const bool hogOn = (LPCVM_GETENV("LPCVM_SCHED_HOG") != nullptr);
+                if (hogOn)
+                    hogT0 = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch()).count();
                 runProcess(p);
                 t_schedClientNo = prevSched;
+                if (hogOn && hogT0) {
+                    const int64_t hogMs =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count() - hogT0;
+                    if (hogMs >= 1000) {
+                        std::cerr << "[sched-hog] " << hogMs << "ms entry=" << p->entry
+                                  << " obj=" << (p->vm ? p->vm->objName() : std::string("?"))
+                                  << " cno=" << p->clientNo
+                                  << " parked=" << (p->parkedVm ? p->parkedVm->objName() : std::string("-"))
+                                  << "\n";
+                        std::cerr.flush();
+                    }
+                }
             }
             lpc::cmdActiveDetach(p->clientNo);
             // vm_endForBackend: free what destruct_object deferred while it ran.

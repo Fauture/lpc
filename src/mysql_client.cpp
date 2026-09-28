@@ -4,8 +4,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mutex>
+#include <string>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -456,17 +460,44 @@ bool MysqlClient::handshake(const std::string& user, const std::string& password
 }
 
 bool MysqlClient::execute(const std::string& sql, Result& out, std::string& error) {
-    if (!sock_) { error = "not connected"; return false; }
+    // LPCVM_SQLLOG=<file>: append one line per statement to its OWN file, so the
+    // MySQL traffic can be inspected without wading through the service logs.
+    // Records: wall ms, elapsed us, verdict, rows/affected, and the full SQL.
+    // Enabled only when the env var names a file - zero cost otherwise.
+    static const char* sqlLogPath = getenv("LPCVM_SQLLOG");
+    static std::mutex sqlLogMx;
+    const int64_t sqlT0 = sqlLogPath
+        ? std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count()
+        : 0;
+    auto sqlLog = [&](const char* verdict, int64_t rows) {
+        if (!sqlLogPath) return;
+        const int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch()).count() - sqlT0;
+        std::lock_guard<std::mutex> lk(sqlLogMx);
+        static std::ofstream f(sqlLogPath, std::ios::app);
+        if (!f) return;
+        std::string one = sql;
+        for (char& c : one) if (c == '\n' || c == '\r') c = ' ';
+        const int64_t wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::system_clock::now().time_since_epoch()).count();
+        f << "t=" << wallMs << "ms us=" << us << " " << verdict
+          << " rows=" << rows << " err=" << (error.empty() ? "-" : error.substr(0, 60))
+          << " sql=" << one.substr(0, 400) << "\n";
+        f.flush();
+    };
+
+    if (!sock_) { error = "not connected"; sqlLog("NOCONN", -1); return false; }
     std::vector<uint8_t> q;
     q.reserve(1 + sql.size());
     q.push_back(0x03);  // COM_QUERY
     q.insert(q.end(), sql.begin(), sql.end());
     seq_ = 0;  // every new command starts a fresh sequence
-    if (!writePacket(q, error)) return false;
+    if (!writePacket(q, error)) { sqlLog("WRITEFAIL", -1); return false; }
 
     std::vector<uint8_t> first;
-    if (!readPacket(first, error)) return false;
-    if (first.empty()) { error = "empty response"; return false; }
+    if (!readPacket(first, error)) { sqlLog("READFAIL", -1); return false; }
+    if (first.empty()) { error = "empty response"; sqlLog("EMPTYRESP", -1); return false; }
     if (first[0] == 0xFF) {
         Cursor e(first);
         e.u8();
@@ -475,6 +506,7 @@ bool MysqlClient::execute(const std::string& sql, Result& out, std::string& erro
         if (e.ok && e.remaining() >= 6 && e.p[0] == '#') { e.u8(); e.u8(); e.u8(); e.u8(); e.u8(); e.u8(); }
         msg = e.nullTerm();
         error = "SQL error " + std::to_string(code) + ": " + msg;
+        sqlLog("SQLERR", -1);
         return false;
     }
     if (first[0] == 0x00) {
@@ -484,6 +516,7 @@ bool MysqlClient::execute(const std::string& sql, Result& out, std::string& erro
         out.affectedRows = static_cast<int64_t>(o.lenenc());
         out.insertId = static_cast<int64_t>(o.lenenc());
         out.hasResultSet = false;
+        sqlLog("OK-WRITE", out.affectedRows);
         return true;
     }
     if (first[0] == 0xFE && first.size() < 9) {
@@ -548,6 +581,7 @@ bool MysqlClient::execute(const std::string& sql, Result& out, std::string& erro
         out.rows.push_back(std::move(cells));
     }
     out.hasResultSet = true;
+    sqlLog("OK-READ", static_cast<int64_t>(out.rows.size()));
     return true;
 }
 

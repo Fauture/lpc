@@ -490,13 +490,34 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     // connection gates), not here.
     if (func.index() == 8) {
         auto cl = std::get<std::shared_ptr<ClosureValue>>(func);
+        // LPCVM_PKTSTEP: step-by-step trace of the dispatch.  [pkt-filed] proves
+        // we ENTERED pktAnalyse and [filed-disp] is only printed AFTER it
+        // returns - so when a request is received and never answered, with no
+        // [filed-disp], the stall is inside this function or the call below.
+        // These markers say exactly which.
+        static const bool pktStep = (LPCVM_GETENV("LPCVM_PKTSTEP") != nullptr);
+        auto step = [&](const char* what) {
+            if (!pktStep) return;
+            std::cerr << "[pkt-step] cmd=0x" << std::hex << cmdNo << std::dec
+                      << " " << what << " fn=" << cl->functionName
+                      << " bound=" << cl->boundArgs.size()
+                      << " owner=" << (cl->owner ? cl->owner->sourceName : std::string("?"))
+                      << " t=" << lpc::msSinceStart() << "\n";
+            std::cerr.flush();
+        };
+        step("closure-ready");
         if (LPCVM_GETENV("LPCVM_TRACE"))
             std::cerr << "[pkt] calling closure " << cl->functionName
                       << " boundArgs=" << cl->boundArgs.size() << "\n";
         std::vector<Value> all = cl->boundArgs;
         all.insert(all.end(), args.begin(), args.end());
-        if (cl->functionName.empty()) return 1;
+        if (cl->functionName.empty()) {
+            step("empty-name -> return 1");
+            return 1;
+        }
+        step("calling applyClosureOnOwner");
         applyClosureOnOwner(func, args);
+        step("applyClosureOnOwner returned");
         if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
             std::cerr << "[pkt-filed] closure " << cl->functionName << " returned\n";
         return 1;

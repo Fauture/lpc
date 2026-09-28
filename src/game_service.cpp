@@ -1596,7 +1596,6 @@ void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t l
     applyLpc("cmd_accelerate_move_to", {make_int(cl.clientNo), make_int((int)time), make_int((int)mapId), arr, make_int(dir)});
 }
 
-
 void handle_vm_cmdAccept(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 1) return;
@@ -3703,7 +3702,6 @@ void handle_vm_cmdAskFields(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_ask_fields", {make_int(cl.clientNo)});
 }
 
-
 void handle_vm_cmdAskPill(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 14) return;
@@ -3717,7 +3715,6 @@ void handle_vm_cmdAskPill(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_ask_pill", {make_int(cl.clientNo), make_int(pos1), make_int(pos2), make_int(pos3), make_int(v4), make_int(v5), make_int(v6), make_int(v7)});
 }
 
-
 void handle_vm_cmdAskSkillDesc(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 2) return;
@@ -3725,12 +3722,10 @@ void handle_vm_cmdAskSkillDesc(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_ask_skill_desc", {make_int(cl.clientNo), make_int(skillId)});
 }
 
-
 void handle_vm_cmdAsktaoSound(GameClient& cl, const uint8_t* body, size_t len)
 {
     applyLpc("cmd_asktao_sound", {make_int(cl.clientNo)});
 }
-
 
 void handle_vm_cmdAssignAttrib(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -3743,13 +3738,11 @@ void handle_vm_cmdAssignAttrib(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_assign_attrib", {make_int(cl.clientNo), make_int(attribId), make_string(name)});
 }
 
-
 void handle_vm_cmdAssignChildAttrib(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 20) return;
     applyLpc("cmd_assign_child_attrib", {make_int(cl.clientNo), make_int(rd32be(body + 0)), make_int(rd32be(body + 4)), make_int(rd32be(body + 8)), make_int(rd32be(body + 12)), make_int(rd32be(body + 16))});
 }
-
 
 void handle_vm_cmdAssignPolar(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -3764,7 +3757,6 @@ void handle_vm_cmdAssignPolar(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_assign_polar", {make_int(cl.clientNo), make_int(id), make_string(name), make_int(val)});
 }
 
-
 void handle_vm_cmdAssignResist(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 6) return;
@@ -3778,7 +3770,6 @@ void handle_vm_cmdAssignResist(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_assign_resist", {make_int(cl.clientNo), make_int(id), make_string(name), make_int(val)});
 }
 
-
 void handle_vm_cmdAssignUpgrade(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 1) return;
@@ -3788,7 +3779,6 @@ void handle_vm_cmdAssignUpgrade(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_assign_upgrade", {make_int(cl.clientNo), make_string(name)});
 }
 
-
 void handle_vm_cmdAuthMatrixForGs(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 2) return;
@@ -3797,7 +3787,6 @@ void handle_vm_cmdAuthMatrixForGs(GameClient& cl, const uint8_t* body, size_t le
     std::string name(reinterpret_cast<const char*>(body + 2), n);
     applyLpc("cmd_auth_matrix_for_gs", {make_int(cl.clientNo), make_string(name)});
 }
-
 
 void handle_vm_cmdAuthRefreshPicForGs(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -3886,7 +3875,6 @@ void handle_vm_cmdBottleThrowBack(GameClient& cl, const uint8_t* body, size_t le
     std::string s((const char*)body + 1, sl);
     applyLpc("cmd_bottle_throw_back", {make_int(cl.clientNo), make_string(s)});
 }
-
 
 // ---- game commands (type=1) generated handlers, chunk 2 ----
 
@@ -4737,7 +4725,6 @@ void handle_vm_cmdMoveTo(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_move_to", {make_int(cl.clientNo), make_int(map_id), make_int(target_id), make_int(x), make_int(y), make_int(dir)});
 }
 
-
 void handle_vm_cmdMovFromQiankundai(GameClient& cl, const uint8_t* body, size_t len)
 {
     size_t off = 0;
@@ -4833,7 +4820,6 @@ void handle_vm_cmdMultiMoveTo(GameClient& cl, const uint8_t* body, size_t len)
     uint16_t dir = rd16be(body, off); off += 2;
     applyLpc("cmd_multi_move_to", {make_int(cl.clientNo), make_int(v), make_int(mapId), arr, make_int(dir)});
 }
-
 
 void handle_vm_cmdMusicList(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -8334,7 +8320,6 @@ void handle_vm_cmdWarViewHistoryInfo(GameClient& cl, const uint8_t* body, size_t
     applyLpc("cmd_view_war_history_info", {make_int(cl.clientNo), make_int(body[0])});
 }
 
-
 void handle_vm_cmdWearAskTaoShow(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 1) return;
@@ -8343,19 +8328,16 @@ void handle_vm_cmdWearAskTaoShow(GameClient& cl, const uint8_t* body, size_t len
     applyLpc("cmd_wear_asktao_show", {make_int(cl.clientNo), make_string(body + 1, slen)});
 }
 
-
 void handle_vm_cmdWho(GameClient& cl, const uint8_t* body, size_t len)
 {
     applyLpc("cmd_who", {make_int(cl.clientNo)});
 }
-
 
 void handle_vm_cmdWindowSizeChange(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 1) return;
     applyLpc("cmd_window_size_change", {make_int(cl.clientNo), make_int(body[0])});
 }
-
 
 void handle_vm_cmdWishing(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -8381,24 +8363,20 @@ void handle_vm_cmdWishing(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_wishing", {make_int(cl.clientNo), make_int(num), m});
 }
 
-
 void handle_vm_cmdWishingBuyItem(GameClient& cl, const uint8_t* body, size_t len)
 {
     applyLpc("cmd_wishing_buy_item", {make_int(cl.clientNo)});
 }
-
 
 void handle_vm_cmdWishingOpen(GameClient& cl, const uint8_t* body, size_t len)
 {
     applyLpc("cmd_wishing_open", {make_int(cl.clientNo)});
 }
 
-
 void handle_vm_cmdWishingSaleItem(GameClient& cl, const uint8_t* body, size_t len)
 {
     applyLpc("cmd_wishing_sale_item", {make_int(cl.clientNo)});
 }
-
 
 void handle_vm_cmdWithdraw(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -8408,12 +8386,10 @@ void handle_vm_cmdWithdraw(GameClient& cl, const uint8_t* body, size_t len)
     applyLpc("cmd_withdraw", {make_int(cl.clientNo), make_int(v1), make_int(v2)});
 }
 
-
 void handle_vm_cmdWLResetSeal(GameClient& cl, const uint8_t* body, size_t len)
 {
     applyLpc("cmd_world_level_reset_seal", {make_int(cl.clientNo)});
 }
-
 
 void handle_vm_cmdWLSealInfo(GameClient& cl, const uint8_t* body, size_t len)
 {
@@ -12163,6 +12139,154 @@ void handleMsgGotGidInfo(GameClient& cl, const uint8_t* body, size_t len) {
 //   if (vm_pktAnalyse(cmdNo, body, len) != 1) {
 //     ... cmdIndex lookup + cmdFunc fallback ...
 //   }
+
+// Register an OUTBOUND filed REQUEST.  Called from builtins.cpp, where a filed
+// frame is framed for the wire; it must be defined at lpc:: scope (not inside the
+// anonymous namespace below) so the declaration in game_service.h matches.
+// Without it a service that only ever ANSWERS - the dba - has nothing
+// registered, so every reply it sent looked like "REPLY WITH NO PENDING REQUEST".
+void filedWatchdogMarkSent(uint16_t cmdNo, const uint8_t* body, unsigned int len);
+
+// ---- filed request/reply watchdog ------------------------------------------
+// The 9030 failure class is "a filed request never got its reply".  Counting
+// [send]/[recv] log lines only ever produced a fuzzy delta, so this keeps a real
+// register of outstanding requests: every filed REQUEST is recorded by cookie,
+// every filed REPLY clears it, and one that stays outstanding past the threshold
+// prints [filed-lost] naming the exact request - the artefact that says whether
+// the peer never answered or the answer never arrived.
+//
+// Wire layout, verified against [filed-out]/[filed-in] dumps (a request body
+// "3400 0000F9A7 ..." is answered by a reply body "4401 0000F9A7 ..."):
+//     [0..2) cmdNo   [2..6) cookie   [6..) payload
+//
+// Enabled only while the runtime probe _probe_on\LPCVM_FILEDDBG exists, so the
+// normal log stays quiet.  Everything here is internal to this file EXCEPT
+// filedWatchdogMarkSent, which builtins.cpp calls through game_service.h (an
+// anonymous namespace does not change the name of a function that the header
+// declares at lpc:: scope, so that one symbol is still exported).
+namespace {
+struct FiledPending {
+    uint16_t reqCmd;
+    int64_t sentAt;
+    std::string hex;
+};
+std::mutex g_filedPendingMx;
+std::map<uint32_t, FiledPending>& g_filedPending() {
+    static std::map<uint32_t, FiledPending> m;
+    return m;
+}
+// Cookie offset depends on WHICH copy of the body we were handed, and the two
+// call sites differ (measured 2026-09-27, body dump + be0/be2 decode):
+//   * the inbound dispatcher already STRIPPED the 2-byte cmdNo, so the cookie
+//     sits at offset 0   ("body=0001E243FFFFFFFF..." -> be0 == the cookie);
+//   * the frame handed to gameServiceSend still carries it, so the cookie is at
+//     offset 2 there ("MZ",cksum,tick,len2,cmd2 then cookie).
+// filedCookieOf2 takes the offset explicitly so neither caller has to guess.
+bool filedCookieOf2(const uint8_t* body, size_t len, size_t off, uint32_t& out) {
+    if (len < off + 4) return false;
+    out = (static_cast<uint32_t>(body[off]) << 24) |
+          (static_cast<uint32_t>(body[off + 1]) << 16) |
+          (static_cast<uint32_t>(body[off + 2]) << 8) |
+          static_cast<uint32_t>(body[off + 3]);
+    return true;
+}
+
+// Same read, but returns 0 instead of failing - for probe dumps that must show
+// every candidate offset without aborting.
+uint32_t filedCookieOf2Hex(const uint8_t* body, unsigned int len, size_t off) {
+    uint32_t v = 0;
+    filedCookieOf2(body, len, off, v);
+    return v;
+}
+std::string filedHeadHex(const uint8_t* body, size_t len) {
+    std::string hex;
+    static const char* hx = "0123456789ABCDEF";
+    for (size_t i = 0; i < len && i < 32; ++i) {
+        hex += hx[body[i] >> 4];
+        hex += hx[body[i] & 15];
+    }
+    return hex;
+}
+// A filed REPLY cleared the request it answers.
+void filedWatchdogMarkReplied(uint16_t cmdNo, const uint8_t* body, size_t len) {
+    static const std::atomic<bool>& fd = dynProbeFlag("LPCVM_FILEDDBG");
+    if (!fd.load(std::memory_order_relaxed)) return;
+    uint32_t cookie = 0;
+    if (!filedCookieOf2(body, len, 0, cookie)) return;
+    std::lock_guard<std::mutex> lk(g_filedPendingMx);
+    auto& m = g_filedPending();
+    auto it = m.find(cookie);
+    if (it == m.end()) {
+        // Print BOTH candidate offsets and both candidate big-endian values: the
+        // request and the reply are logged by different call sites, and one of
+        // them evidently passes a pointer that is already past the 2-byte cmdNo.
+        // Showing the raw bytes plus every decode makes the layout unambiguous
+        // instead of inferring it from a single number.
+        auto be = [&](size_t off) -> uint32_t {
+            if (off + 4 > len) return 0;
+            return (static_cast<uint32_t>(body[off]) << 24) |
+                   (static_cast<uint32_t>(body[off + 1]) << 16) |
+                   (static_cast<uint32_t>(body[off + 2]) << 8) |
+                   static_cast<uint32_t>(body[off + 3]);
+        };
+        std::cerr << "[filed-lost] REPLY WITH NO PENDING REQUEST t="
+                  << lpc::msSinceStart() << " cmd=0x" << std::hex << cmdNo << std::dec
+                  << " cookie=" << cookie << " len=" << len
+                  << " be0=" << be(0) << " be2=" << be(2) << " be4=" << be(4)
+                  << " body=" << filedHeadHex(body, len) << "\n";
+        std::cerr.flush();
+        return;
+    }
+    const int64_t now = lpc::msSinceStart();
+    std::cerr << "[filed-ok] t=" << now << " reply=0x" << std::hex << cmdNo
+              << " req=0x" << it->second.reqCmd << std::dec << " cookie=" << cookie
+              << " rtt=" << (now - it->second.sentAt) << "ms\n";
+    std::cerr.flush();
+    m.erase(it);
+}
+// Route one inbound filed frame: requests get registered, replies get matched.
+void filedWatchdogNote(uint16_t cmdNo, const uint8_t* body, size_t len) {
+    static const std::atomic<bool>& fd = dynProbeFlag("LPCVM_FILEDDBG");
+    if (!fd.load(std::memory_order_relaxed)) return;
+    static const std::map<uint16_t, uint16_t> kReqToRep = {
+        {0x3400, 0x4401}, {0x3411, 0x3412}, {0x2403, 0x2404},
+        {0x2405, 0x2406}, {0x2407, 0x4401}};
+    if (kReqToRep.find(cmdNo) == kReqToRep.end()) {
+        filedWatchdogMarkReplied(cmdNo, body, len);
+        return;
+    }
+    uint32_t cookie = 0;
+    if (!filedCookieOf2(body, len, 0, cookie)) return;
+    std::lock_guard<std::mutex> lk(g_filedPendingMx);
+    g_filedPending()[cookie] = FiledPending{cmdNo, lpc::msSinceStart(),
+                                            filedHeadHex(body, len)};
+}
+// Requests that have waited too long are reported once and forgotten.
+void filedWatchdogSweep() {
+    static const std::atomic<bool>& fd = dynProbeFlag("LPCVM_FILEDDBG");
+    if (!fd.load(std::memory_order_relaxed)) return;
+    const int64_t now = lpc::msSinceStart();
+    std::lock_guard<std::mutex> lk(g_filedPendingMx);
+    auto& m = g_filedPending();
+    for (auto it = m.begin(); it != m.end();) {
+        if (now - it->second.sentAt > 25000) {
+            std::cerr << "[filed-lost] NO REPLY after " << (now - it->second.sentAt)
+                      << "ms t=" << now << " req=0x" << std::hex << it->second.reqCmd
+                      << std::dec << " cookie=" << it->first << " body=" << it->second.hex
+                      << "\n";
+            std::cerr.flush();
+            it = m.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+}  // namespace
+
+// Register an OUTBOUND filed REQUEST (called from builtins.cpp, where the filed
+// frame is framed for the wire).  Without this a service that only ever ANSWERS
+// - the dba - has nothing registered, so every reply it sent looked like
+// "REPLY WITH NO PENDING REQUEST".
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
     // ---- per-connection command gate (public-driver rule) -------------------
     // LDMud's backend loop hands the interpreter the next input line of an
@@ -12174,7 +12298,19 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     // Waiting longer than this is pointless: the client already retries.
     static const int64_t kGateTimeoutMs = 20000;
     const int64_t gateCno = cl.clientNo;
-    const bool gateNeeded = (cl.attrib & ATTRIB_CLIENT_USER) != 0;
+    // MUST use flowGated(), not a bare CLIENT_USER test.  Accepted sockets start
+    // as CLIENT_USER and set_client_attrib only ORs bits in (IDA
+    // vm_f_set_client_attrib @0x804d0ac: newAttrib = attrib | 0x302), so every
+    // server-to-server link (gs -> dba/ccs/aaa) carries attrib 0x303 - CLIENT_USER
+    // *and* INTERNAL_COMM.  Testing only CLIENT_USER therefore put the
+    // one-command-per-connection gate on the internal filed link, and a gate
+    // timeout DROPS the packet with no reply at all (see the `return` below):
+    // the DBA logged the request (`[pkt-filed]`) and the gs never got an answer,
+    // so filed.c's do_operate expired and returned its initial -2 ->
+    // read_runtime_info -2 -> try_recover_data case -2 -> the 9030 dialog.
+    // flowGated() (defined near the top of this file) already encodes the
+    // correct rule and documents this exact 0x303 case.
+    const bool gateNeeded = flowGated(cl.attrib);
     if (gateNeeded) {
         lpc::vmchainMailbox(gateCno, -1, "dispatch-wait");
         if (!lpc::waitClientCommandIdle(gateCno, kGateTimeoutMs)) {
@@ -12277,8 +12413,40 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
             std::cerr.flush();
         }
     }
+    // LPCVM_FILEDDBG: per-frame filed trace with the FULL body and, right after
+    // the dispatch below, whether the frame was handled.  Runtime-armable
+    // (type nul > _probe_on\LPCVM_FILEDDBG).
+    bool filedDbg = false;
+    if (cmdNo == 0x3400 || cmdNo == 0x3401 || cmdNo == 0x3411 || cmdNo == 0x3412 ||
+        cmdNo == 0x4401 || cmdNo == 0x2403 || cmdNo == 0x2404 ||
+        cmdNo == 0x2405 || cmdNo == 0x2406 || cmdNo == 0x2407) {
+        static const std::atomic<bool>& fd = dynProbeFlag("LPCVM_FILEDDBG");
+        filedDbg = fd.load(std::memory_order_relaxed);
+        if (filedDbg) {
+            std::string hex;
+            static const char* hxF = "0123456789ABCDEF";
+            for (size_t i = 0; i < len && i < 64; ++i) {
+                hex += hxF[body[i] >> 4];
+                hex += hxF[body[i] & 15];
+            }
+            std::cerr << "[filed-in] t=" << lpc::msSinceStart()
+                      << " cno=" << cl.clientNo << " cmd=0x" << std::hex << cmdNo << std::dec
+                      << " len=" << len << " body=" << hex << "\n";
+            std::cerr.flush();
+        }
+        filedWatchdogNote(cmdNo, body, len);
+    }
     // Primary path: packet protocol analyser (comm_desc.txt interfaces).
     int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
+    if (filedDbg) {
+        std::cerr << "[filed-disp] t=" << lpc::msSinceStart()
+                  << " cno=" << cl.clientNo << " cmd=0x" << std::hex << cmdNo << std::dec
+                  << " pktAnalyse=" << pa
+                  << (pa == 1 ? " (interface handled)"
+                              : (pa < 0 ? " (PARSE ERROR)" : " (no interface)"))
+                  << "\n";
+        std::cerr.flush();
+    }
     if (pa == 1) return;   // handled by the protocol interface
     if (pa < 0) {          // parse error
         ++cl.recvBadPkts;
@@ -12286,6 +12454,14 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     }
     // Fallback: cmdList/cmdIndex dispatch.
     const CmdEntry* e = findCmd(cmdNo);
+    if (filedDbg) {
+        std::cerr << "[filed-fb] t=" << lpc::msSinceStart()
+                  << " cno=" << cl.clientNo << " cmd=0x" << std::hex << cmdNo << std::dec
+                  << (e ? " findCmd=OK type=" + std::to_string(e->type)
+                        : " findCmd=MISSING (dropped)")
+                  << "\n";
+        std::cerr.flush();
+    }
     if (!e) {
         if (LPCVM_GETENV("LPCVM_TRACE") || (LPCVM_GETENV("LPCVM_TAIL") && (cmdNo == 0x2471 || cmdNo == 0x2473)))
             std::cerr << "[game] bad command 0x" << std::hex << cmdNo << std::dec
@@ -13423,8 +13599,17 @@ int startGameService(int port) {
         }
         std::thread([port]() {
             uint64_t pIn = 0, pOut = 0, fIn = 0, fOut = 0, si = 0, sf = 0;
+            int tick = 0;
             for (;;) {
-                std::this_thread::sleep_for(std::chrono::seconds(60));
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                // Outstanding filed requests are swept every 2s so [filed-lost]
+                // fires close to the loss instead of a minute later.
+                try {
+                    filedWatchdogSweep();
+                } catch (...) {
+                }
+                if (++tick < 30) continue;      // the [hb] line itself stays 60s
+                tick = 0;
                 LivenessCounters& c = liveness();
                 uint64_t nIn = c.pktsIn.load(std::memory_order_relaxed);
                 uint64_t nOut = c.pktsOut.load(std::memory_order_relaxed);
@@ -13713,6 +13898,19 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             m2 == 0x2405 || m2 == 0x2407 || m2 == 0x236F) {
             liveness().filedOut.fetch_add(1, std::memory_order_relaxed);
         }
+        // LPCVM_FILEDDBG: this is THE outbound exit for filed traffic.  filed.c
+        // sends its requests as a raw buffer through
+        //     send_to_client(dba_client_no, msg["req_buf"])
+        // which never reaches the send_message framing path in builtins.cpp, so
+        // the watchdog must be fed HERE or requests stay unregistered and every
+        // reply looks like "REPLY WITH NO PENDING REQUEST".  The WHOLE frame is
+        // passed: the cookie sits at frame offset 2 + 8 (after "MZ" + cksum +
+        // tick + msgLen + cmdNo).
+        if (m2 == 0x3400 || m2 == 0x3411 || m2 == 0x2403 ||
+            m2 == 0x2405 || m2 == 0x2407) {
+            lpc::filedWatchdogMarkSent(
+                m2, reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        }
     }
     int fd = -1;
     {
@@ -13756,6 +13954,50 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             return false;
         }
         sent += n;
+    }
+    // LPCVM_CLIENTDBG: the only exit at which a CLIENT-bound frame becomes
+    // visible.  Without it there is no record of what the server told a stuck
+    // client - which is exactly the gap that made a "正在连接中"/通讯故障 repro
+    // impossible to attribute: every dialog/notify the client ever receives
+    // goes through here, but nothing logged it (a full-tree scan for the
+    // dialog text in the run logs matched 0 files).
+    // [send-fail] above only covers the FAILURE to write; this covers success.
+    {
+        static const std::atomic<bool>& cd = dynProbeFlag("LPCVM_CLIENTDBG");
+        if (cd.load(std::memory_order_relaxed) && data.size() >= 12) {
+            // Offsets MUST match feedClient's WAIT_HEADER branch (the authority
+            // for this layout): h+8 = msgLen, h+10 = cmdNo, body at 12.
+            // Reading cmd from data[8..10] shifted every command by two bytes
+            // and produced phantom ids (0x00C2/0x000D instead of the real
+            // 0x4124/0x205C) - which is exactly the kind of mis-read that makes
+            // a dialog packet look absent.
+            uint16_t c2 = static_cast<uint16_t>(
+                (static_cast<unsigned char>(data[10]) << 8) |
+                static_cast<unsigned char>(data[11]));
+            uint16_t mlen = static_cast<uint16_t>(
+                (static_cast<unsigned char>(data[8]) << 8) |
+                static_cast<unsigned char>(data[9]));
+            std::string hx;
+            static const char* h = "0123456789ABCDEF";
+            for (size_t i = 0; i < data.size() && i < 48; ++i) {
+                hx += h[static_cast<unsigned char>(data[i]) >> 4];
+                hx += h[static_cast<unsigned char>(data[i]) & 15];
+            }
+            // A readable rendering of the body so a dialog/notify payload is
+            // visible in the log itself instead of needing a hex decode later.
+            std::string txt;
+            size_t blen = mlen >= 2 ? static_cast<size_t>(mlen - 2) : 0;
+            for (size_t i = 12; i < data.size() && i < 12 + blen && i < 92; ++i) {
+                unsigned char c = static_cast<unsigned char>(data[i]);
+                if (c >= 0x20 && c < 0x7F) txt += static_cast<char>(c);
+                else if (c >= 0x81) txt += '.';
+            }
+            std::cerr << "[cli-out] t=" << lpc::msSinceStart()
+                      << " cno=" << clientNo << " cmd=0x" << std::hex << c2 << std::dec
+                      << " msgLen=" << mlen << " wire=" << data.size()
+                      << (txt.empty() ? "" : (" txt=" + txt)) << "\n";
+            std::cerr.flush();
+        }
     }
     if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " sent=" << sent << "\n";
     return true;
@@ -13954,6 +14196,50 @@ std::vector<int> gameGetAllClientNo() {
     std::lock_guard<std::mutex> lk(gameMutex());
     for (auto& kv : gameClients()) out.push_back(kv.first);
     return out;
+}
+
+// Register an OUTBOUND filed request.  The recv-side registration above is not
+// enough on its own: a service that only ever ANSWERS (the dba) has no inbound
+// request to register, so every reply it sent looked like "REPLY WITH NO PENDING
+// REQUEST".  Called from the one place a filed message is framed for the wire
+// (builtins.cpp), so both directions share the layout:
+//     [0..2) cmdNo   [2..6) cookie   [6..) payload
+
+// ---- outbound-request registration (see the declarations above) -------------
+void filedWatchdogMarkSent(uint16_t cmdNo, const uint8_t* frame, unsigned int len) {
+    static const std::atomic<bool>& fd = dynProbeFlag("LPCVM_FILEDDBG");
+    if (!fd.load(std::memory_order_relaxed)) return;
+    // `frame` is the COMPLETE wire frame handed to gameServiceSend, but its body
+    // does NOT start with the "MZ" header: the caller (filed.c) builds the raw
+    // buffer as cmdNo(2) + cookie(4) + payload and gameServiceSend frames it, so
+    // what arrives here is  34 00 | 00 01 E2 43 | 0E "time_Info_list" ...
+    // i.e. the cmdNo is at offset 0 and the COOKIE AT OFFSET 2.
+    // (Measured: raw20=3400 0001E243 ... -> cookie 123459, which is exactly what
+    // the matching reply body 0001E243... carries.)
+    const uint8_t* body = frame + 2;
+    const size_t blen = len > 2 ? static_cast<size_t>(len - 2) : 0;
+    uint32_t cookie = 0;
+    if (!filedCookieOf2(body, blen, 0, cookie)) return;
+    {
+        std::lock_guard<std::mutex> lk(g_filedPendingMx);
+        g_filedPending()[cookie] = FiledPending{cmdNo, lpc::msSinceStart(),
+                                                filedHeadHex(body, blen)};
+    }
+    static const std::atomic<bool>& dbg = dynProbeFlag("LPCVM_FILEDDBG");
+    if (dbg.load(std::memory_order_relaxed)) {
+        std::string fhx;
+        static const char* hxf = "0123456789ABCDEF";
+        for (unsigned int i = 0; i < len && i < 20; ++i) {
+            fhx += hxf[frame[i] >> 4];
+            fhx += hxf[frame[i] & 15];
+        }
+        std::cerr << "[filed-reg] t=" << lpc::msSinceStart() << " req=0x" << std::hex
+                  << cmdNo << std::dec << " cookie=" << cookie
+                  << " be8=" << filedCookieOf2Hex(frame, len, 8)
+                  << " be10=" << filedCookieOf2Hex(frame, len, 10)
+                  << " raw20=" << fhx << "\n";
+        std::cerr.flush();
+    }
 }
 
 } // namespace lpc
