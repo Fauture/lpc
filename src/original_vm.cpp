@@ -212,7 +212,14 @@ void cpuProfDump() {
 // itself is expensive (locked environ scan; the boot notes measured ~0.5-1.5us
 // per uncached call), so every hot-path switch is read ONCE and cached.
 // Environment is fixed before the services start, so caching is exact.
-static bool vmEnvTrace() { static const bool v = (LPCVM_GETENV("LPCVM_TRACE") != nullptr); return v; }
+// LPCVM_TRACE gate.  Runtime-armable via dynProbeFlag (env var LPCVM_TRACE at
+// start, or the _probe_on\LPCVM_TRACE file at ANY time) - the member trace below
+// is only useful if it can be switched on against a LIVE service, and a static
+// cached getenv() forced a restart to arm it.
+static bool vmEnvTrace() {
+    static const std::atomic<bool>& f = dynProbeFlag("LPCVM_TRACE");
+    return f.load(std::memory_order_relaxed);
+}
 // LPCVM_NEWBIE: new-character story/task chain diagnostics (see _newbie_run.py).
 static bool nbProbeOn() {
     static const std::atomic<bool>& f = dynProbeFlag("LPCVM_NEWBIE");
@@ -7396,6 +7403,48 @@ private:
             if (mit != reg.vms.end()) {
                 name = mit->second->functionNameByIndex(index);
                 if (!name.empty()) target = mit->second;
+            }
+            if (!target) {
+                // The master VM's table did not name this index.  Before scanning
+                // every VM, ask the MASTER whether it owns a global by that name:
+                // `global_basic_object` (and every other cross-VM global) lives in
+                // the master's variable block, so a global index must run THERE.
+                //
+                // Scanning blindly is what broke item attributes: an item/daemon
+                // VM whose table also carries `find_basic_object_by_import_name`
+                // won the race, so the lookup ran against THAT VM's variable block
+                // - its own, empty `global_basic_object` - and returned 0.  With
+                // basic_object() == 0, buildmsgd::build_item_ex takes
+                //     if (ob == basic_ob) this_dbase = ([ "amount": 1 ]);
+                // and every item is sent to the client with amount 1 and without
+                // `gift` (get_item_basic_info: "amount": this_dbase["amount"];
+                // if (this_dbase["gift"]) ...).  The DB stayed correct because the
+                // item instance dbase is untouched - only the packet was wrong.
+                //
+                // Same rule as the closure path above (master->findFunctionAny).
+                const OriginalVm* masterVm = nullptr;
+                for (auto& kv : reg.vms) {
+                    if (kv.first.find("<main>") != std::string::npos) {
+                        masterVm = kv.second.get();
+                        break;
+                    }
+                }
+                if (masterVm) {
+                    // Name the index from ANY VM's table, then check whether the
+                    // MASTER owns a global by that name - the master's variable
+                    // block is where every cross-VM global lives.
+                    std::string nm;
+                    for (auto& kv : reg.vms) {
+                        nm = kv.second->functionNameByIndex(index);
+                        if (!nm.empty()) break;
+                    }
+                    if (!nm.empty() && masterVm->findFunctionAny(nm)) {
+                        name = nm;
+                        for (auto& kv : reg.vms) {
+                            if (kv.second.get() == masterVm) { target = kv.second; break; }
+                        }
+                    }
+                }
             }
             if (!target) {
                 for (auto& kv : reg.vms) {
@@ -15766,7 +15815,15 @@ private:
 
     Value queryMemberValue(const Value& rawContainer, const Value& key) {
         const Value& container = resolveCrossVmRef(rawContainer);
-        if (vmEnvTrace() && LPCVM_GETENV("LPCVM_TRACE_MEMBER")) {
+        // LPCVM_TRACE_MEMBER: which key, of which TYPE, is used to index which
+        // container.  This is the observation that decides the "server has the
+        // attribute but the client shows 1/None" class: fieldsd::build_update_object
+        // resolves attributes through `names[key]` (string key -> int index) and
+        // then `fields[index]`/`dbase[key]`, and ONE type mismatch turns the field
+        // into `is_undefined(...)` -> the attribute is skipped and never reaches
+        // the wire.  Runtime-armable (LPCVM_TRACE + _probe_on\LPCVM_TRACE_MEMBER).
+        static const std::atomic<bool>& traceMember = dynProbeFlag("LPCVM_TRACE_MEMBER");
+        if (traceMember.load(std::memory_order_relaxed) && vmEnvTrace()) {
             std::string msg = "[member] key=" + to_string(key, false) + " cont=" + to_string(container, false) + "\n";
             std::cerr.write(msg.data(), static_cast<std::streamsize>(msg.size()));
         }
