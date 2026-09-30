@@ -19750,16 +19750,48 @@ std::string canonicalObjKey(const std::string& key) {
 std::string canonicalObjectPath(const std::string& key) { return canonicalObjKey(key); }
 
 // Object IDENTITY for value comparison - what the original compares
-// (vm_compareValue 0x80bbcb4 compares the object pointer stored in the value).
+// (vm_compareValue 0x80bbcb4, vm_sort.c: for types 6..0xA it compares
+// *(_DWORD*)(a+8) with *(_DWORD*)(b+8), i.e. the POINTER carried by the value;
+// vm_f_clone_object 0x80f8eac gives every clone its own object struct via
+// vm_cloneObject() and keeps the template separately at [pNewObject+3Ch], so in
+// the original two clones - and a clone vs its own template - are NEVER equal).
+//
+// The pointer must identify the INSTANCE, and in this engine the instance is
+// the VM: every instance gets its own VM (reg.vms[cloneKey] = vmPtr) while the
+// read-only PROGRAM is deliberately SHARED between a clone and its template
+// (reg.objects[cloneKey] = tmplObj, "share the read-only program", and
+// sharedObject()'s comment), so several registered VMs report the very same
+// &vm->object() address (value.h's ownerKey comment says the same).
+// Returning &vm->object() therefore made a CLONE compare equal to its own
+// template, which is exactly the test buildmsgd.c::build_item_ex uses to decide
+// whether a dbref is an item instance or the shared basic object:
+//     if ((ob == basic_ob)) this_dbase = ([ "amount": 1 ]);
+// Result: every stackable item was packed as amount 1 and without its "gift"
+// field (the client showed 1 while the clone's own dbase still held the real
+// amount - the item stayed usable 20 times), because the template's dbref was
+// substituted for the instance's.
 const void* objectIdentityOf(const std::string& name) {
     if (name.empty()) return nullptr;
-    const std::string k = canonicalObjKey(name);
     auto& reg = objectRegistry();
     std::lock_guard<std::recursive_mutex> rl(registryMutex());
-    if (!k.empty()) {
+    auto vmOfKey = [&](const std::string& k) -> const void* {
         auto it = reg.vms.find(k);
-        if (it != reg.vms.end() && it->second) return &it->second->object();
+        if (it != reg.vms.end() && it->second) return it->second.get();
+        return nullptr;
+    };
+    // Exact registry key ("clone:<rel>#<seq>", "pak:<rel>", "<root>/<main>"):
+    // the instance itself.
+    if (const void* p = vmOfKey(name)) return p;
+    // Another spelling of the same registered instance ("/gs/x/x",
+    // "/gs/x/x.c", "gs/x/x.o", the extension-less room paths find_object()
+    // hands out): canonicalObjKey maps it onto the registered key.
+    const std::string k = canonicalObjKey(name);
+    if (!k.empty() && k != name) {
+        if (const void* p = vmOfKey(k)) return p;
     }
+    // Program (not instance) spelling that is still registered: the program
+    // object's own VM, exactly like the original's master object.
+    if (const void* p = vmOfKey(k)) return p;
     // Unregistered spelling: fall back to the suffix match find_object() uses.
     std::string rel = name;
     if (rel.rfind("pak:", 0) == 0) rel = rel.substr(4);
@@ -19767,7 +19799,7 @@ const void* objectIdentityOf(const std::string& name) {
     if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
     for (auto& kv : reg.vms) {
         if (!kv.second) continue;
-        if (hasSuffix(kv.first, rel)) return &kv.second->object();
+        if (hasSuffix(kv.first, rel)) return kv.second.get();
     }
     return nullptr;
 }

@@ -796,8 +796,12 @@ bool value_equal(const Value& a, const Value& b) {
         //         if (env_m != env_y) return 0;
         // rejected EVERY npc in the room (open_menu then takes its silent
         // long_distance branch -> "点不开"), and only a GM teleport - which
-        // re-stores the room under the other spelling - "fixed" it.  The identity
-        // pointer is per registry entry, so two different clones stay distinct.
+        // re-stores the room under the other spelling - "fixed" it.
+        // The identity objectIdentityOf() returns is the INSTANCE's VM, not
+        // &vm->object(): a clone shares its template's read-only program object,
+        // so the program pointer cannot tell two instances of one program apart
+        // (see objectIdentityOf's comment - that mix-up made every stackable item
+        // pack as amount 1 with no gift flag).
         const void* ia = objectIdentityOf(pa->programName);
         const void* ib = objectIdentityOf(pb->programName);
         if (ia && ib) return ia == ib;
