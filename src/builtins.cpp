@@ -7424,7 +7424,26 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "lodger_object") return make_int(0);
+    if (name == "lodger_object") {
+        // Same efun as original_vm.cpp's h == 0xAF888C6C3C418282 branch
+        // (vm_f_lodger_object 0x80f41c8): the container's lodgers as an array of
+        // object values, in the driver's chain order.  The no-argument form is
+        // this_object(), which on this path is the calling instance recorded in
+        // stubCallCtx().  Kept in step with the VM path so a call routed through
+        // the builtin table cannot silently answer 0 again.
+        if (args.size() > 1) return make_int(0);
+        std::string key;
+        if (args.empty()) {
+            key = stubCallCtx().key;
+            if (key.empty()) key = stubCallCtx().obj;
+        } else if (args[0].index() == 7) {
+            auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+            if (ov) key = ov->programName;
+        } else if (args[0].index() == 4) {
+            key = std::get<SharedString>(args[0]).str();
+        }
+        return makeLodgerArray(key);
+    }
     if (name == "set_valid_chinese") return make_int(1);
     if (name == "get_message_stat") return make_int(0);
     if (name == "set_log_file") return make_int(1);

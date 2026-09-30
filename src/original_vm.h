@@ -273,6 +273,16 @@ std::string canonicalObjectPath(const std::string& key);
 // resolves to no registered instance.
 const void* objectIdentityOf(const std::string& name);
 
+// lodger_object(container): the container's contents as an ARRAY of object values,
+// in the driver's lodger-chain order (vm_f_lodger_object 0x80f41c8; vm_f_move_object
+// 0x80f5348 links at the tail, which is the order envLodgerMove() keeps).  The
+// argument is a registry key or object name of any spelling; an unknown or empty
+// container yields an EMPTY array.  (The original raises "Not found the object for
+// lodger_object." for a name it cannot resolve or a destructed object; we stay
+// lenient because our registry can spell one object two ways and the 2026-09-27
+// attempt showed that throwing here aborts live GM queries and destructor chains.)
+Value makeLodgerArray(const std::string& containerKey);
+
 // destruct_object(ob) support: unregister the object identified by `key`
 // (any spelling: clone key, pak: path, .c/.o program path) so it can no longer
 // be resolved.  Returns false when the key was not registered.

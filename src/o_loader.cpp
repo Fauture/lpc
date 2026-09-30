@@ -216,11 +216,12 @@ OriginalObject loadOriginalObjectFromBytes(const std::vector<uint8_t>& data) {
     }
 
     uint16_t efunCount = r.u16();
-    (void)efunCount;
+    obj.efunCount = efunCount;   // index space split: < efunCount = efun, >= = global program
     uint16_t functionCount = r.u16();
     (void)functionCount;
 
     uint32_t hiddenCount = r.u32();
+    obj.hiddenFunctionCount = hiddenCount;
     for (uint32_t i = 0; i < hiddenCount; ++i) {
         obj.functions.push_back(r.function());
     }

@@ -2661,54 +2661,207 @@ public:
     bool beingDestroyed() const { return beingDestroyed_; }
     void setBeingDestroyed(bool v) { beingDestroyed_ = v; }
 
-    // Run EVERY destructor in the object's merged table.  A character inherits
-    // several programs that each declare one (user.c's `destruct` ->
-    // userd::destroy_user, account.c's `destruct` ->
-    // clean_account_runtime_info -> remove_account_user, ...) and
-    // callFunctionByName("destruct") only reached the FIRST by name, so the
-    // account<->user binding was never removed: the next login found the dead
-    // character in account_users ("residual USER_OB") and returned without ever
-    // sending the character list.
-    void callDestructors(bool verbose) {
-        if (beingDestroyed_) return;
-        beingDestroyed_ = true;
-        std::vector<const OriginalFunction*> fns;
+    // Resolve an inherit path for the merge / destructor walk: the mounted pak
+    // (binary directory) first, then the extracted tree on disk.
+    std::shared_ptr<OriginalObject> loadInheritFileForMerge(const std::string& vpath) {
+        std::string rel = vpath;
+        if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+        if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
+        if (auto p = loadOriginalObjectByRelPath(rel)) return p;
+        std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
+        return std::make_shared<OriginalObject>(loadOriginalObject(cand));
+    }
+    // The ONE destructor the driver would run - the most derived one.
+    // vm_f_destruct_object2 (0x80f9284) is the whole dispatch:
+    //     do {
+    //         v5 = pProgram->initOrderList[--initStep];          // init order, LAST first
+    //         v3 = pConsititutions[v5].pProgram->destructFunOffset;
+    //     } while (v3 == 0xFFFF);                                // skip constitutions without one
+    //     v3 = pConsititutions[v5].baseFunOffset + v3;
+    //     vm_callInUserFunBody(0, pCookie, v3, ...);             // exactly ONE call
+    // i.e. walk the object's constitutions from the most derived one down and call
+    // the FIRST that declares a destructor, then stop.  LPC name resolution agrees:
+    // an override wins and a parent's destructor runs only when the override
+    // explicitly calls ::destruct().
+    //
+    // Doing this by name over funcsByIndex_ is NOT equivalent, and that is what
+    // broke the character save: the loader keys own functions by their .o index
+    // (o_loader.cpp) and only inserts inherited copies, so a private/hidden own
+    // function - which never gets an index - is simply absent, and the lookup
+    // silently falls through to an inherited destructor.  Measured 2026-09-30 on
+    // clone:gs/clone/char/user.o#17371: the destructor that ran was
+    // /gs/inherit/misc/base.c's ("destroy everything inside me": it called
+    // lodger_object and destroyed the backpack) while /gs/clone/char/user.c::
+    // destruct -> userd::destroy_user -> me->save() (the ONLY writer of the
+    // character) never ran, so the character dbase/carry were left at their
+    // create-time values.
+    // True when this object's merged table carries the iid lifecycle functions
+    // (feature/common/iid.c is inherited by items and pets).  Used to widen the
+    // destructor diagnostics to exactly those objects: their remove_iid() must run
+    // on destruction, otherwise register_iid() rejects the SAME iid on the next
+    // restore and the character load aborts (userd.c:1274, "…原因：9202…").
+    bool objHasIidLifecycle() const {
+        for (const auto& kv : funcsByIndex_)
+            if (kv.second && (kv.second->name == "remove_iid" || kv.second->name == "create_iid" ||
+                              kv.second->name == "repair_iid"))
+                return true;
+        return false;
+    }
+
+    const OriginalFunction* pickDestructor() {
+        // LPCVM_LIFE diagnostic for the character program: every destruct/delete
+        // candidate and where it lives.  One real login is then enough to see
+        // whether the own override was found (the 2026-09-30 failure picked a
+        // HIDDEN record with idx 2048, so the character was never saved).
+        const bool dbg = (LPCVM_GETENV("LPCVM_LIFE") != nullptr) &&
+                         (obj_.sourceName.find("char/user.") != std::string::npos ||
+                          // Items matter too: userd's restore aborts the whole load
+                          // with "登录时发现异常…9202…" when register_iid() rejects an
+                          // item iid as duplicated (userd.c:1274), and that iid is
+                          // released by iid.c::destruct -> remove_iid.  If the pick
+                          // below is not that destructor the registration leaks and
+                          // every later login of that character dies the same way.
+                          objHasIidLifecycle());
+        auto dumpCandidates = [&](const OriginalFunction* picked) {
+            if (!dbg) return;
+            const bool isChar = obj_.sourceName.find("char/user.") != std::string::npos;
+            std::cerr << (isChar ? "[dtor] obj=" : "[dtor-iid] obj=") << obj_.sourceName
+                      << " fns=" << obj_.functions.size()
+                      << " hidden=" << obj_.hiddenFunctionCount << " picked="
+                      << (picked ? picked->name : std::string("-")) << " idx="
+                      << (picked ? picked->index : -1) << " funOff="
+                      << (picked ? picked->funOffset : -1);
+            if (!isChar) {
+                // Compact line for items/pets: does the merged table carry the iid
+                // lifecycle, and which destruct/delete entries exist there?
+                for (const auto& kv : funcsByIndex_) {
+                    const OriginalFunction* f = kv.second;
+                    if (!f) continue;
+                    if (f->name == "remove_iid" || f->name == "create_iid" || f->name == "repair_iid" ||
+                        f->name == "destruct" || f->name == "delete")
+                        std::cerr << " |" << f->name << "=key" << kv.first << ",funOff" << f->funOffset
+                                  << ",code" << f->code.size();
+                }
+                std::cerr << "\n";
+                std::cerr.flush();
+                return;
+            }
+            std::cerr << "\n";
+            for (size_t i = 0; i < obj_.functions.size(); ++i) {
+                const OriginalFunction& f = obj_.functions[i];
+                if (f.name != "destruct" && f.name != "delete") continue;
+                std::cerr << "   [own #" << i << (i < obj_.hiddenFunctionCount ? " HIDDEN" : "")
+                          << "] " << f.name << " idx=" << f.index << " code=" << f.code.size() << "\n";
+            }
+            for (const auto& kv : funcsByIndex_) {
+                const OriginalFunction* f = kv.second;
+                if (!f || (f->name != "destruct" && f->name != "delete")) continue;
+                std::cerr << "   [merged key=" << kv.first << "] " << f->name
+                          << " idx=" << f->index << " funOff=" << f->funOffset
+                          << " code=" << f->code.size() << "\n";
+            }
+            std::cerr.flush();
+        };
+        std::map<std::string, std::shared_ptr<OriginalObject>> loaded;
+        // (1) The object's OWN program declares a destructor -> that ONE runs.
+        //     LPC override semantics, and what vm_f_destruct_object2 (0x80f9284)
+        //     does: walk the constitutions from the most derived one down and call
+        //     the first that has one.  For a character this is the difference
+        //     between saving and not saving: /gs/clone/char/user.c::destruct ->
+        //     userd::destroy_user -> me->save(); the inherited
+        //     /gs/inherit/misc/base.c::destruct ("destroy everything inside me")
+        //     must NOT run for it, because user.c never calls ::destruct().
+        //     Only the records AFTER the hidden block are real functions - a hidden
+        //     record's "index" is a flag word.
+        for (size_t i = obj_.hiddenFunctionCount; i < obj_.functions.size(); ++i) {
+            const OriginalFunction& fn = obj_.functions[i];
+            if (fn.code.empty()) continue;                         // forward declaration
+            if (fn.name != "destruct" && fn.name != "delete") continue;
+            // Prefer the merged entry of the same slot (same function, with the
+            // fields the call path settled on).
+            auto it = funcsByIndex_.find(fn.index);
+            if (it != funcsByIndex_.end() && it->second && it->second->name == fn.name) {
+                dumpCandidates(it->second);
+                return it->second;
+            }
+            dumpCandidates(&fn);
+            return &fn;
+        }
+        // (2) No destructor of its own: keep the selection the engine used before
+        //     (smallest (funOffset, index) among the merged destruct/delete
+        //     entries).  Pulling the inherited "destroy the contents" destructors
+        //     in here is what broke entering the world on 2026-09-30 (every login
+        //     attempt ended in user.o::post_enter_world_failed with the character
+        //     destroyed before its first save), so this path is deliberately left
+        //     as it was.
+        const OriginalFunction* best = nullptr;
         for (const auto& kv : funcsByIndex_) {
             const OriginalFunction* f = kv.second;
             if (!f) continue;
             if (f->name != "destruct" && f->name != "delete") continue;
-            bool dup = false;
-            for (auto* x : fns) if (x == f) { dup = true; break; }
-            if (!dup) fns.push_back(f);
+            if (!best || f->funOffset < best->funOffset ||
+                (f->funOffset == best->funOffset && f->index < best->index))
+                best = f;
         }
-        // MOST-DERIVED FIRST.  user.o inherits /gs/feature/char/carry.c, whose
-        // destruct() sets lite_set_temp("destructing", 1) - and user.o::save()
-        // bails out with `if (destructing || destructing_store) return 1;`.
-        // user.o::destruct -> userd::destroy_user -> me->save(0, cb)
-        // (userd:2711) is the ONLY writer of the character's dbase, so with an
-        // inherited destructor running first the flag was already set and the
-        // save silently did nothing (level/items/"newbie" flag lost, the
-        // account stayed in stun_account[] and the next login was rejected with
-        // 9026/9029).  The object's OWN program has funOffset 0; inherited
-        // programs get increasing baseFunOffset in inheritance order.
-        std::stable_sort(fns.begin(), fns.end(),
+        dumpCandidates(best);
+        return best;
+    }
+    void callDestructors(bool verbose) {
+        if (beingDestroyed_) return;
+        beingDestroyed_ = true;
+        // vm_f_destruct_object2 (0x80f9284) is NOT a single call.  Together with its
+        // return hook (vm_f_destruct_func_ok) it loops over the object's
+        // constitutions in reverse init order:
+        //     initStep = pCookie->initStep;
+        //     do {
+        //         if (initStep <= 0) { vm_destructObject(...); return; }
+        //         pCookie->initStep = --initStep;
+        //         v5 = pProgram->initOrderList[initStep];
+        //         v3 = pConsititutions[v5].pProgram->destructFunOffset;   // 0xFFFF = none
+        //     } while (v3 == 0xFFFF);
+        //     v3 = pConsititutions[v5].baseFunOffset + v3;
+        //     vm_callInUserFunBody(0, pCookie, v3, ...);
+        //     vm_hookCallbackWhenReturn(vm_f_destruct_func_ok, pCookie);  // -> re-enters
+        // EVERY constitution's destructor therefore runs.  Calling only one leaked
+        // resources that a base constitution owns: /gs/inherit/misc/item.c::destruct
+        // does the item bookkeeping, but the iid is released by
+        // /feature/common/iid.c::destruct -> unregister_iid.  Measured with the
+        // LPCVM_IIDLIFE probe: 9071 register_iid against 1 remove_iid and 0
+        // unregister_iid, so the next character load rebuilt an item whose iid was
+        // still registered, userd.c:1274 answered "禁止" ->
+        // send_dialog_ok("…原因：9202…") -> return 0, the character never entered the
+        // world, user.c::destruct skipped the save, and the next login failed 9211.
+        const OriginalFunction* first = pickDestructor();
+        std::vector<const OriginalFunction*> chain;
+        if (first) chain.push_back(first);
+        for (const auto& kv : funcsByIndex_) {
+            const OriginalFunction* f = kv.second;
+            if (!f || f->name != "destruct" || f->code.empty()) continue;
+            if (first && f->funOffset == first->funOffset) continue;   // same constitution
+            if (std::find(chain.begin(), chain.end(), f) != chain.end()) continue;
+            chain.push_back(f);
+        }
+        // Own program first (initialised last, destroyed first), then the inherits in
+        // ascending baseFunOffset - i.e. the exact reverse of the init order, so the
+        // deepest constitution (iid.c) runs last.
+        std::stable_sort(chain.begin(), chain.end(),
                          [](const OriginalFunction* a, const OriginalFunction* b) {
-                             if (a->funOffset != b->funOffset) return a->funOffset < b->funOffset;
-                             return a->index < b->index;
+                             return a->funOffset < b->funOffset;
                          });
-        for (const OriginalFunction* f : fns) {
+        for (const OriginalFunction* f : chain) {
             try {
                 Value r = callFunctionPointer(f, {});
                 if (verbose)
                     std::cerr << "[life] destructor " << f->name << " (idx " << f->index
-                              << ") -> " << to_string(r, false) << " on " << thisObjectName_ << "\n";
+                              << " funOff " << f->funOffset << ") -> " << to_string(r, false)
+                              << " on " << thisObjectName_ << "\n";
             } catch (const std::exception& e) {
                 if (verbose) std::cerr << "[life] destructor " << f->name << " threw: " << e.what() << "\n";
             } catch (...) {
                 if (verbose) std::cerr << "[life] destructor " << f->name << " threw (unknown)\n";
             }
         }
-        if (verbose && fns.empty())
+        if (chain.empty() && verbose)
             std::cerr << "[life] no destructor on " << thisObjectName_ << "\n";
     }
     // CrossVmRef target table: the VM's OWN object variables (the table its
@@ -3391,6 +3544,24 @@ public:
             }
         }
         if (!fn) return make_int(0);
+        if (fn->name == "post_enter_world" || fn->name == "post_enter_world_failed") {
+            // Bottom-level entry for BOTH the index path and function-pointer
+            // (closure) calls.  No .o bytecode references either function (630/652
+            // appear only as string-table indexes; no call_global_fn with them, no
+            // pushed name string), so the trigger only becomes visible here: the
+            // frame chain below the new frame is the caller.
+            std::string chain;
+            for (const auto& fr : es_->frames) {
+                std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                if (!chain.empty()) chain += "<-";
+                chain += fnm;
+            }
+            std::cerr << "[pew-ptr] fn=" << fn->name << " idx=" << fn->index
+                      << " funOff=" << fn->funOffset << " obj=" << objName_
+                      << " this=" << thisObjectName_ << " argc=" << args.size()
+                      << " chain=[" << chain << "]\n";
+            std::cerr.flush();
+        }
         // Same contract as callFunctionByName: the callee must read ITS OWN
         // program's globals.  A cross-object inline call leaves the CALLER's
         // variable block active, and this dispatch (the owner-instance retarget
@@ -4150,12 +4321,7 @@ private:
         // "/feature/daemon/register.c"): the mounted pak (binary directory)
         // first, then the extracted tree on disk.
         auto loadInheritFile = [this](const std::string& vpath) -> std::shared_ptr<OriginalObject> {
-            std::string rel = vpath;
-            if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
-            if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-            if (auto p = loadOriginalObjectByRelPath(rel)) return p;
-            std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
-            return std::make_shared<OriginalObject>(loadOriginalObject(cand));
+            return loadInheritFileForMerge(vpath);   // same resolution as pickDestructor
         };
         std::map<std::string, std::shared_ptr<OriginalObject>> loaded;
         // Code-bearing implementations by NAME: the constitution's function
@@ -5092,12 +5258,70 @@ private:
                 return make_int(0);
             }
             if (h == 0xAF888C6C3C418282ull) {
-                // lodger_object：保持 22a15ad 的旧行为（常量 0）。
-                // ef4da68 把它改成"返回容器里的对象"之后，物品就进不了角色的背包列表
-                // （temp "inventory" 为空）-> 存档 carry 分支写空 -> 角色下线丢物品；
-                // 只把这一项搬到可保存的 22a15ad 上即可复现，两次修法（对象实参不抛错+
-                // 多键形尝试 / 索引未命中时扫注册表）都没能修好，所以这里退回旧行为。
-                return make_int(0);
+                // vm_f_lodger_object (0x80f41c8): lodger_object([ob|name]) -> the
+                // container's lodgers as an ARRAY of object values.  The original
+                // walks Vm_Object::pLogderObject (container+56) through
+                // pNeighbourObject (+52), counts the entries, allocates the array
+                // and fills it in chain order; no argument means this_object().
+                // vm_f_move_object (0x80f5348) links a moved object at the TAIL of
+                // that chain (it walks to the end before linking) and unlinks it
+                // from its old container, which is exactly what envLodgerMove()
+                // keeps (push_back / erase) - so envLodgerKeys() answers this efun
+                // with the same contents and the same order.
+                //
+                // This was a `return make_int(0)` stub because the 2026-09-24
+                // attempt (ef4da68) was blamed for the empty backpack / empty carry
+                // save; the ONLY user in the character's chain is
+                // /gs/inherit/misc/base.c::destruct() - `loop (ob in
+                // lodger_object()) destruct_object(ob);` and char.c inherits
+                // base.c - so the stub merely stopped a destructed container from
+                // destroying its contents.  Everything else that reads it was
+                // silently broken by the stub: admin_query_npc (get_npc_by_map /
+                // get_local_map_npc / get_all_npc -> "没有找到匹配的NPC"),
+                // admin_request_player_list, room/zone occupant loops (roomd,
+                // xlibd, weatherd, cityward, party*), start_gs::update[_room].
+                //
+                // Faithful except for one deliberate leniency: the original raises
+                // "Not found the object for lodger_object." when the name resolves
+                // to nothing (or is destructed); we answer an empty array instead,
+                // because a two-way-spelled registry key must not turn a GM query
+                // or a destructor chain into an LPC error.
+                if (args.size() > 1) throw VmError("Too many arguments to lodger_object.");
+                std::string key;
+                if (args.empty()) {
+                    // this_object() must be the FRAME's object (an inline
+                    // cross-object call overrides it), same as env_object().
+                    key = currentThisName();
+                    if (key.empty() || key == "<this>" || key == ".") key = regKeyOfVm(this);
+                    if (key.empty()) key = objName_;
+                } else if (args[0].index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+                    if (ov) key = ov->programName;
+                    if (ov && (key.empty() || key == "<this>" || key == ".") && ov->owner)
+                        key = regKeyOfObjectPtr(ov->owner);
+                } else if (args[0].index() == 4) {
+                    key = std::get<SharedString>(args[0]).str();
+                } else {
+                    throw VmError("Not found the object for lodger_object.\n");
+                }
+                Value lodgers = makeLodgerArray(key);
+                {
+                    // LPCVM_LODGERDBG (env or _probe_on\LPCVM_LODGERDBG): which
+                    // container was asked and how many lodgers came back - the GM
+                    // query "云霄洞" fails with an empty result, so the answer for
+                    // the room key decides whether the env index (or the room
+                    // lookup in front of it) is the remaining gap.
+                    static const std::atomic<bool>& lgOn = dynProbeFlag("LPCVM_LODGERDBG");
+                    if (lgOn.load(std::memory_order_relaxed)) {
+                        const auto av = std::get<std::shared_ptr<ArrayValue>>(lodgers);
+                        std::cerr << "[lodger] key=" << key << " n=" << av->items.size()
+                                  << " fn=" << (es_->frames.empty() || !es_->frames.back().fn
+                                                    ? "<g>" : es_->frames.back().fn->name)
+                                  << " obj=" << objName_ << "\n";
+                        std::cerr.flush();
+                    }
+                }
+                return lodgers;
             }
             if (h == 0xD4A2D50BC20098B1ull || h == 0x8DF2E004D5C4C718ull) {
                 // vm_f_objects (0x80f4d40): objects() -> every live object.
@@ -6961,6 +7185,44 @@ private:
     // one).  Returns false when the call COMPLETED synchronously and result
     // holds the return value.
     bool callUserFunction(int index, int flags, Value& result) {
+        // ---- GLOBAL function call (flags bit7) ---------------------------
+        // vm_callInUserFun (0x8094080):
+        //     if ((flags >> 7) & 1)                                  // GLOBAL
+        //         vm_callInUserFunBody(bit7, v2, 0, argn, vm_pGlobalProgram->pFunctions[v6].pFun);
+        //     else { v4 = consititution->baseFunOffset + v6; ... }     // LOCAL
+        // The global operand is used VERBATIM against the GLOBAL program's table,
+        // and - note the first argument - the body comes from the global program
+        // while the call still runs INLINE in the current context (it is not a
+        // switch to the master's VM; doing that re-enters it and copies the frame
+        // stack per call, which blew memory up during boot on 2026-09-30).
+        // Resolving a global index in THIS object's table can never be right, and
+        // the cross-object fallback it fell into is what turned
+        //     logind.o::enter_world  [128] call_global_fn(#630)   <- post_enter_world
+        // into post_enter_world_failed, whose registered callbacks destroy the
+        // freshly created character: user.c::destruct then early-returns on the
+        // unset "entered_world", nothing is saved, and the next login fails with
+        // "读入角色资料失败 9211".
+        std::shared_ptr<OriginalVm> globalVm;
+        const OriginalFunction* globalFn = nullptr;
+        if (flags & 0x80) {
+            {
+                std::lock_guard<std::recursive_mutex> rlg(registryMutex());
+                auto& regg = objectRegistry();
+                const std::string gkey = searchRoot_.empty() ? "<main>" : searchRoot_ + "/<main>";
+                auto git = regg.vms.find(gkey);
+                if (git != regg.vms.end()) globalVm = git->second;
+                if (!globalVm) {
+                    for (auto& kv : regg.vms)
+                        if (kv.first.find("<main>") != std::string::npos) { globalVm = kv.second; break; }
+                }
+            }
+            if (globalVm) globalFn = globalVm->functionByIndex(index);
+            static const char* const cfuFltG = LPCVM_GETENV("LPCVM_CFUDBG");
+            if (cfuFltG && *cfuFltG)
+                std::cerr << "[gcall] idx=" << index << " obj=" << objName_
+                          << " -> " << (globalFn ? globalFn->name : std::string("NOT-FOUND"))
+                          << " self=" << ((globalVm && globalVm.get() == this) ? 1 : 0) << "\n";
+        }
         if (LPCVM_GETENV("LPCVM_MENUCLOSURE")) {
             const OriginalFunction* tfc = functionByIndex(index);
             if (tfc && (tfc->name == "create_menu_content" ||
@@ -7183,8 +7445,13 @@ private:
         const std::map<int, const OriginalFunction*>& tab =
             tabPtr ? *tabPtr : funcsByIndex_;
         auto it = tab.find(index);
-        if (it != tab.end()) {
-            const OriginalFunction& fn = *it->second;
+        // A GLOBAL call (bit7) is answered by the global program's table only - the
+        // operand is its key there, so this object's table must not be consulted
+        // (see the note at the top of callUserFunction).
+        const OriginalFunction* srcFn =
+            globalFn ? globalFn : (it != tab.end() ? it->second : nullptr);
+        if (srcFn) {
+            const OriginalFunction& fn = *srcFn;
             if (vmEnvTrace() &&
                 ((index >= 50 && index <= 60) || (objName_.find("connectiond") != std::string::npos && index <= 15) ||
                  objName_.find("config") != std::string::npos))
@@ -7378,7 +7645,13 @@ private:
                 // default (saved stayed the 0 pad and the lgxy NPC's save was
                 // skipped -> no 'lgxy' rows).  The zero pads fill the declared
                 // slots for callees WITHOUT a default block.
-                if (startInlineFunction(*impl, false, ac, nullptr, curTbl, nullptr, pad)) return true;
+                // A global call runs inline but with the GLOBAL program's variable
+                // block (that is what vm_callInUserFunBody's bit7 argument selects:
+                // body and globals from vm_pGlobalProgram, this-object unchanged).
+                std::shared_ptr<std::vector<Value>> gvars =
+                    (globalFn && globalVm && globalVm.get() != this) ? globalVm->objVarsShared()
+                                                                    : nullptr;
+                if (startInlineFunction(*impl, false, ac, gvars, curTbl, nullptr, pad)) return true;
             }
             if (authTrace)
                 std::cerr << "[auth] " << impl->name << " START FAILED (stack too shallow)\n";
@@ -7481,6 +7754,31 @@ private:
                 std::cerr << "[vm] cross-object user fun index=" << index << " name=" << name << "\n";
             std::vector<Value> args;
             for (int i = 0; i < argCount && !es_->stack.empty(); ++i) args.push_back(pop().value);
+            if (name == "post_enter_world" || name == "post_enter_world_failed") {
+                // Neither name is called from ANY .o bytecode (no call_global_fn
+                // with their local indexes 630/652, no pushed name string) and the
+                // engine has no literal reference either - yet a frame named
+                // post_enter_world_failed runs and destroys the newly created
+                // character, so the request must arrive through THIS index
+                // resolution.  Log the raw operand, the resolved target and the
+                // caller chain: that pins the call site.
+                std::string chain;
+                for (const auto& fr : es_->frames) {
+                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                    if (!chain.empty()) chain += "<-";
+                    chain += fnm;
+                }
+                std::string adbg;
+                for (auto& a : args) {
+                    if (!adbg.empty()) adbg += " | ";
+                    adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 60);
+                }
+                std::cerr << "[pew-call] idx=" << index << " name=" << name
+                          << " callerObj=" << objName_ << " this=" << thisObjectName_
+                          << " targetObj=" << target->objName() << " argc=" << argCount
+                          << " args=[" << adbg << "] chain=[" << chain << "]\n";
+                std::cerr.flush();
+            }
             if (name == "convert_to_int" && LPCVM_GETENV("LPCVM_ERR_TRACE")) {
                 std::string chain;
                 for (const auto& fr : es_->frames) {
@@ -7973,7 +8271,12 @@ private:
             // then finds it and returns without the character list).
             "destroy_user", "remove_account_user", "set_account_user",
             "find_user_by_account", "find_user_by_client", "is_login",
-            "post_leave_world", "log_file_dect", "query_skill_combat_range"};
+            "post_leave_world", "log_file_dect", "query_skill_combat_range",
+            // "enter world failed" chain: post_enter_world_failed is DEFINED in
+            // start_gs.o but no LPC program calls it (verified against every .o)
+            // and the engine does not either, so the caller has to be captured at
+            // runtime - the frame BELOW it in this VM is the caller.
+            "post_enter_world", "post_enter_world_failed"};
         bool hit = false;
         for (auto* n : kFns) if (fn == n) { hit = true; break; }
         if (!hit) return;
@@ -7997,6 +8300,14 @@ private:
         std::cerr << "[life] " << what << " obj=" << objName_ << " this=" << thisObjectName_
                   << " fn=" << fn << " passed=" << passed
                   << " t=" << msSinceStart() << "ms";
+        if (fn == "post_enter_world_failed" || fn == "post_enter_world") {
+            // Who called it?  The frame below this VM's top frame is the caller
+            // (cross-object calls run inline, so the caller lives in this stack).
+            std::string caller = "<none>";
+            const auto& f = es_->frames;
+            if (f.size() >= 2 && f[f.size() - 2].fn) caller = f[f.size() - 2].fn->name;
+            std::cerr << " caller=" << caller << " prev=" << previousObjectName_;
+        }
         if (!dbg.empty()) std::cerr << " [" << dbg << "]";
         std::cerr << "\n";
         std::cerr.flush();
@@ -8051,6 +8362,41 @@ private:
         int need = (passedArgs >= 0) ? passedArgs : fn.argCount;
         if (static_cast<int>(es_->stack.size()) < need) return false;
         int bp = static_cast<int>(es_->stack.size()) - 1;
+        // IID lifecycle (`LPCVM_IIDLIFE`, runtime-armable): create_iid/remove_iid/
+        // repair_iid/register_iid.  A character load aborts with
+        // "登录时发现异常…（原因：9202…）" the moment register_iid() finds an item iid
+        // still registered (userd.c:1274) - i.e. when the previous instance's
+        // remove_iid() never ran.  This prints who touches which iid, on which
+        // object, from which caller.
+        if (fn.name == "create_iid" || fn.name == "remove_iid" || fn.name == "repair_iid" ||
+            fn.name == "register_iid" || fn.name == "unregister_iid" ||
+            fn.name == "when_iid_duplicated" ||
+            // The destructor CHAIN of an item/pet: the driver calls one destructor
+            // (vm_f_destruct_object2 walks the constitutions backwards) and each one
+            // reaches its parent through an explicit ::destruct() scope call - that is
+            // how iid.c::destruct (funOff 72, the one calling unregister_iid) runs.
+            // Logging every destruct resolution on these objects shows where the chain
+            // stops.
+            (fn.name == "destruct" && objHasIidLifecycle())) {
+            static const std::atomic<bool>& iidFlag = dynProbeFlag("LPCVM_IIDLIFE");
+            if (iidFlag.load(std::memory_order_relaxed) || LPCVM_GETENV("LPCVM_IIDLIFE")) {
+                std::string chain;
+                for (const auto& fr : es_->frames) {
+                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
+                    if (!chain.empty()) chain += "<-";
+                    chain += fnm;
+                    if (chain.size() > 180) break;
+                }
+                std::string a0 = "-";
+                if (bp >= 0 && bp < static_cast<int>(es_->stack.size()))
+                    a0 = to_string(es_->stack[static_cast<size_t>(bp)].value, false).substr(0, 40);
+                std::cerr << "[iid] " << fn.name << " obj=" << objName_
+                          << " this=" << thisObjectName_ << " arg0=" << a0
+                          << " owner=" << (fn.funOffset ? "inh" : "own")
+                          << " chain=[" << chain << "]\n";
+                std::cerr.flush();
+            }
+        }
         // Cross-object inline call: the LPC-visible identity is the CALLEE's.
         std::string idOverride;
         if (identityVm && identityVm != this && !identityVm->thisObjectName().empty() &&
@@ -12337,6 +12683,10 @@ private:
                 // accumulated baseFunOffset of the CURRENT frame applies.
                 int off = 0;
                 if ((flags & 0x80) == 0) {
+                    // vm_callInUserFun 0x8094080, LOCAL branch: index is local to the
+                    // current function's constitution -> baseFunOffset + index.
+                    // (The GLOBAL branch - bit7 - uses the operand verbatim against
+                    // the global program's table, see the note on callUserFunction.)
                     off = es_->frames.empty() ? 0 : es_->frames.back().funOffset;
                     if (off != 0) funIndex += off;
                 }
@@ -19992,7 +20342,11 @@ bool destructObjectByKey(const std::string& keyIn) {
     //    returned WITHOUT the character list (relog7).
     {
         static const bool lifeOn = (LPCVM_GETENV("LPCVM_LIFE") != nullptr);
-        // EVERY inherited destructor must run (see callDestructors).
+        // The ONE most-derived destructor, exactly like the driver
+        // (vm_f_destruct_object2 0x80f9284 - see callDestructors).  LPCVM_LIFE=1
+        // prints the [life] line naming it, which is how the selection is checked
+        // on a real login/logout (a player must show user.o::destruct, NOT the
+        // inherited base.c one that destroys the contents).
         vm->callDestructors(lifeOn);
     }
     const void* proc = scheduler().currentProcessShared().get();
@@ -20036,6 +20390,19 @@ static void envLodgerMove(const std::string& child, const std::string& dest) {
     if (dest.empty()) return;
     idx.lodgers[dest].push_back(child);
     idx.containerOf[child] = dest;
+}
+// lodger_object(container) - the container's lodgers as an LPC array of object
+// values (vm_f_lodger_object 0x80f41c8).  envLodgerKeys() already returns the
+// driver's chain order (tail-append, like vm_f_move_object 0x80f5348) and drops
+// entries whose object is gone, so the array is built straight from it.  An
+// unknown/empty container answers an empty array - see the efun branch for why
+// this is deliberately lenient where the original raises vm_error.
+Value makeLodgerArray(const std::string& containerKey) {
+    Value arr = make_array();
+    if (containerKey.empty()) return arr;
+    auto av = std::get<std::shared_ptr<ArrayValue>>(arr);
+    for (const std::string& k : envLodgerKeys(containerKey)) av->items.push_back(make_object(k));
+    return arr;
 }
 std::vector<std::string> envLodgerKeys(const std::string& containerKey) {
     const std::string c = canonicalObjKey(containerKey);

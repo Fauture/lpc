@@ -57,6 +57,22 @@ struct OriginalObject {
     uint32_t functionBC = 0;
     uint32_t globalVarCount = 0;
     int baseFunOffset = 0;
+    // The .o's function table starts with this many HIDDEN records (loader:
+    // `hiddenCount` then r.function() each).  Their "index" field is a flag word,
+    // not a function index (a hidden record named "destruct" carries 2048 =
+    // 0x800), so anything that resolves functions by index or by name MUST skip
+    // obj.functions[0 .. hiddenCount): picking that record as the destructor left
+    // the character unsaved (measured 2026-09-30, "读入角色资料失败 9211").
+    uint32_t hiddenFunctionCount = 0;
+    // Number of SYSTEM functions (efuns) in the program's function table.  Indices
+    // below it are efuns; indices at/above it address the GLOBAL program's table
+    // and are used VERBATIM (the decompiler says the same:
+    // `prefix = "global_fn" if is_global else "user_fn"`, SEFUN threshold =
+    // len(EFUN_NAMES) = 572).  Callers must not add their own baseFunOffset to
+    // such an operand: logind.o::enter_world's call_global_fn(#630)
+    // (post_enter_world) became #652 (post_enter_world_failed) that way, and the
+    // failure hook destroys the freshly created character.
+    uint16_t efunCount = 0;
     std::string sourceName;   // originating file (diagnostics)
     std::vector<std::string> strings;
     std::vector<std::string> names;
