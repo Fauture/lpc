@@ -14,7 +14,7 @@
 | 开关 | 位置 | 默认 | 作用 | 备注 |
 |---|---|---|---|---|
 | `LPCVM_OBJVAR_VALUENO` | `original_vm.cpp:268`（`objVarValueNoRule()`） | **关** = 旧语义 | 开 = 对象变量**按名取址遍历全部 constitution 并用 `valueNo`**（原版 `vm_getObjVar` 规则）；关 = 旧的 `progVars` 下标语义 | 实测开启后商店叠加失效（买 100 给 2 个 `amount=1`），故默认关 |
-| `LPCVM_FO_LEGACY` | `builtins.cpp:3701` | **关** = IDA 恒等 | 开 = `find_object(object)` 退回"字符串化后按名字查表"；关 = **对象实参恒等返回**（船夫修复） | 关掉它船夫菜单就没了（`[initscript]` 616→2812） |
+| `LPCVM_FO_LEGACY` | `builtins.cpp:3701` | **关** = IDA 恒等 | 开 = `find_object(object)` 退回"字符串化后按名字查表"；关 = **对象实参恒等返回**（船夫修复） | 关掉它船夫菜单就没了（`[initscript]` 616→2812）,已修复 |
 | `LPCVM_CHARRANGE` | `original_vm.cpp:15806` | **关** = 按字节 | 开 = 字符串范围切片按 **GBK 字符**数（旧行为）；关 = 按**字节**（原版 `vm_queryRange` 语义） | 影响 `name[i..j-1]` 这类取子串 |
 | `LPCVM_MAXFRAMES` | `original_vm.cpp:7907` | **400** | LPC 调用深度上限；超过就触发深度守卫（转储 + 异常），防止爆栈 | 值本身就是语义（设小可提前暴露递归） |
 | `LPCVM_NO_HB` | `original_vm.cpp:19249` | **未设 = 心跳开** | 设了 = `postHeartBeatAll()` 直接返回 0（关掉心跳回调） | `LPCVM_HB` 只是心跳的**打印**开关 |
@@ -42,11 +42,4 @@
 > 复现方法：`python -X utf8 _switchnames.py`（列名字）、`python -X utf8 _switches3.py`（按代码块粗分类）。
 > 粗分类会把"块内声明计数器"误判成功能类，所以最终以上面的人工判定为准。
 
----
 
-## 三、当前状态（船夫线 `refactor/ldmud-vm-model`）
-
-- 功能开关里**只有 `LPCVM_FO_LEGACY` 曾被用来二分**：默认关 = 船夫修复生效 ✅
-- `LPCVM_OBJVAR_VALUENO` 默认关 = 旧的 `progVars` 下标语义（实测打开会破坏商店叠加）
-- `lodger_object` 已**退回 22a15ad 的常量 0 行为（不带任何开关）**，解决"下线丢背包"
-  （见 `docs/LODGER_OBJECT_ORIGINAL_22A15AD.md`）

@@ -30,23 +30,8 @@ python -X utf8 _idamcp.py call find '@_mcp_args.json' # 任意工具，参数放
 3. **追调用链/表**：`xrefs_to`（谁引用它）、`find type=data_ref`（名字字符串 → 分发表项）、
    `callees`（它调用了谁，例如 `vm_f_mapping_array` → `vm_f_mapping_array1` → `vm_f_mapping_array2`）。
 
-## 3. 已核对案例（照着做）
 
-**`mapping_array`（新手上任务 S11 张老板发武器失败）**
-
-* `mapping_array` = `vm_f_mapping_array` @ `0x80d876c`：参数 array + func，非空则压入"与源同长度"的结果数组 + index=0，
-  调 `vm_f_mapping_array1`；空数组直接返回空数组。
-* `vm_f_mapping_array1` @ `0x80d8600`：`index++`，校验 ret/src 长度相等，`index >= size` 收尾；
-  否则压 `src[index]` + 函数并调用，再用 `vm_hookCallbackWhenNextAction` / `vm_hookCallbackWhenReturnAt`
-  挂 `vm_f_mapping_array2`。
-* `vm_f_mapping_array2` @ `0x80d8870`：把返回值写进 `ret[index]`，再回 `vm_f_mapping_array1`。
-  → 结论：**原版是"返回钩子驱动的蹦床"，每个元素只占一次 VM 调用，不占 C++ 递归栈**；
-    结果数组与源**同长同序**，不过滤。（我们的实现必须照此，否则大数组映射会撑爆 C 栈。）
-* 相关：`vm_f_load_object` @ `0x80f8cbc` —— 已加载对象直接返回缓存（`flags != 2048`）；
-  构造中的对象用 `flags(0x800/0x1000/6144)` + `initStep` 标记并继续推进，**不会重新跑 create**。
-  这是"装载链重入"的判据。
-
-## 4. 记录要求
+## 3. 记录要求
 
 * 核对完把地址、关键伪代码结论写进对应文档（如 `_ida_missing/<efun>.txt` 或 HANDOVER），
   并在代码注释里引用地址，方便下一个人复核。

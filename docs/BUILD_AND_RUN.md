@@ -142,7 +142,6 @@ WHERE path='user' AND branch='carry' ORDER BY time DESC LIMIT 1;   -- 背包
 4. **启动耗时差异大**：不要用固定的 60 秒判断失败；以 8160 是否 True 为准（见上表）。
 5. **不要在服务运行中改 `_probe_on\` 以外的环境变量**：`LPCVM_GETENV` 类开关只在进程启动时读一次；
    `dynProbeFlag` 类（`_probe_on\<名字>` 空文件）可以运行中热加载，1 秒生效、不用重启。
-6. **端口冲突即拒绝启动**（守卫逻辑），确认上一次的 lpcvm 进程确实退干净了再起。
 
 ---
 
@@ -159,9 +158,6 @@ python -X utf8 _run_keep2.py gs_run
 # 3) 等 8160 为 True（约 5–12 分钟，看版本线）
 Test-NetConnection -ComputerName 192.168.200.1 -Port 8160 -InformationLevel Quiet
 
-# 4) 查背包存档
-python -X utf8 _verify_bag.py
-
-# 5) 停服务
+# 4) 停服务
 Get-Process lpcvm -ErrorAction SilentlyContinue | Stop-Process -Force
 ```

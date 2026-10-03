@@ -2508,6 +2508,15 @@ class PseudoGenV37:
         self.var_types = {}  # inferred local variable types (populated after generate)
         self.suppress_parent_path = suppress_parent_path
         self.suppress_trailing_comments = suppress_trailing_comments
+        # Patch 45: detect if this file IS the global program (startup .o).
+        # The global program's func_table has efun entries at low indices
+        # matching EFUN_TABLE; non-global objects have inherited funcs
+        # (destruct, create, ...) there. Used so is_global=1 calls do not
+        # get shadowed by inherited function names.
+        self._is_global_prog = (
+            self.func_table.get(0) == EFUN_TABLE.get(0)
+            and self.func_table.get(1) == EFUN_TABLE.get(1)
+        )
 
     def _ind(self):
         return "    " * self.indent
@@ -3918,10 +3927,21 @@ class PseudoGenV37:
             # NOT efun/sefun. For start_gs.o (the global program), these are in
             # the file's own func_table. Check func_table FIRST when is_global=1.
             if is_global:
-                if p16 in self.func_table:
+                # Patch 45: is_global=1 references the GLOBAL program's
+                # function table (EFUN_TABLE + SEFUN_TABLE), NOT this
+                # object's func_table. For non-global objects, func_table
+                # holds inherited functions whose indices collide with
+                # global indices (e.g. char.c[652] shadows SEFUN[652]).
+                # Only consult func_table when this file IS the global
+                # program and SEFUN_TABLE is empty (no -q startup file).
+                if p16 in EFUN_TABLE:
+                    fname = EFUN_TABLE[p16]
+                elif p16 in SEFUN_TABLE:
+                    fname = SEFUN_TABLE[p16]
+                elif self._is_global_prog and p16 in self.func_table:
                     fname = self.func_table[p16]
                 else:
-                    fname = EFUN_TABLE.get(p16) or SEFUN_TABLE.get(p16, "global_fn_%d" % p16)
+                    fname = "global_fn_%d" % p16
             elif p16 in self.func_table:
                 fname = self.func_table[p16]
                 # Patch 9 (fixes Patch 17): inherited-slot call_user.
@@ -4795,14 +4815,15 @@ class PseudoGenV37:
             nargs = p8 & 0x3F
             is_global = (p8 >> 7) & 1
             if is_global:
-                # Patch 39 (same as call_user): is_global=1 means the
-                # global program function table = [efuns 0..N-1, sefuns N..].
-                # Check func_table first (the global program's own table),
-                # then fall back to the efun/sefun ranges like call_user.
-                if p16 in self.func_table:
+                # Patch 45: same global-table rule as call_user (an=7).
+                if p16 in EFUN_TABLE:
+                    fname = EFUN_TABLE[p16]
+                elif p16 in SEFUN_TABLE:
+                    fname = SEFUN_TABLE[p16]
+                elif self._is_global_prog and p16 in self.func_table:
                     fname = self.func_table[p16]
                 else:
-                    fname = EFUN_TABLE.get(p16) or SEFUN_TABLE.get(p16, "global_func_%d" % p16)
+                    fname = "global_func_%d" % p16
             elif p16 in self.func_table:
                 fname = self.func_table[p16]
                 # Patch 8: closure over an inherited slot. When the slot
