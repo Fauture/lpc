@@ -7,7 +7,10 @@ shutil.rmtree(LOG_DIR, ignore_errors=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def clear_db():
-    subprocess.run([sys.executable, '_dbclear.py'], check=True, capture_output=True, timeout=120)
+    # absolute path: the runner is documented to run from the repo ROOT, where
+    # the bare '_dbclear.py' relative name does not resolve (python exits 2)
+    dbclear = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_dbclear.py')
+    subprocess.run([sys.executable, dbclear], check=True, capture_output=True, timeout=120)
 
 # --- single-instance guard: refuse to start a second set -------------------
 PORTS = (8001, 8110, 8120, 8160)
@@ -22,8 +25,9 @@ def _port_busy(port):
 
 
 def _require_single_instance():
-    subprocess.run(['powershell', '-NoProfile', '-Command',
-                    'Get-Process lpcvm -ErrorAction SilentlyContinue | Stop-Process -Force'],
+    # taskkill lives in System32 (always resolvable); the powershell fallback
+    # broke detached launches whose PATH has no WindowsPowerShell entry
+    subprocess.run(['taskkill', '/F', '/IM', 'lpcvm.exe'],
                    capture_output=True, text=True)
     time.sleep(3)
     busy = [p for p in PORTS if _port_busy(p)]

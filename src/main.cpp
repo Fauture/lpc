@@ -558,8 +558,30 @@ int main(int argc, char** argv) {
         USHORT n = CaptureStackBackTrace(0, 32, frames, nullptr);
         std::cerr << "[crash] code=0x" << std::hex
                   << (ep ? ep->ExceptionRecord->ExceptionCode : 0)
-                  << " addr=0x" << (ep ? ep->ExceptionRecord->ExceptionAddress : 0)
-                  << std::dec << " frames=" << n << "\n";
+                  << " addr=0x" << (ep ? ep->ExceptionRecord->ExceptionAddress : 0);
+        // An access violation carries the ACCESS TYPE in Information[0] (0 read,
+        // 1 write, 8 DEP/execute) and the address it touched in Information[1].
+        // Without them a crash whose ExceptionAddress points into the HEAP is
+        // indistinguishable from a bad data pointer - and that distinction is
+        // exactly what matters: "execute" means we jumped to a garbage function
+        // pointer (e.g. a closure's captured OriginalFunction*), which is what
+        // the combat sort_by_speed crashes look like.
+        if (ep && ep->ExceptionRecord &&
+            (ep->ExceptionRecord->ExceptionCode == 0xC0000005) &&
+            ep->ExceptionRecord->NumberParameters >= 2) {
+            static const char* const kAcc[] = { "read", "write", "?2", "?3", "?4",
+                                                "?5", "?6", "?7", "execute" };
+            const ULONG_PTR a0 = ep->ExceptionRecord->ExceptionInformation[0];
+            std::cerr << " access=" << (a0 < 9 ? kAcc[a0] : "?")
+                      << " faultaddr=0x" << ep->ExceptionRecord->ExceptionInformation[1];
+        }
+        // Where the INSTRUCTION POINTER was: for an "execute" fault this is the
+        // bogus code address, not a valid module - so print it separately from
+        // the handler's own frames.
+        if (ep && ep->ContextRecord) {
+            std::cerr << " eip=0x" << static_cast<uintptr_t>(ep->ContextRecord->Eip);
+        }
+        std::cerr << std::dec << " frames=" << n << "\n";
         // Which thread died and how deep its stack was.  0xc00000fd
         // (EXCEPTION_STACK_OVERFLOW) swallows the frame list, so the depth is
         // the only evidence left: near the full reserve = runaway recursion,

@@ -5,7 +5,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
-    add_compile_options(/W3 /EHsc)
+    # All sources are UTF-8 without BOM.  Without /utf-8, cl decodes them as
+    # GBK (codepage 936) and certain multi-byte comment sequences are read as
+    # invalid GBK pairs that swallow newlines / restructure the token stream -
+    # original_vm.cpp then fails with phantom "namespace" errors near
+    # Scheduler::spawn that do not exist under /utf-8 (verified: /Zs passes
+    # clean with /utf-8, fails without).
+    add_compile_options(/W3 /EHsc /utf-8)
     # The Debug CRT enables per-container STL checks (_ITERATOR_DEBUG_LEVEL=2
     # under /MDd); every stack push/pop / vector op in the interpreter then
     # pays range/orphan bookkeeping measured at ~1-2us per VM opcode in Debug.

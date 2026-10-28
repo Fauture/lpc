@@ -61,4 +61,10 @@ private:
     Value makeDefaultObject(const std::string& path);
 };
 
+// Call a closure value from inside an efun implementation (builtins.cpp), on the
+// VM that invoked the efun.  Needed by `sort(array, cmp_closure, direction)`:
+// the comparator must decide the order (vm_f_sort 0x80dbf4c), otherwise combat
+// member ordering falls back to comparing object names.
+Value callClosureForEfun(const Value& closure, const std::vector<Value>& args);
+
 } // namespace lpc

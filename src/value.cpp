@@ -275,12 +275,16 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         case 5: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<ArrayValue>>(key).get()); break;
         case 6: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<MappingValue>>(key).get()); break;
         case 7: {
-            // OBJECT keys hash by the object's logical path (programName).
-            // NOTE: `object(<this>)` values all have the literal "<this>", and
-            // clones of one program share its path, so they collapse into one
-            // key.  Switching to the per-object `owner` pointer fixes that but
-            // made the gs boot hang (mapping lookups stalled during load), so it
-            // is reverted here until the stall is understood.
+            // OBJECT keys hash by the object's logical path (programName) - the
+            // behaviour this port boots with.  NOTE: the original compares the
+            // object STRUCTURE POINTER here (vm_compareValue 0x80bbcb4, cases
+            // 6..0xA), and hashing programName collapses every `object(<this>)`
+            // value into ONE key, which is why combat commands are shared
+            // between the player, monsters and pets.  Switching to
+            // owner/alive reproduces the original identity but makes the gs boot
+            // stall (unbounded growth, ~1 GB RSS, 8160 never opens), so the
+            // object identity has to be fixed together with whatever boot-time
+            // mapping it breaks.
             const auto& ov = std::get<std::shared_ptr<ObjectValue>>(key);
             uint32_t h = 2166136261u;
             if (ov) {
@@ -381,6 +385,7 @@ bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {    if (a.
         const auto& ob = std::get<std::shared_ptr<ObjectValue>>(b);
         if (oa.get() == ob.get()) return true;
         if (!oa || !ob) return false;
+        // Matches the hash above (programName); see the note there.
         return oa->programName == ob->programName;
     }
     case 8: return std::get<std::shared_ptr<ClosureValue>>(a).get() == std::get<std::shared_ptr<ClosureValue>>(b).get();

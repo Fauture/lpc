@@ -49,8 +49,9 @@ def port_busy(port):
         return False
 
 
-subprocess.run(['powershell', '-NoProfile', '-Command',
-                'Get-Process lpcvm -ErrorAction SilentlyContinue | Stop-Process -Force'],
+# taskkill lives in System32 (always resolvable); the powershell fallback
+# broke launches from shells whose PATH has no WindowsPowerShell entry
+subprocess.run(['taskkill', '/F', '/IM', 'lpcvm.exe'],
                capture_output=True, text=True)
 time.sleep(3)
 busy = [p for p in PORTS if port_busy(p)]

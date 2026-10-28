@@ -2908,8 +2908,31 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         const Value& v = args[0];
         if (v.index() == 2) return v;
         if (v.index() == 4) {
-            try { return make_int(static_cast<int64_t>(std::stoll(sqlTrim(std::get<SharedString>(v))))); }
-            catch (...) { return make_int(0); }
+            // vm_f_atoi (IDA 0x80d46d8):
+            //     for (i = s; vm_isspace(*i); ++i);
+            //     if (*i == '0' && (i[1] == 'x' || i[1] == 'X'))
+            //         v = vm_strtol(..., i + 2, 0, 16, 0);   // hexadecimal
+            //     else
+            //         v = vm_strtol(..., i, 0, 10, 0);       // decimal
+            // Parsing hex as decimal made EVERY "0x...." macro expand to 0.
+            // That is what broke room permissions: form2's
+            // convert_string_to_bit_macro() does atoi(expand_macro("ROOM_..."))
+            // on values like "0x00000004" (ROOM_P_AUTO_TOUCH), so room_limit
+            // came out 0, room.c::set_permission() left permission == 0 and
+            // permission.c::refresh_permission() sent 0x1A03 with 0 - the client
+            // then refuses ALT+Z with "本地图无法使用自动遇敌".
+            const std::string s = std::get<SharedString>(v).str();
+            size_t i = 0;
+            while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' ||
+                                    s[i] == '\n' || s[i] == '\v' || s[i] == '\f'))
+                ++i;
+            const bool hex = (i + 1 < s.size() && s[i] == '0' &&
+                              (s[i + 1] == 'x' || s[i + 1] == 'X'));
+            const char* beg = s.c_str() + (hex ? i + 2 : i);
+            char* end = nullptr;
+            const long long r = std::strtoll(beg, &end, hex ? 16 : 10);
+            if (end == beg) return make_int(0);
+            return make_int(static_cast<int64_t>(r));
         }
         return make_int(0);
     }
@@ -7784,26 +7807,65 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_mapping();
     }
     if (name == "sort") {
-        // vm_f_sort (0x80dbf4c): sort(array) sorts ascending by natural
-        // order; sort(array, cmp_func) uses the comparator.  The VM handles
-        // the 2-arg form; this catches the 1-arg form (start_ccs does
-        // sort(keys(m)) and sort(arr)).
-        if (args.empty() || args[0].index() != 5) return make_array();
-        auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+        // vm_f_sort (0x80dbf4c):
+        //   sort(array)                    -> ascending, natural order
+        //   sort(array, cmp_func)          -> order of cmp_func(element)
+        //   sort(array, cmp_func, dir)     -> dir < 0 descending (READS THE
+        //                                     ORDER FROM THE LAST ARGUMENT)
+        // The comparator MUST be used: combat orders its members with
+        //     sort(obs, (: sort_by_speed :), -1)
+        // and sorting by to_string(object) instead put "clone:...char/user.o"
+        // before every "clone:...monster/basic.o".  The defending player then
+        // landed in front of the fastest group and get_action_ob() bailed out
+        //              if (ob_arr[0]->is_in_status("defense")) return 0;
+        // so NO member acted for the rest of that round (monsters and pets all
+        // stood still whenever the player defended).
+        int sArr = -1, sCmp = -1, sDir = -1;
+        if (LPCVM_GETENV("LPCVM_SORTDBG")) {
+            std::string ad;
+            for (size_t si = 0; si < args.size(); ++si)
+                ad += (si ? " | " : "") + std::to_string(args[si].index()) + ":" +
+                      to_string(args[si], false).substr(0, 24);
+            std::cerr << "[sort-args] n=" << args.size() << " [" << ad << "] ctx="
+                      << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+            std::cerr.flush();
+        }
+        for (size_t si = 0; si < args.size(); ++si) {
+            const size_t k = args.size() - 1 - si;   // prefer the LAST int as direction
+            if (args[k].index() == 5 && sArr < 0) sArr = static_cast<int>(k);
+            else if (args[k].index() == 8 && sCmp < 0) sCmp = static_cast<int>(k);
+            else if (args[k].index() == 2 && sDir < 0) sDir = static_cast<int>(k);
+        }
+        if (sArr < 0) return make_array();
+        auto src = std::get<std::shared_ptr<ArrayValue>>(args[static_cast<size_t>(sArr)]);
         std::vector<Value> items = src->items;
-        auto less = [](const Value& a, const Value& b) -> bool {
-            if (a.index() == 2 && b.index() == 2)
-                return std::get<int64_t>(a) < std::get<int64_t>(b);
-            if (a.index() == 3 || b.index() == 3) {
-                double x = (a.index() == 3) ? std::get<double>(a) : static_cast<double>(as_int(a));
-                double y = (b.index() == 3) ? std::get<double>(b) : static_cast<double>(as_int(b));
-                return x < y;
-            }
-            std::string x = to_string(a, false);
-            std::string y = to_string(b, false);
-            return x < y;
-        };
-        std::stable_sort(items.begin(), items.end(), less);
+        const bool desc = (sDir >= 0) && (as_int(args[static_cast<size_t>(sDir)]) < 0);
+        if (sCmp >= 0 && args[static_cast<size_t>(sCmp)].index() == 8) {
+            const Value cmpClosure = args[static_cast<size_t>(sCmp)];
+            auto keyOf = [&](const Value& v) -> int64_t {
+                return as_int(callClosureForEfun(cmpClosure, std::vector<Value>{v}));
+            };
+            std::stable_sort(items.begin(), items.end(), [&](const Value& a, const Value& b) {
+                const int64_t ka = keyOf(a), kb = keyOf(b);
+                return desc ? (ka > kb) : (ka < kb);
+            });
+        } else {
+            auto less = [](const Value& a, const Value& b) -> bool {
+                if (a.index() == 2 && b.index() == 2)
+                    return std::get<int64_t>(a) < std::get<int64_t>(b);
+                if (a.index() == 3 || b.index() == 3) {
+                    double x = (a.index() == 3) ? std::get<double>(a) : static_cast<double>(as_int(a));
+                    double y = (b.index() == 3) ? std::get<double>(b) : static_cast<double>(as_int(b));
+                    return x < y;
+                }
+                return to_string(a, false) < to_string(b, false);
+            };
+            if (desc)
+                std::stable_sort(items.begin(), items.end(),
+                                 [&](const Value& a, const Value& b) { return less(b, a); });
+            else
+                std::stable_sort(items.begin(), items.end(), less);
+        }
         auto out = std::make_shared<ArrayValue>();
         out->items = std::move(items);
         return out;

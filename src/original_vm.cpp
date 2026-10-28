@@ -808,6 +808,91 @@ int compareValues(const Value& a, const Value& b) {
     return x < y ? -1 : (x > y ? 1 : 0);
 }
 
+// vm_compareValue (0x80bbcb4, vm_sort.c) - the comparison vm_sortArray uses
+// for sort() values and for the KEYS its comparator extracts:
+//   - different types compare by TYPE NUMBER (no cross-type coercion!):
+//     0/1 nil/void < 2 int < 3 float < 4 string < 5 buffer < 6 array
+//     < 7 mapping < 8 object < 9 closure < 10 other
+//   - 0/1: equal
+//   - 2/3: numeric
+//   - 4 string: when BOTH start with a digit, compare strtol(str,10) first
+//     (so "2abc" sorts before "10x"); fall through to strcmp
+//   - 5 buffer: memcmp of the common prefix, then by length
+//   - 6..10 (array/mapping/object/closure/...): compare the STRUCTURE
+//     POINTER (identity/address), never the contents
+int compareValuesOriginal(const Value& a, const Value& b) {
+    // our variant index -> original vm type number
+    auto rank = [](const Value& v) -> int {
+        switch (v.index()) {
+        case 0: case 1: return static_cast<int>(v.index());
+        case 2: case 3: case 4: return static_cast<int>(v.index());
+        case 10: return 5;              // buffer
+        case 5: return 6;               // array
+        case 6: return 7;               // mapping
+        case 7: return 8;               // object
+        case 8: return 9;               // closure
+        default: return 10;             // LoopCtrl / CrossVmRef / ...
+        }
+    };
+    const int ra = rank(a), rb = rank(b);
+    if (ra != rb) return ra < rb ? -1 : 1;
+    switch (ra) {
+    case 0: case 1:
+        return 0;
+    case 2: {
+        int64_t x = std::get<int64_t>(a), y = std::get<int64_t>(b);
+        return x < y ? -1 : (x > y ? 1 : 0);
+    }
+    case 3: {
+        double x = std::get<double>(a), y = std::get<double>(b);
+        return x < y ? -1 : (x > y ? 1 : 0);
+    }
+    case 4: {
+        const std::string x = std::get<SharedString>(a).str();
+        const std::string y = std::get<SharedString>(b).str();
+        if (!x.empty() && !y.empty() &&
+            std::isdigit(static_cast<unsigned char>(x[0])) &&
+            std::isdigit(static_cast<unsigned char>(y[0]))) {
+            long long nx = std::strtoll(x.c_str(), nullptr, 10);
+            long long ny = std::strtoll(y.c_str(), nullptr, 10);
+            if (nx < ny) return -1;
+            if (nx > ny) return 1;
+        }
+        int c = x.compare(y);
+        return c < 0 ? -1 : (c > 0 ? 1 : 0);
+    }
+    case 5: {
+        // buffer: memcmp the common prefix, then compare lengths
+        const std::string& x = std::get<std::shared_ptr<BufferValue>>(a)->data;
+        const std::string& y = std::get<std::shared_ptr<BufferValue>>(b)->data;
+        size_t n = x.size() < y.size() ? x.size() : y.size();
+        if (n) {
+            int c = std::memcmp(x.data(), y.data(), n);
+            if (c) return c < 0 ? -1 : 1;
+        }
+        return x.size() < y.size() ? -1 : (x.size() > y.size() ? 1 : 0);
+    }
+    default: {
+        // array / mapping / object / closure / ...: structure pointer
+        auto ptr = [](const Value& v) -> const void* {
+            switch (v.index()) {
+            case 5: return std::get<5>(v).get();
+            case 6: return std::get<6>(v).get();
+            case 7: return std::get<7>(v).get();
+            case 8: return std::get<8>(v).get();
+            case 9: return std::get<9>(v).get();
+            case 10: return std::get<10>(v).get();
+            case 11: return std::get<11>(v).get();
+            default: return nullptr;
+            }
+        };
+        const void* x = ptr(a);
+        const void* y = ptr(b);
+        return x < y ? -1 : (x > y ? 1 : 0);
+    }
+    }
+}
+
 // Cast a value in place to the target type (2 int, 3 real, 4 string, 6 array, 7 mapping).
 Value castValue(Value v, int targetType, bool setConstAttr = false) {
     switch (targetType) {
@@ -2978,6 +3063,73 @@ public:
                     std::cerr.flush();
                 }
             }
+            // LPCVM_CMDDBG: what does the ACTOR hold in got_command when the
+            // round asks it to act?  next_round.c::do_action(me) reads
+            //     cmd = me->query_temp("got_command"); action_no = cmd["action"];
+            //     action_ob = query_entry(action_no);
+            // and the observed trace ran actions/defense.o for the MONSTER, so
+            // the monster's got_command must already say action == 1 even though
+            // monster_tactics::physical_tactics set action == 2 on it.  Print the
+            // actor (its program name) and its live got_command straight from the
+            // owning VM's tmp_dbase.
+            {
+                static const std::atomic<bool>& cmdDbg = dynProbeFlag("LPCVM_CMDDBG");
+                if (cmdDbg.load(std::memory_order_relaxed) && name == "do_action" &&
+                    !args.empty() && args[0].index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+                    std::string who = ov ? ov->programName : "<null-obj>";
+                    std::string cmdStr = "<no-vm>";
+                    {
+                        std::shared_ptr<OriginalVm> tv;
+                        {
+                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
+                            for (auto& kv : objectRegistry().vms) {
+                                // Match by the registry key the actor string prints
+                                // (clone:<path>#<seq>) OR by the object pointer.
+                                if (ov && kv.first == ov->programName) { tv = kv.second; break; }
+                                if (ov && ov->owner && &kv.second->object() == ov->owner) {
+                                    tv = kv.second; break;
+                                }
+                            }
+                        }
+                        if (tv) {
+                            const int slot = tv->objVarSlotByName("tmp_dbase");
+                            if (slot >= 0 && static_cast<size_t>(slot) < tv->objVars().size()) {
+                                const Value& db = tv->objVars()[static_cast<size_t>(slot)];
+                                if (db.index() == 6) {
+                                    auto mp = std::get<std::shared_ptr<MappingValue>>(db);
+                                    if (mp) {
+                                        const Value* g = mp->find(make_string("got_command"));
+                                        cmdStr = g ? to_string(*g, false).substr(0, 90)
+                                                   : std::string("<unset>");
+                                        // next_round.c::do_action skips a member when
+                                        //   xuwu | died | cob->get_result() | owner died
+                                        // and then does set_action(99) -> actions/null.c.
+                                        // Print the per-object flags that decide it.
+                                        const Value* died = mp->find(make_string("died"));
+                                        const Value* eff = mp->find(make_string("effect_round"));
+                                        cmdStr += " died=" +
+                                                  (died ? to_string(*died, false).substr(0, 24)
+                                                        : std::string("<unset>"));
+                                        cmdStr += " effect_round=" +
+                                                  (eff ? to_string(*eff, false).substr(0, 60)
+                                                       : std::string("<unset>"));
+                                    } else {
+                                        cmdStr = "<null-map>";
+                                    }
+                                } else {
+                                    cmdStr = "<tmp_dbase-t" + std::to_string(db.index()) + ">";
+                                }
+                            } else {
+                                cmdStr = "<no-slot>";
+                            }
+                        }
+                    }
+                    std::cerr << "[cmd] actor=" << who << " got_command=" << cmdStr
+                              << " caller=" << objName_ << "\n";
+                    std::cerr.flush();
+                }
+            }
             // LPCVM_SKILLDBG: skill registration audit.  Every /gs/skills/*.c
             // runs setup_skill() at boot, which does
             //     set_skill_attrib(this_object())   // fills "no" from
@@ -3652,6 +3804,236 @@ public:
         return make_int(0);   // unreachable (SuspendSignal thrown)
     }
 
+    // Registry lookup of the VM that owns a closure: the exact creating
+    // instance key first (clones share the template's OriginalObject, so many
+    // registered VMs report object() == owner), then the first object()-match.
+    // Used by every closure call site that must resolve or run the body on the
+    // OWNER VM - the equivalent of vm_callFunPtr's `pObject = info->pObject`.
+    std::shared_ptr<OriginalVm> closureOwnerVm(const std::shared_ptr<ClosureValue>& cl) const {
+        if (!cl || !cl->owner) return nullptr;
+        std::shared_ptr<OriginalVm> ownerVm;
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        auto& reg = objectRegistry();
+        if (!cl->ownerKey.empty()) {
+            auto itK = reg.vms.find(cl->ownerKey);
+            if (itK != reg.vms.end()) ownerVm = itK->second;
+        }
+        if (!ownerVm) {
+            for (auto& kv : reg.vms) {
+                if (&kv.second->object() == cl->owner) { ownerVm = kv.second; break; }
+            }
+        }
+        return ownerVm;
+    }
+
+    // Re-address a closure's function, mirroring the original vm_callFunPtr:
+    // the closure carries pObject + funOffset and EVERY call re-reads the
+    // offset and resolves the body in the OWNER PROGRAM'S MERGED constitution
+    // table (`pObject->pProgram->pFunctions[funOffset]`).  A raw cached
+    // function pointer is never trusted first.
+    //
+    // Our equivalent of the merged table is funcsByIndex_ of the VM whose
+    // object() == cl->owner:
+    //   - the owner object's raw `functions` vector is the LOADER's root table:
+    //     its entries carry zero-byte DLT placeholders that
+    //     mergeInheritedFunctions / the DLT-repointing pass fixed ONLY in
+    //     funcsByIndex_, and its records are not guaranteed to be stored at
+    //     position == index (o_loader reads the index from the DLT entry) - so
+    //     `functions[funcIndex]` can return a placeholder or a different
+    //     record than the merged table decided;
+    //   - for a foreign owner the table must come from the OWNER VM, never
+    //     from this VM (indexes are per-program) - resolve it through
+    //     closureOwnerVm (exact creating instance first).
+    // funcIndex == the original funOffset; efun closures are type 75 and go
+    // to vm_callInEfun by their own slot instead (their slot number COLLIDES
+    // with real merged-table indexes - taskd's (*funcs["tip"]) ran
+    // instruction_1's unrelated function because of exactly that collision).
+    // allowNameFallback=false is for cross-owner call sites: a name lookup on
+    // THIS VM could pick an overriding copy (handler_module's process_command
+    // vs accountd's own), which index addressing never does.
+    const OriginalFunction* liveClosureFunc(const std::shared_ptr<ClosureValue>& cl,
+                                            bool allowNameFallback = true) {
+        if (!cl) return nullptr;
+        if (cl->efunClosure) return nullptr;   // type 75: caller resolves the efun by name
+        const OriginalFunction* fn = nullptr;
+        if (cl->owner && cl->owner != &obj_ && cl->owner != objectRegistry().masterObj) {
+            // pObject of ANOTHER program: read the OWNER's merged table.
+            if (cl->funcIndex >= 0) {
+                if (auto ownerVm = closureOwnerVm(cl)) {
+                    auto& tab = ownerVm->functionTable();
+                    auto it = tab.find(cl->funcIndex);
+                    if (it != tab.end()) fn = it->second;
+                }
+            }
+            // Owner VM unresolvable: do NOT re-address the foreign index
+            // against THIS program's merged table - the same number addresses
+            // a different function here.  The original errors out on such a
+            // call ("Owner object is destructed, can't invoke function.");
+            // only the name fallback (when allowed) remains.
+        } else if (cl->owner == objectRegistry().masterObj && cl->funcIndex >= 0) {
+            // isGlobal closure (owner = the global/master program) ONLY.
+            // vm_callInUserFunBody's isGlobal selects the GLOBAL program's
+            // function table - never this VM's.  (This branch previously
+            // caught owner == &obj_ as well: a same-owner closure then
+            // resolved against the MASTER's table, where index 32 was
+            // accountd's process_command OVERRIDE (#153/sz33) instead of the
+            // base handler_module#6/sz21 this VM's merged table correctly
+            // holds - _process_command called the override, which
+            // re-dispatched itself and spanned 715k queue sends.)
+            fn = findMasterFunction(cl->funcIndex);
+        } else if (cl->funcIndex >= 0) {
+            // Same object (owner == this object) or owner-less: this VM's
+            // merged table, then the global program's.
+            auto it = funcsByIndex_.find(cl->funcIndex);
+            if (it != funcsByIndex_.end()) fn = it->second;
+            else fn = findMasterFunction(cl->funcIndex);
+        }
+        // funOffset-slot VALIDATION.  The original's funOffset is bound by the
+        // compiler to the exact function record, so pFunctions[funOffset] can
+        // never land on a different function.  Our funcIndex is NOT always
+        // equivalent (DLT-root-table provenance + inherited merges): for
+        // cmd_cfg_write_etc.o the owner merged table[3] held empty_entries,
+        // not write_etc - the dispatched no-op broke the CONFIG_D reply chain
+        // and gs hung forever on "FILE_D wait for CONFIG_D".  When the slot
+        // landed on a DIFFERENTLY named function the index cannot be trusted:
+        // fall back to the name the closure records.  For a foreign owner that
+        // name resolves on the OWNER VM (vm_callInUserFunBody addresses
+        // pObject's own program); for the same owner it resolves here.  An
+        // overriding copy cannot hijack this: dbaserverd's process_command
+        // keeps its captured base because the slot record's NAME MATCHES, and
+        // allowNameFallback=false callers get null instead of a guess.
+        if (fn && !cl->functionName.empty() && fn->name != cl->functionName)
+            fn = nullptr;   // slot mismatch -> index untrustworthy
+        if (!fn && !cl->functionName.empty()) {
+            if (!allowNameFallback)
+                return nullptr;
+            if (cl->owner && cl->owner != &obj_ && cl->owner != objectRegistry().masterObj) {
+                if (auto ownerVm = closureOwnerVm(cl))
+                    fn = ownerVm->findFunctionAny(cl->functionName);
+            } else {
+                fn = findFunctionAny(cl->functionName);
+            }
+        }
+        if (fn && fn != cl->func) cl->func = fn;   // refresh the cache
+        return fn;
+    }
+    // Invoke a ONE-ARGUMENT closure (sort comparators / mapping callbacks):
+    // efun closures call the efun directly (vm_callFunPtr type 75 ->
+    // vm_callInEfun), LPC closures are re-addressed funOffset-style through
+    // the OWNER program's merged table and run either inline here (same
+    // program / global) or on the OWNER VM (vm_callInUserFunBody switches
+    // thisObject to pObject).  Shared by the sort handler so every comparator
+    // call site uses exactly the original's addressing.
+    Value invokeClosureOne(const std::shared_ptr<ClosureValue>& cl, const Value& arg) {
+        if (!cl) return make_int(0);
+        std::vector<Value> all = cl->boundArgs;
+        all.push_back(arg);
+        if (cl->efunClosure) {
+            const auto& efunNames = efunNameTable();
+            for (size_t i = 0; i < efunNames.size(); ++i)
+                if (efunNames[i] == cl->functionName)
+                    return callEfunWithArgs(static_cast<int>(i), all);
+            return make_int(0);
+        }
+        const OriginalFunction* fn = liveClosureFunc(cl);
+        if (fn) {
+            const OriginalObject* master = objectRegistry().masterObj;
+            if (cl->owner == nullptr || cl->owner == &obj_ || cl->owner == master)
+                return executeFunctionFromOutside(*fn, all);
+            if (auto ownerVm = closureOwnerVm(cl))
+                return ownerVm->callFunctionPointer(fn, all);
+        }
+        // No resolvable owner (e.g. a closure over THIS program's own function
+        // whose index was never captured): resolve the name in the current
+        // object - the original's funOffset lookup in the current program.
+        if (!cl->functionName.empty())
+            return callFunctionByName(cl->functionName, all);
+        return make_int(0);
+    }
+
+    // vm_f_sort (0x80dbf4c) + vm_f_sort_mapping - the complete efun:
+    //   sort(array)                      -> ascending by vm_compareValue
+    //   sort(array, order)               -> order int (arg1 IS the order when
+    //                                       it is a number, NO comparator)
+    //   sort(array, cmp[, order])        -> cmp(element) is a KEY EXTRACTOR;
+    //                                       the original first calls it ONCE
+    //                                       per element into a dest array
+    //                                       (vm_f_sort_mapping), then sorts
+    //                                       by the keys with vm_compareValue
+    // order: 0 -> error, |order| > 2 -> clamps to 1/-1, missing -> 1;
+    // ±2 are the STABLE variants (ASCENDING/DESCENDING_STABLE); keys of ANY
+    // type ("A000..."/"Z000..." strings from sort_obs_by_speed_ex) compare
+    // with vm_compareValue - NOT with toInt(), which turned every string key
+    // into 0 and left the array in insertion order.
+    Value efunSort(const std::vector<Value>& args) {
+        if (args.size() > 3)
+            throw VmError("Too many arguments to sort.\n");
+        // Locate array / comparator / order by TYPE: well-formed calls are
+        // positional (array, [cmp|order], [order]), but the dispatcher can
+        // deliver the closure/direction in front of the array (sort_obs_by_speed).
+        int sArr = -1, sCmp = -1, sDir = -1;
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (args[i].index() == 5 && sArr < 0) sArr = static_cast<int>(i);
+            else if (args[i].index() == 8 && sCmp < 0) sCmp = static_cast<int>(i);
+            else if (args[i].index() == 2 && sDir < 0) sDir = static_cast<int>(i);
+        }
+        if (sArr < 0) return make_array();   // no array: keep the lenient behaviour
+        int64_t order = 1;
+        if (sDir >= 0) {
+            order = std::get<int64_t>(args[static_cast<size_t>(sDir)]);
+            if (order == 0)
+                throw VmError("You must specific order for sort.\n");
+            if (order > 2) order = 1;
+            else if (order < -2) order = -1;
+        }
+        const bool desc = order < 0;
+        auto src = std::get<std::shared_ptr<ArrayValue>>(args[static_cast<size_t>(sArr)]);
+        std::vector<Value> items = src->items;
+        if (sCmp >= 0) {
+            // Key extraction: ONE comparator call per element (the original
+            // builds the dest key array first, then sorts - never O(n log n)
+            // comparator invocations).
+            auto cl = std::get<std::shared_ptr<ClosureValue>>(args[static_cast<size_t>(sCmp)]);
+            std::vector<std::pair<Value, Value>> keyed(items.size());
+            for (size_t i = 0; i < items.size(); ++i)
+                keyed[i] = {invokeClosureOne(cl, items[i]), std::move(items[i])};
+            // order=-1/DESCENDING applies to the COMPARATOR form too: the
+            // original passes the order straight into vm_sortArray over the
+            // extracted key array.  Dropping it here sorted combat speeds
+            // ascending - sort_obs_by_speed_ex's "A..." (defending) keys came
+            // FIRST, get_action_ob hit is_in_status("defense") and the whole
+            // round stood still, and the speed order was reversed.
+            if (desc) {
+                std::stable_sort(keyed.begin(), keyed.end(),
+                                 [](const std::pair<Value, Value>& a, const std::pair<Value, Value>& b) {
+                                     return compareValuesOriginal(b.first, a.first) < 0;
+                                 });
+            } else {
+                std::stable_sort(keyed.begin(), keyed.end(),
+                                 [](const std::pair<Value, Value>& a, const std::pair<Value, Value>& b) {
+                                     return compareValuesOriginal(a.first, b.first) < 0;
+                                 });
+            }
+            for (size_t i = 0; i < keyed.size(); ++i) items[i] = std::move(keyed[i].second);
+        } else {
+            // No comparator: vm_sortArray(order, array, 0, order) - plain
+            // vm_compareValue on the elements themselves.
+            if (desc)
+                std::stable_sort(items.begin(), items.end(),
+                                 [](const Value& a, const Value& b) {
+                                     return compareValuesOriginal(b, a) < 0;
+                                 });
+            else
+                std::stable_sort(items.begin(), items.end(),
+                                 [](const Value& a, const Value& b) {
+                                     return compareValuesOriginal(a, b) < 0;
+                                 });
+        }
+        auto out = std::make_shared<ArrayValue>();
+        out->items = std::move(items);
+        return out;
+    }
+
     // Run a specific function pointer on THIS VM (with this VM's object vars).
     // Used by call_fun_ptr to run a closure's captured function on its owner VM.
     Value callFunctionPointer(const OriginalFunction* fn, const std::vector<Value>& args) {
@@ -3665,6 +4047,11 @@ public:
             }
         }
         if (!fn) return make_int(0);
+        // NOTE: a global "is this pointer still inside some loaded program's
+        // function table" check was tried here and REMOVED: it took the registry
+        // mutex on every closure call and stalled the gs boot (the port never
+        // opened).  Closure staleness has to be handled where the closure is
+        // invoked and its owner is known (liveClosureFunc), not here.
         if (fn->name == "post_enter_world" || fn->name == "post_enter_world_failed") {
             // Bottom-level entry for BOTH the index path and function-pointer
             // (closure) calls.  No .o bytecode references either function (630/652
@@ -4549,6 +4936,19 @@ private:
                               << " fns=" << parentObj->functions.size() << "\n";
                 int funOff = accFun + inh.baseFunOffset;
                 int varOff = accVar + inh.baseVarOffset;
+                if (const char* dt = LPCVM_GETENV("LPCVM_DUMPTBL")) {
+                    if (obj_.sourceName.find(dt) != std::string::npos) {
+                        int pcDlt = -1;
+                        for (const auto& pfn : parentObj->functions)
+                            if (pfn.name == "process_command") { pcDlt = pfn.index; break; }
+                        std::cerr << "[inh] child=" << obj_.sourceName
+                                  << " parent=" << inh.path
+                                  << " funOff=" << funOff
+                                  << " fns=" << parentObj->functions.size()
+                                  << " pc_dlt=" << pcDlt << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 // Parent's own inheritance comes first (its function indexes
                 // already include them), then the parent's functions.
                 walk(*parentObj, funOff, varOff);
@@ -4631,8 +5031,28 @@ private:
         // iid.c::create_iid()'s `query("combined")` is compiled to a fixed
         // index - so the winner decides whether a `combined` item is spared an
         // IID at creation time.
-        if (LPCVM_GETENV("LPCVM_IIDQ") && obj_.sourceName.find("item/medicine/basic") != std::string::npos) {
-            static bool dumped = false;
+        // LPCVM_DUMPTBL=<substr>: dump the merged constitution's same-name
+        // entries after the walk + repointing pass - shows which record each
+        // index really bound (accountd: ::process_command compiled to a=32,
+        // base handler_module#6 must sit at 26+6=32; the override#153/sz33
+        // there instead = walk/repoint bug).
+        if (const char* dt = LPCVM_GETENV("LPCVM_DUMPTBL")) {
+            if (obj_.sourceName.find(dt) != std::string::npos) {
+                for (auto& kv : funcsByIndex_) {
+                    if (!kv.second) continue;
+                    if (kv.second->name != "process_command" &&
+                        kv.second->name != "_process_command")
+                        continue;
+                    std::cerr << "[tbl] idx=" << kv.first << " " << kv.second->name
+                              << "#" << kv.second->index
+                              << "/sz" << kv.second->code.size()
+                              << " funOff=" << kv.second->funOffset
+                              << " obj=" << obj_.sourceName << "\n";
+                }
+                std::cerr.flush();
+            }
+        }
+        if (LPCVM_GETENV("LPCVM_IIDQ") && obj_.sourceName.find("item/medicine/basic") != std::string::npos) {            static bool dumped = false;
             if (!dumped) {
                 dumped = true;
                 // Low indices first: iid.c's bytecode calls inherited functions
@@ -4856,11 +5276,13 @@ private:
                               << " blk=" << (objVars_ ? objVars_->size() : 0)
                               << " varOff=" << currentVarOffset() << "\n";
             }
-        } else if (target->arr) {
+        } else if (target->arr &&
+                   reinterpret_cast<uintptr_t>(target->arr.get()) >= 0x10000) {
             int64_t i = toInt(target->key);
             auto& items = target->arr->items;
             if (i >= 0 && i < static_cast<int64_t>(items.size())) items[static_cast<size_t>(i)] = v;
-        } else if (target->map) {
+        } else if (target->map &&
+                   reinterpret_cast<uintptr_t>(target->map.get()) >= 0x10000) {
             target->map->insert(target->key, v);
         }
     }
@@ -5005,8 +5427,25 @@ private:
         hargs.push_back(make_int(y));
         hargs.push_back(make_int(flag));
         try {
-            if (c->func) {
-                callFunctionPointer(c->func, hargs);
+            // vm_callFunPtr: the body is re-addressed through pObject +
+            // funOffset on EVERY call - never through the cached pointer, which
+            // can be stale after a merged-table rebuild (0xc0000005
+            // access=execute).  An efun-closure hook (liveClosureFunc returns
+            // null for it) goes through the efun-by-name fallback.
+            const OriginalFunction* hfn = liveClosureFunc(c);
+            if (hfn) {
+                const OriginalObject* master = objectRegistry().masterObj;
+                if (c->owner && c->owner != &obj_ && c->owner != master) {
+                    // Foreign program: vm_callInUserFunBody runs the body in
+                    // the OWNER's context (thisObject switched to pObject);
+                    // running it on THIS VM would read this object's
+                    // string/var tables.
+                    if (auto ownerVm = closureOwnerVm(c)) {
+                        ownerVm->callFunctionPointer(hfn, hargs);
+                        return;
+                    }
+                }
+                callFunctionPointer(hfn, hargs);
             } else if (!c->functionName.empty()) {
                 callFunctionByName(c->functionName, hargs);
             }
@@ -6300,12 +6739,25 @@ private:
                 // 0xc00000fd after ~16k levels, right at
                 // /gs/daemons/import/scroll.o::create -> create_data ->
                 // read_etc_file("scroll.list").
-                const OriginalFunction* mfn = cl->func;
-                if (!mfn && cl->funcIndex >= 0 && !cl->efunClosure) {
-                    auto fit = funcsByIndex_.find(cl->funcIndex);
-                    mfn = (fit != funcsByIndex_.end()) ? fit->second : findMasterFunction(cl->funcIndex);
-                }
-                if (!mfn && !cl->efunClosure) mfn = findFunctionAny(cl->functionName);
+                // Resolve from the owner's CURRENT merged table, exactly like
+                // the original: pObject + funOffset re-read on every call
+                // (liveClosureFunc).  The cached pointer can be stale after a
+                // table merge, and executing it jumps into freed memory; an
+                // efun closure (ClosureValue::efunClosure) resolves to null
+                // here on purpose - its funcIndex is the EFUN slot and
+                // collides with real merged-table indexes - and falls through
+                // to the efun-by-name call below.
+                //
+                // The efun case MUST be a direct efun call: re-entering this
+                // dispatcher with the SAME efun index and the SAME arguments
+                // (the first attempt did `return callEfunWithArgs(efunIndex,
+                // args)` when nothing resolved) recursed
+                //     callEfunWithArgs -> mapping_array -> callEfunWithArgs -> ...
+                // with one C++ frame pair per level; the boot died with
+                // 0xc00000fd after ~16k levels, right at
+                // /gs/daemons/import/scroll.o::create -> create_data ->
+                // read_etc_file("scroll.list").
+                const OriginalFunction* mfn = liveClosureFunc(cl);
                 if (!mfn) {
                     int eidx = -1;
                     const auto& efunNames = efunNameTable();
@@ -6992,62 +7444,37 @@ private:
                 timerUnregister(e);
                 return make_int(0);
             }
-            if (nm == "sort" && args.size() >= 2 && args[0].index() == 5) {
-                // vm_f_sort (0x80dbf4c): sort(array, cmp_func) sorts ascending by
-                // the comparison function's result.  cmd_l_get_server_list does
-                //   sort(values(server_list), (: sort_by_server_id :))
-                // where sort_by_server_id(data) returns data["id"].
-                auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-                std::vector<Value> items = src->items;
-                Value cmp = args[1];
-                auto invokeCmp = [&](const Value& v) -> Value {
-                    if (cmp.index() != 8) return make_int(0);
-                    auto cl = std::get<std::shared_ptr<ClosureValue>>(cmp);
-                    std::vector<Value> all = cl->boundArgs;
-                    all.push_back(v);
-                    const OriginalObject* master = objectRegistry().masterObj;
-                    if (cl->func && (cl->owner == nullptr || cl->owner == &obj_ || cl->owner == master)) {
-                        return executeFunctionFromOutside(*cl->func, all);
-                    }
-                    if (cl->owner && cl->owner != &obj_) {
-                        auto& reg = objectRegistry();
-                        std::shared_ptr<OriginalVm> ownerVm;
-                        {
-                            std::lock_guard<std::recursive_mutex> rl(registryMutex());
-                            for (auto& kv : reg.vms)
-                                if (&kv.second->object() == cl->owner) { ownerVm = kv.second; break; }
-                        }
-                        if (ownerVm) {
-                            if ((cl->functionName == "convert_to_int" ||
-                                 (cl->func && cl->func->name == "convert_to_int")) &&
-                                LPCVM_GETENV("LPCVM_ERR_TRACE")) {
-                                std::string chain;
-                                for (const auto& fr : es_->frames) {
-                                    std::string fnm = fr.fn ? fr.fn->name : "<ctx>";
-                                    if (!chain.empty()) chain += "<-";
-                                    chain += fnm;
-                                }
-                                std::string adbg;
-                                for (auto& a : all) {
-                                    if (!adbg.empty()) adbg += " | ";
-                                    adbg += std::to_string(a.index()) + ":" + to_string(a, false).substr(0, 100);
-                                }
-                                std::cerr << "[c2i-call:sort] callerObj=" << objName_ << " chain=[" << chain
-                                          << "] target=" << ownerVm->objName() << " [" << adbg << "]\n";
-                                std::cerr.flush();
-                            }
-                            if (cl->func) return ownerVm->callFunctionPointer(cl->func, all);
-                            return ownerVm->callFunctionByName(cl->functionName, all);
-                        }
-                    }
-                    return make_int(0);
-                };
-                std::stable_sort(items.begin(), items.end(), [&](const Value& a, const Value& b) {
-                    return toInt(invokeCmp(a)) < toInt(invokeCmp(b));
-                });
-                auto out = std::make_shared<ArrayValue>();
-                out->items = std::move(items);
-                return out;
+            // sort(array[, cmp_func[, direction]]).
+            // The ARRAY is not always args[0]: the 3-argument form used by
+            // next_round.c::sort_obs_by_speed
+            //     sort(obs, (: sort_by_speed :), -1)
+            // reaches this handler with the direction/closure in front of the
+            // array, and requiring args[0] to be an array made the whole call
+            // fall through to the generic efun, which returns an EMPTY array.
+            // obs_hp then became ({}) and the round loop
+            //     loop (ob in obs_hp) { ... do_action(ob); ... }
+            // executed NOBODY - the "player defends and then every monster and
+            // pet just stands there" bug.  Locate the array/comparator/direction
+            // by type instead of by position.
+            // sort(array[, cmp_func[, order]]) - vm_f_sort.  The ARRAY is not
+            // always args[0]: the 3-argument form used by
+            // next_round.c::sort_obs_by_speed
+            //     sort(obs, (: sort_by_speed :), -1)
+            // reaches this handler with the direction/closure in front of the
+            // array, and requiring args[0] to be an array made the whole call
+            // fall through to the generic efun, which returned an EMPTY array -
+            // the "player defends and then every monster and pet just stands
+            // there" bug.  efunSort locates the array/comparator/order by type.
+            if (nm == "sort") {
+                if (LPCVM_GETENV("LPCVM_SORTDBG")) {
+                    std::string ad;
+                    for (size_t ai = 0; ai < args.size(); ++ai)
+                        ad += (ai ? " | " : "") + std::to_string(args[ai].index()) + ":" +
+                              to_string(args[ai], false).substr(0, 30);
+                    std::cerr << "[sortargs] n=" << args.size() << " [" << ad << "] obj=" << objName_ << "\n";
+                    std::cerr.flush();
+                }
+                return efunSort(args);
             }
             if (h == 0xF1613230774E7E45ull) {
                 // vm_f_relinquish: the LPC startup code (load_all etc.) calls
@@ -7352,6 +7779,17 @@ private:
                           << "] procEntry=" << procE << "\n";
                 std::cerr.flush();
             }
+            // Record the VM that is executing this efun BEFORE handing control to
+            // builtins.cpp: efuns that need to call back into LPC (sort's
+            // comparator, filter/map callbacks) resolve the closure's program
+            // through this.  Without it they silently returned 0 and `sort`
+            // fell back to insertion order - which broke combat ordering
+            // (defending player always first -> get_action_ob() returned 0 and
+            // no member acted for the round).
+            t_efunCallerVm = this;
+            // (sort is handled ABOVE by efunSort - vm_f_sort/vm_f_sort_mapping;
+            // it must run on THIS VM because the comparator is an LPC function
+            // that needs a real frame, which builtins.cpp cannot provide.)
             Value bres = call_builtin(nullptr, nm, args);
             if (nm == "move_in_map" || nm == "put_in_map" || nm == "remove_from_map")
                 fireMapHooks(nm, args);
@@ -12464,7 +12902,49 @@ private:
                         // (see [vmown]) needs the original's model: a frame stack
                         // per PCB.
                         int64_t qid = queueResolveId(qv);
+                        // Spin breaker, mirroring the original's per-process
+                        // function-call depth guard ("Too depth (%d) function
+                        // call!" once vm_funCp reaches vm_funContextSize, 128
+                        // in the gameshell config): a closure whose execution
+                        // QUEUES the same-named closure again is a self
+                        // re-dispatch loop - dbaserverd.process_command
+                        // resolving to its own dispatcher override spun
+                        // dispatch_ddb_service 199k times in 5 minutes this
+                        // way.  128 consecutive self-dispatches -> the
+                        // original's error instead of an infinite spin.
+                        // Normal traffic never trips: the sending frame is
+                        // the CALLER there, not the closure itself.
+                        if (v.index() == 8) {
+                            auto clv = std::get<std::shared_ptr<ClosureValue>>(v);
+                            const std::string* topName =
+                                (es_->frames.empty() || !es_->frames.back().fn)
+                                    ? nullptr : &es_->frames.back().fn->name;
+                            thread_local std::string t_lastSelfName;
+                            thread_local int t_selfSends = 0;
+                            if (clv && topName && !clv->functionName.empty() &&
+                                clv->functionName == *topName) {
+                                if (++t_selfSends >= 128)
+                                    throw VmError("Too depth (128) function call!\n");
+                            } else {
+                                t_selfSends = 0;
+                            }
+                        }
                         bool ok = queueSend(qid, v);
+                        // A queue message that is not a closure arrives at the
+                        // threadd daemon as "Bad message in THREAD_D, expected
+                        // function got (undefined)" and the login dies.  Print
+                        // the sender UNCONDITIONALLY (the trace envs slow the
+                        // thread enough to hide this) - the frame name names
+                        // the LPC culprit directly.
+                        if (v.index() != 8)
+                            std::cerr << "[q-send-BAD] qid=" << qid
+                                      << " vtype=t" << v.index()
+                                      << " obj=" << objName_
+                                      << " fn=" << (es_->frames.empty() || !es_->frames.back().fn
+                                                        ? std::string("<global>")
+                                                        : es_->frames.back().fn->name)
+                                      << " this=" << thisObjectName_
+                                      << " ip=" << es_->lastIp << "\n";
                         static const std::atomic<bool>& qSendTrace =
                             dynProbeFlag("LPCVM_QUEUE_TRACE");
                         if (envFlagTail() || qSendTrace.load(std::memory_order_relaxed)) {
@@ -12476,6 +12956,11 @@ private:
                             std::cerr << "[q-send] qid=" << qid << " ok=" << ok
                                       << " obj=" << objName_ << " fn=" << cf
                                       << " this=" << thisObjectName_ << " qv=" << qvdesc
+                                      << " vtype=t" << v.index()
+                                      << (v.index() == 8 && std::get<std::shared_ptr<ClosureValue>>(v)
+                                                              ? (" name=" + std::get<std::shared_ptr<ClosureValue>>(v)->functionName +
+                                                                 " nbound=" + std::to_string(std::get<std::shared_ptr<ClosureValue>>(v)->boundArgs.size()))
+                                                              : std::string())
                                       << " ip=" << es_->lastIp
                                       << " vm=" << this << "\n";
                         }
@@ -14198,7 +14683,8 @@ private:
                                       << (cx ? cx->functionName : std::string("?")) << "\" idx="
                                       << (cx ? cx->funcIndex : -1) << " owner="
                                       << (cx && cx->owner ? cx->owner->sourceName : std::string("null"))
-                                      << " func=" << (cx && cx->func ? cx->func->name : std::string("null"))
+                                      << " func=" << (cx && cx->func && originalHomeVmOf(cx->func)
+                                                         ? cx->func->name : std::string("stale-or-null"))
                                       << " bound=" << (cx ? cx->boundArgs.size() : 0)
                                       << " obj=" << objName_ << "\n";
                         } else {
@@ -14251,7 +14737,8 @@ private:
                         if (nbA++ < 400) {
                             std::cerr << "[nb-apply] " << (cl2 ? cl2->functionName : std::string("?"))
                                       << " bound=" << (cl2 ? cl2->boundArgs.size() : 0)
-                                      << " func=" << ((cl2 && cl2->func) ? cl2->func->name : std::string("null"))
+                                      << " func=" << ((cl2 && cl2->func && originalHomeVmOf(cl2->func))
+                                                          ? cl2->func->name : std::string("stale-or-null"))
                                       << " owner=" << ((cl2 && cl2->owner) ? cl2->owner->sourceName : std::string("null"))
                                       << " " << nbClosureDesc(funItem.value)
                                       << "\n";
@@ -14426,32 +14913,70 @@ private:
                     std::vector<Value> all = cl->boundArgs;
                     all.insert(all.end(), args.begin(), args.end());
                     const OriginalFunction* fn = nullptr;
+                    // Cross-owner: the live record re-addressed through the
+                    // OWNER's merged table, used ONLY for the ownership
+                    // retarget identity checks below - the dispatch itself
+                    // must stay on the detached owner-VM path.
+                    const OriginalFunction* xown = nullptr;
                     const OriginalObject* master = objectRegistry().masterObj;
                     bool sameOwner = (cl->owner == nullptr) || (cl->owner == &obj_) || (cl->owner == master);
-                    // Prefer the function captured at closure-creation time:
-                    // create_function_value(n) binds the EXACT merged function
-                    // at index n.  Re-resolving by name later can pick a
-                    // DIFFERENT (overriding) copy in the current VM - e.g.
-                    // handler_module's process_command (merged 32) vs
-                    // accountd's own process_command (153) - which changed the
-                    // dispatch target and caused an infinite re-dispatch loop.
-                    if (cl->func && sameOwner) {
-                        // global function (owner = master) or same-object:
-                        // run inline on THIS VM's stack/obj vars.
-                        fn = cl->func;
-                    } else if (cl->funcIndex >= 0 && !cl->func && !cl->efunClosure) {
-                        // legacy closure without a func pointer
-                        auto fit = funcsByIndex_.find(cl->funcIndex);
-                        if (fit != funcsByIndex_.end()) {
-                            fn = fit->second;
-                        } else if (const OriginalFunction* gfn = findMasterFunction(cl->funcIndex)) {
-                            fn = gfn;
-                        }
+                    // funOffset-style addressing, mirroring vm_callFunPtr: the
+                    // closure carries pObject + funOffset and EVERY call
+                    // re-addresses the body in the OWNER PROGRAM'S MERGED
+                    // table; the cached pointer is refreshed by the resolver,
+                    // never trusted.  Index addressing still binds the EXACT
+                    // merged function captured at creation time
+                    // (create_function_value(n) -> merged index n) - unlike a
+                    // name re-resolution, which can pick a DIFFERENT
+                    // (overriding) copy in the current VM (handler_module's
+                    // process_command, merged 32, vs accountd's own 153 ->
+                    // infinite re-dispatch loop).
+                    //   same-owner / global closure -> resolve here and run
+                    //   INLINE on this VM (vm_callInUserFunBody with
+                    //   thisObject unchanged);
+                    //   other-owner closure -> the DETACHED owner-VM
+                    //   invocation below (an inline run inside the reply
+                    //   dispatcher parks the dispatcher and stops every later
+                    //   reply - msg_cfg_*/operate_done replies died exactly
+                    //   that way when cross-owner closures were routed
+                    //   inline).  No name fallback here: a lookup in THIS
+                    //   program could pick an overriding copy.
+                    if (sameOwner) {
+                        fn = liveClosureFunc(cl);
+                    } else if (!cl->efunClosure && cl->owner && cl->owner != &obj_) {
+                        xown = liveClosureFunc(cl, /*allowNameFallback=*/false);
                     }
                     if (vmEnvTrace() && cl->funcIndex >= 0)
                         std::cerr << "[cfv] closure by-index " << cl->functionName
                                   << " idx=" << cl->funcIndex
                                   << " -> " << (fn ? fn->name : "?") << "\n";
+                    // LPCVM_CFV probe (hot: _probe_on\LPCVM_CFV): what did the
+                    // funOffset-style resolution pick, and what would the
+                    // by-NAME fallback on THIS VM resolve to?  Catches
+                    // base-vs-override mismatch (process_command re-dispatch
+                    // loops) with the record indexes and code sizes.
+                    {
+                        static const std::atomic<bool>& cfvP = dynProbeFlag("LPCVM_CFV");
+                        static std::atomic<int> cfvN{0};
+                        if (cfvP.load(std::memory_order_relaxed) && cfvN.fetch_add(1) < 60000) {
+                            const OriginalFunction* byName =
+                                cl->functionName.empty() ? nullptr : findFunctionAny(cl->functionName);
+                            std::cerr << "[cfv-probe] thisVm=" << obj_.sourceName
+                                      << " fn=" << cl->functionName << " idx=" << cl->funcIndex
+                                      << " owner=" << (cl->owner ? cl->owner->sourceName : std::string("-"))
+                                      << " sameOwner=" << sameOwner
+                                      << " live=" << (fn ? fn->name + "#" + std::to_string(fn->index) +
+                                                          "/off" + std::to_string(fn->funOffset) +
+                                                          "/sz" + std::to_string(fn->code.size()) : std::string("0"))
+                                      << " xown=" << (xown ? xown->name + "#" + std::to_string(xown->index) +
+                                                           "/off" + std::to_string(xown->funOffset) +
+                                                           "/sz" + std::to_string(xown->code.size()) : std::string("0"))
+                                      << " byNameHere=" << (byName ? byName->name + "#" + std::to_string(byName->index) +
+                                                                     "/sz" + std::to_string(byName->code.size()) : std::string("0"))
+                                      << "\n";
+                            std::cerr.flush();
+                        }
+                    }
                     if (fn) {
                         // The closure's function may belong to a DIFFERENT
                         // object's program than the one executing now (a global
@@ -14575,8 +15100,15 @@ private:
                         // to the function's HOME instance, keeping the detached
                         // invocation (an inline run inside the reply dispatcher
                         // parks the dispatcher and stops every later reply).
-                        if (cl->func && (!ownerVm || !ownerVm->ownsFunction(cl->func))) {
-                            auto hv = homeVmMutable(cl->func);
+                        // Identity tests only: the live record re-addressed
+                        // through the owner's merged table (xown) wins; the
+                        // captured pointer is the fallback for closures whose
+                        // owner VM is gone (no table to re-address against) -
+                        // it is never executed here, so a stale one cannot
+                        // crash.
+                        const OriginalFunction* own = xown ? xown : (fn ? fn : cl->func);
+                        if (own && (!ownerVm || !ownerVm->ownsFunction(own))) {
+                            auto hv = homeVmMutable(own);
                             if (hv) {
                                 if (LPCVM_GETENV("LPCVM_EVDBG") || vmEnvTrace())
                                     std::cerr << "[cfv] owner-instance retarget "
@@ -14587,6 +15119,27 @@ private:
                             }
                         }
                         if (ownerVm) {
+                            // LPCVM_CFV probe: the owner-VM dispatch resolves
+                            // BY NAME below - print what that name resolves to
+                            // on the owner VM (override vs captured base).
+                            {
+                                static const std::atomic<bool>& cfvP2 = dynProbeFlag("LPCVM_CFV");
+                                static std::atomic<int> cfvN2{0};
+                                if (cfvP2.load(std::memory_order_relaxed) && cfvN2.fetch_add(1) < 30000) {
+                                    const OriginalFunction* byName = ownerVm->findFunctionAny(cl->functionName);
+                                    std::cerr << "[cfv-probe2] dispatchVm=" << ownerVm->objName()
+                                              << " fn=" << cl->functionName
+                                              << " idx=" << cl->funcIndex
+                                              << " owner=" << (cl->owner ? cl->owner->sourceName : std::string("-"))
+                                              << " byNameOnOwner=" << (byName ? byName->name + "#" +
+                                                                    std::to_string(byName->index) + "/off" +
+                                                                    std::to_string(byName->funOffset) + "/sz" +
+                                                                    std::to_string(byName->code.size()) : std::string("0"))
+                                              << " xown=" << (xown ? xown->name + "#" + std::to_string(xown->index) : std::string("0"))
+                                              << " -> detached byName\n";
+                                    std::cerr.flush();
+                                }
+                            }
                             if ((vmEnvTrace() || vmEnvEventTrace()) &&
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
                                 std::cerr << "[cfptr] owner-init " << cl->functionName
@@ -14613,8 +15166,7 @@ private:
                                               << " on " << ownerVm->object().sourceName
                                               << " vm=" << this << " ownerVm=" << ownerVm.get() << "\n";
                                 try {
-                                    if (cl->func) result = ownerVm->callFunctionPointer(cl->func, all);
-                                    else result = ownerVm->callFunctionByName(cl->functionName, all);
+                                    result = ownerVm->callFunctionByName(cl->functionName, all);
                                     if (vmEnvTrace() || vmEnvEventTrace() || constructDiagOn() ||
                                         (LPCVM_GETENV("LPCVM_TAIL") && (cl->functionName == "do_init" || cl->functionName == "do_init_after_loaded")))
                                         std::cerr << "[postinit-ok] " << cl->functionName
@@ -14652,7 +15204,7 @@ private:
                                 } catch (...) {
                                     result = make_int(0);
                                 }
-                            } else if (cl->func) {
+                            } else {
                                 if (cl->functionName == "convert_to_int" && LPCVM_GETENV("LPCVM_ERR_TRACE")) {
                                     std::string chain;
                                     for (const auto& fr : es_->frames) {
@@ -14670,48 +15222,78 @@ private:
                                               << " clName=" << cl->functionName << " [" << adbg << "]\n";
                                     std::cerr.flush();
                                 }
-                                result = runDetached([&] { return ownerVm->callFunctionPointer(cl->func, all); });
-                            } else
-                                result = runDetached([&] { return ownerVm->callFunctionByName(cl->functionName, all); });
+                                // funOffset-style dispatch (vm_callFunPtr:
+                                // vm_callInUserFunBody runs the body at
+                                // pObject->pFunctions[funOffset]): the record
+                                // re-addressed from the OWNER's merged table -
+                                // NEVER a by-name lookup here.  byNameOnOwner
+                                // picks the LOWEST-index same-name record,
+                                // which for dbaserverd.process_command is the
+                                // OWN dispatcher override (#32) instead of the
+                                // captured base (#6/sz21) - the override
+                                // re-dispatches itself and dba spins at
+                                // dispatch_ddb_service forever (measured:
+                                // 199k [q-send] in 5 min, gs never boots).
+                                result = runDetached([&] {
+                                    return xown ? ownerVm->callFunctionPointer(xown, all)
+                                                : ownerVm->callFunctionByName(cl->functionName, all);
+                                });
+                            }
                             if ((vmEnvTrace() || vmEnvEventTrace()) &&
                                 (cl->functionName == "init" || cl->functionName == "do_init"))
                                 std::cerr << "[cfptr] owner-init DONE " << cl->functionName
                                           << " on " << ownerVm->object().sourceName << "\n";
-                        } else if (cl->func) {
+                        } else {
                             // No owner instance in the registry at all: the
-                            // closure's function is still callable - run it
-                            // inline with its HOME tables instead of dropping
-                            // the call silently (a dropped operate_done is a
-                            // lost DBA wakeup).
-                            const OriginalVm* h = originalHomeVmOf(cl->func);
-                            std::shared_ptr<std::vector<Value>> hv;
-                            const std::vector<std::string>* hs = nullptr;
-                            const std::map<int, const OriginalFunction*>* hf = nullptr;
-                            if (h && h != this) {
-                                hv = h->ownObjVarsShared();
-                                hs = &h->object().strings;
-                                hf = &h->functionTable();
+                            // closure's function may still be callable - run
+                            // it inline with its HOME tables instead of
+                            // dropping the call silently (a dropped
+                            // operate_done is a lost DBA wakeup).
+                            // funOffset-style: the live record re-addressed
+                            // through the merged table (fn) wins; the captured
+                            // pointer is used only when it still lies inside a
+                            // LIVE program table (originalHomeVmOf finds its
+                            // home).  A stale pointer into a reallocated table
+                            // has no home and is refused - the equivalent of
+                            // the original's "Owner object is destructed,
+                            // can't invoke function." error instead of
+                            // executing freed memory (0xc0000005
+                            // access=execute).
+                            const OriginalFunction* missFn = fn;
+                            const OriginalVm* h = missFn ? originalHomeVmOf(missFn) : nullptr;
+                            if (!missFn && cl->func) {
+                                h = originalHomeVmOf(cl->func);
+                                if (h) missFn = cl->func;
                             }
-                            if (LPCVM_GETENV("LPCVM_EVDBG") || vmEnvTrace())
-                                std::cerr << "[cfv] owner-vm missing " << cl->functionName
-                                          << " ownerKey=" << cl->ownerKey
-                                          << " home=" << (h ? h->objName() : std::string("?"))
-                                          << " -> inline\n";
-                            bool ph2 = pushArgsForFunction(*cl->func, all);
-                            inlineStarted = startInlineFunction(*cl->func, ph2, static_cast<int>(all.size()),
-                                                                hv, hs, hf);
-                        } else if (inPostInit) {
-                            // post_init closure whose owner VM is gone (or the
-                            // closure's owner is not in the registry): the LPC
-                            // post_init loop's try/catch would swallow an error
-                            // from a daemon init and continue with the next
-                            // closure.  Mirror that here so one failing init
-                            // (e.g. a task template register that errors) cannot
-                            // kill the master's post_init loop and stall the
-                            // whole startup.
-                            if (vmEnvTrace())
-                                std::cerr << "[postinit-skip] " << cl->functionName
-                                          << " owner VM missing, continue\n";
+                            if (missFn && h) {
+                                std::shared_ptr<std::vector<Value>> hv;
+                                const std::vector<std::string>* hs = nullptr;
+                                const std::map<int, const OriginalFunction*>* hf = nullptr;
+                                if (h != this) {
+                                    hv = h->ownObjVarsShared();
+                                    hs = &h->object().strings;
+                                    hf = &h->functionTable();
+                                }
+                                if (LPCVM_GETENV("LPCVM_EVDBG") || vmEnvTrace())
+                                    std::cerr << "[cfv] owner-vm missing " << cl->functionName
+                                              << " ownerKey=" << cl->ownerKey
+                                              << " home=" << h->objName() << " -> inline\n";
+                                bool ph2 = pushArgsForFunction(*missFn, all);
+                                inlineStarted = startInlineFunction(*missFn, ph2, static_cast<int>(all.size()),
+                                                                    hv, hs, hf);
+                            } else if (inPostInit) {
+                                // post_init closure whose owner VM is gone (or the
+                                // closure's owner is not in the registry): the LPC
+                                // post_init loop's try/catch would swallow an error
+                                // from a daemon init and continue with the next
+                                // closure.  Mirror that here so one failing init
+                                // (e.g. a task template register that errors) cannot
+                                // kill the master's post_init loop and stall the
+                                // whole startup.
+                                if (vmEnvTrace())
+                                    std::cerr << "[postinit-skip] " << cl->functionName
+                                              << " owner VM missing, continue\n";
+                            }
                         }
                     } else {
                         // The closure may reference a builtin efun (e.g. the
@@ -16475,12 +17057,43 @@ private:
         }
         if (container.index() == 6) {
             auto mp = std::get<std::shared_ptr<MappingValue>>(container);
+            // A NULL mapping payload must read as undefined instead of being
+            // dereferenced.  This is the crash that stopped every combat round:
+            // next_round -> sort_obs_by_speed -> get_speed_effect ->
+            // lite_query -> lite_query_temp -> `tmp_dbase[path]`, where the
+            // object's tmp_dbase global had never been materialised (null
+            // shared_ptr).  0xc0000005 at mp->find().  Monsters therefore never
+            // reached do_action and the round died (or, before, the whole gs
+            // process did).
+            // The 2026-10-28 combat crash is 0xc0000005 at addr=0x00000001 - a
+            // payload pointer whose VALUE is literally 1, not 0 - inside
+            // tmp_dbase[path] < lite_query_temp < lite_query < get_speed_effect
+            // < sort_by_speed.  Treat any implausible payload (below the lowest
+            // possible heap address) as a miss and name the culprit in the log.
+            if (!mp || reinterpret_cast<uintptr_t>(mp.get()) < 0x10000) {
+                static int garbageN = 0;
+                if (garbageN++ < 20)
+                    std::cerr << "[map-garbage] key=" << to_string(key, false)
+                              << " ptr=0x" << std::hex
+                              << reinterpret_cast<uintptr_t>(mp.get()) << std::dec
+                              << " obj=" << objName_ << "\n";
+                return Value{};
+            }
             const Value* hit = mp->find(key);
             if (hit) return *hit;
             return Value{};   // miss -> original type 0 "undefined"
         }
         if (container.index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(container);
+            if (!arr || reinterpret_cast<uintptr_t>(arr.get()) < 0x10000) {
+                static int garbageA = 0;
+                if (garbageA++ < 20)
+                    std::cerr << "[arr-garbage] key=" << to_string(key, false)
+                              << " ptr=0x" << std::hex
+                              << reinterpret_cast<uintptr_t>(arr.get()) << std::dec
+                              << " obj=" << objName_ << "\n";
+                return Value{};
+            }
             int64_t i = toInt(key);
             if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) return arr->items[static_cast<size_t>(i)];
             return Value{};   // OOB -> original type 0 "undefined"
@@ -22219,6 +22832,62 @@ namespace lpc {
 // file's anonymous namespace, so other translation units cannot reach it.
 void registerServiceSocket(int fd, std::function<bool(unsigned int fd)> cb) {
     scheduler().addServiceSocket(fd, std::move(cb));
+}
+
+// Public entry point (declared in interpreter.h): call a closure value from
+// inside an efun implementation (builtins.cpp), on the VM that invoked the efun.
+//
+// This exists because `sort(array, cmp_closure, direction)` MUST use the
+// comparator: vm_f_sort (0x80dbf4c) reads the order from the last argument and
+// sorts with the closure's key.  Our builtins.cpp `sort` ignored the closure and
+// sorted by to_string(value) instead, so next_round.c's
+//     sort_obs_by_speed_ex(obs)  ==  sort(obs, (: sort_by_speed_ex :), -1)
+// ordered the combat members by OBJECT NAME: "clone:gs/clone/char/user.o" sorts
+// before "clone:gs/clone/monster/basic.o", so the player was always first in the
+// fastest group.  get_action_ob() then saw the defending player as ob_arr[0],
+// hit `if (ob_arr[0]->is_in_status("defense")) return 0;` and the whole slow
+// phase returned - every monster and pet stood still for the round.
+Value callClosureForEfun(const Value& closure, const std::vector<Value>& args) {
+    if (closure.index() != 8) return Value{};
+    auto cl = std::get<std::shared_ptr<ClosureValue>>(closure);
+    if (!cl) return Value{};
+    // The original's Vm_Fun_Ptr_T carries pObject (the owning program) plus
+    // funOffset, and the call always runs on THAT program - so resolve the VM
+    // from the closure's owner instead of the thread-local "current efun caller"
+    // (which is not set on every efun dispatch path; that is why the comparator
+    // silently returned 0 and sort() fell back to the insertion order).
+    std::shared_ptr<OriginalVm> vm;
+    {
+        std::lock_guard<std::recursive_mutex> rl(registryMutex());
+        auto& reg = objectRegistry();
+        if (cl->owner) {
+            // The exact creating instance first: clones share the template's
+            // OriginalObject, so an object()-only match can bind the closure
+            // to an OLDER clone of the same program.
+            if (!cl->ownerKey.empty()) {
+                auto itK = reg.vms.find(cl->ownerKey);
+                if (itK != reg.vms.end()) vm = itK->second;
+            }
+            if (!vm) {
+                for (auto& kv : reg.vms) {
+                    if (&kv.second->object() == cl->owner) { vm = kv.second; break; }
+                }
+            }
+        }
+    }
+    if (!vm) {
+        const OriginalVm* cur = t_efunCallerVm;
+        if (cur) vm = std::shared_ptr<OriginalVm>(const_cast<OriginalVm*>(cur), [](OriginalVm*) {});
+    }
+    if (!vm) return Value{};
+    // Resolve the comparator by NAME on the owning program, like the original
+    // (which stores pObject + funOffset and resolves the body on every call).
+    // The cached OriginalFunction* is only a fallback and callFunctionPointer
+    // refuses it when it no longer lies inside a live program table.
+    if (!cl->functionName.empty()) return vm->callFunctionByName(cl->functionName, args);
+    const OriginalFunction* fn = vm->liveClosureFunc(cl);
+    if (fn) return vm->callFunctionPointer(fn, args);
+    return Value{};
 }
 
 } // namespace lpc
