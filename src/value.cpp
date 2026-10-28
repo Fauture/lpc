@@ -274,7 +274,23 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         switch (key.index()) {
         case 5: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<ArrayValue>>(key).get()); break;
         case 6: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<MappingValue>>(key).get()); break;
-        case 7: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<ObjectValue>>(key).get()); break;
+        case 7: {
+            // OBJECT keys hash by the object's logical path (programName).
+            // NOTE: `object(<this>)` values all have the literal "<this>", and
+            // clones of one program share its path, so they collapse into one
+            // key.  Switching to the per-object `owner` pointer fixes that but
+            // made the gs boot hang (mapping lookups stalled during load), so it
+            // is reverted here until the stall is understood.
+            const auto& ov = std::get<std::shared_ptr<ObjectValue>>(key);
+            uint32_t h = 2166136261u;
+            if (ov) {
+                for (unsigned char c : ov->programName) {
+                    h ^= c;
+                    h *= 16777619u;
+                }
+            }
+            return h;
+        }
         case 8: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<ClosureValue>>(key).get()); break;
         case 9: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<LoopCtrl>>(key).get()); break;
         default: p = key.index(); break;
@@ -359,7 +375,14 @@ bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {    if (a.
         return striequal(std::get<SharedString>(a), std::get<SharedString>(b));
     case 5: return std::get<std::shared_ptr<ArrayValue>>(a).get() == std::get<std::shared_ptr<ArrayValue>>(b).get();
     case 6: return std::get<std::shared_ptr<MappingValue>>(a).get() == std::get<std::shared_ptr<MappingValue>>(b).get();
-    case 7: return std::get<std::shared_ptr<ObjectValue>>(a).get() == std::get<std::shared_ptr<ObjectValue>>(b).get();
+    case 7: {
+        // Object keys compare by programName (matching the hash above).
+        const auto& oa = std::get<std::shared_ptr<ObjectValue>>(a);
+        const auto& ob = std::get<std::shared_ptr<ObjectValue>>(b);
+        if (oa.get() == ob.get()) return true;
+        if (!oa || !ob) return false;
+        return oa->programName == ob->programName;
+    }
     case 8: return std::get<std::shared_ptr<ClosureValue>>(a).get() == std::get<std::shared_ptr<ClosureValue>>(b).get();
     case 9: return std::get<std::shared_ptr<LoopCtrl>>(a).get() == std::get<std::shared_ptr<LoopCtrl>>(b).get();
     case 10:

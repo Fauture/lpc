@@ -375,3 +375,14 @@ build/*.txt
 crashdumps/
 build/*.exe
 *.ini.bak
+
+# 鏍圭洰褰曠姝㈤殢鎵嬩骇鐢熺殑涓存椂鏂囦欢锛堣鍒欒 AGENTS.md / README銆岃剼鏈笌涓存椂鏂囦欢宸ヤ綔鐩綍銆嶏級
+/*.tar
+/*.zip
+/*.msg.txt
+gs_run/
+
+# 崩溃转储（GB 级）与 IDA 反编译输出（临时产物）
+dumps/
+_ida_out/
+

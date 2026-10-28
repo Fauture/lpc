@@ -25,10 +25,10 @@
 
 ```powershell
 cd C:\Users\Administrator\Desktop\lpc
-python -X utf8 _build.py
+python -X utf8 tools\_build.py
 ```
 
-`_build.py` 做四件事，避免"看起来成功其实没编"：
+`tools\_build.py` 做四件事，避免"看起来成功其实没编"：
 
 1. **杀掉正在跑的 lpcvm**（否则 exe 被占用，链接报 `LNK1104`）；
 2. `touch` 关键源码（`src/original_vm.cpp`、`builtins.cpp`、`value.cpp/.h`、`pak_loader.cpp`、`main.cpp`），
@@ -57,14 +57,14 @@ BUILD OK: C:\Users\Administrator\Desktop\lpc\build\Release\lpcvm.exe  3427328 by
 ```powershell
 cd C:\Users\Administrator\Desktop\lpc
 $env:EXTRA_LPCVM='LPCVM_QUIET=1'
-python -X utf8 _run_keep2.py gs_run          # gs_run = 日志目录名，任意取
+python -X utf8 tools\_run_keep2.py tmp\gs_run   # tmp\gs_run = 日志目录，任意取（放 tmp\ 下）
 ```
 
-`_run_keep2.py <LOG_DIR>` 的流程：
+`tools\_run_keep2.py <LOG_DIR>` 的流程：
 
 1. **单实例守卫**：先 `Stop-Process lpcvm`，再检查 `8001/8110/8120/8160`；只要有一个还被占，
    就打印 `!! ports still held by another process` 并**拒绝启动**（避免两套服务共用一个库）；
-2. **清库**：调 `_dbclear.py` 清空 `dl_ddb_1_test`（要保留数据就设 `KEEP_DB=1`）；
+2. **清库**：调 `tools\_dbclear.py` 清空 `dl_ddb_1_test`（要保留数据就设 `KEEP_DB=1`）；
    > 按本项目约定：**服务一律带清库启动**，除非明确要保留现场。
 3. `rmtree` 日志目录并重建，然后按 `aaa → dba → ccs → gs` 顺序启动（每个间隔 3 秒）：
    ```
@@ -90,7 +90,7 @@ $env:EXTRA_LPCVM='LPCVM_QUIET=1,LPCVM_TEMPKEY=1,LPCVM_INSN_FN=get_user_carry_dat
 ```powershell
 Test-NetConnection -ComputerName 192.168.200.1 -Port 8160 -InformationLevel Quiet   # 期望 True
 Get-Process lpcvm | Measure-Object | % { $_.Count }                                 # 期望 4
-Get-Content gs_run\live_gs.txt -Tail 5
+Get-Content tmp\gs_run\live_gs.txt -Tail 5
 ```
 
 **启动耗时按版本差异很大，必须等 8160 开口，别中途杀掉**：
@@ -114,8 +114,8 @@ Get-Process lpcvm -ErrorAction SilentlyContinue | Stop-Process -Force
 ## 4. 数据检查（起好之后）
 
 ```powershell
-python -X utf8 _verify_bag.py     # 角色存档 carry 分支：206+ 字节且有物品 = 正常；17 字节 = 丢背包
-python -X utf8 _dbclear.py        # 手动清 dl_ddb_1_test（KEEP_DB=1 跳过）
+python -X utf8 tools\_verify_save.py   # 角色存档 carry 分支：206+ 字节且有物品 = 正常；17 字节 = 丢背包
+python -X utf8 tools\_dbclear.py       # 手动清 dl_ddb_1_test（KEEP_DB=1 跳过）
 ```
 
 常用 SQL（测试库 `dl_ddb_1_test`，表 `data(path,name,branch,content,time,checksum)`）：
@@ -132,13 +132,14 @@ WHERE path='user' AND branch='carry' ORDER BY time DESC LIMIT 1;   -- 背包
 
 ## 5. 这套脚本的坑（都踩过）
 
-1. **被跟踪的脚手架会被 git 回退删掉**：`_run_keep2.py` / `_dbclear.py` 只在较新提交里被跟踪，
-   `git reset --hard <旧提交>` 会删除它们（服务因此起不来）。对策：仓库里另存**未被跟踪**的副本
-   （`_run4.py`、`_run_keep2_untracked.py`），回退不受影响；`_dbclear.py` 丢了就按
+1. **被跟踪的工具会被 git 回退删掉**：`tools\` 下的脚本（`tools\_build.py`、`tools\_run_keep2.py`、
+   `tools\_dbclear.py` 等）是**被跟踪**的，`git reset --hard <早期提交>` 会把整个 `tools\` 一起删掉
+   （服务因此起不来）。对策：回退前先把需要的工具拷到 `tmp\`（如 `copy tools\_build.py tmp\`），
+   或回退后从备份 zip（`C:\Users\Administrator\Desktop\bianyi\`）恢复 `tools\`；`_dbclear.py` 丢了就按
    "清空 `dl_ddb_1_test` 全部表、`KEEP_DB=1` 跳过"的语义重建。
 2. **运行中的服务会占用 exe**：不先停服务就编译 → `LNK1104`，而且旧 exe 还在，容易被误当成"新编译的"。
-   `_build.py` 已内置杀进程，手工编译时务必自己先停。
-3. **编译完必须重启服务**：`_build.py` 只产出 exe，不会自动拉起服务。
+   `tools\_build.py` 已内置杀进程，手工编译时务必自己先停。
+3. **编译完必须重启服务**：`tools\_build.py` 只产出 exe，不会自动拉起服务。
 4. **启动耗时差异大**：不要用固定的 60 秒判断失败；以 8160 是否 True 为准（见上表）。
 5. **不要在服务运行中改 `_probe_on\` 以外的环境变量**：`LPCVM_GETENV` 类开关只在进程启动时读一次；
    `dynProbeFlag` 类（`_probe_on\<名字>` 空文件）可以运行中热加载，1 秒生效、不用重启。
@@ -149,11 +150,11 @@ WHERE path='user' AND branch='carry' ORDER BY time DESC LIMIT 1;   -- 背包
 
 ```powershell
 # 1) 编译
-python -X utf8 _build.py
+python -X utf8 tools\_build.py
 
-# 2) 起服务（带清库；日志目录 gs_run）
+# 2) 起服务（带清库；日志目录 tmp\gs_run）
 $env:EXTRA_LPCVM='LPCVM_QUIET=1'
-python -X utf8 _run_keep2.py gs_run
+python -X utf8 tools\_run_keep2.py tmp\gs_run
 
 # 3) 等 8160 为 True（约 5–12 分钟，看版本线）
 Test-NetConnection -ComputerName 192.168.200.1 -Port 8160 -InformationLevel Quiet

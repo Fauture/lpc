@@ -5073,6 +5073,48 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[send_to_client] cno=" << cno << " body=" << data.size()
                           << " total=" << pkt.size() << "\n";
+            // Combat anti-cheat bookkeeping (always on, see noteCombatQuestion
+            // in game_service.h/cpp): remember the `question` of the 0x5203
+            // prompt sent to this client, so an echo in c_end_animate that never
+            // became ready on the client can be mapped back to the formula
+            // value.  0x5203 body = u16 subtype(0) | u32 0 | u16 wait(25) |
+            // u32 question | u16 round(1).
+            //
+            // The frame MUST be identified by its command number, never by size:
+            // many other packets are also 14 bytes long (0xFD39, 0x4E35, ...) and
+            // recording their bytes as "the question" silently corrupted the
+            // stored prompt (measured: the shim computed 150428407 for a real
+            // question that the LPC had answered 761379489).
+            {
+                const uint8_t* b = reinterpret_cast<const uint8_t*>(data.data());
+                const size_t n = data.size();
+                // send(cmd, len, buf) -> data is the payload; raw send(buf) ->
+                // data starts with the command word.  Two-argument
+                // ob->send(20995, buf) puts the command inside data as well.
+                bool isPrompt = false;
+                size_t po = 0;
+                if (args.size() >= 3) {
+                    isPrompt = ((msgNo & 0xFFFF) == 0x5203);
+                } else if (n >= 2 && b[0] == 0x52 && b[1] == 0x03) {
+                    isPrompt = true;
+                    po = 2;
+                }
+                // Body layout (14 bytes, verified against a real client capture):
+                //   [0..1] subtype 0 | [2..5] u32 0 | [6..7] wait_command_time
+                //   [8..11] question (BE) | [12..13] round (1)
+                // `po` skips the command word for the raw send() form, so the
+                // question lives at po+8..po+11.
+                if (isPrompt && n >= po + 14 && n <= po + 16 &&
+                    b[po + 2] == 0 && b[po + 3] == 0 &&
+                    b[po + 4] == 0 && b[po + 5] == 0 &&
+                    b[po + 12] == 0 && b[po + 13] == 1) {
+                    const uint32_t q = (static_cast<uint32_t>(b[po + 8]) << 24) |
+                                       (static_cast<uint32_t>(b[po + 9]) << 16) |
+                                       (static_cast<uint32_t>(b[po + 10]) << 8) |
+                                       static_cast<uint32_t>(b[po + 11]);
+                    lpc::noteCombatQuestion(cno, q);
+                }
+            }
             // LPCVM_SEND: full outbound packet audit (cmd + size + head bytes +
             // the LPC function that sent it).  Needed to tell "the server never
             // sent it" from "the client cannot read it" for client-visible
@@ -5103,7 +5145,39 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         // Full body for the two client-visible story packets
                         // (0x2603 task log, 0x20D1 drama) so they can be
                         // compared byte-for-byte with a real client capture.
-                        const bool fullBody = (sc == 0x2603 || sc == 0x20D1);
+                        // Combat scene/member packets additionally dumped in
+                        // full (2026-10-27, "no character model in combat"):
+                        //   0x39F1 send_combat_update_object / member update
+                        //   0xF0A9 build_combat_members_info (friends)
+                        //   0x1DE5 build_combat_members_info (opponents)
+                        //   0x251B build_improvement_ex
+                        //   0xFFDF send_start_combat
+                        const bool fullBody = (sc == 0x2603 || sc == 0x20D1 ||
+                                               sc == 0x39F1 || sc == 0xF0A9 ||
+                                               sc == 0x1DE5 || sc == 0x251B ||
+                                               sc == 0xFFDF ||
+                                               // 0x5203 = MSG_C_WAIT_COMMAND
+                                               // (combatd.c::wait_commands sends
+                                               // pad_buffer(0, make32(0),
+                                               //   wait_command_time, make32(question),
+                                               //   round)).  The client echoes the
+                                               // anti-cheat answer it computes from
+                                               // that question in c_end_animate; a
+                                               // wrong field width here makes every
+                                               // animate-done fail the answer check,
+                                               // so the round only advances on the
+                                               // set_timer fallback (~40s/round).
+                                               sc == 0x5203) ||
+                                              // LPCVM_SEND_FULL (=the marker file
+                                              // _probe_on\LPCVM_SEND_FULL): dump the
+                                              // WHOLE body of EVERY outbound packet,
+                                              // so the login/battle sequence can be
+                                              // diffed frame by frame against a real
+                                              // client capture (the loopback traffic of
+                                              // our own server cannot be sniffed, so
+                                              // the server side is the only witness).
+                                              dynProbeFlag("LPCVM_SEND_FULL")
+                                                  .load(std::memory_order_relaxed);
                         size_t cap3 = fullBody ? data.size() : (data.size() > 4000 ? 96 : 40);
                         for (size_t i = 0; i < data.size() && i < cap3; ++i) {
                             h3 += hx3[(static_cast<unsigned char>(data[i]) >> 4) & 15];
@@ -6716,14 +6790,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return mp;
     }
-    if (name == "put_sub_data") {
-        // vm_f_put_sub_data: put_sub_data(&str, pos, val) writes val into the
-        // string reference at pos (char or string).  We cannot mutate the
-        // caller's string reference from here; the bytecode-level callers
-        // (start_ccs) pass &str - return 0 and rely on the VM path.  Fallback
-        // for direct calls: no-op.
-        return make_int(0);
-    }
+    // put_sub_data is handled in the interpreter (original_vm.cpp efun
+    // dispatch) because it must write through the caller's reference; the old
+    // no-op stub here silently disabled anticheaterd::encrypt_script's XOR and
+    // the anti-cheat script reached the client as plaintext.
     if (name == "var_type" || name == "var_raw_type") {
         // vm_f_var_type (0x80dd70c): returns the STRING type name via
         // vm_valueType ("undefined"/"void"/"integer"/"float"/"string"/

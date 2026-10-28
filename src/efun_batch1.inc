@@ -31,6 +31,27 @@
 //   * csv_parse / break_utf8 / combine_utf8 port the original parsers.
 // =====================================================================
 
+// ---- apex anti-cheat channel (IDA: vm_f_enable_apex 0x807e030,
+//      vm_f_send_to_apex 0x807e124, CHSEnd 0x804be7c) --------------------
+// The original's apex path is an OPTIONAL PLUGIN loaded at run time:
+//   enable_apex([on])  on!=0 -> CHSStart() (dlopen the "ASclient" library; the
+//                              globals are g_hASclient / g_sh_start /
+//                              g_sh_exit / g_sh_setfunc) and CHSSetFunc()
+//                              installs the receive callback; returns 1 only
+//                              when that callback (apexRecv) got installed.
+//                       on==0 -> apexRecv = 0; CHSEnd() (dlclose) -> returns 1.
+//   send_to_apex(type, value, buf)
+//                      apexRecv installed -> forward and return its result;
+//                      otherwise -1.
+// This build has no such plugin, so ENABLING correctly fails (0), but
+// DISABLING must still answer 1 and send_to_apex must answer -1.  The old
+// catch-all stub below answered 0 for both, which is not what the driver did.
+if (name == "enable_apex") {
+    int64_t on = args.empty() ? 1 : as_int(args[0]);
+    return make_int(on ? 0 : 1);
+}
+if (name == "send_to_apex") return make_int(-1);
+
 // ---- debugger / tracing / profiling knobs (all no-ops in this build) ----
 if (name == "set_trace_level" || name == "xdebug" ||
     name == "set_primitive" || name == "trace_modules" ||
@@ -54,8 +75,7 @@ if (name == "set_trace_level" || name == "xdebug" ||
     name == "verigen_get_distortion_index" ||
     name == "verigen_set_no_distortion_char" ||
     name == "dbfs_compact" || name == "dbfs_openfs" ||
-    name == "save_map_info" || name == "enable_apex" ||
-    name == "send_to_apex" || name == "create_fs" ||
+    name == "save_map_info" || name == "create_fs" ||
     name == "pack_dir" || name == "fgetfpinfo")
     return make_int(0);
 if (name == "rpc_debug_on" || name == "rpc_debug_off" ||

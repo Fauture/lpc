@@ -2269,7 +2269,31 @@ void handle_vm_cmdCEndAnimate(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 4) return;
     uint32_t v7 = rd32be(body);
-    applyLpc("cmd_c_end_animate", {make_int(cl.clientNo), make_int(v7)});
+    // LPCVM_CENDDBG (env or _probe_on\LPCVM_CENDDBG): the anti-cheat answer the
+    // client echoes in c_end_animate (CMD 0x4104).  combatd.c::wait_commands
+    // stores answer = ((question*7)^140017600)&0x7FFFFFFF and sends the question
+    // in the 0x5203 (MSG_C_WAIT_COMMAND) prompt; c_end_animate.c rejects the
+    // animate-done when they differ, which leaves the round waiting for the
+    // wait_command_time (25 s) timer.  Logging the echoed value next to the
+    // [send] 0x5203 question makes the mismatch measurable without a client
+    // capture.
+    static const std::atomic<bool>& cendDbg = lpc::dynProbeFlag("LPCVM_CENDDBG");
+    uint32_t answer = v7;
+    uint32_t fixed = 0;
+    if (lpc::substituteCombatAnswer(cl.clientNo, v7, fixed)) {
+        if (cendDbg.load(std::memory_order_relaxed))
+            std::cerr << "[cend] cno=" << cl.clientNo << " client=" << v7
+                      << " (0x" << std::hex << v7 << std::dec
+                      << ") -> formula=" << fixed << " (0x" << std::hex << fixed
+                      << std::dec << ")\n";
+        answer = fixed;
+    }
+    if (cendDbg.load(std::memory_order_relaxed)) {
+        std::cerr << "[cend] cno=" << cl.clientNo << " answer=" << answer
+                  << " (0x" << std::hex << answer << std::dec << ")\n";
+        std::cerr.flush();
+    }
+    applyLpc("cmd_c_end_animate", {make_int(cl.clientNo), make_int(answer)});
 }
 
 void handle_vm_cmdCFlee(GameClient& cl, const uint8_t* body, size_t len)
@@ -2559,6 +2583,20 @@ void sendGamePacket(int clientNo, uint16_t cmd, const std::string& body) {
     frame += body;
     gameServiceSend(clientNo, frame);
 }
+
+// ---- combat anti-cheat answer bookkeeping ---------------------------------
+// See game_service.h for the full derivation.  The map is tiny (one entry per
+// live client) and guarded because sends and command dispatch run on different
+// threads.
+namespace {
+std::mutex& combatQMu() { static std::mutex m; return m; }
+std::map<int, uint32_t>& combatQ() { static std::map<int, uint32_t> m; return m; }
+}  // namespace
+
+// The three public entry points are defined at the end of the file, outside the
+// file-local anonymous namespace that wraps the protocol helpers above (a
+// definition inside it would get internal linkage and no other translation unit
+// could link to it).
 
 // vm_cmdCheckServer (0x5108, CMD_CHECK_SERVER).  Body = [u32 len][crypted text]
 // (value-typed: the 4-byte length is NOT length-prefixed, it is a raw BE u32).
@@ -12483,6 +12521,25 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
                   << " client=" << cl.clientNo << " attrib=" << cl.attrib
                   << " type=" << e->type << " OK\n";
     switch (cmdNo) {
+    // LPCVM_RECV: incoming-command audit (cmd + length + head bytes).  Needed
+    // to tell "the client sent the wrong thing" from "we reject a correct
+    // packet", e.g. a combat skill click that just re-opens the action panel.
+    {
+        static const std::atomic<bool>& recvFlag = dynProbeFlag("LPCVM_RECV");
+        if (recvFlag.load(std::memory_order_relaxed)) {
+            static const char* hxr = "0123456789ABCDEF";
+            std::string h;
+            size_t cap = len > 64 ? 64 : len;
+            for (size_t i = 0; i < cap; ++i) {
+                h += hxr[body[i] >> 4];
+                h += hxr[body[i] & 15];
+            }
+            std::cerr << "[recv] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
+                      << " cmd=0x" << std::hex << cmdNo << std::dec
+                      << " len=" << len << " hex=" << h << "\n";
+            std::cerr.flush();
+        }
+    }
     // LPCVM_MOVEPKT diagnostic (temporary): dump the exact bytes of the
     // movement/echo packets, whose bodies begin with the client's tick
     // (vm_cmdMoveTo 0x805561c / vm_cmdAccelerateMoveTo 0x805573c /
@@ -14240,6 +14297,58 @@ void filedWatchdogMarkSent(uint16_t cmdNo, const uint8_t* frame, unsigned int le
                   << " raw20=" << fhx << "\n";
         std::cerr.flush();
     }
+}
+
+// ---- combat anti-cheat answer (c_end_animate 0x4104) ----------------------
+// Definitions live here, outside the file-local anonymous namespace, so they
+// have external linkage (see game_service.h for the full derivation).
+uint32_t combatAnswerFor(uint32_t question) {
+    // LPC integer semantics: (question * 7) wraps as int32, xor, then & 0x7FFFFFFF.
+    const int32_t q7 = static_cast<int32_t>(static_cast<uint32_t>(question) * 7u);
+    const int32_t v = q7 ^ 140017600;
+    return static_cast<uint32_t>(v) & 0x7FFFFFFFu;
+}
+
+void noteCombatQuestion(int clientNo, uint32_t question) {
+    {
+        std::lock_guard<std::mutex> lk(combatQMu());
+        combatQ()[clientNo] = question;
+    }
+    static const std::atomic<bool>& dbg = dynProbeFlag("LPCVM_CENDDBG");
+    if (dbg.load(std::memory_order_relaxed))
+        std::cerr << "[cq] store cno=" << clientNo << " question=" << question
+                  << " (0x" << std::hex << question << std::dec << ")\n"
+                  << std::flush;
+}
+
+bool substituteCombatAnswer(int clientNo, uint32_t clientAnswer, uint32_t& out) {
+    // Opt-in: the real cause of the 25 s stall was put_sub_data being a no-op
+    // (the anti-cheat script reached the client as plaintext, so its LPC VM
+    // never defined set_answer_by_question).  With that fixed the client
+    // computes the answer itself and this fallback must stay off unless asked
+    // for with LPCVM_COMBAT_AC=1.
+    static const bool enabled = [] {
+        const char* v = LPCVM_GETENV("LPCVM_COMBAT_AC");
+        return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
+    }();
+    if (!enabled) return false;
+    uint32_t question = 0;
+    {
+        std::lock_guard<std::mutex> lk(combatQMu());
+        auto it = combatQ().find(clientNo);
+        if (it == combatQ().end()) return false;
+        question = it->second;
+    }
+    const uint32_t expect = combatAnswerFor(question);
+    static const std::atomic<bool>& dbg = dynProbeFlag("LPCVM_CENDDBG");
+    if (dbg.load(std::memory_order_relaxed))
+        std::cerr << "[cq] use  cno=" << clientNo << " question=" << question
+                  << " (0x" << std::hex << question << std::dec << ") expect="
+                  << std::dec << expect << " (0x" << std::hex << expect << std::dec
+                  << ") client=" << clientAnswer << "\n" << std::flush;
+    if (clientAnswer == expect) return false;
+    out = expect;
+    return true;
 }
 
 } // namespace lpc

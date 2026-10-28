@@ -16,6 +16,11 @@ and FAILS LOUDLY unless a fresh exe appears.
 import os, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+# tools/ 内的脚本：工程根是上一级（build/lpcvm.sln 所在处）。在根目录放脚本时保持旧行为。
+if not os.path.exists(os.path.join(ROOT, 'build', 'lpcvm.sln')):
+    _up = os.path.dirname(ROOT)
+    if os.path.exists(os.path.join(_up, 'build', 'lpcvm.sln')):
+        ROOT = _up
 EXE = os.path.join(ROOT, 'build', 'Release', 'lpcvm.exe')
 MSBUILD = r'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe'
 

@@ -121,6 +121,27 @@ std::vector<int> gameGetAllClientNo();
 // client slot is unknown.
 bool gameServiceSend(int clientNo, const std::string& data);
 
+// ---- combat anti-cheat answer ("c_end_animate", 0x4104) -------------------
+//
+// combatd.c::wait_commands stores, per player,
+//     answer = ((question * 7) ^ 140017600) & 0x7FFFFFFF
+// and sends `question` to the client in the 0x5203 prompt.  The real client
+// keeps that number in its own LPC variable `_answer`
+// (GFightMgr::OnMsg_C_WaitCommand -> set_answer_by_question(question):
+// asktao_dump.exe 0x5bfe4a..0x5bfe85) and echoes it in 0x4104.  When that
+// variable is not ready within one second the client sends a stale value
+// instead (sub_572470 waits 0x3E8 ms, then sends *(_DWORD*)(sym+8)), so
+// c_end_animate.c rejects the animate-done and the round only advances on the
+// 25 s wait_command_time timer.
+//
+// noteCombatQuestion remembers the question of the last prompt sent to a
+// client; substituteCombatAnswer maps a client echo that does not match it to
+// the formula value (exactly what the original client computes).
+// LPCVM_COMBAT_AC=0 disables the substitution.
+void noteCombatQuestion(int clientNo, uint32_t question);
+uint32_t combatAnswerFor(uint32_t question);
+bool substituteCombatAnswer(int clientNo, uint32_t clientAnswer, uint32_t& out);
+
 // LPCVM_FILEDDBG support: register an outbound filed REQUEST so the
 // outstanding-request watchdog can name the request that never got its reply
 // (see the watchdog block in game_service.cpp).  No-op unless the runtime probe

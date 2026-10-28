@@ -770,8 +770,8 @@ Value xorValues(const Value& a, const Value& b) { return make_int(static_cast<in
 // load_ban_words' `ban_words_match_id[group] |= ({ match_id })`.  The plain
 // orValues above only bitwise-ORs ints, so that compound assign wrote an int
 // into the mapping and valid_ban_words_by_group's is_array() check failed -
-// GM-account names never matched the "GM必用字符" include group (create ->
-// 9111 缺少必含字符) and banned names were never filtered.
+// GM-account names never matched the "GM蹇呯敤瀛楃" include group (create ->
+// 9111 缂哄皯蹇呭惈瀛楃) and banned names were never filtered.
 Value lpcOrValues(const Value& a, const Value& b) {
     if (a.index() == 5 && b.index() == 5) {
         auto out = std::make_shared<ArrayValue>();
@@ -1075,7 +1075,7 @@ struct Frame {
     // args, so the return cleanup must additionally drop these pad slots or
     // every such call leaves pad zeros behind on the caller's stack (they
     // shifted sprintf's 3-arg pop in hero.o get_save_path -> branch "title_0"
-    // instead of "title_男"/"title_女").
+    // instead of "title_鐢?/"title_濂?).
     // Only subtracted when the callee did NOT resort its frame (a check_args_num
     // default block folds the pads into argNum via resort_stack; subtracting
     // again then would over-trim).
@@ -1492,7 +1492,7 @@ bool heavyIdxFixOn() {
 // GsRegIndex::objBySuffix / vmsByKey) was tried here and DELETED: those indexes
 // are keyed by the NORMALIZED key, so "/gs/x.o" (live) and "pak:gs/x.o" (proto)
 // collapse to one entry and the lookup returned the wrong instance - the boot
-// hung at "还没有从 CONFIG_D 取得服务器所在区组名".  The registry iteration
+// hung at "杩樻病鏈変粠 CONFIG_D 鍙栧緱鏈嶅姟鍣ㄦ墍鍦ㄥ尯缁勫悕".  The registry iteration
 // order of the original scan is part of its semantics; memoize it instead.
 
 // Registry maps that maintain the index from their own operations, so no
@@ -1935,8 +1935,8 @@ public:
     // tid=10"), and get_thread_id() must still return ONE value for the whole
     // chain: filed.c::do_operate otherwise builds its reply closure with tid 8
     // and computes its wait mask from tid 10, so the reply raises a bit nobody
-    // waits on, the request returns its default -2 (9112 「数据库目前正在维护
-    // 中」) and check_name_used's tail (save() + logind->show_char_list) is lost -
+    // waits on, the request returns its default -2 (9112 銆屾暟鎹簱鐩墠姝ｅ湪缁存姢
+    // 涓€? and check_name_used's tail (save() + logind->show_char_list) is lost -
     // 0xF061 then carries no character and basic_char_info is never written.
     //
     // PER-THREAD, like the original's per-PCB state: the pin is installed by
@@ -2314,7 +2314,7 @@ public:
     // "valid" stale value is_in_combat()
     // (is_object(temp("combat")) && !cob->lite_query_temp("finished")) stayed
     // TRUE for good: the player could not talk to NPCs and admin_kickoff refused
-    // with "正在战斗中，无法强踢下线".  unregisterDestructed() flips it.
+    // with "姝ｅ湪鎴樻枟涓紝鏃犳硶寮鸿涪涓嬬嚎".  unregisterDestructed() flips it.
     std::shared_ptr<std::atomic<bool>> aliveFlag() const { return aliveFlag_; }
     void markObjectDead() { if (aliveFlag_) aliveFlag_->store(false); }
 private:
@@ -2457,7 +2457,7 @@ public:
     // then saw a stale/empty snapshot: `service_flag` read as undefined, so
     // `do_operate` returned -2 immediately without ever queueing the request -
     // the runtime delete after a logout never reached the DBA, its callback
-    // never fired and the account stayed in the 9026 "暂时无法登录" critical
+    // never fired and the account stayed in the 9026 "鏆傛椂鏃犳硶鐧诲綍" critical
     // section forever.  Threads of the same object must SHARE the block.
     void adoptObjVars(const std::shared_ptr<std::vector<Value>>& v) {
         if (!v) return;
@@ -2699,7 +2699,7 @@ public:
     // (feature/common/iid.c is inherited by items and pets).  Used to widen the
     // destructor diagnostics to exactly those objects: their remove_iid() must run
     // on destruction, otherwise register_iid() rejects the SAME iid on the next
-    // restore and the character load aborts (userd.c:1274, "…原因：9202…").
+    // restore and the character load aborts (userd.c:1274, "鈥﹀師鍥狅細9202鈥?).
     bool objHasIidLifecycle() const {
         for (const auto& kv : funcsByIndex_)
             if (kv.second && (kv.second->name == "remove_iid" || kv.second->name == "create_iid" ||
@@ -2716,7 +2716,7 @@ public:
         const bool dbg = (LPCVM_GETENV("LPCVM_LIFE") != nullptr) &&
                          (obj_.sourceName.find("char/user.") != std::string::npos ||
                           // Items matter too: userd's restore aborts the whole load
-                          // with "登录时发现异常…9202…" when register_iid() rejects an
+                          // with "鐧诲綍鏃跺彂鐜板紓甯糕€?202鈥? when register_iid() rejects an
                           // item iid as duplicated (userd.c:1274), and that iid is
                           // released by iid.c::destruct -> remove_iid.  If the pick
                           // below is not that destructor the registration leaks and
@@ -2828,8 +2828,8 @@ public:
         // /feature/common/iid.c::destruct -> unregister_iid.  Measured with the
         // LPCVM_IIDLIFE probe: 9071 register_iid against 1 remove_iid and 0
         // unregister_iid, so the next character load rebuilt an item whose iid was
-        // still registered, userd.c:1274 answered "禁止" ->
-        // send_dialog_ok("…原因：9202…") -> return 0, the character never entered the
+        // still registered, userd.c:1274 answered "绂佹" ->
+        // send_dialog_ok("鈥﹀師鍥狅細9202鈥?) -> return 0, the character never entered the
         // world, user.c::destruct skipped the save, and the next login failed 9211.
         const OriginalFunction* first = pickDestructor();
         std::vector<const OriginalFunction*> chain;
@@ -2918,6 +2918,117 @@ public:
 
     Value callFunctionByName(const std::string& name, const std::vector<Value>& args) {
         CpuProfGuard _cpuProfByName("callByName");
+        // LPCVM_POSDBG (runtime-armed via _probe_on\LPCVM_POSDBG): combat
+        // position-binding audit.  The client's combat member record carries
+        // make16(ob->get_combat_pos()) (buildmsgd.c:396) and every member shows
+        // 0, i.e. char_pos_map is empty.  bind_combat_pos is the ONLY writer of
+        // char_pos_map, so log every cross-object entry into the six functions
+        // that own that map's lifecycle together with (a) whether the callee
+        // resolved to real code and (b) the CURRENT size of the cob's
+        // char_pos_map.  A call that lands on a zero-byte DLT placeholder
+        // silently does nothing (see the [cfu] comments above) and leaves the
+        // map empty - that failure mode is invisible without this.
+        {
+            static const std::atomic<bool>& posDbg = dynProbeFlag("LPCVM_POSDBG");
+            if (posDbg.load(std::memory_order_relaxed) &&
+                (name == "init_combat_pos" || name == "init_pos" ||
+                 name == "bind_combat_pos" || name == "set_combat_pos" ||
+                 name == "get_combat_pos" || name == "empty_all_pos" ||
+                 name == "select_pos_for_char" || name == "select_empty_pos_by_corps")) {
+                const OriginalFunction* pf = findFunctionAny(name);
+                std::string as;
+                for (size_t ai = 0; ai < args.size() && ai < 4; ++ai)
+                    as += (ai ? "|" : "") + to_string(args[ai], false).substr(0, 40);
+                std::string ms = "-";
+                int cs = objVarSlotByName("char_pos_map");
+                if (cs >= 0 && static_cast<size_t>(cs) < objVars_->size()) {
+                    const Value& mv = (*objVars_)[static_cast<size_t>(cs)];
+                    if (mv.index() == 6)
+                        ms = "map=" + std::to_string(
+                                 std::get<std::shared_ptr<MappingValue>>(mv)->size());
+                    else
+                        ms = "map=t" + std::to_string(mv.index());
+                }
+                std::cerr << "[pos] >> " << objName_ << "::" << name
+                          << " fn=" << (pf ? "found" : "MISSING")
+                          << " code=" << (pf ? static_cast<int>(pf->code.size()) : 0)
+                          << " voff=" << (pf ? pf->varOffset : -999)
+                          << " argc=" << args.size() << " " << ms
+                          << " args=[" << as << "]\n";
+                std::cerr.flush();
+            }
+            // LPCVM_POSDBG also logs the combat anti-cheat pair that
+            // combatd.c::wait_commands stores on the player:
+            //     get_question_answer(&question, &answer);
+            //     ob->lite_set_temp("answer", answer);
+            //     ob->send(20995, pad_buffer(..., make32(question), ...));
+            // c_end_animate.c compares the client's echo against that stored
+            // answer and refuses the animate-done when they differ (the round
+            // then waits for wait_command_time).  Printing BOTH stored values
+            // next to the [send] 0x5203 question tells apart "the VM computed a
+            // different answer" from "the client did not compute one".
+            if (posDbg.load(std::memory_order_relaxed) &&
+                (name == "lite_set_temp" || name == "set_temp") && args.size() >= 2 &&
+                args[0].index() == 4) {
+                const std::string& k = std::get<SharedString>(args[0]).str();
+                if (k == "answer" || k == "question") {
+                    std::cerr << "[ans] " << objName_ << " set " << k << " = "
+                              << to_string(args[1], false).substr(0, 40)
+                              << " (t" << args[1].index() << ")\n";
+                    std::cerr.flush();
+                }
+            }
+            // LPCVM_SKILLDBG: skill registration audit.  Every /gs/skills/*.c
+            // runs setup_skill() at boot, which does
+            //     set_skill_attrib(this_object())   // fills "no" from
+            //                                       // etc/skill_attrib.list
+            //     register_skill_ob(lite_query("no"), this_object())
+            // and get_skill_ob(no) is just all_skills[no].  magic_attack::
+            // do_check_input bails out when get_skill_ob(para) is not an object,
+            // so an empty/unkeyed all_skills makes EVERY skill action fail and
+            // the client re-opens the action panel (0xF0E3 reset).
+            if (name == "register_skill_ob" || name == "setup_skill" ||
+                name == "set_skill_attrib" || name == "set_attrib" ||
+                name == "get_skill_ob") {
+                static const std::atomic<bool>& skDbg = dynProbeFlag("LPCVM_SKILLDBG");
+                if (skDbg.load(std::memory_order_relaxed)) {
+                    std::string as;
+                    for (size_t ai = 0; ai < args.size() && ai < 3; ++ai)
+                        as += (ai ? " | " : "") + to_string(args[ai], false).substr(0, 40);
+                    std::cerr << "[skillcall] " << name << " obj=" << objName_
+                              << " args=[" << as << "]";
+                    // Sizes of the two globals that drive skill registration: if
+                    // one of them is empty, set_skill_attrib returns before
+                    // importd::set_attrib and every skill stays without no/id,
+                    // so all_skills[no] never gets the object.
+                    if (objName_.find("skillsd") != std::string::npos) {
+                        int si = objVarSlotByName("attrib_index");
+                        int sl = objVarSlotByName("attrib_list");
+                        // objVarSlotByName can resolve to the wrong slot for an
+                        // object with inherited programs, so scan EVERY slot and
+                        // report the containers large enough to be the parsed
+                        // skill table (attrib_list should hold hundreds of name
+                        // keys, attrib_index an array of the header columns).
+                        std::string scan;
+                        for (size_t vi = 0; vi < objVars_->size(); ++vi) {
+                            const Value& mv = (*objVars_)[vi];
+                            if (mv.index() == 6) {
+                                auto mp = std::get<std::shared_ptr<MappingValue>>(mv);
+                                if (mp->size() >= 5)
+                                    scan += " s" + std::to_string(vi) + ":map" + std::to_string(mp->size());
+                            } else if (mv.index() == 5) {
+                                auto ar = std::get<std::shared_ptr<ArrayValue>>(mv);
+                                if (ar->items.size() >= 3)
+                                    scan += " s" + std::to_string(vi) + ":arr" + std::to_string(ar->items.size());
+                            }
+                        }
+                        std::cerr << " idxSlot=" << si << " lstSlot=" << sl << scan;
+                    }
+                    std::cerr << "\n";
+                    std::cerr.flush();
+                }
+            }
+        }
         // Per-process run state (the original's per-PCB frame stack).
         // REMOVED (2026-09-22, boot regression): this used to STASH the parked
         // chain aside when a different process entered the object (probe-gated
@@ -2925,7 +3036,7 @@ public:
         // contract: while the chain's frames_/cond_/parked_ live in runStates_[A],
         // the reply that should wake A is delivered against the VM and finds no
         // waiter, so the DB round trip is lost - during boot that silently
-        // dropped ~6 of 634 NPC registrations (山神/龙神/青龙/雷神/花神/憾地魔),
+        // dropped ~6 of 634 NPC registrations (灞辩/榫欑/闈掗緳/闆风/鑺辩/鎲惧湴榄?,
         // and the task objects that look those NPCs up then retried do_init
         // forever, so the service never reached "listening".  Interleaving a
         // second process on top of a parked chain is ALREADY safe: the entry
@@ -3270,7 +3381,17 @@ public:
                       << " obj=" << objName_ << " (function not found)\n";
             std::cerr.flush();
         }
-        return make_int(0);
+        // A call to a function the target does not define must yield VOID, not
+        // integer 0: the original driver's vm_callInOtherFun (IDA 0x8094cd8) ends
+        // its "Function is not found." path with vm_pushVoid().  LPC compares that
+        // against 0 - magic_attack.c guards the optional per-skill hook with
+        //     if ((sob->do_check_input(me, victim_id, para) == 0)) return 0;
+        // and most skills (e.g. /gs/skills/jinguang-zhaxian.c, which only inherits
+        // /gs/inherit/misc/skill.c) do NOT define do_check_input, so returning 0
+        // made EVERY skill cast fail and the client re-opened the action panel.
+        // (The 0xc0000005 crash this produced is fixed by the NULL-object guard
+        // in the object-call opcode, not by returning 0.)
+        return Value{};
     }
 
     // load_object(path, arg, PROGRAM-CONTENT) - the original vm_f_load_object
@@ -3571,7 +3692,7 @@ public:
         // /gs/daemons/userd.o's table.  `service_flag` then read as undefined,
         // do_operate returned -2 BEFORE send_to_queue, the logout's runtime
         // delete never reached the DBA, notify_delete_runtime_done never ran and
-        // the account stayed in the 9026 「暂时无法登录」 critical section for
+        // the account stayed in the 9026 銆屾殏鏃舵棤娉曠櫥褰曘€?critical section for
         // ever (measured: [fn] ENTER delete_content_to, a do_operate frame, then
         // no [q-send], no [q-fail], no msg_deleted_content, no
         // stop_stun_account).
@@ -3640,8 +3761,43 @@ public:
                 std::cerr.flush();
             }
         }
+        // LPCVM_SKILLDBG: audit the skill registry calls.  /gs/skills/*.c run
+        // setup_skill() at boot, which does set_skill_attrib(this_object()) and
+        // then register_skill_ob(lite_query("no"), this_object()); get_skill_ob
+        // is just all_skills[no].  magic_attack::do_check_input rejects the
+        // action when get_skill_ob(para) is not an object, which makes the
+        // client re-open the combat action panel (0xF0E3 reset).  Logging the
+        // `no` argument tells apart "the attributes were written into the
+        // dbase" from "query_entire_dbase aliasing dropped the write" (no==0).
+        {
+            static const std::atomic<bool>& skDbg = dynProbeFlag("LPCVM_SKILLDBG");
+            if (skDbg.load(std::memory_order_relaxed)) {
+                const OriginalFunction* f = nullptr;
+                auto itf = funcsByIndex_.find(index);
+                if (itf != funcsByIndex_.end()) f = itf->second;
+                if (f && (f->name == "register_skill_ob" || f->name == "get_skill_ob")) {
+                    std::string a0 = "-", a1 = "-";
+                    const auto& st = es_->stack;
+                    const size_t n = st.size();
+                    if (n >= 1) a1 = to_string(st[n - 1].value, false).substr(0, 40);
+                    if (n >= 2) {
+                        a0 = to_string(st[n - 2].value, false).substr(0, 40);
+                    } else {
+                        a0 = a1;
+                        a1 = "-";
+                    }
+                    std::cerr << "[skillcall] " << f->name << "(" << a0 << ", " << a1
+                              << ") obj=" << objName_ << "\n";
+                    std::cerr.flush();
+                }
+            }
+        }
         auto it = funcsByIndex_.find(index);
-        if (it == funcsByIndex_.end()) return make_int(0);
+        // Unknown index: VOID, like the original's vm_pushVoid() for a missing
+        // function (never integer 0 - LPC compares `call() == 0` for optional
+        // hooks, see the callFunctionByName note above).  The NULL-object guard
+        // in the object-call opcode covers the crash this used to trigger.
+        if (it == funcsByIndex_.end()) return Value{};
         return executeFunctionOnStack(*it->second);
     }
 
@@ -3886,25 +4042,59 @@ public:
     void runInheritedInitsOf(const OriginalObject& parent, int accFun, int accVar) {
         for (const auto& inh : parent.inherits) {
             std::shared_ptr<OriginalObject> parentObj;
-            try {
+            {
+                // Resolve the inherit by the path the program records, trying the
+                // exact forms in order and never silently substituting another
+                // file: two roots can hold same-named programs (/feature/... and
+                // /gs/feature/...), and picking the wrong one makes the parent's
+                // baseVarOffset point into a different constitution - which
+                // leaves THIS program's globals (e.g. combat_pos' pos_list /
+                // char_pos_map) permanently undefined without any error.
                 std::string rel = inh.path;
-                if (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
-                if (hasSuffix(rel, ".c")) rel.replace(rel.size() - 2, 2, ".o");
-                if (auto p = loadOriginalObjectByRelPath(rel)) parentObj = p;
-                else {
-                    std::string cand = searchRoot_.empty() ? rel : searchRoot_ + "/" + rel;
-                    parentObj = std::make_shared<OriginalObject>(loadOriginalObject(cand));
+                while (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+                std::vector<std::string> cands;
+                auto addCand = [&](const std::string& c) {
+                    if (c.empty()) return;
+                    for (const auto& x : cands) if (x == c) return;
+                    cands.push_back(c);
+                };
+                addCand(rel);
+                if (hasSuffix(rel, ".c")) { std::string o = rel; o.replace(o.size() - 2, 2, ".o"); addCand(o); }
+                else addCand(rel + ".o");
+                if (!searchRoot_.empty()) addCand(searchRoot_ + "/" + rel);
+                for (const auto& c : cands) {
+                    if (auto p = loadOriginalObjectByRelPath(c)) { parentObj = p; break; }
                 }
-            } catch (...) {
-                if (vmEnvDbgObjVar())
-                    std::cerr << "[inhinit] FAIL load " << inh.path << " for " << obj_.sourceName << "\n";
-                continue;
+                if (!parentObj) {
+                    for (const auto& c : cands) {
+                        try { parentObj = std::make_shared<OriginalObject>(loadOriginalObject(c)); break; }
+                        catch (...) { continue; }
+                    }
+                }
+                if (!parentObj) {
+                    std::cerr << "[inhinit] CANNOT RESOLVE inherit '" << inh.path
+                              << "' of " << obj_.sourceName << " tried:";
+                    for (const auto& c : cands) std::cerr << ' ' << c;
+                    std::cerr << "\n";
+                    continue;
+                }
             }
             if (vmEnvDbgObjVar() && obj_.sourceName.find("/zone/") != std::string::npos)
                 std::cerr << "[inhinit] " << obj_.sourceName << " <- " << inh.path
                           << " gc=" << parentObj->globalCode.size() << " vars=" << objVars_->size() << "\n";
             int funOff = accFun + inh.baseFunOffset;
             int varOff = accVar + inh.baseVarOffset;
+            {
+                // Runtime-armed chain audit (_probe_on\LPCVM_INHDBG): prove which
+                // inherit paths were matched and what accumulated var offset each
+                // got, so a missing/mismatched constitution (globals left
+                // undefined, e.g. combat_pos' pos_list/char_pos_map) is visible
+                // without flood-logging the whole boot.
+                static const std::atomic<bool>& inhDbg = dynProbeFlag("LPCVM_INHDBG");
+                if (inhDbg.load(std::memory_order_relaxed))
+                    std::cerr << "[inhchain] " << obj_.sourceName << " <- " << inh.path
+                              << " varOff=" << varOff << " gc=" << parentObj->globalCode.size() << "\n";
+            }
             runInheritedInitsOf(*parentObj, funOff, varOff);
             // Execute the parent's own global init code under its constitution.
             Frame frame{nullptr, 0, 0, 0, &parentObj->strings};
@@ -4947,7 +5137,7 @@ private:
         // without this guard a wake inside send_to_queue made the second call return the
         // woken daemon's tid, the reply raised the wrong wait bit and the request ended
         // as -2, which login.c::check_valid_name turns into
-        //   9112 "数据库目前正在维护中，无法确认角色名字是否存在".
+        //   9112 "鏁版嵁搴撶洰鍓嶆鍦ㄧ淮鎶や腑锛屾棤娉曠‘璁よ鑹插悕瀛楁槸鍚﹀瓨鍦?.
         struct CurProcGuard {
             decltype(scheduler().currentProcessSnapshot()) saved;
             CurProcGuard() : saved(scheduler().currentProcessSnapshot()) {}
@@ -5092,7 +5282,7 @@ private:
             // roomd.setup_room_basic_info's register_zone branch does
             // env_object(room_ob)->register_entry(...) so a zone's children are
             // exposed through zone->query_entry.  move_object/env_object were
-            // no-op stubs, so every zone child stayed unregistered (混合区域 /
+            // no-op stubs, so every zone child stayed unregistered (娣峰悎鍖哄煙 /
             // misc.o all_entries empty) and party/stage.o::clone_room re-armed
             // register_post_init forever -> post_init() never returned -> 8160
             // never opened.  Track env as registry-key -> registry-key.
@@ -5163,7 +5353,7 @@ private:
                     //     if (!is_object(env_object()) || env_object() != env_object(ob)) return 0;
                     // so the wrong key made EVERY distance check fail for
                     // non-reserved ids: selecting a dialog menu answered
-                    // "距离NPC过远，无法进行此操作。" (reproduced with the
+                    // "璺濈NPC杩囪繙锛屾棤娉曡繘琛屾鎿嶄綔銆? (reproduced with the
                     // character's own id, 25740).
                     obKey = currentThisName();   // no O(N) registry scan
                     if (obKey.empty()) {
@@ -5277,7 +5467,7 @@ private:
                 // base.c - so the stub merely stopped a destructed container from
                 // destroying its contents.  Everything else that reads it was
                 // silently broken by the stub: admin_query_npc (get_npc_by_map /
-                // get_local_map_npc / get_all_npc -> "没有找到匹配的NPC"),
+                // get_local_map_npc / get_all_npc -> "娌℃湁鎵惧埌鍖归厤鐨凬PC"),
                 // admin_request_player_list, room/zone occupant loops (roomd,
                 // xlibd, weatherd, cityward, party*), start_gs::update[_room].
                 //
@@ -5308,7 +5498,7 @@ private:
                 {
                     // LPCVM_LODGERDBG (env or _probe_on\LPCVM_LODGERDBG): which
                     // container was asked and how many lodgers came back - the GM
-                    // query "云霄洞" fails with an empty result, so the answer for
+                    // query "浜戦渼娲? fails with an empty result, so the answer for
                     // the room key decides whether the env index (or the room
                     // lookup in front of it) is the remaining gap.
                     static const std::atomic<bool>& lgOn = dynProbeFlag("LPCVM_LODGERDBG");
@@ -5669,7 +5859,7 @@ private:
                             const Value& v = es_->stack[static_cast<size_t>(i)].value;
                             if (v.index() == 4) {
                                 const std::string& st = std::get<SharedString>(v).str();
-                                // match GBK bytes of "充值送" (B3 E4 D6 B5 CB CD); keep source ASCII
+                                // match GBK bytes of "鍏呭€奸€? (B3 E4 D6 B5 CB CD); keep source ASCII
                                 static const unsigned char gb[] = {0xB3, 0xE4, 0xD6, 0xB5, 0xCB, 0xCD};
                                 bool hit = st.size() >= 24;
                                 for (size_t k = 0; !hit && k + 6 <= st.size(); ++k) {
@@ -5726,7 +5916,7 @@ private:
                 // newbie_gift::create() returned before set_gift_item() and
                 // init_newbie_gift_items(), leaving gift_info empty - opening
                 // the gift then rebuilt the next-level gift instead of showing
-                // the item list, and the item lost its 赠品 flag.
+                // the item list, and the item lost its 璧犲搧 flag.
                 std::shared_ptr<OriginalVm> tvm;
                 if (args.empty()) {
                     tvm = templateVm_;
@@ -5818,7 +6008,7 @@ private:
                 //     (object_name(this_object(), 1))->query_entire_dbase()
                 // to read the template's dbase, which is where an item clone's
                 // name comes from (without this, get_name() was undefined and
-                // the client showed "你使用了0").
+                // the client showed "浣犱娇鐢ㄤ簡0").
                 std::string key;
                 const Value& av = args[0];
                 if (av.index() == 7) {
@@ -5980,7 +6170,7 @@ private:
                 // from_info, args) handed func_entry a 2-element argument list
                 // (from_info, <array>), so its `name` parameter was undefined,
                 // find_user_by_name(undefined) answered 0, and EVERY targeted GM
-                // command replied "XXX目前不在线。".
+                // command replied "XXX鐩墠涓嶅湪绾裤€?.
                 auto& reg0 = objectRegistry();
                 const Value& obv = args[0];
                 const Value& funv = args[1];
@@ -6081,7 +6271,7 @@ private:
             // so the old "ignore func, return the input" stub handed import-name
             // STRINGS to callers that need objects.  instruction_1::
             // query_task_weapon's is_object(basic) then failed and the newbie S11
-            // drama answered "奇怪，怎么找不到了呢？我再找找，你过会儿再来。"
+            // drama answered "濂囨€紝鎬庝箞鎵句笉鍒颁簡鍛紵鎴戝啀鎵炬壘锛屼綘杩囦細鍎垮啀鏉ャ€?
             // instead of handing over the weapon (armour is looked up by name and
             // the shop uses dealer.list, so only the weapon step was broken).
             if (nm == "mapping_array" && args.size() >= 2 && args[0].index() == 5) {
@@ -6581,7 +6771,7 @@ private:
                 // watchdog set_timer(30+random(3), &timer_id,
                 // "do_when_precost_timeout", gid, oper_info) fired with gid and
                 // oper_info undefined, so oper_map[gid] and coind's oper_coin
-                // lock were never released and the mall answpted "正在处理".
+                // lock were never released and the mall answpted "姝ｅ湪澶勭悊".
                 for (size_t ai = 3; ai < args.size(); ++ai) bound.push_back(args[ai]);
                 if (!fnName.empty()) {
                     int64_t timeout = std::max<int64_t>(1, toInt(args[0]));
@@ -6619,7 +6809,7 @@ private:
                         // letting both run.
                         //
                         // The game re-arms repeating timers from INSIDE their
-                        // own callback (ccs_lotteryd: do_init sets "保存彩票信息"
+                        // own callback (ccs_lotteryd: do_init sets "淇濆瓨褰╃エ淇℃伅"
                         // -> save_info -> save_info_to_db -> set_timer(same
                         // name) again, and collect_data -> save_info_to_db(1)
                         // does it a THIRD way).  Under pure coexist semantics
@@ -7201,7 +7391,7 @@ private:
         // into post_enter_world_failed, whose registered callbacks destroy the
         // freshly created character: user.c::destruct then early-returns on the
         // unset "entered_world", nothing is saved, and the next login fails with
-        // "读入角色资料失败 9211".
+        // "璇诲叆瑙掕壊璧勬枡澶辫触 9211".
         std::shared_ptr<OriginalVm> globalVm;
         const OriginalFunction* globalFn = nullptr;
         if (flags & 0x80) {
@@ -7366,7 +7556,7 @@ private:
                 }
                 if (envFlagTail() && gfn->name == "register_basic_object") {
                     // basic_objectd creates generic npc basics from the *_npc.list
-                    // tables; log every registration so missing NPC names (逍遥仙
+                    // tables; log every registration so missing NPC names (閫嶉仴浠?
                     // etc.) can be traced to the row data actually applied.  Args
                     // sit on TOP of the stack (pushed by the caller before the
                     // call opcode); arg0 = import_name string, arg1 = the basic
@@ -7387,8 +7577,8 @@ private:
                     if (adbg.find("npc/basic") != std::string::npos ||
                         adbg.find("xiaoyaoxian") != std::string::npos ||
                         adbg.find("taisha") != std::string::npos ||
-                        adbg.find("\xC1\xA6\xD2\xA3\xCF\xC9") != std::string::npos ||   // 逍遥仙 GBK
-                        adbg.find("\xCC\xA9\xC9\xB1") != std::string::npos)            // 泰煞守卫 GBK
+                        adbg.find("\xC1\xA6\xD2\xA3\xCF\xC9") != std::string::npos ||   // 閫嶉仴浠?GBK
+                        adbg.find("\xCC\xA9\xC9\xB1") != std::string::npos)            // 娉扮厼瀹堝崼 GBK
                         std::cerr << "[rbo2] " << adbg << " obj=" << objName_ << "\n";
                     std::cerr.flush();
                 }
@@ -7397,7 +7587,15 @@ private:
                         "create_data_from2", "create_data_from3", "add_to_section",
                         "_find_room", "find_room_ob", "get_alias_room",
                         "attach_form_file", "create_data", "query_form_value",
-                        "do_init_data", "do_place_npc"};
+                        "do_init_data", "do_place_npc",
+                        // Skill registry: these are global primitives reached
+                        // through the inline (case8) call_other path, so the
+                        // callFunctionByName probe never sees them.
+                        // register_skill_ob(no, ob) with no==0 proves the skill
+                        // object's dbase never received "no" from importd::
+                        // set_attrib (my[str] = v on query_entire_dbase()).
+                        "register_skill_ob", "get_skill_ob", "set_attrib", "has_skill",
+                        "setup_skill", "set_skill_attrib"};
                     bool hit = false;
                     for (auto* pf : probeFns)
                         if (gfn->name == pf) { hit = true; break; }
@@ -7408,16 +7606,42 @@ private:
                             size_t si = es_->stack.size() - static_cast<size_t>(ac) + static_cast<size_t>(k);
                             if (!adbg.empty()) adbg += " | ";
                             if (si < es_->stack.size()) {
-                                const Value& av = es_->stack[si].value;
-                                if (av.index() == 4) adbg += "str(" + std::to_string(std::get<SharedString>(av).size()) + ")["
-                                                          + std::get<SharedString>(av).str().substr(0, 24) + "]";
+                                const StackItem& sit = es_->stack[si];
+                                const Value& av = sit.value;
+                                adbg += "t" + std::to_string(av.index()) + (sit.isRef ? "R" : "");
+                                if (av.index() == 11) adbg += "(cvf)";
+                                adbg += "[";
+                                if (av.index() == 4) adbg += "str(" + std::to_string(std::get<SharedString>(av).size()) + ")"
+                                                          + std::get<SharedString>(av).str().substr(0, 24);
                                 else adbg += to_string(av, false).substr(0, 60);
+                                adbg += "]";
                             } else adbg += "?";
                         }
                         std::cerr << "[hprobe] call global fn=" << gfn->name
                                   << " obj=" << objName_ << " argc=" << ac
                                   << " args=[" << adbg << "]\n";
-                        std::cerr.flush();
+                        // has_skill(skill): the string key must exist in the
+                        // CALLING character's `skills` mapping (feature/char/
+                        // skill.c: `!is_undefined(skills[skill])`).  Print a few
+                        // keys of every small string-keyed mapping on that
+                        // object so a key-format mismatch is visible.
+                        if (gfn->name == "has_skill") {
+                            std::string keys;
+                            for (size_t vi = 0; vi < objVars_->size(); ++vi) {
+                                const Value& mv = (*objVars_)[vi];
+                                if (mv.index() != 6) continue;
+                                auto mp = std::get<std::shared_ptr<MappingValue>>(mv);
+                                if (mp->size() == 0 || mp->size() > 200) continue;
+                                int shown = 0;
+                                for (const auto& kv : mp->items()) {
+                                    if (shown++ >= 3) break;
+                                    keys += " s" + std::to_string(vi) + ":" +
+                                            to_string(kv.first, false).substr(0, 20);
+                                }
+                            }
+                            std::cerr << "[hasSkill] " << objName_ << keys << "\n";
+                            std::cerr.flush();
+                        }
                     }
                 }
                 if (startInlineFunction(*gfn, false, flags & 0x3F)) return true;
@@ -8006,8 +8230,8 @@ private:
             //     is_undefined(portrait)  -> actor_name = ob->get_name(),
             //                                portrait_used = ob->query("portrait")
             //     else (portrait == 0)    -> portrait_used = -1, actor_name = ""
-            // so padding with int 0 sent the 二级菜单 (e.g. 莲花姑娘 -> 提高宠物忠诚
-            // -> "你还没有宠物。") with portrait = 0xFFFFFFFF and an EMPTY name -
+            // so padding with int 0 sent the 浜岀骇鑿滃崟 (e.g. 鑾茶姳濮戝 -> 鎻愰珮瀹犵墿蹇犺瘹
+            // -> "浣犺繕娌℃湁瀹犵墿銆?) with portrait = 0xFFFFFFFF and an EMPTY name -
             // exactly the missing portrait/name a real client showed.
             // Parameters that declare a default are filled by the callee's own
             // inline default block (check_args_num/resort_stack), so they are not
@@ -8139,9 +8363,9 @@ private:
                 "clean_task", "update_special_event", "do_interface_guide",
                 "do_stage_bonus", "query_entry", "register_interface",
                 // Story/scenario -> teleport tail (post_enter_world ->
-                // do_task_instruction -> raise_event_ex("初进游戏") ->
+                // do_task_instruction -> raise_event_ex("鍒濊繘娓告垙") ->
                 // finish_init_scenario -> try_finish_task -> do_stage_move ->
-                // moved::enter_room(me, 揽仙镇外, 102, 157, dir)).
+                // moved::enter_room(me, 鎻戒粰闀囧, 102, 157, dir)).
                 "enter_room", "enter_room_ex", "leave_room", "try_finish_task",
                 "finish_init_scenario", "play_scenario", "start_scenario",
                 "do_scenario", "task_init", "create_task", "query_task",
@@ -8189,7 +8413,7 @@ private:
     }
 
     // ---- LPCVM_ROOM: scene/map-change tracing --------------------------------
-    // "过图" (map transition) is driven by the client sending 0x1026/0x234A/0x2212
+    // "杩囧浘" (map transition) is driven by the client sending 0x1026/0x234A/0x2212
     // -> cmd_enter_room(cmdgroup, client_no, new_room) -> player process_command
     // -> feature/common/move.c::enter_room(room, x, y, dir) which validates with
     // is_blocked(map_index,x,y) (a NEGATIVE result makes it return early!) and
@@ -8246,7 +8470,7 @@ private:
     }
 
     // ---- LPCVM_LIFE: character lifecycle (login/logout/despawn) -------------
-    // The reported "下线后再次上线错误" needs the exact despawn chain:
+    // The reported "涓嬬嚎鍚庡啀娆′笂绾块敊璇? needs the exact despawn chain:
     //   client disconnect -> user::disconnected(cause, is_logout)
     //     -> set_timer(is_logout ? 0 : 180, &_timer_id, "time_expired")
     //     -> user::time_expired -> trap_into(SF_DISCONNECTED_TIME_EXPIRED)
@@ -8364,7 +8588,7 @@ private:
         int bp = static_cast<int>(es_->stack.size()) - 1;
         // IID lifecycle (`LPCVM_IIDLIFE`, runtime-armable): create_iid/remove_iid/
         // repair_iid/register_iid.  A character load aborts with
-        // "登录时发现异常…（原因：9202…）" the moment register_iid() finds an item iid
+        // "鐧诲綍鏃跺彂鐜板紓甯糕€︼紙鍘熷洜锛?202鈥︼級" the moment register_iid() finds an item iid
         // still registered (userd.c:1274) - i.e. when the previous instance's
         // remove_iid() never ran.  This prints who touches which iid, on which
         // object, from which caller.
@@ -8505,7 +8729,7 @@ private:
             // another object read the wrong table: `service_flag` came out
             // undefined, `do_operate` returned -2 BEFORE send_to_queue, the
             // logout's runtime delete never reached the DBA, its callback never
-            // ran and the account stayed in the 9026 「暂时无法登录」 critical
+            // ran and the account stayed in the 9026 銆屾殏鏃舵棤娉曠櫥褰曘€?critical
             // section forever (measured: delete_content_to entered, do_operate
             // frame logged, no [q-send], no [q-fail], no msg_deleted_content).
             autoVars = ownObjVars_;
@@ -9553,7 +9777,7 @@ private:
     // unrelated value, a stale watchdog/timer wake, a stray raise) RE-PARKS
     // instead of forging wait_event()==0: filed.c::do_operate treats 0 as "the
     // reply arrived" and otherwise returns its default ({-2, cookie})[0], which
-    // is exactly the 9112 「数据库目前正在维护中，无法确认角色名字是否存在」 dialog.
+    // is exactly the 9112 銆屾暟鎹簱鐩墠姝ｅ湪缁存姢涓紝鏃犳硶纭瑙掕壊鍚嶅瓧鏄惁瀛樺湪銆?dialog.
     void parkOnEvent(const std::string& ename, const Value& eref, uint32_t mask, double secs) {
         ResumeCond cond;
         cond.kind = 3;
@@ -9606,7 +9830,7 @@ private:
                 // hosts several processes and its cond slot gets replaced, so the
                 // check failed and the wait reported the honest -501 instead,
                 // which made filed.c::do_operate return its default -2 (9112
-                // 「数据库目前正在维护中」) even though the reply was still coming.
+                // 銆屾暟鎹簱鐩墠姝ｅ湪缁存姢涓€? even though the reply was still coming.
                 if (vmEnvEvDbg())
                     std::cerr << "[ev] spurious resume of forever wait " << ename
                               << " mask=0x" << std::hex << mask << std::dec
@@ -11087,7 +11311,7 @@ private:
                                     // mapping with the class string that
                                     // register_task_template stored (measured
                                     // A1BED0C2CAD6A1BF312D39BCB6D0C2CAD6C8CECEF1, 21 bytes
-                                    // for 【新手】1-9级新手任务) - if they differ the
+                                    // for 銆愭柊鎵嬨€?-9绾ф柊鎵嬩换鍔? - if they differ the
                                     // name->class / class->template lookups can never hit.
                                     auto mp36 = std::get<std::shared_ptr<MappingValue>>(vv);
                                     const Value* nv = mp36->find(make_string("name"));
@@ -11219,7 +11443,7 @@ private:
                                     // stock in the GLOBAL `goods` mapping (dealer.c:36) and
                                     // fills it in create() through add_goods(name).  Dump it
                                     // for every shop NPC clone: an empty mapping means the
-                                    // server never built the stock ("商店没有物品" is then not
+                                    // server never built the stock ("鍟嗗簵娌℃湁鐗╁搧" is then not
                                     // a client problem), and a populated one with a first
                                     // entry whose elements are t4(base)/t7(object)/ints proves
                                     // add_goods ran.
@@ -11665,6 +11889,66 @@ private:
                               << " t=" << std::this_thread::get_id() << "\n";
                 const auto& names = efunNameTable();
                 if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
+                    names[efun] == "put_sub_data") {
+                    // vm_f_put_sub_data (IDA 0x80d9b64): put_sub_data(&var, pos,
+                    // val) writes val into the caller's string/buffer reference.
+                    // val may be an integer (one byte, -255..255) or a whole
+                    // string/buffer; the original memcpy()s subDataLen bytes at
+                    // `pos` and returns NOTHING (vm_popNStack without a push).
+                    //
+                    // WHY THIS MATTERS: anticheaterd::encrypt_script builds the
+                    // combat anti-cheat script with
+                    //     crypted_text = (buffer)("*" + script_text);
+                    //     code = 182;
+                    //     for (i = 1; i <= sizeof(crypted_text) - 1; i++) {
+                    //         put_sub_data(&crypted_text, i, crypted_text[i] ^ code);
+                    //         code = ((code * 3 + 5) ^ 39) & 255;
+                    //     }
+                    // The old stub returned 0 WITHOUT writing, so the 0xF0B1
+                    // script push carried the source in PLAINTEXT (measured:
+                    // "#ifndef GET_ANS..." was readable in the packet while the
+                    // real server sends obfuscated bytes).  The client's rolling
+                    // xor then produced garbage, `set_answer_by_question` was
+                    // never defined in the client's LPC VM, `_answer` never
+                    // became ready, c_end_animate received a stale value and
+                    // every combat round waited out wait_command_time (25 s).
+                    // The same stub also broke tolower_temp / picd / the
+                    // check_server challenge decrypt.
+                    std::vector<StackItem> refs;
+                    for (int i = 0; i < argc && !es_->stack.empty(); ++i) refs.push_back(pop());
+                    if (refs.size() >= 3) {
+                        Value cur = refs[0].isRef ? deref(refs[0]) : refs[0].value;
+                        const int64_t pos =
+                            toInt(refs[1].isRef ? deref(refs[1]) : refs[1].value);
+                        Value val = refs[2].isRef ? deref(refs[2]) : refs[2].value;
+                        std::string sub;
+                        if (val.index() == 2) {
+                            sub.assign(1, static_cast<char>(std::get<int64_t>(val) & 0xFF));
+                        } else if (val.index() == 4) {
+                            sub = std::get<SharedString>(val).str();
+                        } else if (val.index() == 10) {
+                            auto vb = std::get<std::shared_ptr<BufferValue>>(val);
+                            if (vb) sub = vb->data;
+                        }
+                        if (!sub.empty() && pos >= 0) {
+                            if (cur.index() == 10) {              // buffer: mutate in place
+                                auto b = std::get<std::shared_ptr<BufferValue>>(cur);
+                                if (b && static_cast<size_t>(pos) + sub.size() <= b->data.size())
+                                    b->data.replace(static_cast<size_t>(pos), sub.size(), sub);
+                            } else if (cur.index() == 4) {        // string: write back a copy
+                                const SharedString& ss = std::get<SharedString>(cur);
+                                std::string m = ss.str();
+                                if (static_cast<size_t>(pos) + sub.size() <= m.size()) {
+                                    m.replace(static_cast<size_t>(pos), sub.size(), sub);
+                                    if (refs[0].isRef) writeThrough(refs[0], make_string(m));
+                                }
+                            }
+                        }
+                    }
+                    pushValue(Value(UndefinedTag{}));
+                    break;
+                }
+                if (efun >= 0 && static_cast<size_t>(efun) < names.size() &&
                     names[efun] == "new_view_point") {
                     // vm_f_new_view_point(mapIndex, oldX, oldY, newX, newY,
                     //                     &appear, &disappear): diff the 9x7 view
@@ -11878,7 +12162,7 @@ private:
                             std::cerr << "[sscanf] input=[" << input.substr(0, 30) << "] fmt=[" << fmtStr
                                       << "] n=" << n << " outs=" << outs.size() << "\n";
                         if (constructDiagOn()) {
-                            // GBK bytes of "充值送": B3 E4 D6 B5 CB CD
+                            // GBK bytes of "鍏呭€奸€?: B3 E4 D6 B5 CB CD
                             static const unsigned char cb[] = {0xB3, 0xE4, 0xD6, 0xB5, 0xCB, 0xCD};
                             bool cHit = false;
                             for (size_t k = 0; k + 6 <= fmtStr.size() && !cHit; ++k) {
@@ -12160,8 +12444,8 @@ private:
                     // one statement - filed.c::do_operate built its reply closure
                     // with that foreign tid and computed its wait mask from the
                     // real one, so the reply raised a bit nobody waited on and
-                    // the request answered its default -2 (9112 「数据库目前正在
-                    // 维护中」, still seen when two create commands overlap).
+                    // the request answered its default -2 (9112 銆屾暟鎹簱鐩墠姝ｅ湪
+                    // 缁存姢涓€? still seen when two create commands overlap).
                     struct CurProcPin {
                         decltype(scheduler().currentProcessSnapshot()) saved;
                         CurProcPin() : saved(scheduler().currentProcessSnapshot()) {}
@@ -13333,7 +13617,7 @@ private:
                         // mid-place_char; running it serviced on the shared
                         // roomd registry VM re-enters the parked image at a
                         // stale ip on wake and REPLAYS the current npc row
-                        // (master/掌门) instead of advancing to the next entry
+                        // (master/鎺岄棬) instead of advancing to the next entry
                         // (misc/qinglong etc.), so the elemental gods never get
                         // placed.  Inline keeps the whole setup loop in one VM
                         // image.  Blanket roomd inline is NOT safe (it deadlocks
@@ -13647,6 +13931,18 @@ private:
                 } else if (pathVal.index() == 7) {
                     // Object value: resolve through the clone/registry key.
                     auto ov = std::get<std::shared_ptr<ObjectValue>>(pathVal);
+                    // A NULL object payload (an object slot that was never
+                    // assigned or was invalidated) must behave like a missing
+                    // object instead of being dereferenced: the 2026-10-28 gs
+                    // dump shows 0xc0000005 at ov->programName from this exact
+                    // path (last LPC frames lite_query_temp<--lite_query<--
+                    // get_speed_effect).  Drop the arguments, push void and stop
+                    // here - the tail of the case would push a stale `result`.
+                    if (!ov) {
+                        for (int i = 0; i < argn && !es_->stack.empty(); ++i) pop();
+                        pushValue(Value{});
+                        break;
+                    }
                     std::string path = ov->programName;
                     if (path == "<this>" || path == "." || path.empty()) {
                         // object(<this>) captured at creation time: resolve
@@ -13966,8 +14262,8 @@ private:
                 // Applying an efun-closure over call_other/call_other_arg with a
                 // REFERENCE argument (e.g. account_transactiond.do_account_transaction
                 // doing (*proc_func)(&m, info, fields) where proc_func =
-                // (: call_other, "…cmd_l_precost_coin.c", "precost_coin", … :) and
-                // precost_coin declares `mixed &result` and assigns result=([…])).
+                // (: call_other, "鈥md_l_precost_coin.c", "precost_coin", 鈥?:) and
+                // precost_coin declares `mixed &result` and assigns result=([鈥)).
                 // The callee's write must land in the caller's stack slot m, so the
                 // &arg cannot be flattened to its (undefined) value here.  Keep
                 // slot/obj refs as a CrossVmRef (index-11) that survives the value
@@ -13976,11 +14272,11 @@ private:
                 //
                 // TODO(possible over-fix - needs the ORIGINAL server to settle):
                 //   commit 847c20a introduced this (and the matching case 7/8 handling)
-                //   to fix "Mall precost returned result=0 (元宝不足) although the
+                //   to fix "Mall precost returned result=0 (鍏冨疂涓嶈冻) although the
                 //   balance check passed" and verified "precost reply now result=1".
                 //   Side effect reported by the operator: right after a fresh server
                 //   start a normal player used to need the item package card
-                //   (道具套餐卡, which grants 位列仙班) to enter the game for the first
+                //   (閬撳叿濂楅鍗? which grants 浣嶅垪浠欑彮) to enter the game for the first
                 //   ~1-3 minutes, and after this change they enter immediately - i.e.
                 //   the precost result now comes back successful where the original
                 //   might still answer 0 (payment/qualification required).
@@ -14275,7 +14571,7 @@ private:
                         // there ran operate_done with vendued.o's variables: the
                         // oper_map lookup missed, raise_event never fired and the
                         // waiting do_operate stalled to -2 (the DBA reply then
-                        // looks lost -> login's "通讯故障 ... 9030").  Re-target
+                        // looks lost -> login's "閫氳鏁呴殰 ... 9030").  Re-target
                         // to the function's HOME instance, keeping the detached
                         // invocation (an inline run inside the reply dispatcher
                         // parks the dispatcher and stops every later reply).
@@ -14746,7 +15042,7 @@ private:
                             static int childN = 0, jbN = 0, cwN = 0, stN = 0, qdN = 0;
                             if (isQd && qdN < 8) {
                                 ++qdN;
-                                // questiond.do_init gates on _find_npc("文曲星").
+                                // questiond.do_init gates on _find_npc("鏂囨洸鏄?).
                                 // Replicate find_npc_ob and inspect registration.
                                 Value f;
                                 callVmFn("gs/daemons/named.o", "find_npc_ob",
@@ -15042,7 +15338,7 @@ private:
                                                                     line2 += (z2 ? "," : " [") + std::to_string(mapIds2[z2]);
                                                                 if (mapIds2.size() > 5) line2 += "...";
                                                                 else if (!mapIds2.empty()) line2 += "]";
-                                                                // R82: map identity for empty maps (云霄宫 has 0 objects) -
+                                                                // R82: map identity for empty maps (浜戦渼瀹?has 0 objects) -
                                                                 // print the map index value + registered map name/dims + the
                                                                 // room's own stored map_id/source_id/map_index.
                                                                 if (mi2.index() == 2) {
@@ -15107,7 +15403,7 @@ private:
                                         break;
                                     }
                                 } else if (gtSt || gtJb) {
-                                    // statued state: statue counts on the FIRST, MIDDLE(17th: 五龙窟一层) and LAST statue maps
+                                    // statued state: statue counts on the FIRST, MIDDLE(17th: 浜旈緳绐熶竴灞? and LAST statue maps
                                     const char* maps[][2] = {
                                         { "\xC0\xC0\xCF\xC8\xD5\xF2\xCD\xE2", "lanxianzhenwai" },
                                         { "\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3", "wulongku1" },
@@ -15125,9 +15421,9 @@ private:
                                         } else ss2 = "t" + std::to_string(sv2.index());
                                         return ss2;
                                     };
-                                    stOut += "揽仙镇外=" + probeStatueMap("\xC0\xBF\xCF\xC9\xD5\xF2\xCD\xE2");
-                                    stOut += " 五龙窟一层=" + probeStatueMap("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3");
-                                    stOut += " 玉清山巅=" + probeStatueMap("\xD3\xF1\xC7\xE5\xC9\xBD\xE1\xDB");
+                                    stOut += "鎻戒粰闀囧=" + probeStatueMap("\xC0\xBF\xCF\xC9\xD5\xF2\xCD\xE2");
+                                    stOut += " 浜旈緳绐熶竴灞?" + probeStatueMap("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3");
+                                    stOut += " 鐜夋竻灞卞穮=" + probeStatueMap("\xD3\xF1\xC7\xE5\xC9\xBD\xE1\xDB");
                                     // statued obj vars: all_map_info count + load_ok
                                     std::shared_ptr<OriginalVm> stVm2 = findVmBySub("gs/daemons/statued.o");
                                     if (stVm2) {
@@ -15144,7 +15440,7 @@ private:
                                                 }
                                             }
                                         }
-                                        // Which mappings hold the 五龙窟一层 key?
+                                        // Which mappings hold the 浜旈緳绐熶竴灞?key?
                                         std::string wl1 = std::string("\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3", 10);
                                         int mi3 = 0;
                                         for (size_t z4 = 0; z4 < svars.size(); ++z4) {
@@ -15170,10 +15466,10 @@ private:
                                             return "t" + std::to_string(vv.index());
                                         };
                                         const char* probeRooms[] = {
-                                            "\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3",   // 五龙窟一层
-                                            "\xCE\xE5\xC1\xFA\xC9\xBD",                    // 五龙山
-                                            "\xCE\xD4\xC1\xFA\xC6\xC2",                    // 卧龙坡
-                                            "\xD0\xF9\xD4\xAF\xB7\xD8\xD2\xBB\xB2\xE3",   // 轩辕坟一层
+                                            "\xCE\xE5\xC1\xFA\xBF\xDF\xD2\xBB\xB2\xE3",   // 浜旈緳绐熶竴灞?
+                                            "\xCE\xE5\xC1\xFA\xC9\xBD",                    // 浜旈緳灞?
+                                            "\xCE\xD4\xC1\xFA\xC6\xC2",                    // 鍗ч緳鍧?
+                                            "\xD0\xF9\xD4\xAF\xB7\xD8\xD2\xBB\xB2\xE3",   // 杞╄緯鍧熶竴灞?
                                         };
                                         (void)probeRooms;
                                         auto roomProbe = [&](const char* nm, const char* label) {
@@ -15194,7 +15490,7 @@ private:
                                                  { make_string("\xCA\xA6\xB8\xB8@\xCC\xEC\xDC\xAD\xB3\xC7") }, fnd2);
                                         std::string fb2;
                                         arrOf(fnd2, 3, fb2);
-                                        stOut += " 师fu@tyc=" + fb2;
+                                        stOut += " 甯坒u@tyc=" + fb2;
                                     }
                                     std::cerr << stOut << "\n";
                                     std::cerr.flush();
@@ -15204,7 +15500,7 @@ private:
                         }
                     }
                     // TEMP R79: npc_ob identity + raw array for the colliding
-                    // 杂货店老板 name, and the map-cell occupant resolution.
+                    // 鏉傝揣搴楄€佹澘 name, and the map-cell occupant resolution.
                     if (f.fn && f.fn->name == "do_init" &&
                         (thisObjectName_.find("party/city_war") != std::string::npos ||
                          objName_.find("party/city_war") != std::string::npos)) {
@@ -15213,7 +15509,7 @@ private:
                             ++cw2N;
                             try {
                                 std::string w2 = "[cw2] #" + std::to_string(cw2N) + " ";
-                                const std::string zhdKey = std::string("\xD4\xD3\xBB\xF5\xB5\xEA\xC0\xCF\xB0\xE5", 10); // 杂货店老板
+                                const std::string zhdKey = std::string("\xD4\xD3\xBB\xF5\xB5\xEA\xC0\xCF\xB0\xE5", 10); // 鏉傝揣搴楄€佹澘
                                 std::shared_ptr<OriginalVm> nmVm;
                                 std::string nmKey;
                                 {
@@ -15258,7 +15554,7 @@ private:
                                     }
                                     if (!foundMap) w2 += "no-npc_ob-map";
                                 }
-                                // map-cell occupant of room 杂货店
+                                // map-cell occupant of room 鏉傝揣搴?
                                 Value rmm;
                                 callVmFn("gs/daemons/named.o", "find_room_ob", { make_string("\xD4\xD3\xBB\xF5\xB5\xEA") }, rmm);
                                 if (rmm.index() == 7) {
@@ -15519,7 +15815,7 @@ private:
                         }
                     }
                     // TEMP R92: why did zone masters' load_rooms skip children
-                    // (misc/混合区域 rooms empty vs wumingxiaozhen working).
+                    // (misc/娣峰悎鍖哄煙 rooms empty vs wumingxiaozhen working).
                     if (f.fn && f.fn->name == "load_rooms") {
                         std::string d0 = "?";
                         int k0 = f.bp - f.argNum + 1;
@@ -15543,7 +15839,7 @@ private:
                         std::cerr.flush();
                     }
                     // TEMP R91: stage.clone_room gate - evaluate zoned
-                    // query_entry(混合区域) -> query_entry(帮派名人堂).
+                    // query_entry(娣峰悎鍖哄煙) -> query_entry(甯淳鍚嶄汉鍫?.
                     if (f.fn && f.fn->name == "clone_room" &&
                         (thisObjectName_.find("party/stage") != std::string::npos ||
                          objName_.find("party/stage") != std::string::npos)) {
@@ -15576,18 +15872,18 @@ private:
                     }
                     // TEMP R77: trace named's register_class_ob - pre-mutation
                     // state of the npc_ob/room_ob mapping + the object being
-                    // added, to find where the donghai 杂货店老板 npc_ob entry
+                    // added, to find where the donghai 鏉傝揣搴楄€佹澘 npc_ob entry
                     // (registered at boot) disappears before post_init phase-2.
                     if (f.fn && f.fn->name == "register_class_ob" &&
                         objName_.find("named.o") != std::string::npos) {
                         static int rcN = 0;
-                        // Only the colliding display names matter (杂货店老板 /
-                        // 杂货店 / 药店老板 / 药店).
+                        // Only the colliding display names matter (鏉傝揣搴楄€佹澘 /
+                        // 鏉傝揣搴?/ 鑽簵鑰佹澘 / 鑽簵).
                         static const char* rcKeys[] = {
-                            "\xD4\xD3\xBB\xF5\xB5\xEA\xC0\xCF\xB0\xE5",  // 杂货店老板
-                            "\xD4\xD3\xBB\xF5\xB5\xEA",                   // 杂货店
-                            "\xD2\xA9\xB5\xEA\xC0\xCF\xB0\xE5",          // 药店老板
-                            "\xD2\xA9\xB5\xEA",                            // 药店
+                            "\xD4\xD3\xBB\xF5\xB5\xEA\xC0\xCF\xB0\xE5",  // 鏉傝揣搴楄€佹澘
+                            "\xD4\xD3\xBB\xF5\xB5\xEA",                   // 鏉傝揣搴?
+                            "\xD2\xA9\xB5\xEA\xC0\xCF\xB0\xE5",          // 鑽簵鑰佹澘
+                            "\xD2\xA9\xB5\xEA",                            // 鑽簵
                         };
                         std::vector<std::string> rcStrs;
                         for (int k = f.bp - f.argNum + 1; k <= f.bp; ++k) {
@@ -15651,7 +15947,7 @@ private:
                     }
                     // TEMP probe: which object registers the taskd template/entry
 
-                    // named "娃娃冒险任务", and with what key bytes?
+                    // named "濞冨▋鍐掗櫓浠诲姟", and with what key bytes?
                     if (f.fn && (f.fn->name == "register_entry" ||
                                  f.fn->name == "register_task_template") && f.argNum >= 1) {
                         int k0 = f.bp - f.argNum + 1;
@@ -16209,7 +16505,7 @@ private:
             //     arg = (string)buf[(used_len + 1)..(used_len + len)];
             // read len=0 for every segment: each argument became an empty
             // string, `commandd::process_command(me, "", ...)` matched no
-            // command, and EVERY GM command (查询在线 / 隐身 / ...) silently did
+            // command, and EVERY GM command (鏌ヨ鍦ㄧ嚎 / 闅愯韩 / ...) silently did
             // nothing with no error anywhere.
             const std::string& s = std::get<std::shared_ptr<BufferValue>>(container)->data;
             int64_t i = toInt(key);
@@ -16265,8 +16561,8 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
         // slicing that substring came out as garbage ("1(x1"), so the
         // extra_para_action map was keyed wrongly and EVERY menu item written as
         // [label/cmd(para)] was silently swallowed by
-        // menu.c::select_menu_item's extra-para guard ("再来一份" in the GM
-        // 急急如律令 menu did nothing).  The 9111 name rule agrees:
+        // menu.c::select_menu_item's extra-para guard ("鍐嶆潵涓€浠? in the GM
+        // 鎬ユ€ュ寰嬩护 menu did nothing).  The 9111 name rule agrees:
         // punishd::check_name_length_legal takes a whole GBK character with
         // name[i..(i+2)-1], i.e. two BYTES.
         // LPCVM_CHARRANGE=1 restores the old character-wise slicing (A/B).
@@ -16459,7 +16755,7 @@ void Scheduler::spawnDelayed(std::shared_ptr<OriginalVm> vm, const std::string& 
             // stay the "<this>" default, so a timer-dispatched
             // user::time_expired called destruct_object(this_object()) with an
             // unresolvable value and the logged-out character was never
-            // destroyed (see §5.C).
+            // destroyed (see 搂5.C).
             dedicated->setThisObjectName(vm->thisObjectName());
             vm = std::move(dedicated);
         }
@@ -16559,8 +16855,8 @@ void Scheduler::parkCurrent(std::shared_ptr<Process> p, const ResumeCond& cond) 
     // first one's condition.  The first process was then registered under the
     // other's event/mask (or woken by an unrelated raise) and returned from its
     // wait_event early - filed.c::do_operate answered its default -2 and
-    // login.c::check_valid_name turned that into the 9112 「数据库目前正在维护
-    // 中」 dialog (real client, hammering ENTER: two name-check waits with mask
+    // login.c::check_valid_name turned that into the 9112 銆屾暟鎹簱鐩墠姝ｅ湪缁存姢
+    // 涓€?dialog (real client, hammering ENTER: two name-check waits with mask
     // 0x400 and 0x20, one reply each, and the 0x20 waiter returned -2 before its
     // own reply arrived).
     const ResumeCond& c = cond;
@@ -16978,7 +17274,7 @@ Value Scheduler::execOnMain(const std::shared_ptr<OriginalVm>& vm, const std::st
     // is set by game_service around feedClient() (see builtins.h).  The public
     // drivers hand ONE command at a time to a connection's interactive, so two
     // un-finished chains on one connection mean the driver broke that model -
-    // which is exactly what makes the LPC answer 9101 「正在处理中」.
+    // which is exactly what makes the LPC answer 9101 銆屾鍦ㄥ鐞嗕腑銆?
     const int64_t dcno = lpc::dispatchCno();
     const void* runVmRaw = runVm.get();
     if (isSchedulerThread()) {
@@ -18066,7 +18362,7 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
             // resumed from its filed read, then calling configd read_etc
             // cross-VM: shopd.do_init's continuation was never chained, so
             // after the cfg reply resumed configd the rest of do_init -
-            // load_open_server_conf tail, "正常启动" - never ran).
+            // load_open_server_conf tail, "姝ｅ父鍚姩" - never ran).
             p->parkedVm.reset();
             if (vmEnvTrace())
                 std::cerr << "[sched-xvm-resume] " << p->entry << " vm=" << rvm.get() << "\n";
@@ -19249,7 +19545,7 @@ std::string registerObjectVM(const std::string& virtualPath, const std::string& 
 // "login.o chain owned by tid=8 but resumed by tid=10"), so within ONE statement
 // filed.c::do_operate built its reply closure with tid 8 and computed its wait
 // mask from tid 10: the reply raised tid 8's event bit while the waiter sat on
-// tid 10's, the request returned its default -2 (9112 「数据库目前正在维护中」)
+// tid 10's, the request returned its default -2 (9112 銆屾暟鎹簱鐩墠姝ｅ湪缁存姢涓€?
 // and check_name_used's tail (save() + logind->show_char_list) was lost, so the
 // character list 0xF061 carried no character and basic_char_info was never
 // written.  The VM that is executing sets tlsExecVm below and its recorded chain
@@ -19472,7 +19768,7 @@ Value findObjectInRegistry(const std::string& virtualPath, const std::string& se
     // and carry_to_destination opens with
     //     if (!is_object(env = find_object(destination))) return;
     // so a miss here is a SILENT no-op - the coachman's menu opens, the teleport
-    // option is clickable, and nothing happens ("车夫无法传送").  Registry keys
+    // option is clickable, and nothing happens ("杞﹀か鏃犳硶浼犻€?).  Registry keys
     // always carry the .o extension, so retry with it appended (and with .c
     // normalised the same way) when the caller passed a bare path.
     const size_t slash = rel.find_last_of('/');
@@ -19608,7 +19904,7 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
             // template for each row): the template must be the REAL registered
             // object, never a previous "clone:" instance - matching one of
             // those re-imports the PREVIOUS row's identity onto every new
-            // basic (逍遥仙 basics ended up registered as 泰煞守卫, etc.).
+            // basic (閫嶉仴浠?basics ended up registered as 娉扮厼瀹堝崼, etc.).
             for (auto& kv : reg.vms) {
                 std::string key = kv.first;
                 if (key.compare(0, 6, "clone:") == 0) continue;   // skip instances
@@ -20227,8 +20523,8 @@ void flowProbeReply(int64_t cno, int64_t cmd, int64_t len) {
 // stub, so nothing was ever destroyed: a logged-out character stayed alive
 // (user::disconnected -> time_expired -> ... -> destruct_object(me) did
 // nothing), the account stayed "online", and the next login RECONNECTED the
-// stale character instead of showing the character list ("下线后再次上线
-// 直接进入游戏没有选择").  Unregister the object so it can no longer be
+// stale character instead of showing the character list ("涓嬬嚎鍚庡啀娆′笂绾?
+// 鐩存帴杩涘叆娓告垙娌℃湁閫夋嫨").  Unregister the object so it can no longer be
 // resolved by key (call_other/destruct checks then see "no such object").
 //
 // The VM's shared_ptr is parked (not dropped) for a while: a self-destruct or
@@ -20247,9 +20543,9 @@ std::vector<std::shared_ptr<OriginalVm>>& destroyedVmPark() {
 // destruct_object(this_object()) in the same thread still works: charge
 // items' apply() does consume_amount(1) (-> set_amount(0) ->
 // destruct_object(this_object())) and THEN
-//     send_text(0, sprintf("你使用了#R%s#n。", get_name()))
+//     send_text(0, sprintf("浣犱娇鐢ㄤ簡#R%s#n銆?, get_name()))
 // Unregistering at once made get_name() (this_object()->query("name"))
-// return 0, so using the LAST item of a stack printed "你使用了0".
+// return 0, so using the LAST item of a stack printed "浣犱娇鐢ㄤ簡0".
 // Here: the destructors run at once (vm_f_destruct_object2), only the
 // registry removal waits for the scheduler process that issued it to finish.
 struct PendingFree {
@@ -21640,7 +21936,7 @@ void vmchainBegin(int64_t clientNo, int64_t chainKey, const void* vm,
             // command at a time (LDMud's backend loop hands the interpreter the
             // next input line of an interactive only after its command_giver
             // finished; FluffOS buffers input the same way).  Any other
-            // un-ENDed chain of this connection is the 9101 「正在处理中」 cause.
+            // un-ENDed chain of this connection is the 9101 銆屾鍦ㄥ鐞嗕腑銆?cause.
             for (const auto& kv : m) {
                 if (kv.second.clientNo != clientNo) continue;
                 if (kv.second.chainKey == chainKey) continue;
@@ -21844,7 +22140,7 @@ bool clientLpcBusy(int64_t cno) {
 // returned after 339ms while its LPC continuation
 // (create_new_char -> check_valid_name -> get_gid -> do_operate) kept running on
 // a separate chain, so the next packet of a 20x ENTER burst met the LPC
-// re-entrancy guard -> 9101 「正在处理中」.
+// re-entrancy guard -> 9101 銆屾鍦ㄥ鐞嗕腑銆?
 //
 // The marker is reference counted per connection:
 //   * +1 while a command is being dispatched on a thread (execOnMain),
@@ -21926,3 +22222,4 @@ void registerServiceSocket(int fd, std::function<bool(unsigned int fd)> cb) {
 }
 
 } // namespace lpc
+
