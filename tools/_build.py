@@ -24,8 +24,7 @@ if not os.path.exists(os.path.join(ROOT, 'build', 'lpcvm.sln')):
 EXE = os.path.join(ROOT, 'build', 'Release', 'lpcvm.exe')
 MSBUILD = r'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe'
 
-subprocess.run(['powershell', '-NoProfile', '-Command',
-                'Get-Process lpcvm -ErrorAction SilentlyContinue | Stop-Process -Force'],
+subprocess.run(['taskkill', '/F', '/IM', 'lpcvm.exe'],
                capture_output=True, text=True)
 time.sleep(3)
 for f in ('src/original_vm.cpp', 'src/builtins.cpp', 'src/value.cpp', 'src/value.h',
