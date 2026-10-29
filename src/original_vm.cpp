@@ -94,6 +94,42 @@ void dynProbeStartWatcher() {
 // ---- liveness counters (see original_vm.h) -------------------------------
 LivenessCounters& liveness() { static LivenessCounters c; return c; }
 
+// BAG CHAIN WHITELIST (LPCVM_BAGDBG): EVERY function on the trade/item-move
+// path, checked at the three unavoidable chokepoints (local call op7,
+// cross-object call op8, function return op72/73, efun op6) so the whole
+// flow leaves one continuous trace instead of per-hunch probes.
+inline bool bagChainFn(const std::string& n) {
+    static const char* const kFns[] = {
+        // item.c move family
+        "move_to_bag", "move_to_bag_ex", "move_to_dest", "put_in_container",
+        "move_out", "move_back", "move_back_to_bag", "move_back_to_room",
+        "move_back_to_store", "get_container_free_pos", "get_free_pos",
+        "notify_carrier", "get_capacity", "get_store_capacity",
+        "get_container", "do_when_move_to_bag", "try_move_to_katao",
+        "is_same_item", "is_same_item_ex", "separate", "add_amount",
+        "cost_amount", "get_amount", "set_amount", "combine_with",
+        // limit / check daemons side
+        "check_limit_item", "move_to_bag_check", "get_durability",
+        "is_need_apply_log", "get_apply_log_item_info",
+        // user.c carry family
+        "query_inventory", "query_inventory_arr", "set_inventory",
+        "set_inventory_item", "get_inv_start_pos", "get_inv_end_pos",
+        "get_inv_size", "calc_inv_size", "is_legal_inv_pos", "refresh_item",
+        "has_item", "get_idlesse_place", "get_inventory_free_pos",
+        "can_carry", "query_bag_amount", "in_specical_inv_state",
+        "switch_back_equip",
+        // exchange flow
+        "exchange_ok", "exchange_cancel", "exchange_finish", "exchange_close",
+        "remove_exchange_all", "do_exchange", "do_exchange_item",
+        "check_has_important_item", "exchange_open", "exchange_open_ex",
+        "exchange_appraise", "exchange_select", "make_certain_exchanger",
+        "delete_make_certain", "delete_bargainer", "is_make_certain",
+        "send_receive_item", "save_string", "get_iid"};
+    for (auto* k : kFns)
+        if (n == k) return true;
+    return false;
+}
+
 const std::atomic<bool>& dynProbeFlag(const char* name) {    static std::mutex reg;
     std::lock_guard<std::mutex> lk(reg);
     for (DynProbeSlot* s : dynProbeSlots())
@@ -7052,11 +7088,26 @@ private:
                 // this_object()) from its container.  The original also
                 // unlinks it from the container's lodger list, which our env
                 // map models as the single container key.
-                std::string key = objName_;
-                if (!args.empty()) {
-                    if (args[0].index() == 4) key = std::get<SharedString>(args[0]);
-                    else if (args[0].index() == 7)
-                        key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                //
+                // CLONE KEY (2026-10-29 trade vanish): the no-arg form must
+                // clear under currentThisName() - the same key move_object
+                // stores and env_object() reads.  objName_ is the VM's
+                // template-level name; item clones share one template VM, so
+                // clearing under it left the CLONE's env entry (stale owner)
+                // alive: the confirm/cancel move_out then saw the old
+                // container with pos=0 and hit the error("...非正常容器...")
+                // branch - the trade chain aborted after move_out and the
+                // item was in no container (vanished from both players).
+                std::string key;
+                if (args.empty()) {
+                    key = currentThisName();
+                    if (key.empty()) key = objName_;
+                } else if (args[0].index() == 4) {
+                    key = std::get<SharedString>(args[0]).str();
+                } else if (args[0].index() == 7) {
+                    key = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                } else {
+                    key = objName_;
                 }
                 if (!key.empty()) envStoreObjKey(key, "");
                 return make_int(0);
@@ -11986,6 +12037,33 @@ private:
                     std::cerr << "[ret-enter] " << f.fn->name << " bp=" << f.bp
                               << " argNum=" << f.argNum << " stack=" << es_->stack.size()
                               << " frames=" << es_->frames.size() << " op=" << in.op << "\n";
+                // BAG TRACE (ret-side): fires at the ONE point every return
+                // passes - inline takeovers cannot skip it (unlike the
+                // broadcast-side probe the inline path jumps over).  Pins the
+                // trade item vanish: move_to_bag ret (1 ok / 0 move_to_dest
+                // fail / string limit-vanish), query_inventory ret (the live
+                // container mapping or not), move_to_dest / move_out /
+                // move_back / check_limit_item.
+                {
+                    static const std::atomic<bool>& bagRetOn = dynProbeFlag("LPCVM_BAGDBG");
+                    if (bagRetOn.load(std::memory_order_relaxed) && f.fn) {
+                        const std::string& bfn = f.fn->name;
+                        if (bagChainFn(bfn)) {
+                            size_t bp2 = static_cast<size_t>(f.bp);
+                            std::string rv = "<void>";
+                            if (es_->stack.size() > bp2 + 1)
+                                rv = to_string(es_->stack[bp2 + 1].value, false).substr(0, 80);
+                            else if (!es_->stack.empty())
+                                rv = to_string(es_->stack.back().value, false).substr(0, 80);
+                            std::cerr << "[bag-ret] " << bfn
+                                      << " retIdx=t" << (es_->stack.size() > bp2 + 1
+                                          ? es_->stack[bp2 + 1].value.index() : -1)
+                                      << " ret=" << rv
+                                      << " vm=" << objName_ << "\n";
+                            std::cerr.flush();
+                        }
+                    }
+                }
                 // Diagnostic return probe: scand query_objects results for the
                 // change_lookd monster gate, hero get_save_path shape, and
                 // (LPCVM_TAIL) vendue/change_lookd/scand entry functions.
@@ -12172,6 +12250,29 @@ private:
                 // Cross-object inline call: restore the caller's obj vars and
                 // function-index table (constitution).
                 if (f.savedObjVars) { auto _ob = objVars_; objVars_ = f.savedObjVars; noteVars("pop-f", _ob); }
+                if (f.funcLookupSwitched) es_->funcLookup = f.savedFuncLookup;
+                // BAG TRACE: verify the inline-return restore.  The trade
+                // vanish showed move_to_bag's execution disappear right after
+                // an inline query_inventory returned - if retCode does NOT
+                // point at the caller's code (or the caller frame is not the
+                // expected function), the restored ip executes foreign code
+                // and the move chain silently dies.
+                if (f.savedObjVars && dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed)) {
+                    const std::string calleeN = f.fn ? f.fn->name : "<ctx>";
+                    if (calleeN == "query_inventory" || calleeN == "move_out" ||
+                        calleeN == "get_capacity" || calleeN == "move_to_bag" ||
+                        calleeN == "move_to_bag_ex" || calleeN == "lite_query_temp") {
+                        const Frame* callerF = es_->frames.size() >= 2
+                            ? &es_->frames[es_->frames.size() - 2] : nullptr;
+                        std::cerr << "[bag-inline-ret] callee=" << calleeN
+                                  << " caller=" << (callerF && callerF->fn ? callerF->fn->name : "<none>")
+                                  << " retCodeMatch=" << (callerF && callerF->fn &&
+                                      f.retCode == &callerF->fn->code ? 1 : 0)
+                                  << " retIp=" << f.retIp
+                                  << " obj=" << objName_ << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 if (f.funcLookupSwitched) es_->funcLookup = f.savedFuncLookup;
                 es_->frames.pop_back();
                 es_->stack.resize(static_cast<size_t>(newSize));
@@ -13572,6 +13673,18 @@ private:
                 int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 int argc = fromMeta ? m1 : in.b;
                 es_->lastEfunIndex = efun;
+                // BAG TRACE: efun calls made from the item-move chain.
+                if (dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed) &&
+                    !es_->frames.empty() && es_->frames.back().fn &&
+                    bagChainFn(es_->frames.back().fn->name)) {
+                    const auto& bnames = efunNameTable();
+                    std::string bnm = (efun >= 0 && static_cast<size_t>(efun) < bnames.size())
+                                          ? bnames[efun] : "?";
+                    std::cerr << "[bag-efun] " << es_->frames.back().fn->name
+                              << " -> efun=" << bnm << " idx=" << efun
+                              << " argc=" << argc << " obj=" << objName_ << "\n";
+                    std::cerr.flush();
+                }
                 if (vmEnvTrace() && objName_.find("cmd_log_important") != std::string::npos)
                     std::cerr << "[efun-pre] efun=" << efun << " argc=" << argc
                               << " stack=" << es_->stack.size() << " frames=" << es_->frames.size()
@@ -14587,6 +14700,27 @@ private:
             }
             case 7: { // call_in_user_fun
                 CpuProfGuard _cpuProfOp7("op7");
+                // BAG TRACE: when the CURRENT function is one of the item-move
+                // chain, print every local (index-based) call it makes and how
+                // the index resolved in this VM's merged table.  The trade
+                // vanish showed move_to_bag(_ex) never returning right after
+                // query_inventory - the next local call is call_user_fn(#196)
+                // = move_to_dest; a merged-table mis-resolution here (same
+                // family as the old CONFIG_D slot mixup) would swallow the
+                // execution with no cross-object trace at all.
+                if (dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed) &&
+                    !es_->frames.empty() && es_->frames.back().fn) {
+                    const std::string& cfn = es_->frames.back().fn->name;
+                    int fi7b = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                    auto fit7b = funcsByIndex_.find(fi7b);
+                    const std::string fn7b = (fit7b != funcsByIndex_.end() && fit7b->second)
+                                                 ? fit7b->second->name : std::string("<NOT-FOUND>");
+                    if (bagChainFn(cfn) || bagChainFn(fn7b)) {
+                        std::cerr << "[bag-call] " << cfn << " -> idx=" << fi7b
+                                  << " fn=" << fn7b << " obj=" << objName_ << "\n";
+                        std::cerr.flush();
+                    }
+                }
                 // Diagnostic switches are read ONCE (see the vmEnv*/envFlag* helpers
                 // above): call_in_user_fun runs ~44k times per 5s during startup and
                 // each raw std::getenv here is a linear scan of the process
@@ -14829,7 +14963,8 @@ private:
                 Value pathVal = pop().value;
                 Value funVal = pop().value;
                 if (pathVal.index() == 5 && funVal.index() == 4 &&
-                    std::get<SharedString>(funVal).str().find("move_to_bag") != std::string::npos) {
+                    std::get<SharedString>(funVal).str().find("move_to_bag") != std::string::npos &&
+                    dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed)) {
                     std::cerr << "[c8-top] t5 move_to_bag call on obj=" << objName_
                               << " elems=" << std::get<std::shared_ptr<ArrayValue>>(pathVal)->items.size()
                               << "\n";
@@ -15213,20 +15348,27 @@ private:
                 }
                 if (funName == "process_command" || funName == "cmd_internal_auth" ||
                     funName == "relay_agent" || funName == "main" || funName == "send_message" ||
-                    envFlagTraceObj()) {
+                    envFlagTraceObj() || dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed)) {
                     std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal)
                         : (pathVal.index() == 7 ? std::get<std::shared_ptr<ObjectValue>>(pathVal)->programName
                                                 : (std::string("t") + std::to_string(pathVal.index())));
                     const char* trObj8 = envTraceObjValue();
                     bool watch = funName == "process_command" || funName == "cmd_internal_auth" ||
                                  funName == "relay_agent" || funName == "main" ||
-                                 funName == "send_message";
+                                 funName == "send_message" ||
+                                 bagChainFn(funName) ||
+                                 (!es_->frames.empty() && es_->frames.back().fn &&
+                                  bagChainFn(es_->frames.back().fn->name));
                     if (!watch && trObj8)
                         watch = objName_.find(trObj8) != std::string::npos ||
                                 pv.find(trObj8) != std::string::npos;
                     if (watch)
                         std::cerr << "[case8] " << objName_ << " -> " << pv << "::" << funName
-                                  << " argc=" << argn << "\n";
+                                  << " argc=" << argn
+                                  << (dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed)
+                                          && !es_->frames.empty() && es_->frames.back().fn
+                                      ? (" caller=" + es_->frames.back().fn->name) : std::string())
+                                  << "\n";
                 }
                 if (pathVal.index() == 4) {
                     std::string path = std::get<SharedString>(pathVal);
@@ -15632,10 +15774,12 @@ private:
                         }
                     }
                 } else if (pathVal.index() == 5) {
-                    std::cerr << "[arr-in] fn=" << funName << " elems="
-                              << std::get<std::shared_ptr<ArrayValue>>(pathVal)->items.size()
-                              << " obj=" << objName_ << "\n";
-                    std::cerr.flush();
+                    if (dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed)) {
+                        std::cerr << "[arr-in] fn=" << funName << " elems="
+                                  << std::get<std::shared_ptr<ArrayValue>>(pathVal)->items.size()
+                                  << " obj=" << objName_ << "\n";
+                        std::cerr.flush();
+                    }
                     // ------------------------------------------------------------------
                     // ARRAY CALL (MudOS/LPC driver extension): `(array)->fn(args)` calls
                     // fn on EVERY object element and returns the array of results.
@@ -15723,8 +15867,10 @@ private:
                         std::cerr << "[array-call] " << funName << " on " << targets.size()
                                   << " elements\n";
                 } else if (pathVal.index() == 7) {
-                    std::cerr << "[obj-in] fn=" << funName << " obj=" << objName_ << "\n";
-                    std::cerr.flush();
+                    if (dynProbeFlag("LPCVM_BAGDBG").load(std::memory_order_relaxed)) {
+                        std::cerr << "[obj-in] fn=" << funName << " obj=" << objName_ << "\n";
+                        std::cerr.flush();
+                    }
                     // Object value: resolve through the clone/registry key.
                     auto ov = std::get<std::shared_ptr<ObjectValue>>(pathVal);
                     // A NULL object payload (an object slot that was never
@@ -22656,38 +22802,83 @@ std::vector<std::string> envLodgerKeys(const std::string& containerKey) {
     return out;
 }
 
+// Per-KEY environment store (2026-10-29 trade item vanishing).  The old
+// model kept the environment on the VM (vmSetEnv/vmEnv), but item clones
+// SHARE the template VM (see [vs]: one vm served clone:...#84 AND #137), so
+// every clone of a template read/wrote the SAME env record: the separate()
+// clone created for the trade slot inherited the ORIGINAL item's env (the
+// seller), and the confirm-time move_out saw env=seller with position=0
+// (already cleared by the slot-time move_out) and hit
+// error("从非正常容器物品中直接移除物品") - the whole move_to_bag_ex chain
+// aborted, put_in_container never ran, and the item existed in no container.
+// This map keys the environment by the FULL registry key (clone number
+// included) so clones are isolated.
+std::mutex& envByKeyMutex() { static std::mutex m; return m; }
+std::unordered_map<std::string, std::string>& envByKey() {
+    static std::unordered_map<std::string, std::string> m;
+    return m;
+}
+
 void envStoreObjKey(const std::string& selfKey, const std::string& destKey) {
     const std::string dest = canonicalObjKey(destKey);
+    const std::string self = canonicalObjKey(selfKey);
     {
         std::lock_guard<std::mutex> lk(envPendMutex());
         envLodgerMove(canonicalObjKey(selfKey), dest);
     }
-    if (auto vm = envVmForKey(selfKey)) {
-        vm->vmSetEnv(dest);
-        std::lock_guard<std::mutex> lk(envPendMutex());
-        envPending().erase(selfKey);
-        return;
+    if (self.empty()) return;
+    {
+        std::lock_guard<std::mutex> lk(envByKeyMutex());
+        if (dest.empty()) envByKey().erase(self);
+        else envByKey()[self] = dest;
+    }
+    // VM-level env stays for VM-owned (non-clone) keys only - clones share
+    // their template VM and would clobber each other's record there.
+    if (self.find('#') == std::string::npos) {
+        if (auto vm = envVmForKey(selfKey)) {
+            vm->vmSetEnv(dest);
+            std::lock_guard<std::mutex> lk(envPendMutex());
+            envPending().erase(selfKey);
+            return;
+        }
     }
     std::lock_guard<std::mutex> lk(envPendMutex());
     if (dest.empty()) envPending().erase(selfKey);
     else envPending()[selfKey] = dest;
 }
 std::string envLookupObjKey(const std::string& obKey) {
-    if (auto vm = envVmForKey(canonicalObjKey(obKey))) {
-        const std::string& e = vm->vmEnv();
-        if (!e.empty()) return e;
+    const bool isCloneKey = obKey.find('#') != std::string::npos;
+    // Per-key env FIRST: clones share the template VM, whose vmEnv is NOT
+    // theirs (the trade vanish root cause - see envStoreObjKey).
+    {
+        std::lock_guard<std::mutex> lk(envByKeyMutex());
+        auto it = envByKey().find(canonicalObjKey(obKey));
+        if (it != envByKey().end()) return it->second;
+    }
+    // VM-level env only for VM-owned (non-clone) keys: a clone key hitting
+    // the shared template VM's record is exactly the cross-clone pollution
+    // this store exists to prevent.
+    if (!isCloneKey) {
+        if (auto vm = envVmForKey(canonicalObjKey(obKey))) {
+            const std::string& e = vm->vmEnv();
+            if (!e.empty()) return e;
+        }
     }
     std::lock_guard<std::mutex> lk(envPendMutex());
     auto it = envPending().find(obKey);
     if (it != envPending().end()) return it->second;
-    std::string b = obKey;
-    size_t hb = b.find('#');
-    if (hb != std::string::npos) b.resize(hb);
-    for (auto& kv : envPending()) {
-        std::string a = kv.first;
-        size_t ha = a.find('#');
-        if (ha != std::string::npos) a.resize(ha);
-        if (a == b) return kv.second;
+    // Same-template fallback ONLY for non-clone keys; a clone must NOT
+    // inherit a sibling clone's (or the template's) environment.
+    if (!isCloneKey) {
+        std::string b = obKey;
+        size_t hb = b.find('#');
+        if (hb != std::string::npos) b.resize(hb);
+        for (auto& kv : envPending()) {
+            std::string a = kv.first;
+            size_t ha = a.find('#');
+            if (ha != std::string::npos) a.resize(ha);
+            if (a == b) return kv.second;
+        }
     }
     return std::string();
 }
