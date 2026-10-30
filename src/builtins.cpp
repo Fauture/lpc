@@ -5560,6 +5560,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // process, timing out and returning -1 instead of the config value).
         if (args.empty()) {
             int64_t pid = lpc::schedulerCurrentTid();
+            // LPCVM_TIDDBG (hot, default off): one line per get_thread_id()
+            // call - the tid-flip hunt for chains that split their identity
+            // across a nested process run (xlibd args_stack orphans).
+            if (LPCVM_GETENV("LPCVM_TIDDBG"))
+                std::cerr << "[tid] tid=" << pid
+                          << " obj=" << stubCallCtx().obj
+                          << " fn=" << stubCallCtx().fn << "\n";
             // LPCVM_EVDBG: the DBA operate path (filed.c::do_operate) builds its
             // wait/raise event name from get_thread_id(); if the tid seen here
             // differs from the one the parked process used, the raise targets a

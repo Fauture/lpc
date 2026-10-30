@@ -1270,6 +1270,10 @@ void regIndexRegister(const std::string& key, const std::shared_ptr<OriginalVm>&
                       const std::shared_ptr<OriginalObject>& obj);
 void regIndexUnregister(const std::string& key);
 void regIndexUnregisterPtr(const void* op);
+// O(1) identity resolution: OriginalObject instance -> its registered VM.
+// Mirrors the original driver, where an object value IS the object pointer;
+// declared here, defined after the registry (needs OriginalVm complete).
+std::shared_ptr<OriginalVm> vmForOwnerPtr(const void* ownerPtr);
 class IndexedVmMap : public std::unordered_map<std::string, std::shared_ptr<OriginalVm>> {
 public:
     using Base = std::unordered_map<std::string, std::shared_ptr<OriginalVm>>;
@@ -3940,10 +3944,24 @@ public:
                     std::cerr << "[life] destructor " << f->name << " (idx " << f->index
                               << " funOff " << f->funOffset << ") -> " << to_string(r, false)
                               << " on " << thisObjectName_ << "\n";
+                if (warDtor.load(std::memory_order_relaxed) &&
+                    thisObjectName_.find("misc/combat.o#") != std::string::npos)
+                    std::cerr << "[war-dtor-ok] " << thisObjectName_ << " funOff="
+                              << f->funOffset << " -> " << to_string(r, false).substr(0, 40) << "\n";
             } catch (const std::exception& e) {
                 if (verbose) std::cerr << "[life] destructor " << f->name << " threw: " << e.what() << "\n";
+                static const std::atomic<bool>& warDtorC = dynProbeFlag("LPCVM_WARDBG");
+                if (warDtorC.load(std::memory_order_relaxed) &&
+                    thisObjectName_.find("misc/combat.o#") != std::string::npos)
+                    std::cerr << "[war-dtor-THROW] " << thisObjectName_ << " funOff="
+                              << f->funOffset << " what=" << e.what() << "\n";
             } catch (...) {
                 if (verbose) std::cerr << "[life] destructor " << f->name << " threw (unknown)\n";
+                static const std::atomic<bool>& warDtorU = dynProbeFlag("LPCVM_WARDBG");
+                if (warDtorU.load(std::memory_order_relaxed) &&
+                    thisObjectName_.find("misc/combat.o#") != std::string::npos)
+                    std::cerr << "[war-dtor-THROW] " << thisObjectName_ << " funOff="
+                              << f->funOffset << " what=(unknown)\n";
             }
         }
         if (chain.empty() && verbose)
@@ -10918,6 +10936,26 @@ private:
             // whoever happens to enter only made resumeCaller re-pin the wrong
             // process after a nested entry.
         }
+        // Pin get_thread_id() to the chain's OWNER for this resume, exactly
+        // like resumeCaller: the continuation of a parked chain is the SAME
+        // original PCB in the original driver, so its tid must not change.
+        // Without this pin a chain resumed by a waker process ran its tail
+        // under the WAKER's tid - xlibd's push_args/pop_args pair (one drama
+        // chain resumed across a park) then landed on different args_stack
+        // slots, entries orphaned, and a later push logged 「时间标记过于古
+        // 老」 - a line the original never produces.
+        struct ResumeChainTidScope {
+            int64_t prev;
+            bool armed;
+            ResumeChainTidScope() : prev(lpc::scheduler().chainTid()), armed(false) {}
+            ~ResumeChainTidScope() {
+                if (armed) lpc::scheduler().setChainTid(prev);
+            }
+        } resumeTidScope;
+        if (execOwnerTid_ >= 0 && execOwnerTid_ < 128) {
+            lpc::scheduler().setChainTid(execOwnerTid_);
+            resumeTidScope.armed = true;
+        }
         if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") &&
             objName_.find("/clone/npc/master") != std::string::npos) {
             std::string cf = es_->frames.empty() || !es_->frames.back().fn ? "<none>" : es_->frames.back().fn->name;
@@ -11292,9 +11330,16 @@ private:
         auto it = runStates_.find(key);
         if (it == runStates_.end()) {
             runStates_[key].es = std::shared_ptr<ExecState>(new ExecState());
-            runStates_[key].ownerTid = (lpc::scheduler().chainTid() >= 0)
-                                           ? lpc::scheduler().chainTid()
-                                           : lpc::scheduler().currentProcessTid();
+            // The chain's owner is the process CREATING it - prefer the real
+            // current PCB tid.  The TLS chainTid can carry a stale/clobbered
+            // value (a nested process run that exited before the restore
+            // existed), and a chain recorded with a foreign tid would then
+            // report that tid for its whole life via chainOwnerTid().
+            {
+                int64_t cur = lpc::scheduler().currentProcessTid();
+                if (cur < 0) cur = lpc::scheduler().chainTid();
+                runStates_[key].ownerTid = (cur >= 0) ? cur : -1;
+            }
             it = runStates_.find(key);
             activeKey_ = key;
             es_ = it->second.es.get();
@@ -15817,12 +15862,20 @@ private:
                         auto ov = std::get<std::shared_ptr<ObjectValue>>(tv);
                         const std::string& op = ov->programName;
                         Value r;
-                        // CLONE IDENTITY: resolve per-clone vm via ov->owner
-                        // first (the programName string cannot distinguish
-                        // clones and falls back to the pak template - the
-                        // trade item vanishing root cause, see the case-8
-                        // object branch above for the full story).
-                        if (!funName.empty()) {
+                        // OWNER-FIRST (2026-10-29 thorough cross-vm fix): the
+                        // array element keeps its per-instance identity through
+                        // the pointer, so (values(items))->move_to_bag_ex(me)
+                        // reaches the REAL clone even when the element's
+                        // programName lost the clone suffix.  No owner hit ->
+                        // the historical string path.
+                        std::shared_ptr<OriginalVm> vmO =
+                            ov->owner ? vmForOwnerPtr(ov->owner) : nullptr;
+                        if (vmO && vmO.get() != this && !funName.empty()) {
+                            vmO->setPreviousObjectName(thisObjectName_);
+                            r = runDetached([&] {
+                                return vmO->callFunctionByName(funName, callArgs);
+                            });
+                        } else if (!funName.empty()) {
                             r = tryCallOtherObject(searchRoot_, op, funName, callArgs, thisObjectName_);
                             if (funName == "query_inventory" || funName == "move_to_bag" ||
                                 funName == "move_to_bag_ex") {
@@ -15986,29 +16039,60 @@ private:
                         }
                         if (selfRef && hasRefArg) resolveSelf();
                         if (!(selfRef && hasRefArg && found)) {
-                            if (envFlagTail() && objName_.find("questiond") != std::string::npos) {
-                                static int qdC = 0;
-                                if (qdC < 80) {
-                                    ++qdC;
-                                    std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
-                                    std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal).str() : "?";
-                                    std::string fv = funName.empty() ? ("idx" + std::to_string(funIndex)) : funName;
-                                    std::cerr << "[qd-call] fn=" << fv << " path=" << pv
-                                              << " cur=" << cur << " obj=" << objName_ << "\n";
-                                    std::cerr.flush();
-                                }
-                            }
-                            auto args = popArgs();
-                            if (funName.empty()) {
-                                result = runDetached([&] {
-                                    return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
-                                });
+                            // OWNER-FIRST IDENTITY (2026-10-29 thorough cross-vm
+                            // fix): the object value carries the per-instance
+                            // OriginalObject pointer - exactly the original
+                            // driver's Vm_Object* semantics.  Resolve through
+                            // it (O(1) GsRegIndex.objByPtr) instead of the
+                            // string path, whose clone suffix is lost wherever
+                            // a value crosses a VM boundary (timer callbacks,
+                            // temp maps, closures) - the trade item vanish and
+                            // the missing combat round panel (the
+                            // standard_template timer callback's chained
+                            // ob->start_new_round() never reached the clone)
+                            // are the same disease.  Same VM -> inline like
+                            // object(<this>); another VM -> the same detached
+                            // mechanics the string path uses; no owner hit ->
+                            // the historical string path, untouched.
+                            std::shared_ptr<OriginalVm> vmO =
+                                ov->owner ? vmForOwnerPtr(ov->owner) : nullptr;
+                            if (vmO && vmO.get() != this) {
+                                auto args = popArgs();
+                                vmO->setPreviousObjectName(thisObjectName_);
+                                if (funName.empty())
+                                    result = runDetached([&] {
+                                        return vmO->callFunctionByIndex(funIndex);
+                                    });
+                                else
+                                    result = runDetached([&] {
+                                        return vmO->callFunctionByName(funName, args);
+                                    });
                                 found = true;
                             } else {
-                                result = runDetached([&] {
-                                    return tryCallOtherObject(searchRoot_, path, funName, args);
-                                });
-                                found = true;
+                                if (envFlagTail() && objName_.find("questiond") != std::string::npos) {
+                                    static int qdC = 0;
+                                    if (qdC < 80) {
+                                        ++qdC;
+                                        std::string cur = es_->frames.empty() || !es_->frames.back().fn ? "<top>" : es_->frames.back().fn->name;
+                                        std::string pv = pathVal.index() == 4 ? std::get<SharedString>(pathVal).str() : "?";
+                                        std::string fv = funName.empty() ? ("idx" + std::to_string(funIndex)) : funName;
+                                        std::cerr << "[qd-call] fn=" << fv << " path=" << pv
+                                                  << " cur=" << cur << " obj=" << objName_ << "\n";
+                                        std::cerr.flush();
+                                    }
+                                }
+                                auto args = popArgs();
+                                if (funName.empty()) {
+                                    result = runDetached([&] {
+                                        return tryCallOtherObjectByIndex(searchRoot_, path, funIndex, args);
+                                    });
+                                    found = true;
+                                } else {
+                                    result = runDetached([&] {
+                                        return tryCallOtherObject(searchRoot_, path, funName, args);
+                                    });
+                                    found = true;
+                                }
                             }
                         }
                     }
@@ -18362,6 +18446,24 @@ private:
                 es_->stack.resize(rec.stackSize);
                 pushValue(make_string(std::string(e.what())));
                 es_->ip = rec.ipTarget;
+                // The original driver's vm_traceError prints EVERY LPC error
+                // that a catch() swallows - errors are never silent there.
+                // Without this, a cross-VM call failing inside a catch-guarded
+                // chain (e.g. template init_combat dying and leaving a
+                // never-started combat stuck for hours) leaves no trace at
+                // all.  One line per swallow; LPCVM_CATCH_TRACE=0 disables.
+                if (!LPCVM_GETENV("LPCVM_CATCH_TRACE") || LPCVM_GETENV("LPCVM_CATCH_TRACE")[0] != '0') {
+                    std::string ch;
+                    for (const auto& fr : es_->frames) {
+                        if (!ch.empty()) ch += "<-";
+                        ch += fr.fn ? fr.fn->name : "<ctx>";
+                        if (ch.size() > 200) break;
+                    }
+                    std::cerr << "[lpc-catch] \"" << e.what() << "\" ob=" << thisObjectName_
+                              << " obj=" << objName_ << " vm=" << this
+                              << " chain=[" << ch << "] ip=" << rec.ipTarget << "\n";
+                    std::cerr.flush();
+                }
                 if (LPCVM_GETENV("LPCVM_TAIL")) {
                     bool rel = thisObjectName_.find("login") != std::string::npos ||
                                objName_.find("login") != std::string::npos;
@@ -18414,6 +18516,21 @@ private:
                     es_->stack.resize(rec.stackSize);
                     pushValue(make_string(std::string(e.what())));
                     es_->ip = rec.ipTarget;
+                    // Same visibility rule as the VmError branch above: an
+                    // exception swallowed by an LPC catch must leave a trace
+                    // (LPCVM_CATCH_TRACE=0 disables).
+                    if (!LPCVM_GETENV("LPCVM_CATCH_TRACE") || LPCVM_GETENV("LPCVM_CATCH_TRACE")[0] != '0') {
+                        std::string ch;
+                        for (const auto& fr : es_->frames) {
+                            if (!ch.empty()) ch += "<-";
+                            ch += fr.fn ? fr.fn->name : "<ctx>";
+                            if (ch.size() > 200) break;
+                        }
+                        std::cerr << "[lpc-catch] <std> \"" << e.what() << "\" ob=" << thisObjectName_
+                                  << " obj=" << objName_ << " vm=" << this
+                                  << " chain=[" << ch << "] ip=" << rec.ipTarget << "\n";
+                        std::cerr.flush();
+                    }
                     if (vmEnvTrace())
                         std::cerr << "[catch] std error \"" << e.what() << "\" resumed at ip=" << rec.ipTarget << "\n";
                 } else {
@@ -20246,7 +20363,27 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
     Value callResult = make_int(0);
     // Pin the chain-owner tid for this run: get_thread_id() must return the same
     // tid for the process that owns the executing frame chain (see chainTid()).
-    if (p->tid >= 0) setChainTid(p->tid);
+    // AND restore the previous value on every exit path: a NESTED process run
+    // (send_to_queue / execOnMain handing control to a service process while
+    // the caller's C++ frame is still on the stack) used to leave ITS tid in
+    // the TLS slot, so the caller chain's tail saw a foreign get_thread_id()
+    // for the rest of its run.  xlibd's args_stack is keyed by get_thread_id();
+    // push_args/pop_args of one drama then landed on different tids, entries
+    // orphaned, and the next push logged 「时间标记过于古老」 - a line the
+    // original driver never produces (its sequential event loop cannot nest
+    // processes, so a PCB's tid is constant for its whole life).
+    struct ChainTidRestore {
+        int64_t prev;
+        bool armed;
+        ChainTidRestore() : prev(lpc::scheduler().chainTid()), armed(false) {}
+        ~ChainTidRestore() {
+            if (armed) lpc::scheduler().setChainTid(prev);
+        }
+    } chainTidRestore;
+    if (p->tid >= 0) {
+        lpc::scheduler().setChainTid(p->tid);
+        chainTidRestore.armed = true;
+    }
     // Publish this process's telnet client id for its whole run and restore the
     // previous value on every exit path: the telnet efuns read a thread-local
     // slot, and with all LPC on one thread that slot must follow the PROCESS.
@@ -20790,6 +20927,27 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         }
         parkCurrent(p, sig.cond);
     } catch (const std::exception& e) {
+        // The original driver prints EVERY uncaught LPC error (vm_errorQuit
+        // -> error trace to the log).  Here an uncaught error from a
+        // scheduler process (e.g. a player's attack command whose init_combat
+        // chain died inside a cross-VM call -> the never-started no-model
+        // combat of 2026-10-30 02:28) used to vanish silently unless
+        // LPCVM_TAIL / vmEnvTrace was armed.  One line per failure;
+        // LPCVM_CATCH_TRACE=0 disables.
+        if (!LPCVM_GETENV("LPCVM_CATCH_TRACE") || LPCVM_GETENV("LPCVM_CATCH_TRACE")[0] != '0') {
+            OriginalVm* evm = p->parkedVm ? p->parkedVm.get() : p->vm.get();
+            std::string ch;
+            if (evm)
+                for (const auto& fr : evm->es_->frames) {
+                    if (!ch.empty()) ch += "<-";
+                    ch += fr.fn ? fr.fn->name : "<ctx>";
+                    if (ch.size() > 200) break;
+                }
+            std::cerr << "[sched-catch] entry=" << p->entry << " tid=" << p->tid
+                      << " vm=" << (p->vm ? p->vm->objName() : "?")
+                      << " what=[" << e.what() << "] chain=[" << ch << "]\n";
+            std::cerr.flush();
+        }
         if (LPCVM_GETENV("LPCVM_TAIL")) {
             auto relO = [](const std::string& o) {
                 return o.find("login.o") != std::string::npos || o.find("logind.o") != std::string::npos;
@@ -20862,6 +21020,14 @@ void Scheduler::runProcess(std::shared_ptr<Process> p) {
         if (p->resultPromise) p->resultPromise->set_value(make_int(0));
         p->done = true;
     } catch (...) {
+        if (!LPCVM_GETENV("LPCVM_CATCH_TRACE") || LPCVM_GETENV("LPCVM_CATCH_TRACE")[0] != '0') {
+            OriginalVm* evmU = p->parkedVm ? p->parkedVm.get() : p->vm.get();
+            std::cerr << "[sched-catch] entry=" << p->entry << " tid=" << p->tid
+                      << " vm=" << (p->vm ? p->vm->objName() : "?")
+                      << " evm=" << (evmU ? evmU->objName() : "?")
+                      << " what=<unknown-non-std>\n";
+            std::cerr.flush();
+        }
         if (vmEnvTrace() || (constructDiagOn() &&
                              (p->entry == "__init__" || p->entry == "__master__")))
             std::cerr << "[sched-err] proc=" << p.get() << " entry=" << p->entry
@@ -21244,6 +21410,29 @@ Value tryCallOtherObjectByIndex(const std::string& searchRoot, const std::string
 // the next npc).  Mirror execOnMain/spawnDelayed: when the target registry VM
 // is parked or still has active frames, run the callee on a fresh dedicated
 // VM that SHARES the object's instance variables.
+// O(1) identity resolution: OriginalObject instance -> its registered VM.
+// Same scope pairing as tryCallOtherObject above (declared together at the
+// top of the file); the key comes from GsRegIndex.objByPtr (maintained
+// automatically by IndexedObjMap on every registry insert/erase), then the
+// live registry is re-verified so a recycled pointer / re-registered key
+// cannot alias.
+std::shared_ptr<OriginalVm> vmForOwnerPtr(const void* ownerPtr) {
+    if (!ownerPtr) return nullptr;
+    std::string key;
+    {
+        RegIdxGuard g;
+        auto it = regIndex().objByPtr.find(ownerPtr);
+        if (it == regIndex().objByPtr.end()) return nullptr;
+        key = it->second;
+    }
+    auto& reg = objectRegistry();
+    std::lock_guard<std::recursive_mutex> rl(registryMutex());
+    auto it = reg.vms.find(key);
+    if (it == reg.vms.end() || !it->second) return nullptr;
+    if (&it->second->object() != ownerPtr) return nullptr;   // key reused meanwhile
+    return it->second;
+}
+
 Value tryCallOtherObject(const std::string& searchRoot, const std::string& objectPath,
                          const std::string& funName, const std::vector<Value>& args,
                          const std::string& callerThisName) {
@@ -22137,6 +22326,19 @@ Value cloneObjectInRegistry(const std::string& virtualPath, const std::string& s
     }
     auto ov = std::make_shared<ObjectValue>();
     ov->programName = cloneKey;
+    // IDENTITY (2026-10-29 cross-vm, thorough): every object value built from
+    // the registry now carries the per-instance OriginalObject pointer.  The
+    // original driver's object value IS the Vm_Object pointer - identity can
+    // never be lost across a call boundary.  Ours is a string (programName)
+    // which loses the clone suffix wherever a value crosses a VM boundary
+    // (timer callbacks, temp maps, closures), and every string-based
+    // resolution then lands on the wrong instance or fails silently: the
+    // trade item vanish and the missing combat round panel (the
+    // standard_template timer callback received the combat clone and its
+    // chained ob->start_new_round() never reached the clone) are the same
+    // disease.  All resolution points now prefer ov->owner (vmForOwnerPtr,
+    // O(1) through GsRegIndex.objByPtr) and keep the string path as fallback.
+    if (objPtr) ov->owner = objPtr.get();
     // Hand the clone's liveness flag to the value: when the object is really
     // freed the value stops counting as an object (see ObjectValue::alive).
     if (vmPtr) ov->alive = vmPtr->aliveFlag();
