@@ -435,8 +435,35 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
     if (obj->destructed())
         vmError("Object is not found (destructed).");
     const OriginalFunction* fn = obj->prog()->findFn(funName);
-    if (!fn)
-        vmError("Function " + funName + " is not found.");
+    if (!fn) {
+        // [fnmiss] call_other 函数解析失败现场: 目标对象/程序/函数名。
+        // [原版语义] gs.log(原版) 全程无 "Function ... is not found":
+        // inspect_cityd 只定义 init_menu_content, dynamic_menu.c L167
+        // (*fa)(this_object()) 注册即调 action 闭包, 原版静默通过 ——
+        // 缺失函数 = 压 int 0, 不 vmError。
+        static std::atomic<int> fnMissLog{0};
+        if (fnMissLog.fetch_add(1) < 20) {
+            const auto& progFns = obj->prog()->src().functions;
+            std::string near;
+            for (const auto& f : progFns)
+                if (f.name.find(funName.substr(0, 8)) != std::string::npos) {
+                    near += f.name + " ";
+                    if (near.size() > 120) break;
+                }
+            std::cerr << "[fnmiss] obj=" << obj->key()
+                      << " progFnCount=" << progFns.size()
+                      << " funName=" << funName
+                      << " near=[" << near << "]"
+                      << " caller="
+                      << (pcb->frames.empty() || !pcb->frames.back().obj
+                              ? "<null>"
+                              : pcb->frames.back().obj->key())
+                      << "\n";
+            std::cerr.flush();
+        }
+        Interp::pushValue(pcb, make_int(0));
+        return;
+    }
     // previous_object() in the callee names the caller.
     VmObject* caller = pcb->frames.empty() ? nullptr : pcb->frames.back().obj;
     pcb->previousObjectName = caller ? caller->key() : std::string();
@@ -530,7 +557,13 @@ Value vmCallOther(const Value& target, const std::string& funName,
                   const std::vector<Value>& args) {
     VmPcb* pcb = currentPcb();
     if (!pcb) vmError("call_other outside a process.");
+    const size_t framesBefore = pcb->frames.size();
     vmCallOtherPush(pcb, target, funName, args);
+    if (pcb->frames.size() == framesBefore) {
+        // [fnmiss] 函数缺失: vmCallOtherPush 已压 int 0 且未压帧 ——
+        // 直接取走返回值, 不进 nested loop。
+        return Interp::popValue(pcb);
+    }
     const size_t depth = pcb->frames.size() - 1;
     Interp::runNested(pcb, depth);
     return popValueNested(pcb);
