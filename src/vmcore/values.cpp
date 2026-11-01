@@ -41,6 +41,15 @@ bool isZero(const Value& v) {
     case 1: return true;
     case 2: return std::get<int64_t>(v) == 0;
     case 3: return std::get<double>(v) == 0.0;
+    case 7: {
+        // Reference invalidation (original driver semantics): an object value
+        // whose alive flag was cleared at real free IS 0 — master's iid map
+        // entries and every other stored reference stop being truthy, so
+        // `if (global_95[iid])` skips instead of reporting a duplicate iid.
+        auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+        if (!ov) return true;
+        return ov->alive && !ov->alive->load(std::memory_order_relaxed);
+    }
     default: return false;
     }
 }

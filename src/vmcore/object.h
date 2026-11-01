@@ -126,6 +126,16 @@ public:
 
     bool destructed() const { return destructed_.load(); }
     void markDestructed() { destructed_.store(true); }
+    // The call-dispatch dead test (op8 / call_other / broadcast): a merely
+    // MARKED object is still executing its destructor chain — user.o::destruct
+    // -> userd::destroy_user -> me->save() is the ONLY dbase writer and every
+    // hop of it runs while destructed_ is already set.  Rejecting those calls
+    // (the old target->destructed() gate) silently killed the whole logout
+    // save: me->save resolved to a dropped op8 -> 0.  Truly freed = the
+    // references were closed (closeReferences at chain end).
+    bool reallyGone() const {
+        return destructed_.load() && !alive_->load();
+    }
     // Reference invalidation on the real free (原版: 引用变 0)。
     std::shared_ptr<std::atomic<bool>> aliveFlag() const { return alive_; }
     void closeReferences() { if (alive_) alive_->store(false); }

@@ -173,6 +173,94 @@ void parkVmObject(VmObject* obj) {
     objKeyByPtr()[obj] = obj->key();
     if (obj->prog()) objKeyByPtr()[&obj->prog()->src()] = obj->key();
 }
+
+// ---------------------------------------------------------------------------
+// Orphaned-contents cascade.  The original driver garbage-collects objects
+// that lose their last reference when their owner is destructed — a logged-
+// out character's carried items/pets are collected and their destructors run
+// (iid.c::destruct -> unregister_iid on the master's global iid map).  Our
+// port keeps objects immortal, so those iids stayed registered forever and
+// every re-login restore hit register_iid -> duplicate ->
+// when_iid_duplicated(deny) -> "原因码9202/9211" on login.  Walk the dying
+// object's instance variables and free the per-character clones
+// (item/pet/guard/child) it held: each clone's mudlib destructor runs in its
+// own scheduler process, then the clone leaves the registry.
+// ---------------------------------------------------------------------------
+static bool isOwnedCloneKey(const std::string& k) {
+    if (k.find('#') == std::string::npos) return false;   // clones only
+    return k.find("/clone/item/") != std::string::npos ||
+           k.find("/clone/pet/") != std::string::npos ||
+           k.find("/clone/char/guard") != std::string::npos ||
+           k.find("/clone/char/child") != std::string::npos;
+}
+static void collectOwnedClones(const Value& v,
+                               std::set<const void*>& seen,
+                               std::vector<vmcore::VmObject*>& out,
+                               int depth) {
+    if (depth > 8) return;
+    switch (v.index()) {
+    case 7: {
+        auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+        if (!ov) return;
+        vmcore::VmObject* o = ov->vmObj;
+        if (!o && !ov->programName.empty() && ov->programName != "<this>")
+            o = vmcore::Registry::instance().findByName(ov->programName);
+        if (!o || !seen.insert(static_cast<const void*>(o)).second) return;
+        if (isOwnedCloneKey(o->key())) {
+            out.push_back(o);
+            // recurse into the item (nested bags/gems) but not into rooms/NPCs
+            for (const auto& vv : o->vars())
+                collectOwnedClones(vv, seen, out, depth + 1);
+        }
+        return;
+    }
+    case 5: {
+        auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+        if (!arr || !seen.insert(static_cast<const void*>(arr.get())).second) return;
+        for (const auto& e : arr->items)
+            collectOwnedClones(e, seen, out, depth + 1);
+        return;
+    }
+    case 6: {
+        auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+        if (!mp || !seen.insert(static_cast<const void*>(mp.get())).second) return;
+        mp->forEachActive([&](const Value&, const Value& val) {
+            collectOwnedClones(val, seen, out, depth + 1);
+        });
+        return;
+    }
+    default: return;
+    }
+}
+static void freeOrphanedContents(vmcore::VmObject* o) {
+    std::set<const void*> seen;
+    std::vector<vmcore::VmObject*> owned;
+    for (const auto& v : o->vars())
+        collectOwnedClones(v, seen, owned, 0);
+    static const std::atomic<bool>& cscDbg = dynProbeFlag("LPCVM_CASCADE");
+    if (cscDbg.load(std::memory_order_relaxed)) {
+        std::cerr << "[cascade] " << o->key() << " owned=" << owned.size();
+        std::cerr.flush();
+        for (auto* c : owned) std::cerr << " " << (c ? c->key() : "?");
+        std::cerr << "\n";
+        std::cerr.flush();
+    }
+    for (auto* c : owned) {
+        if (!c || c->destructed()) continue;
+        c->markDestructed();
+        // The mudlib destructor (iid.c::destruct -> unregister_iid) must run
+        // while the object is still registered — master's iid_map holds a
+        // live ObjectValue the destructor compares against this_object().
+        // Closing references first (an earlier attempt) nulled that value
+        // and the unregister silently no-opped.  Instead defer the real
+        // free to the destructor process's own chain end.
+        vmcore::VmPcb* sp =
+            vmcore::Scheduler::instance().spawn(c, "destruct", {});
+        pendingFrees().push_back(
+            PendingFree{c->key(), static_cast<const void*>(sp)});
+    }
+}
+
 std::string vmKeyOfObjectPtr(const void* objPtr) {
     std::lock_guard<std::mutex> lk(objParkMx());
     auto it = objKeyByPtr().find(objPtr);
@@ -192,7 +280,18 @@ void vmFlushPendingFrees(const void* proc) {
     }
     for (auto& e : now) {
         vmcore::VmObject* obj = vmcore::Registry::instance().findByName(e.key);
+        static const std::atomic<bool>& cscDbg0 = dynProbeFlag("LPCVM_CASCADE");
+        if (cscDbg0.load(std::memory_order_relaxed)) {
+            std::cerr << "[cascade] flush proc=" << e.proc << " key=" << e.key
+                      << " found=" << (obj ? 1 : 0)
+                      << " destructed=" << (obj ? (obj->destructed() ? 1 : 0) : -1)
+                      << "\n";
+            std::cerr.flush();
+        }
         if (obj && obj->destructed()) {
+            // Free the carried items/pets first (their destructors unregister
+            // the iids — see freeOrphanedContents), then the owner itself.
+            freeOrphanedContents(obj);
             // The object leaves the registry here: every ObjectValue that
             // carries its flag stops being an object (the original driver's
             // reference invalidation on a real free).
@@ -698,6 +797,13 @@ Value findObjectInRegistry(const std::string& virtualPath,
                            const std::string& searchRoot) {
     (void)searchRoot;
     vmcore::VmObject* o = vmcore::Registry::instance().findByName(virtualPath);
+    static const std::atomic<bool>& foDbg = dynProbeFlag("LPCVM_FODB");
+    if (foDbg.load(std::memory_order_relaxed) &&
+        virtualPath.find("/gs/zone/") != std::string::npos) {
+        std::cerr << "[fobj] '" << virtualPath << "' -> "
+                  << (o ? o->key() : "0") << "\n";
+        std::cerr.flush();
+    }
     if (!o) return make_int(0);
     return vmcore::Registry::makeObjectValue(o);
 }
@@ -736,6 +842,20 @@ bool destructObjectByKey(const std::string& keyIn) {
     // the ONLY dbase writer and resolves `me` through the registry.
     obj->markDestructed();
     const OriginalFunction* dtr = obj->prog()->findFn("destruct");
+    {
+        // LPCVM_LIFE (once-cached env, driver context only): was the mudlib
+        // destructor actually resolvable?  A MISSING here means the whole
+        // logout save chain (destruct -> userd::destroy_user -> me->save)
+        // silently never runs while destruct_object still reports success.
+        static const bool lifeProbe2 = [] {
+            const char* e = std::getenv("LPCVM_LIFE");
+            return e && *e;
+        }();
+        if (lifeProbe2)
+            std::cerr << "[life] destruct-chain " << keyIn << " dtr="
+                      << (dtr ? "FOUND" : "MISSING (destructor never runs!)")
+                      << "\n";
+    }
     if (dtr) {
         vmcore::VmPcb* pcb = vmcore::currentPcb();
         if (pcb) {
@@ -748,6 +868,17 @@ bool destructObjectByKey(const std::string& keyIn) {
             vmPushFunCall(pcb, obj, dtr, {});
             const std::string okey = obj->key();
             vmcore::vmHookCallbackWhenReturn(pcb, [okey](Value& rv) {
+                // LPCVM_LIFE: the destructor frame RETURNED (the whole
+                // user.o::destruct body ran to its end, whichever branch).
+                {
+                    static const bool lifeProbe3 = [] {
+                        const char* e = std::getenv("LPCVM_LIFE");
+                        return e && *e;
+                    }();
+                    if (lifeProbe3)
+                        std::cerr << "[life] destruct-chain " << okey
+                                  << " BODY-DONE\n";
+                }
                 auto& reg2 = vmcore::Registry::instance();
                 if (vmcore::VmObject* o = reg2.findByName(okey)) {
                     vmcore::VmPcb* pcb2 = vmcore::currentPcb();
@@ -760,6 +891,7 @@ bool destructObjectByKey(const std::string& keyIn) {
                         pendingFrees().push_back(
                             PendingFree{okey, static_cast<const void*>(pcb2)});
                     } else {
+                        freeOrphanedContents(o);
                         o->closeReferences();
                         reg2.unregisterObject(okey);
                         reg2.clearConstructing(okey);
@@ -789,6 +921,7 @@ bool destructObjectByKey(const std::string& keyIn) {
             PendingFree{obj->key(), static_cast<const void*>(pcb)});
         return true;
     }
+    freeOrphanedContents(obj);
     obj->closeReferences();
     reg.unregisterObject(obj->key());
     reg.clearConstructing(obj->key());

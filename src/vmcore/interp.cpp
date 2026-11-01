@@ -1849,7 +1849,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         }
                     }
                 }
-                if (!target || target->destructed()) {
+                if (!target || target->reallyGone()) {
                     // Probe BOTH miss flavors: string paths (index 4) and
                     // object values whose vmObj/registry lookup failed
                     // (index 7) — the silent drop here is what shrinks
@@ -1891,9 +1891,87 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 VmObject* caller = pcb->frames.empty() ? nullptr
                                                        : pcb->frames.back().obj;
                 pcb->previousObjectName = caller ? caller->key() : std::string();
+                {
+                    // LPCVM_SAVEDBG: op8 is THE mudlib call_other path (inline
+                    // frame push, vmCallOtherPush is only the C++ entry) —
+                    // trace the login/logout save chain hops here.
+                    static const std::atomic<bool>& svFlag = dynProbeFlag("LPCVM_SAVEDBG");
+                    if (svFlag.load(std::memory_order_relaxed) && caller) {
+                        const std::string& ck = caller->key();
+                        const std::string tk = target->key();
+                        // Full outgoing call graph of the user object (logout
+                        // window) + every userd.o -> user.o hop (destroy_user
+                        // died mid-body; the killer hop is one of these).
+                        if (ck.find("char/user.o#") != std::string::npos ||
+                            (ck.find("daemons/userd.o") != std::string::npos &&
+                             tk.find("char/user.o#") != std::string::npos) ||
+                            (funName == "destroy_user" || funName == "save_to_text" ||
+                             funName == "write_content_to" || funName == "create_content_to" ||
+                             funName == "enter_world" || funName == "start_game" ||
+                             funName == "select_char" || funName == "restore_from_text" ||
+                             funName == "restore_raw" || funName == "disconnected")) {
+                            std::cerr << "[save] " << ck << " -> "
+                                      << tk << "::" << funName << "\n";
+                            std::cerr.flush();
+                        }
+                        // Capture get_start_room's actual result — the save's
+                        // "position" comes verbatim from it; shows which branch
+                        // produced the persisted room/x/y/dir.
+                        if (funName == "get_start_room") {
+                            const std::string tk0 = target->key();
+                            vmcore::vmHookCallbackWhenReturn(pcb, [tk0](Value& rv) {
+                                std::string s = to_string(rv, false);
+                                size_t p = s.find("position");
+                                std::cerr << "[startroom] " << tk0 << " -> "
+                                          << (p == std::string::npos
+                                                  ? s.substr(0, 200)
+                                                  : s.substr(p, 120))
+                                          << "\n";
+                                std::cerr.flush();
+                            });
+                        }
+                        // Login-room redirect decision inputs: userd enter_room
+                        // switches to the default town when
+                        // is_in_mini_client() && mini_clientd::refuse_enter(room).
+                        if (funName == "refuse_enter" || funName == "is_in_mini_client") {
+                            const std::string tk1 = target->key();
+                            const std::string fk1 = funName;
+                            vmcore::vmHookCallbackWhenReturn(pcb, [tk1, fk1](Value& rv) {
+                                std::cerr << "[minic] " << fk1 << " on " << tk1
+                                          << " -> idx" << rv.index()
+                                          << (rv.index() == 2
+                                                  ? "=" + std::to_string(std::get<int64_t>(rv))
+                                                  : "")
+                                          << "\n";
+                                std::cerr.flush();
+                            });
+                        }
+                    }
+                }
                 pushItemsBack();
                 if (!pushFrameInPlace(pcb, target, target->prog(), fn, argn, true, 0))
                     pushValue(pcb, make_int(0));
+                else {
+                    // LPCVM_NSDBG: capture what query("not_start_room") returns
+                    // on rooms — move.c::enter_room gates start_room updates on
+                    // it, and a wrongly-truthy result keeps the stale start
+                    // room in the logout save (position never persists).
+                    static const std::atomic<bool>& nsDbg = dynProbeFlag("LPCVM_NSDBG");
+                    if (nsDbg.load(std::memory_order_relaxed) && funName == "query" &&
+                        !pcb->stack.empty() && pcb->stack.back().value.index() == 4 &&
+                        std::get<SharedString>(pcb->stack.back().value).str() ==
+                            "not_start_room") {
+                        const std::string tk = target->key();
+                        vmcore::vmHookCallbackWhenReturn(pcb, [tk](Value& rv) {
+                            std::cerr << "[nsroom] " << tk << " -> "
+                                      << (rv.index() == 2
+                                              ? std::to_string(std::get<int64_t>(rv))
+                                              : "idx" + std::to_string(rv.index()))
+                                      << "\n";
+                            std::cerr.flush();
+                        });
+                    }
+                }
                 break;
             }
             case 5: { // call_fun_ptr

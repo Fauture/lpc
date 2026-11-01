@@ -10,7 +10,10 @@ def clear_db():
     # absolute path: the runner is documented to run from the repo ROOT, where
     # the bare '_dbclear.py' relative name does not resolve (python exits 2)
     dbclear = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_dbclear.py')
-    subprocess.run([sys.executable, dbclear], check=True, capture_output=True, timeout=120)
+    # errors='replace': children may print GBK console text; a strict UTF-8
+    # decode crashes the harness reader thread and takes the services down.
+    subprocess.run([sys.executable, dbclear], check=True, capture_output=True,
+                   timeout=120, encoding='utf-8', errors='replace')
 
 # --- single-instance guard: refuse to start a second set -------------------
 PORTS = (8001, 8110, 8120, 8160)
@@ -28,7 +31,7 @@ def _require_single_instance():
     # taskkill lives in System32 (always resolvable); the powershell fallback
     # broke detached launches whose PATH has no WindowsPowerShell entry
     subprocess.run(['taskkill', '/F', '/IM', 'lpcvm.exe'],
-                   capture_output=True, text=True)
+                   capture_output=True, encoding='utf-8', errors='replace')
     time.sleep(3)
     busy = [p for p in PORTS if _port_busy(p)]
     if busy:

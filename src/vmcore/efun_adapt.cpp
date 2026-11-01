@@ -1113,7 +1113,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         auto out = std::make_shared<ArrayValue>();
         for (VmObject* o : Registry::instance().allObjects()) {
-            if (!o || o->destructed()) continue;
+            if (!o || o->reallyGone()) continue;
             const std::string& k = o->key();
             const bool isClone = k.find('#') != std::string::npos;
             if (!isObjects) {
@@ -1736,6 +1736,20 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (timeout > 2147483647LL) timeout = 2147483647LL;
         const int64_t id = timerSchedule(timerName, fnName, owner, timeout,
                                          std::move(bound), timerCl);
+        {
+            // LPCVM_TIMERDBG: the disconnect->save chain hinges on this timer
+            // (user.o::disconnected -> set_timer(0/180,&_timer_id,"time_expired")
+            //  -> time_expired -> destruct -> userd::destroy_user -> save).
+            static const std::atomic<bool>& tmFlag = dynProbeFlag("LPCVM_TIMERDBG");
+            if (tmFlag.load(std::memory_order_relaxed) &&
+                (fnName == "time_expired" || fnName == "logout" ||
+                 timerName == "_timer_id")) {
+                std::cerr << "[timer] set_timer id=" << id << " delay=" << timeout
+                          << "s fn=" << fnName << " name=" << timerName
+                          << " owner=" << owner->key() << "\n";
+                std::cerr.flush();
+            }
+        }
         return make_int(id);
     }
     if (h == 0x807E5C16A0A571A7ull) {
@@ -2183,6 +2197,55 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         pushValue(pcb, Value{});
         return;
     }
+    if ((name == "find_reachable" || name == "find_reachable_ex") &&
+        raw.size() >= 3) {
+        // vm_f_find_reachable / vm_f_find_reachable_ex
+        //   find_reachable(map_index, &x, &y [, radius [, plot]])
+        // Spiral-searches outward from (x,y) for the first standable cell
+        // (is_blocked == 0), writes it back through the by-reference x/y and
+        // returns 1; 0 only when nothing standable is within the radius.
+        // The constant-0 stub made userd.c's login enter_room treat every
+        // restored position as unreachable -> default-town fallback, so no
+        // character ever came back where they logged out.
+        std::vector<Value> eargs;
+        eargs.reserve(raw.size());
+        for (auto& it : raw)
+            eargs.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+        int x0 = static_cast<int>(toInt(eargs[1]));
+        int y0 = static_cast<int>(toInt(eargs[2]));
+        int range = eargs.size() >= 4 ? static_cast<int>(toInt(eargs[3])) : 8;
+        if (range < 1) range = 1;
+        if (range > 128) range = 128;
+        auto standable = [&](int x, int y) {
+            std::vector<Value> a = {eargs[0], make_int(x), make_int(y)};
+            Value b = lpc::mapModule().is_blocked(a);
+            return b.index() == 2 && std::get<int64_t>(b) == 0;
+        };
+        int fx = -1, fy = -1;
+        if (standable(x0, y0)) {
+            fx = x0; fy = y0;
+        } else {
+            for (int r = 1; r <= range && fx < 0; ++r) {
+                for (int dx = -r; dx <= r && fx < 0; ++dx) {
+                    for (int dy = -r; dy <= r && fx < 0; ++dy) {
+                        if (std::max(std::abs(dx), std::abs(dy)) != r) continue;
+                        if (standable(x0 + dx, y0 + dy)) {
+                            fx = x0 + dx; fy = y0 + dy;
+                        }
+                    }
+                }
+            }
+        }
+        if (fx >= 0) {
+            if (raw[1].isRef) Interp::storeItem(pcb, raw[1], make_int(fx));
+            if (raw[2].isRef) Interp::storeItem(pcb, raw[2], make_int(fy));
+            pushValue(pcb, make_int(1));
+        } else {
+            pushValue(pcb, make_int(0));
+        }
+        return;
+    }
+
     if (name == "set_timer" && raw.size() >= 3) {
         // set_timer(timeout, &timer_id, func, ...): the 2nd parameter is a
         // by-reference OUT slot for the new timer id — dispatch it where the

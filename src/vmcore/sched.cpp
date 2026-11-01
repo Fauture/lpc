@@ -1254,6 +1254,17 @@ void Scheduler::run() {
                     continue;
                 }
                 tp->eventWoken = true;
+                {
+                    // LPCVM_TIMERDBG: log the actual FIRE of disconnect-chain
+                    // timers (time_expired = the save trigger).
+                    static const std::atomic<bool>& tfFlag = dynProbeFlag("LPCVM_TIMERDBG");
+                    if (tfFlag.load(std::memory_order_relaxed) &&
+                        (tp->entry == "time_expired" || tp->entry == "logout"))
+                        std::cerr << "[timer-fire] t=" << msSinceStart()
+                                  << "ms tid=" << tp->tid << " obj="
+                                  << (tp->obj ? tp->obj->key() : std::string("(null)"))
+                                  << " fn=" << tp->entry << "\n";
+                }
                 if (tp->timedEvent) {
                     if (tp->cond.kind == 6) {
                         auto mw = impl_->mutexWaiters.find(tp->cond.ename);

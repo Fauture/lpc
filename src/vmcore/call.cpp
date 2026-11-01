@@ -432,7 +432,7 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
     }
     if (!obj)
         vmError("Object is not found (when call in function).");
-    if (obj->destructed())
+    if (obj->reallyGone())
         vmError("Object is not found (destructed).");
     const OriginalFunction* fn = obj->prog()->findFn(funName);
     if (!fn) {
@@ -467,6 +467,27 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
     // previous_object() in the callee names the caller.
     VmObject* caller = pcb->frames.empty() ? nullptr : pcb->frames.back().obj;
     pcb->previousObjectName = caller ? caller->key() : std::string();
+    {
+        // LPCVM_SAVEDBG: trace the logout save chain's call_other hops
+        // (user.o::destruct -> userd::destroy_user -> me->save -> userd::
+        // save_to_text -> filed write_content_to).  A missing hop pinpoints
+        // where the chain silently dies (all mudlib-side, invisible otherwise).
+        static const std::atomic<bool>& svFlag = dynProbeFlag("LPCVM_SAVEDBG");
+        if (svFlag.load(std::memory_order_relaxed) &&
+            (funName == "destroy_user" || funName == "save_to_text" ||
+             funName == "write_content_to" || funName == "create_content_to" ||
+             funName == "save" || funName == "post_enter_world_failed" ||
+             funName == "enter_world" || funName == "start_game" ||
+             funName == "select_char" || funName == "check_name_used" ||
+             funName == "restore_from_text" || funName == "restore_raw" ||
+             funName == "create_gid" || funName == "disconnected" ||
+             funName == "create_char" || funName == "apply" ||
+             funName == "login" || funName == "post_enter_world")) {
+            std::cerr << "[save] " << (caller ? caller->key() : "<null>")
+                      << " -> " << obj->key() << "::" << funName << "\n";
+            std::cerr.flush();
+        }
+    }
     pushArgs(pcb, fn, args);
     pushFrameInPlace(pcb, obj, obj->prog(), fn, fn->argCount, true, 0);
 }
@@ -489,7 +510,7 @@ static void broadcastStartNext(VmPcb* pcb, const std::shared_ptr<BroadcastState>
     while (st->idx < st->targets.size()) {
         VmObject* obj = st->targets[st->idx++];
         const OriginalFunction* fn =
-            (obj && !obj->destructed()) ? obj->prog()->findFn(st->funName) : nullptr;
+            (obj && !obj->reallyGone()) ? obj->prog()->findFn(st->funName) : nullptr;
         if (!fn) {
             st->results->items.push_back(make_int(0));
             continue;

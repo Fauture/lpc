@@ -3123,7 +3123,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (isoDbg.load(std::memory_order_relaxed) && !args.empty()) {
             const auto& c = stubCallCtx();
             static std::atomic<int> isoLog{0};
-            if (c.fn == "do_init" && isoLog.fetch_add(1) < 30) {
+            if (isoLog.fetch_add(1) < 60) {
                 const Value& a = args[0];
                 std::string desc;
                 if (a.index() == 7) {
@@ -5099,6 +5099,36 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     lpc::filedWatchdogMarkSent(
                         mcReq, reinterpret_cast<const uint8_t*>(data.data()), data.size());
                 }
+                // LPCVM_POSDBG: dump the "position" field of user-save
+                // payloads (0x3400 create_content) — shows exactly what
+                // get_start_room produced at logout (room/x/y/dir).
+                if (mcReq == 0x3400) {
+                    static const std::atomic<bool>& posDbg = dynProbeFlag("LPCVM_POSDBG");
+                    if (posDbg.load(std::memory_order_relaxed)) {
+                        const char* begin = reinterpret_cast<const char*>(data.data());
+                        const char* end = begin + data.size();
+                        size_t p = 0;
+                        int dumps = 0;
+                        while (dumps < 2) {
+                            static const char kKey[] = "position";
+                            auto it = std::search(begin + p, end, kKey, kKey + 8);
+                            if (it == end) break;
+                            size_t off = it - begin;
+                            std::string snip;
+                            for (size_t i = off;
+                                 i < off + 150 && i < data.size(); ++i) {
+                                char ch = begin[i];
+                                snip += (ch >= 32 && ch < 127) ? ch : '.';
+                            }
+                            std::cerr << "[pos] t=" << lpc::msSinceStart()
+                                      << " len=" << data.size()
+                                      << " @" << off << " " << snip << "\n";
+                            std::cerr.flush();
+                            p = off + 8;
+                            ++dumps;
+                        }
+                    }
+                }
             }
             // LPCVM_FILEDDBG: outbound filed frames with the FULL body.  Paired
             // with the [filed-in]/[filed-disp] lines in game_service.cpp this
@@ -5817,7 +5847,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // input lets the caller's is_mapping check fail the same way.
         if (!args.empty() && args[0].index() == 4) {
             Value out;
-            bool ok = restoreValueAscii(std::get<SharedString>(args[0]), out);
+            const std::string& rvs = std::get<SharedString>(args[0]).str();
+            bool ok = restoreValueAscii(rvs, out);
+            {
+                // LPCVM_RVDBG: large-payload parse audit (user save/restore
+                // round trip).  A failed parse of the 9211 restore shows the
+                // exact payload size and the head/tail bytes that broke it.
+                static const std::atomic<bool>& rvFlag = dynProbeFlag("LPCVM_RVDBG");
+                if (rvFlag.load(std::memory_order_relaxed) &&
+                    (rvs.size() > 400 || !ok)) {
+                    std::cerr << "[rv] in=" << rvs.size() << " ok=" << ok
+                              << " type=" << (ok ? out.index() : -1)
+                              << " head=" << rvs.substr(0, 100)
+                              << " tail=" << (rvs.size() > 100
+                                  ? rvs.substr(rvs.size() - 100) : "")
+                              << "\n";
+                    std::cerr.flush();
+                }
+            }
             if (LPCVM_GETENV("LPCVM_MALL")) {
                 // The online-mall precost round trip (buy_from_mall_vsucc ->
                 // accountd -> aaa -> do_when_got_precost_coin) carries the

@@ -13940,11 +13940,28 @@ static void processGameConnection(unsigned int fdRaw) {
             // 2 = "driver_callback" per start_gs::stat_disconnect(34691).
             // Called while the client slot is still registered: the LPC
             // looks the user up with find_user_by_client(cno).
+            // LPCVM_DISCDBG: the disconnect->save chain is silent on failure;
+            // print whether cmd_disconnected actually reached the mudlib.
+            static const std::atomic<bool>& discFlag = dynProbeFlag("LPCVM_DISCDBG");
+            const bool discDbg = discFlag.load(std::memory_order_relaxed);
             try {
-                callMasterProgramFunction("cmd_disconnected",
+                Value r = callMasterProgramFunction("cmd_disconnected",
                                           {make_int(clientNo), make_int(2)},
                                           lpc::masterSearchRoot());
+                if (discDbg) {
+                    std::cerr << "[disc] t=" << lpc::msSinceStart()
+                              << "ms cno=" << clientNo
+                              << " cmd_disconnected called ret-type=" << r.index() << "\n";
+                    std::cerr.flush();
+                }
+            } catch (const std::exception& e) {
+                if (discDbg)
+                    std::cerr << "[disc] cno=" << clientNo
+                              << " cmd_disconnected EXC: " << e.what() << "\n";
             } catch (...) {
+                if (discDbg)
+                    std::cerr << "[disc] cno=" << clientNo
+                              << " cmd_disconnected EXC(unknown)\n";
             }
             {
                 std::lock_guard<std::mutex> lk(gameMutex());
