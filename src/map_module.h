@@ -75,6 +75,17 @@ public:
     Value moveInMap(const std::vector<Value>& args);
     Value getFromMap(const std::vector<Value>& args);
     Value getInSight(const std::vector<Value>& args);
+    // get_sight() for the calling object: reverse-resolve its allocated id,
+    // locate its (map,x,y), then the same 9x7 block window as get_in_sight.
+    // The engine primitive had no implementation, so move.c::enter computed
+    // an empty sight list and no NPC/player appearance was ever sent.
+    Value getSightByKey(const std::string& objKey);
+    // new_view_point(map, ox, oy, nx, ny, &app, &dis): the sight-window
+    // diff between the old and the new position — app = ids newly visible,
+    // dis = ids no longer visible.  move_to gates every walking appear /
+    // disappear notification on its result; the constant-0 stub meant
+    // walking never revealed NPCs entering the view.
+    Value newViewPoint(const std::vector<Value>& args);
     Value getIdInMap(const std::vector<Value>& args);
     Value getAllObjects();
 

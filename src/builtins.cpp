@@ -7274,6 +7274,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "get_in_sight") {
         return lpc::mapModule().getInSight(args);
     }
+    if (name == "get_sight") {
+        // vm_f_get_sight (no args): ids visible from THIS object's position.
+        // move.c::enter does  obs = get_sight() - ({id})  to drive the
+        // appear notifications — a stub 0 left every sight list empty.
+        std::string k = stubCallCtx().key;
+        if (k.empty()) k = stubCallCtx().obj;
+        return lpc::mapModule().getSightByKey(k);
+    }
     if (name == "get_id_in_map") {
         return lpc::mapModule().getIdInMap(args);
     }

@@ -2197,6 +2197,39 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         pushValue(pcb, Value{});
         return;
     }
+    if (name == "new_view_point" && raw.size() >= 7) {
+        // vm_f_new_view_point(map, ox, oy, nx, ny, &app, &dis): the sight
+        // window diff that drives move_to's walking appear/disappear
+        // notifications.  The constant-0 stub silenced every walking reveal.
+        std::vector<Value> eargs;
+        eargs.reserve(raw.size());
+        for (auto& it : raw)
+            eargs.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+        Value r = lpc::mapModule().newViewPoint(eargs);
+        if (r.index() == 6) {
+            auto mp = std::get<std::shared_ptr<MappingValue>>(r);
+            auto get = [&](const char* k) {
+                Value out;
+                auto v = mp->find(make_string(k));
+                if (v) out = *v;
+                return out;
+            };
+            if (raw[5].isRef) Interp::storeItem(pcb, raw[5], get("app"));
+            if (raw[6].isRef) Interp::storeItem(pcb, raw[6], get("dis"));
+            // non-zero when anything changed
+            auto nonEmpty = [&](const Value& v) {
+                return v.index() == 5 &&
+                       !std::get<std::shared_ptr<ArrayValue>>(v)->items.empty();
+            };
+            pushValue(pcb, make_int((nonEmpty(get("app")) || nonEmpty(get("dis"))) ? 1 : 0));
+        } else {
+            if (raw[5].isRef) Interp::storeItem(pcb, raw[5], make_array());
+            if (raw[6].isRef) Interp::storeItem(pcb, raw[6], make_array());
+            pushValue(pcb, make_int(0));
+        }
+        return;
+    }
+
     if ((name == "find_reachable" || name == "find_reachable_ex") &&
         raw.size() >= 3) {
         // vm_f_find_reachable / vm_f_find_reachable_ex

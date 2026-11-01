@@ -552,6 +552,105 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
     return arr;
 }
 
+Value MapModule::newViewPoint(const std::vector<Value>& args) {
+    // new_view_point(mapIndex, old_x, old_y, new_x, new_y): sight-window
+    // (9x7 blocks, same geometry as get_in_sight) diff between the old and
+    // the new position.  Returns (["app": ids newly visible, "dis": ids no
+    // longer visible]) — the efun dispatcher writes them back through the
+    // caller's by-reference slots and move_to gates the walking appear /
+    // disappear notifications on the result.  The constant-0 stub meant
+    // walking never revealed NPCs entering the view.
+    if (args.size() < 5) return make_int(0);
+    std::lock_guard<std::mutex> lk(g_mapMutex);
+    MapInfo* m = getMapInfoByValue(args[0]);
+    if (!m) return make_int(0);
+    auto window = [&](int x, int y) {
+        std::vector<int64_t> ids;
+        if (x < 0 || y < 0 || x >= m->width || y >= m->height) return ids;
+        int xb1 = (x >> 3) - 4; if (xb1 < 0) xb1 = 0;
+        int xb2 = (x >> 3) + 4; if (xb2 >= m->xblocks) xb2 = m->xblocks - 1;
+        int yb1 = (y >> 3) - 3; if (yb1 < 0) yb1 = 0;
+        int yb2 = (y >> 3) + 3; if (yb2 >= m->yblocks) yb2 = m->yblocks - 1;
+        for (int bx = xb1; bx <= xb2; ++bx)
+            for (int by = yb1; by <= yb2; ++by)
+                for (MapObj* ob = m->cells[bx * m->yblocks + by]; ob; ob = ob->next)
+                    ids.push_back(ob->id);
+        return ids;
+    };
+    std::vector<int64_t> oldW = window(static_cast<int>(valToInt(args[1])),
+                                       static_cast<int>(valToInt(args[2])));
+    std::vector<int64_t> newW = window(static_cast<int>(valToInt(args[3])),
+                                       static_cast<int>(valToInt(args[4])));
+    auto has = [&](const std::vector<int64_t>& v, int64_t id) {
+        for (int64_t i : v) if (i == id) return true;
+        return false;
+    };
+    auto app = std::make_shared<ArrayValue>();
+    auto dis = std::make_shared<ArrayValue>();
+    for (int64_t id : newW)
+        if (!has(oldW, id)) app->items.push_back(make_int(id));
+    for (int64_t id : oldW)
+        if (!has(newW, id)) dis->items.push_back(make_int(id));
+    auto mp = std::make_shared<MappingValue>();
+    mp->insert(make_string("app"), Value{app});
+    mp->insert(make_string("dis"), Value{dis});
+    return Value{mp};
+}
+
+Value MapModule::getSightByKey(const std::string& objKey) {
+    // get_sight() (no args, engine primitive): the ids visible from the
+    // CALLING object's position — the same 9x7 block window get_in_sight
+    // answers for an explicit (map,x,y).  The caller is identified by its
+    // allocated id (reverse lookup through the id pool's object-key table;
+    // keys are compared under several spellings because ObjectValue
+    // programNames may or may not carry the "pak:" mount prefix).
+    std::lock_guard<std::mutex> lk(g_mapMutex);
+    auto matches = [&](const std::string& stored) {
+        if (stored.empty() || stored == objKey) return stored == objKey && !stored.empty();
+        std::string a = stored, b = objKey;
+        auto strip = [](std::string& s, const char* pre) {
+            size_t p;
+            while ((p = s.find(pre)) != std::string::npos &&
+                   (p == 0 || s[p - 1] == ':'))
+                s.erase(p, 4);
+        };
+        strip(a, "pak:"); strip(b, "pak:");
+        return a == b;
+    };
+    int64_t found = 0;
+    for (int64_t i = 0; i < static_cast<int64_t>(idInfo_.size()); ++i) {
+        if (matches(idInfo_[i])) {
+            found = poolStartId_ + i;
+            break;
+        }
+    }
+    if (!found) return make_array();
+    for (size_t mi = 1; mi < allMap_.size(); ++mi) {
+        MapInfo* m = allMap_[mi];
+        if (!m) continue;
+        for (size_t bi = 0; bi < m->cells.size(); ++bi) {
+            for (MapObj* ob = m->cells[bi]; ob; ob = ob->next) {
+                if (ob->id != found) continue;
+                int x = ob->x, y = ob->y;
+                if (x < 0 || y < 0 || x >= m->width || y >= m->height)
+                    return make_array();
+                int xb1 = (x >> 3) - 4; if (xb1 < 0) xb1 = 0;
+                int xb2 = (x >> 3) + 4; if (xb2 >= m->xblocks) xb2 = m->xblocks - 1;
+                int yb1 = (y >> 3) - 3; if (yb1 < 0) yb1 = 0;
+                int yb2 = (y >> 3) + 3; if (yb2 >= m->yblocks) yb2 = m->yblocks - 1;
+                auto arr = std::make_shared<ArrayValue>();
+                for (int bx = xb1; bx <= xb2; ++bx)
+                    for (int by = yb1; by <= yb2; ++by)
+                        for (MapObj* o2 = m->cells[bx * m->yblocks + by]; o2;
+                             o2 = o2->next)
+                            arr->items.push_back(make_int(o2->id));
+                return arr;
+            }
+        }
+    }
+    return make_array();
+}
+
 Value MapModule::getInSight(const std::vector<Value>& args) {
     // get_in_sight(mapIndex, x, y): ids in the 9x7 block window
     if (args.size() < 3) return make_array();
