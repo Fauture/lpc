@@ -58,6 +58,7 @@ struct ArrayValue;
 struct MappingValue;
 struct ObjectValue;
 struct ClosureValue;
+namespace vmcore { class VmObject; }
 struct LoopCtrl;
 struct BufferValue;
 struct Program;
@@ -321,6 +322,10 @@ struct MappingValue {
 };
 struct ObjectValue {
     std::string programName;
+    // The INSTANCE the value refers to (原版: v.info = Vm_Object_T*, 对象值
+    // 就是指针 — vm_callInOtherFun 0x8094cd8 零查找).  Null for values built
+    // before vmcore registration (diagnostics only).
+    vmcore::VmObject* vmObj = nullptr;
     // The program that created this object value (set by push_this_object).
     // When programName is "<this>" the value is an object-identity reference
     // captured at creation time; callers resolve it through this owner's
@@ -365,6 +370,15 @@ struct ClosureValue {
     // returned int 1 instead of instruction_1's tip string -> every task
     // log/tip empty).  Such closures must go to the efun-by-name fallback.
     bool efunClosure = false;
+    // True when this closure wraps a GLOBAL-PROGRAM function (op23
+    // create_function_value with bit7 set and a matching master function,
+    // e.g. scand's (: find_basic_object_by_import_name :), funcIndex 1869).
+    // 原版 vm_callInUserFunBody(bit7, ..., vm_pGlobalProgram): the BODY runs
+    // from vm_pGlobalProgram (master bytecode + constant pool) with the
+    // CURRENT object as context — never the creating object's program (whose
+    // merged table has no such index and whose findFn by name misses ->
+    // closure fell into the efun-by-name stub and returned 0 forever).
+    bool globalFn = false;
     // Registry key of the EXACT VM that created this closure (e.g.
     // "clone:gs/clone/char/login.o#16960").  A clone shares its template's
     // OriginalObject, so several registered VMs report object() == owner and

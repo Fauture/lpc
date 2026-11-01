@@ -11312,8 +11312,9 @@ void handle_vm_msgCfgReadEtc(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 8 > len) return;
     uint32_t cookie = rd32be(body, off); off += 4;
     uint32_t result = rd32be(body, off); off += 4;
-    if (LPCVM_GETENV("LPCVM_TAIL"))
-        std::cerr << "[cfg-res] cookie=" << cookie << " result=" << result << "\n";
+    if (LPCVM_GETENV("LPCVM_TAIL") || LPCVM_GETENV("LPCVM_CTRACE"))
+        std::cerr << "[cfg-res] cookie=" << cookie << " result=" << result
+                  << " -> applyLpc msg_cfg_read_etc\n";
     applyLpc("msg_cfg_read_etc", {make_int(cl.clientNo), make_int(cookie), make_int(result)});
 }
 
@@ -12091,8 +12092,16 @@ void handleMsgReadContent(GameClient& cl, const uint8_t* body, size_t len) {
     if (svcTraceOn())
         std::cerr << "[readcontent] client=" << cl.clientNo << " cookie=" << a
                   << " result=" << (int32_t)b << " len=" << slen << "\n";
-    applyLpc("msg_read_content",
-             {make_int(cl.clientNo), make_int((int32_t)a), make_int((int32_t)b), make_string(s)});
+    {
+        const auto t0 = GetTickCount64();
+        applyLpc("msg_read_content",
+                 {make_int(cl.clientNo), make_int((int32_t)a), make_int((int32_t)b), make_string(s)});
+        const auto dt = GetTickCount64() - t0;
+        if (dt > 500 || LPCVM_GETENV("LPCVM_CTRACE"))
+            std::cerr << "[filed-lat] read cookie=" << (int32_t)a
+                      << " applyLpc=" << dt << "ms\n";
+        std::cerr.flush();
+    }
 }
 
 // vm_msgWrittenContent (0x8067634): body = [u32 BE a][u32 BE b]
@@ -12108,8 +12117,16 @@ void handleMsgWrittenContent(GameClient& cl, const uint8_t* body, size_t len) {
     if (svcTraceOn())
         std::cerr << "[game] msg_written_content client=" << cl.clientNo
                   << " cookie=" << a << " result=" << b << " attrib=" << cl.attrib << "\n";
-    applyLpc("msg_written_content",
-             {make_int(cl.clientNo), make_int(a), make_int(b)});
+    {
+        const auto t0 = GetTickCount64();
+        applyLpc("msg_written_content",
+                 {make_int(cl.clientNo), make_int(a), make_int(b)});
+        const auto dt = GetTickCount64() - t0;
+        if (dt > 500 || LPCVM_GETENV("LPCVM_CTRACE"))
+            std::cerr << "[filed-lat] write cookie=" << a
+                      << " applyLpc=" << dt << "ms\n";
+        std::cerr.flush();
+    }
 }
 
 // vm_msgCreatedGid (0x8067b80): body = [u32 BE cookie][u32 BE result][u8 gidLen][gid]
@@ -12474,21 +12491,32 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
         }
         filedWatchdogNote(cmdNo, body, len);
     }
-    // Primary path: packet protocol analyser (comm_desc.txt interfaces).
-    int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
-    if (filedDbg) {
-        std::cerr << "[filed-disp] t=" << lpc::msSinceStart()
-                  << " cno=" << cl.clientNo << " cmd=0x" << std::hex << cmdNo << std::dec
-                  << " pktAnalyse=" << pa
-                  << (pa == 1 ? " (interface handled)"
-                              : (pa < 0 ? " (PARSE ERROR)" : " (no interface)"))
-                  << "\n";
-        std::cerr.flush();
-    }
-    if (pa == 1) return;   // handled by the protocol interface
-    if (pa < 0) {          // parse error
-        ++cl.recvBadPkts;
-        return;
+    // Primary path: packet protocol analyser (comm_desc.txt interfaces) —
+    // BUT only for commands the built-in cmdList dispatch does NOT handle.
+    // The C++ switch below (handle_vm_msgCfgReadEtc / handle_vm_msgCfgAaaList
+    // / the whole cmdList table) is the PROVEN path: runs 2026-10-31 efix3
+    // booted to loads=6996 with ZERO interfaces registered.  Letting a freshly
+    // registered LPC interface preempt it (the old order here) rerouted the
+    // config/file replies to communicated.c::process_command, which never
+    // completes the flow — gs hung at "FILE_D wait for CONFIG_D" (oid:16).
+    const CmdEntry* ePre = findCmd(cmdNo);
+    const bool cppAuthored = ePre && (cl.attrib & ePre->type & 7) != 0;
+    if (!cppAuthored) {
+        int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
+        if (filedDbg) {
+            std::cerr << "[filed-disp] t=" << lpc::msSinceStart()
+                      << " cno=" << cl.clientNo << " cmd=0x" << std::hex << cmdNo << std::dec
+                      << " pktAnalyse=" << pa
+                      << (pa == 1 ? " (interface handled)"
+                                  : (pa < 0 ? " (PARSE ERROR)" : " (no interface)"))
+                      << "\n";
+            std::cerr.flush();
+        }
+        if (pa == 1) return;   // handled by the protocol interface
+        if (pa < 0) {          // parse error
+            ++cl.recvBadPkts;
+            return;
+        }
     }
     // Fallback: cmdList/cmdIndex dispatch.
     const CmdEntry* e = findCmd(cmdNo);
@@ -13615,6 +13643,13 @@ int startGameService(int port) {
     if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
         closesocket(s);
         return 0;
+    }
+    // The original vm_f_start_service_on sets the listener NON-BLOCKING before
+    // listen(): the driver's main-loop scan accepts until WSAEWOULDBLOCK — a
+    // blocking listener would freeze the scheduler thread on the drain loop.
+    {
+        u_long nb = 1;
+        ioctlsocket(s, FIONBIO, &nb);
     }
     if (listen(s, 2104) == SOCKET_ERROR) {
         closesocket(s);

@@ -420,7 +420,7 @@ def _needs_paren_for_member(obj):
     return True
 
 
-def extract_default_args(insts, min_arg, nargs, str_table):
+def extract_default_args(insts, min_arg, nargs, str_table, ovar_names=None):
     """Extract optional-argument default values from the function header
     bytecode. Between checkargs(an=15) and enter(an=27), the compiler emits
     push instructions for each optional argument's default value (in order,
@@ -457,16 +457,51 @@ def extract_default_args(insts, min_arg, nargs, str_table):
             v = p16 | (p8 << 16)
             vals.append(str(v))
         elif an == 66:  # push_0 / pushUndefined
-            vals.append("0")
+            vals.append("undefined")  # Patch 81: T_UNDEFINED, not int 0
         elif an == 63:  # push_real
             raw = p16 | (p8 << 16)
             fv = struct.unpack('<f', struct.pack('<i', raw))[0]
-            s = ("%.6f" % fv).rstrip('0').rstrip('.')
-            vals.append(s if s else "0")
+            s = ("%.6f" % fv).rstrip('0')
+            # Patch 88: keep ".0" -- push_real(2.0) is a FLOAT, not int 2.
+            if s.endswith('.'):
+                s += "0"
+            vals.append(s if s else "0.0")
         elif an == 22 and p16 == 0:  # new_array(elems=0) -> ({ })
             vals.append("({ })")
         elif an == 24 and p16 == 0:  # new_mapping(pairs=0) -> ([ ])
             vals.append("([ ])")
+        elif an == 6:  # Patch 74D: call_in_efun - non-constant default value
+            # e.g. `int ti = time()` in share_banker deal_move_to_store_result
+            # (push_0; call time nargs=0). Render the call text so the
+            # declaration keeps a default; otherwise the VM rejects callers
+            # relying on it ("Bad argument N, missed default value").
+            _en74 = EFUN_NAMES[p16] if 0 <= p16 < len(EFUN_NAMES) else ('efun_%d' % p16)
+            _na74 = p8 if 0 < p8 <= len(vals) else 0
+            if _na74:
+                _ca74 = vals[len(vals) - _na74:]
+                del vals[len(vals) - _na74:]
+            else:
+                _ca74 = []
+            vals.append('%s(%s)' % (_en74, ', '.join(_ca74)))
+        elif an == 53:  # Patch 76 (P74H): push_global_var - non-constant default
+            # e.g. `mixed x = some_global` in the function header prologue.
+            # Without this entry the default lands on the WRONG argument
+            # index (or is dropped), and the declaration loses the default:
+            # callers then die with "Bad argument N, missed default value"
+            # (itemd.c / coin_traded.c / friendd.c).
+            if p16 in GLOBAL_VAR_TABLE:
+                vals.append(str(GLOBAL_VAR_TABLE[p16]))
+            else:
+                vals.append('global_%d' % p16)
+        elif an == 61 or an == 62:  # Patch 76b: push_ovar(_ptr) - own-variable default
+            # The object's OWN global variable (push_ovar), distinct from
+            # push_global (global program vars, handled above). Same failure
+            # mode when missing: declaration loses the default and callers
+            # die with "Bad argument N, missed default value".
+            if ovar_names and 0 <= p16 < len(ovar_names) and ovar_names[p16]:
+                vals.append(str(ovar_names[p16]))
+            else:
+                vals.append('this_var_%d' % p16)
         # an == 71 (resort) and other non-push opcodes: skip
         i += 1
     for j, v in enumerate(vals):
@@ -599,7 +634,7 @@ class LPCOFile:
                 name = data[pos:pos+nlen].decode(self.encoding, 'surrogateescape').rstrip('\x00'); pos += nlen
                 if pos + 4 > len(data): break
                 elen = struct.unpack_from('<I', data, pos)[0]; pos += 4
-                if elen <= 0 or elen > 5000: break
+                if elen < 0 or elen > 5000: break
                 if pos + elen > len(data): break
                 exps = data[pos:pos+elen].decode(self.encoding, 'surrogateescape').rstrip('\x00'); pos += elen
                 self.defines.append((name, exps, nargs))
@@ -1442,6 +1477,21 @@ class LPCOFile:
                 pos += nodesCount * 4
                 self.dlt_func_segs[nodes_start] = nodesCount
                 self.dlt_func_names_by_seg[nodes_start] = fun_name  # Patch 44
+                # Patch 71: keep per-name maps. Several table entries can
+                # share one code segment (alias names); the dicts above
+                # collapse them (last wins), which dropped the alias from
+                # the emitted source and shifted all following runtime
+                # function indices after recompilation (start_gs:
+                # set_command/get_short).
+                if not getattr(self, 'dlt_func_names_multi', None):
+                    self.dlt_func_names_multi = {}
+                self.dlt_func_names_multi.setdefault(nodes_start, []).append(fun_name)
+                if not getattr(self, 'dlt_name_to_ns', None):
+                    self.dlt_name_to_ns = {}
+                self.dlt_name_to_ns[fun_name] = nodes_start
+                if not getattr(self, 'dlt_name_to_idx', None):
+                    self.dlt_name_to_idx = {}
+                self.dlt_name_to_idx[fun_name] = entry_table_idx
                 # metaDataLen
                 metaDataLen = struct.unpack_from('<I', prog, pos)[0]
                 pos += 4 + metaDataLen
@@ -1569,6 +1619,77 @@ def _has_side_effect_init(val):
         return True
     return False
 
+def _init_head_ok(prog, start, proglen=None):
+    """Check whether [start] begins a plausible init segment."""
+    import struct as _s
+    if proglen is None:
+        proglen = len(prog)
+    if start < 0 or start + 9 > proglen:
+        return False
+    try:
+        sc = _s.unpack_from('<I', prog, start)[0]
+        if not (0 < sc < 5000):
+            return False
+        pos = start + 4
+        for k in range(sc):
+            flag = prog[pos]; pos += 1
+            if flag & 1:
+                slen = _s.unpack_from('<I', prog, pos)[0]; pos += 4
+                if not (0 < slen < 500):
+                    return False
+                pos += slen
+            if flag & 2:
+                pos += 4
+            if flag & ~3:
+                return False
+            if pos > proglen:
+                return False
+        nc = _s.unpack_from('<I', prog, pos)[0]; pos += 4
+        if not (0 < nc < 100000):
+            return False
+        pos += nc * 4
+        return pos <= proglen + 4
+    except (struct.error, IndexError):
+        return False
+
+
+def _find_init_segment_fallback(prog, proglen=None):
+    """Scan for the LAST plausible init segment (sits after all function
+    debug segments) whose instruction opcodes are all valid."""
+    import struct as _s
+    if proglen is None:
+        proglen = len(prog)
+    best = None
+    n = proglen
+    i = 0
+    while i + 9 <= n:
+        sc = _s.unpack_from('<I', prog, i)[0]
+        if 0 < sc < 5000:
+            if _init_head_ok(prog, i, proglen):
+                try:
+                    pos = i + 4
+                    for k in range(sc):
+                        flag = prog[pos]; pos += 1
+                        if flag & 1:
+                            slen = _s.unpack_from('<I', prog, pos)[0]; pos += 4
+                            pos += slen
+                        if flag & 2:
+                            pos += 4
+                    nc = _s.unpack_from('<I', prog, pos)[0]; pos += 4
+                    all_ok = True
+                    for k in range(nc):
+                        insn = _s.unpack_from('<I', prog, pos + k * 4)[0]
+                        if ((insn >> 24) & 0xFF) not in OPCODES:
+                            all_ok = False
+                            break
+                    if all_ok:
+                        best = i
+                except (struct.error, IndexError):
+                    pass
+        i += 4
+    return best
+
+
 def parse_init_code_segment(o):
     """Parse the init code segment (post-DLT data) and reconstruct global
     variable initializations.
@@ -1577,8 +1698,14 @@ def parse_init_code_segment(o):
     """
     prog = o.prog
     start = getattr(o, 'init_code_start', 0)
-    if not start or start + 8 > len(prog):
-        return []
+    if not start or start + 8 > len(prog) or not _init_head_ok(prog, start):
+        # DLT parsing may have broken early, leaving init_code_start
+        # pointing into a function debug segment. Scan for the real one.
+        fb = _find_init_segment_fallback(prog)
+        if fb is None:
+            return []
+        start = fb
+        o.init_code_start = fb
 
     pos = start
     end = len(prog)
@@ -1586,7 +1713,7 @@ def parse_init_code_segment(o):
         # symbolsCount
         symbolsCount = struct.unpack_from('<I', prog, pos)[0]
         pos += 4
-        if symbolsCount < 0 or symbolsCount > 1000:
+        if symbolsCount < 0 or symbolsCount > 5000:
             return []
         # symbols
         symbols = []
@@ -1720,8 +1847,13 @@ def parse_init_code_segment(o):
                 stack.append('"%s"' % s.replace('"', '\\"'))
             else:
                 stack.append('<str_%d>' % p16)
-        elif an == 59:  # push_i
-            stack.append(str(p16))
+        elif an == 59:  # push_i (16-bit signed)
+            # Patch 84: sign-extend. This is the init-segment
+            # path; without it a push_i(-1) (0xFFFF) rendered as
+            # 65535, so mapping keys were stored unsigned and
+            # lookups with the negative literal missed
+            # (logind.c protect_tip_map -> no protect tip shown).
+            stack.append(str(p16 - 0x10000 if p16 >= 0x8000 else p16))
         # Patch 38: push_global (an=53) was missing in init code segment
         # parsing, causing all subsequent call_ptr invocations to have wrong
         # stack layout. This silently dropped the entire GS startup sequence
@@ -1742,14 +1874,22 @@ def parse_init_code_segment(o):
             else:
                 raw = meta_idx  # fallback
             fv = struct.unpack('<f', struct.pack('<i', raw))[0]
-            s = ("%.6f" % fv).rstrip('0').rstrip('.')
+            s = ("%.6f" % fv).rstrip('0')
+            # Patch 88: keep ".0" -- push_real(2.0) is a FLOAT, not int 2.
+            if s.endswith('.'):
+                s += "0"
             if s == "" or s == "-":
                 s = "0"
             stack.append(s)
         elif an == 65:  # push_this (pushThisObject) - no p16 operand
             stack.append("this_object()")
         elif an == 66:  # push_0 (pushUndefined) - no p16 operand
-            stack.append("0")
+            # Patch 81: pushUndefined is T_UNDEFINED, NOT integer 0.
+            # vm_getVarType returns 0 for it, so clean_array(type=255)
+            # removes it -- unlike integer 0 (type=2) which is kept.
+            # Rendering it as 0 left residue 0s in arrays
+            # (random_coupond: form_value[0] -> Bad type to index).
+            stack.append("undefined")
         elif an == 52:  # push_argnum - pushes argc, NOT pop
             stack.append("argc")
 
@@ -1894,8 +2034,8 @@ def parse_init_code_segment(o):
                 else:
                     statements.append(("%s += %d;" % (var, amt), line_info))
         elif an == 47:  # op_eq - compound assignment (ptr, val -> var op= val)
-            ops = {2: "+=", 3: "-=", 4: "*=", 5: "/=", 6: "%=",
-                   7: "|=", 8: "^=", 9: ">>=", 10: "<<="}
+            ops = {2: "+=", 3: "-=", 4: "*=", 5: "/=", 6: "&=", 7: "|=", 8: "^=",
+                   9: ">>=", 10: "<<=", 11: "%="}
             op = ops.get(p16, "?=")
             if len(stack) >= 2:
                 val = stack.pop()
@@ -1917,7 +2057,15 @@ def parse_init_code_segment(o):
             # vm_pGlobalProgram->pFunctions[v6] (global program function table),
             # NOT efun/sefun. Check func_table FIRST when is_global=1.
             if is_global:
-                if p16 in func_table:
+                # Patch 74F: is_global=1 references the GLOBAL program's
+                # function table (EFUN_TABLE/SEFUN_TABLE) - same rule as
+                # Patch 45 in PseudoGenV37. The local merged func_table
+                # holds inherited forwarding entries whose indices collide
+                # with global ones (monster.c init ft[724]='enter' shadowed
+                # the real time_desc_to_int at global #724). Only consult
+                # func_table when no startup table is available (this file
+                # IS the global program).
+                if not SEFUN_TABLE and p16 in func_table:
                     fname = func_table[p16]
                 else:
                     fname = EFUN_TABLE.get(p16) or SEFUN_TABLE.get(p16, "global_fn_%d" % p16)
@@ -2754,7 +2902,9 @@ class PseudoGenV37:
                 types[var] = 'int'
 
         # Rule 5: Float literal in assignment -> float
-        for m in re.finditer(r'\b(\w+)\s*=\s*([^;]+);', all_text):
+        # (?!=) keeps `==` comparisons (e.g. `if (a == "x")`) from being
+        # read as assignments whose value runs to the next `;`.
+        for m in re.finditer(r'\b(\w+)\s*=(?!=)\s*([^;]+);', all_text):
             var, expr = m.group(1), m.group(2)
             if var in types:
                 continue
@@ -2795,9 +2945,13 @@ class PseudoGenV37:
                 types[var] = method_return_types[method]
 
         # Rule 8: All-integer arithmetic expression -> int (second pass)
-        for m in re.finditer(r'\b(\w+)\s*=\s*([^;]+);', all_text):
+        # (?!=) + brace guard: see Rule 5 note; an `if (a == "..") { ... }`
+        # head must not be parsed as `a = ...` with the block body as value.
+        for m in re.finditer(r'\b(\w+)\s*=(?!=)\s*([^;]+);', all_text):
             var, expr = m.group(1), m.group(2)
             if var in types:
+                continue
+            if '{' in expr or '}' in expr:
                 continue
             # Skip expressions with function/method calls
             if '->' in expr or re.search(r'\b\w+\s*\(', expr):
@@ -2814,6 +2968,49 @@ class PseudoGenV37:
 
         return types
 
+    def _p68_strip(self, s):
+        # Patch 68: strip one redundant outer paren layer.
+        if not (s.startswith("(") and s.endswith(")")):
+            return s
+        d = 0
+        for i, ch in enumerate(s):
+            if ch == "(":
+                d += 1
+            elif ch == ")":
+                d -= 1
+                if d == 0:
+                    if i == len(s) - 1:
+                        return s[1:-1]
+                    return s
+        return s
+
+    def _p68_pure(self, cond):
+        # Patch 68: the merged guard re-evaluates C1 (synthetic if), so
+        # every call-like token in it must be a known-pure efun.
+        if "->" in cond:
+            return False
+        n = len(cond)
+        i = 0
+        while i < n:
+            ch = cond[i]
+            if ch.isalpha() or ch == "_":
+                j = i
+                while j < n and (cond[j].isalnum() or cond[j] == "_"):
+                    j += 1
+                name = cond[i:j]
+                k = j
+                while k < n and cond[k].isspace():
+                    k += 1
+                if k < n and cond[k] == "(" and name not in (
+                        "sizeof", "member_array", "pointerp", "arrayp",
+                        "intp", "stringp", "objectp", "mapp", "undefinedp",
+                        "functionp", "floatp", "bufferp", "clonep", "nullp"):
+                    return False
+                i = j
+            else:
+                i += 1
+        return True
+
     def generate(self, insts, nc):
         """Generate enhanced pseudocode."""
         self.insts = insts
@@ -2824,15 +3021,38 @@ class PseudoGenV37:
         # simulated stack and causes a bogus return 0; at the end of void
         # functions (e.g. build_onlinemall_buf).
         self._prologue_pushes = set()
+        self._prologue_skip = set()
         _in_prologue = False
+        _idx15 = _idx27 = -1
         for _ni, (_an, _p16, _p8) in enumerate(insts):
             if _an == 15:
+                if _idx15 < 0:
+                    _idx15 = _ni
                 _in_prologue = True
                 continue
             if _an == 27:
+                if _in_prologue and _idx27 < 0:
+                    _idx27 = _ni
                 break
-            if _in_prologue and _an in (59, 60, 63, 64, 66):
+            if _in_prologue and (_an in (59, 60, 63, 64, 66)
+                                 or (_an in (22, 24) and _p16 == 0)):
+                # Patch 70: 22=new_array(0) / 24=new_mapping(0) are aggregate
+                # optional-arg defaults (({}) / ([])); extract_default_args
+                # already renders them into the signature, so the pushed
+                # value must not leak into the body stack (it otherwise
+                # surfaces as a bogus `return ([ ]);` at the function's ret,
+                # e.g. safe_load_object in start_gs).
                 self._prologue_pushes.add(_ni)
+        # Patch 74A: EVERYTHING between checkargs(15) and enter_function(27)
+        # is compiler-generated prologue (optional-arg default construction,
+        # including non-constant defaults via call_in_efun, e.g.
+        # `int ti = time()`). None of it may emit body statements: the body
+        # renderer would otherwise execute e.g. allocate_buffer with its
+        # arguments already consumed by the prologue aggregation, leaking
+        # `allocate_buffer(<?>);` garbage that the trailing ret then picks
+        # up as a bogus return value (combat_menu set_menu_img).
+        if 0 <= _idx15 <= 4 and _idx27 > _idx15:
+            self._prologue_skip = set(range(_idx15, _idx27))
         # Collect all jump targets and classify them
         self.structured_targets = set()
         self.goto_targets = set()
@@ -2892,6 +3112,12 @@ class PseudoGenV37:
         self._in_catch_block = False  # track catch block entry (for goto skip)
         self._foreach_info = {} # for_cond_ni -> (loop_var, container/limit, step)
         self._pending_foreach = None  # (loop_var, container/limit, step) from for_init, for next for_cond
+        # P77: for_init numeric loops snapshot the bound into the LoopCtrl
+        # (IDA vm_initForLoop @0x080BC8F0: LoopCtrl[6] = bound at init).
+        # The current compiler emits manual loops (re-evaluated bound) for any
+        # C-style for, so we hoist the bound expression into a temp variable
+        # to reproduce the snapshot semantics exactly.
+        self._loop_bound_temps = []  # list of (temp_name, bound_expr)
         for ni, (an, p16, p8) in enumerate(insts):
             if an in (18, 31, 33, 44, 80):
                 t = ni + 1 + (p16 if p16 < 0x8000 else p16 - 0x10000)
@@ -3032,7 +3258,13 @@ class PseudoGenV37:
                             exit_ni = ht
                             cond_ni = hi
                             break
-                    if han == 33 and (hp8 & 1) == 0:  # if_jnz (jump if false) = loop exit
+                    # Patch 46: the while condition if must be INSIDE the
+                    # loop (at or after the head). An if before the head that
+                    # jumps past the back-edge is an enclosing if (e.g. the
+                    # if/else wrapping two while(i--) loops), not the loop
+                    # condition - taking it would emit the enclosing if as
+                    # the while header and misplace the whole loop.
+                    if (han == 33 and (hp8 & 1) == 0 and hi >= target):  # if_jnz = loop exit
                         ht = hi + 1 + (hp16 if hp16 < 0x8000 else hp16 - 0x10000)
                         if ht > ni:
                             exit_ni = ht
@@ -3104,12 +3336,39 @@ class PseudoGenV37:
                     or _goto_ni > self._loop_close_backedges[_head_ni]):
                 self._loop_close_backedges[_head_ni] = _goto_ni
 
+        # Patch 46: instruction liveness (reachability) analysis. Worklist
+        # from instruction 0 following fall-through and jump successors.
+        # Used to suppress dead labels and to avoid suppressing live gotos
+        # in the dead-code heuristic (a nop between two gotos can itself be
+        # a jump target, making the second goto live).
+        self._live = self._compute_liveness(insts, nc)
+
+        # Patch 46: do-while continue targets. A `continue` in a do-while
+        # loop jumps to the start of the loop condition evaluation (the
+        # quiet-op run feeding the back-edge if), not to the loop head.
+        # Map each do-while's condition start to (if_ni, exit_ni) for the
+        # goto -> continue detection.
+        self._do_while_cond_starts = {}
+        _DW_QUIET = frozenset({
+            52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+            1, 2, 25, 38, 40, 41, 48, 75, 81, 85, 28, 30, 32, 37, 39, 42,
+            43, 45, 74, 5, 6, 7, 8, 9, 22, 24, 67, 68, 13, 36, 79, 19, 20,
+            21, 23, 49, 71, 16, 17, 69, 70,
+        })
+        for _dw_head, (_dw_if, _dw_exit) in self._do_while_heads.items():
+            _cs = _dw_if
+            while (_cs - 1 > _dw_head and self.insts[_cs - 1][0] in _DW_QUIET):
+                _cs -= 1
+            self._do_while_cond_starts[_cs] = (_dw_if, _dw_exit)
+
         self.targets = self.goto_targets - self.structured_targets
         self.all_targets = self.structured_targets | self.goto_targets
         consumed_targets = set()
         self._consumed_gotos = set()  # gotos already emitted as break/continue
         self._catch_skip_gotos = set()  # compiler-generated gotos that skip the catch handler
         self._skip_until_if_close = False  # skip dead code after continue/break/return in if-block
+        self._consumed_goto_targets = set()  # Patch 46: goto targets consumed as break/continue/return
+        self._synth_wraps = {}  # Patch 68: synthetic if-wraps: start ni -> (end ni, cond text)
 
         # Detect switch/case patterns (populates _switch_starts, _switch_cases,
         # _switch_ends, _switch_default)
@@ -3117,6 +3376,24 @@ class PseudoGenV37:
 
         # Track which switch blocks we've opened, to close them at _switch_ends
         self._open_switches = []  # list of (switch_start_ni, end_ni)
+
+        # Patch 46: suppress the loop-head label when the while header is
+        # emitted later at the condition if (head < cond if). The label
+        # would otherwise appear inside the loop's first statement,
+        # misrepresenting the structure. Only suppress when every goto
+        # targeting the head is one of the loop's own back-edges (no
+        # external jumps into the loop).
+        for _lh in self._loop_heads:
+            _lw_backedges = set(g for g, (gh, _) in self._loop_exits.items() if gh == _lh)
+            _has_ext = False
+            for _lg, (_lan, _lp16, _lp8) in enumerate(self.insts):
+                if _lan == 31 and _lg not in _lw_backedges:
+                    _lt = _lg + 1 + (_lp16 if _lp16 < 0x8000 else _lp16 - 0x10000)
+                    if _lt == _lh:
+                        _has_ext = True
+                        break
+            if not _has_ext:
+                consumed_targets.add(_lh)
 
         # Dead-code tracking: after ret, skip instructions until a jump target
         self._returned = False
@@ -3146,7 +3423,13 @@ class PseudoGenV37:
                         continue  # skip dead code
 
             # Close if/else blocks at target FIRST (inner blocks close before outer)
-            while self._if_stack and ni == self._if_stack[-1][1]:
+            # Patch 49: use >= instead of ==. A block's end target often points
+            # at a padding nop (or a nop run) before the real next instruction,
+            # and several nested blocks may share the same exit point one nop
+            # apart (e.g. an inner if whose body is `goto L` where L == the
+            # enclosing block's end). Matching only the exact target left those
+            # blocks unclosed (they leaked to the end-of-function cleanup).
+            while self._if_stack and ni >= self._if_stack[-1][1]:
                 # If this if/else block was opened BEFORE the innermost switch,
                 # the switch (being inner) must close first. Break to let the
                 # switch-close code below handle it, then we'll resume.
@@ -3201,6 +3484,14 @@ class PseudoGenV37:
                     self.lines.append("%s}" % self._ind())
                 consumed_targets.add(ni)
 
+            # Patch 68: fire the synthetic if-wrap registered by the
+            # goto merger (multi-level exit goto elimination).
+            if getattr(self, '_synth_wraps', None) and ni in self._synth_wraps:
+                _e68s, _c68s = self._synth_wraps.pop(ni)
+                self.lines.append("%sif (%s) {" % (self._ind(), _c68s))
+                self.indent += 1
+                self._if_stack.append((ni, _e68s, "if"))
+
             # Close switch blocks whose end has been reached (outer blocks).
             # After closing a switch, resume closing if/else blocks whose
             # target equals ni (they may be parent blocks that wrapped the switch).
@@ -3210,7 +3501,8 @@ class PseudoGenV37:
                 self.lines.append("%s}  // end switch" % self._ind())
                 self._case_in_switch = False
                 # Resume closing if/else blocks now that the switch is closed
-                while self._if_stack and ni == self._if_stack[-1][1]:
+                # Patch 49: >= (same rationale as the main close loop above).
+                while self._if_stack and ni >= self._if_stack[-1][1]:
                     # Don't close if/else blocks belonging to an outer switch
                     if self._open_switches:
                         outer_start = self._open_switches[-1][0]
@@ -3253,14 +3545,41 @@ class PseudoGenV37:
                         self.lines.append("%s}" % self._ind())
                     consumed_targets.add(ni)
 
+            # Patch 46: close loops deferred past their final back-edge (the
+            # loop body extends beyond the last back-edge, e.g. ends with a
+            # break). All break paths and the fall-through land here; close
+            # the loop at its exit target. Do-while entries (back-edge if in
+            # _do_while_ifs) close at their back-edge if instead.
+            while (self._while_stack and ni == self._while_stack[-1][1]
+                   and self._while_stack[-1][0] not in self._do_while_ifs):
+                self._while_stack.pop()
+                self.indent -= 1
+                self.lines.append("%s}  // end loop (verified)" % self._ind())
+                consumed_targets.add(ni)
+
             # Close while loop at back-edge goto (only at the final back-edge
             # for this loop head; intermediate back-edges are continue statements
             # handled by _gen_inst's goto -> continue detection).
             if ni in self._loop_exits:
                 head_ni, exit_ni = self._loop_exits[ni]
-                if ni != self._loop_close_backedges.get(head_ni, -1):
-                    # Not the final back-edge - fall through to _gen_inst
-                    # for continue detection.
+                # Patch 46: the final back-edge normally closes the loop,
+                # but when LIVE code exists between it and the loop exit,
+                # the back-edge is really a `continue` and the loop body
+                # extends past it (typically ending in break). Defer the
+                # close to the exit target (close-at-exit code above).
+                _defer_close = False
+                if ni == self._loop_close_backedges.get(head_ni, -1):
+                    for _lni in range(ni + 1, exit_ni):
+                        if (_lni < nc and _lni in self._live
+                                and self.insts[_lni][0] not in (0, 29, 46)):
+                            _defer_close = True
+                            break
+                    if _defer_close and exit_ni > nc:
+                        _defer_close = False
+                if (ni != self._loop_close_backedges.get(head_ni, -1)
+                        or _defer_close):
+                    # Not the final back-edge (or deferred) - fall through
+                    # to _gen_inst for continue detection.
                     pass
                 else:
                     # Check if the innermost if-block's target is a break (goto to
@@ -3369,7 +3688,9 @@ class PseudoGenV37:
                 self._while_stack.append((ni, exit_ni))
                 consumed_targets.add(ni)  # suppress label
 
-            if ni in self.targets and ni not in consumed_targets:
+            if (ni in self.targets and ni not in consumed_targets
+                    and ni in self._live
+                    and ni not in self._consumed_goto_targets):
                 self.lines.append("\n%s// --- label L%04d ---" % (self._ind(), ni))
 
             # Emit case labels if this ni is a switch body target
@@ -3399,7 +3720,7 @@ class PseudoGenV37:
                         self.lines.append("%scase \"%s\":" % (self._ind(), val))
                 self._case_in_switch = True
 
-            if ni not in self._prologue_pushes:
+            if ni not in self._prologue_skip and ni not in self._prologue_pushes:
                 self._gen_inst(ni, an, p16, p8, nc)
 
         # Close any remaining open switches
@@ -3430,6 +3751,69 @@ class PseudoGenV37:
         if byte_offset + 4 > len(self.metadata):
             return 0
         return struct.unpack_from('<i', self.metadata, byte_offset)[0]
+
+    def _compute_liveness(self, insts, nc):
+        """Patch 46: compute the set of reachable (live) instruction indices.
+
+        Worklist traversal from instruction 0, following fall-through and
+        jump successors per opcode semantics:
+          - goto(31) / for_step(80) / default(12): unconditional jump
+          - ret(73) / ret_fake(72): no successors
+          - if(33) / for_cond(18): fall-through + conditional target
+          - try(44): fall-through + catch handler target
+          - case_num(10) / case_str(11): fall-through + case body target
+          - everything else: fall-through
+        """
+        live = set()
+        work = [0]
+        while work:
+            ni = work.pop()
+            if ni in live or ni < 0 or ni >= nc:
+                continue
+            live.add(ni)
+            an, p16, p8 = insts[ni]
+            t = ni + 1 + (p16 if p16 < 0x8000 else p16 - 0x10000)
+            if an in (31, 80, 12):  # goto / for_step / default
+                work.append(t)
+            elif an in (73, 72):  # ret / ret_fake
+                pass
+            elif an in (33, 18, 44):  # if / for_cond / try
+                work.append(ni + 1)
+                work.append(t)
+            elif an in (10, 11):  # case_num / case_str
+                work.append(ni + 1)
+                mi = p16 | (p8 << 16)
+                work.append(ni + 1 + self._read_meta_int(mi))
+            else:
+                work.append(ni + 1)
+        return live
+
+    def _return_tail_value(self, ni):
+        """Patch 46: render the constant pushed by instruction ni as a
+        return value, or None if it is not a simple constant push."""
+        an, p16, p8 = self.insts[ni]
+        if an == 59:  # push_i (16-bit signed)
+            return str(p16 - 0x10000 if p16 >= 0x8000 else p16)
+        if an == 60:  # push_num (32-bit)
+            return str(p16 | (p8 << 16))
+        if an == 63:  # push_real
+            raw = p16 | (p8 << 16)
+            fv = struct.unpack('<f', struct.pack('<i', raw))[0]
+            s = ("%.6f" % fv).rstrip('0')
+            # Patch 88: keep ".0" -- push_real(2.0) is a FLOAT, not int 2.
+            if s.endswith('.'):
+                s += "0"
+            return s if s else "0.0"
+        if an == 64:  # push_s
+            if 0 <= p16 < len(self.strings):
+                esc = self.strings[p16].replace('\\', '\\\\').replace('"', '\\"')
+                return '"%s"' % esc
+            return '""'
+        if an == 22 and p16 == 0:  # new_array(0)
+            return "({})"
+        if an == 24 and p16 == 0:  # new_mapping(0)
+            return "([ ])"
+        return None
 
     def _detect_switch_pattern(self, insts, nc):
         """Detect switch(expr) { case X: ... case Y: ... default: ... } patterns.
@@ -3545,6 +3929,17 @@ class PseudoGenV37:
                             ni += 1
                         continue
                     ni += 1
+                # Patch 48: skip trailing nops after the last body's
+                # terminator so sw_end points at the first real
+                # instruction after the switch (the common break target).
+                # The end-scan stops at ni+1 of the terminating goto/ret,
+                # but the compiler usually pads nops between the body end
+                # and the post-switch code; case-body break gotos target
+                # the first REAL instruction, so sw_end must match it.
+                # Nops are never emitted, so this cannot overshoot into
+                # live code.
+                while end_ni < nc and insts[end_ni][0] in (0, 29, 46):
+                    end_ni += 1
                 self._switch_ends[run_start] = end_ni
                 # Track the "fallthrough" target: the common goto target that
                 # case bodies jump to in order to exit the switch. This is the
@@ -3554,33 +3949,52 @@ class PseudoGenV37:
                 from collections import Counter
                 goto_counter = Counter()
                 body_targets = set(t[0] for t in all_targets)
+                # Patch 46: loop exit targets and shared return tails are
+                # NOT switch breaks - exclude them from the fallthru
+                # counting. Loop HEADS / do-while cond-starts are NOT
+                # excluded: a forward jump to a head is a loop ENTRY (the
+                # common `switch {...} while (1) {...}` layout where the
+                # switch break target IS the next loop's head), and real
+                # continues are backward jumps already excluded by the
+                # gt >= next_body bound.
+                _loop_ctl = set(self._loop_heads.values())
+                _loop_ctl |= set(e for (_, e) in self._loop_exits.values())
+                # Patch 48: back-edge instruction indices (for_step / goto
+                # latches, i.e. the KEYS of _loop_exits) are continue
+                # targets - a forward goto to one is a `continue`, not a
+                # switch break. Without this, continue-gotos outvote the
+                # real break target in the fallthru counting and the
+                # switch-break detection breaks.
+                _loop_ctl |= set(self._loop_exits.keys())
+                def _is_ret_tail(t):
+                    if not (0 <= t < nc):
+                        return False
+                    ta = insts[t][0]
+                    if ta == 73:
+                        return True
+                    if (ta in (59, 60, 63, 64)
+                            or (ta == 22 and insts[t][1] == 0)
+                            or (ta == 24 and insts[t][1] == 0)):
+                        return t + 1 < nc and insts[t + 1][0] == 73
+                    return False
                 for bni in sorted(body_targets):
-                    # Scan this case body for top-level gotos (not inside if-blocks)
-                    # until next case body or end
+                    # Patch 46: scan the ENTIRE case body (including inside
+                    # if-blocks - break gotos are usually guarded by ifs)
+                    # until the next case body.
                     next_body = min((t for t in body_targets if t > bni), default=end_ni)
-                    gni = bni
-                    while gni < min(next_body, end_ni):
+                    for gni in range(bni, min(next_body, end_ni)):
                         gan, gp16, gp8 = insts[gni]
-                        if gan == 31:  # goto at top level of case body
-                            gt = gni + 1 + (gp16 if gp16 < 0x8000 else gp16 - 0x10000)
-                            # Allow targets at end_ni or end_ni+1 (switch break),
-                            # or before end_ni (fallthrough to switch-end code).
-                            # Only count gotos that jump to or past the NEXT case
-                            # body start (gt >= next_body). Gotos within the same
-                            # case body (internal jumps, nested switch breaks)
-                            # must NOT be counted as outer switch breaks.
-                            if gt != end_ni and gt not in body_targets and gt <= end_ni + 1 and gt >= next_body:
-                                goto_counter[gt] += 1
-                            gni += 1
-                        elif gan == 33:  # if - skip the if-block body
-                            if_target = gni + 1 + (gp16 if gp16 < 0x8000 else gp16 - 0x10000)
-                            # Guard against backward jumps (do-while back-edge)
-                            if if_target > gni:
-                                gni = if_target
-                            else:
-                                gni += 1
-                        else:
-                            gni += 1
+                        if gan != 31:
+                            continue
+                        gt = gni + 1 + (gp16 if gp16 < 0x8000 else gp16 - 0x10000)
+                        # Count forward jumps past the next case body that
+                        # are not case bodies themselves, not loop control
+                        # points (continue / loop break), and not shared
+                        # return tails.
+                        if (gt != end_ni and gt not in body_targets
+                                and gt >= next_body and gt not in _loop_ctl
+                                and not _is_ret_tail(gt)):
+                            goto_counter[gt] += 1
                 if goto_counter:
                     # Most common fallthrough target = switch break point
                     self._switch_fallthru[run_start] = goto_counter.most_common(1)[0][0]
@@ -3615,12 +4029,24 @@ class PseudoGenV37:
             raw = self._read_meta_int(meta_idx)
             fv = struct.unpack('<f', struct.pack('<i', raw))[0]
             # Strip trailing zeros for readability
-            s = ("%.6f" % fv).rstrip('0').rstrip('.')
+            s = ("%.6f" % fv).rstrip('0')
+            # Patch 88: keep ".0" -- push_real(2.0) is a FLOAT, not int 2.
+            if s.endswith('.'):
+                s += "0"
             if s == "" or s == "-" or s == "-0":
-                s = "0"
+                s = "0.0"
             self._push(s); return
-        if an == 66:     # push_0
-            self._push("0"); return
+        if an == 66:     # push_0 / pushUndefined
+            # Patch 82: T_UNDEFINED, NOT integer 0.
+            # IDA vm_getVarType@0x808cb3c reads the type byte at
+            # value+4: pushUndefined -> 0, integer 0 -> 2(T_INT).
+            # clean_array (default type=255) removes type==0 only,
+            # so `arr[i]=undefined` is cleaned while `arr[i]=0`
+            # stays. Also affects default args: ref_time=undefined
+            # lets get_latter_time_info take the interval branch
+            # (task_time_ex.c get_next_task_time -> questiond
+            # set_timer negative timeout).
+            self._push("undefined"); return
         if an == 65:     # push_this
             self._push("this_object()"); return
         if an == 52:     # push_argnum
@@ -3666,8 +4092,7 @@ class PseudoGenV37:
             # preserves file order, so p16 indexes it directly.)
             idx = p16
             if 0 <= idx < len(self.strings):
-                s = self.strings[idx].replace('\n','\\n').replace('\r','\\r').replace('\x00','')
-                s = s.replace('"', '\\"')
+                s = self.strings[idx].replace('\\','\\\\').replace('\n','\\n').replace('\r','\\r').replace('"','\\"').replace('\x00','')
                 self._push('"%s"' % s)
             else:
                 self._push('STR#%d' % p16)
@@ -3755,8 +4180,8 @@ class PseudoGenV37:
             self._push(var); return
 
         if an == 47:  # op_eq (compound assignment)
-            ops = {2: "+=", 3: "-=", 4: "*=", 5: "/=", 6: "%=",
-                   7: "|=", 8: "^=", 9: ">>=", 10: "<<="}
+            ops = {2: "+=", 3: "-=", 4: "*=", 5: "/=", 6: "&=", 7: "|=", 8: "^=",
+                   9: ">>=", 10: "<<=", 11: "%="}
             op = ops.get(p16, "?=")
             # Bytecode push order: ptr, val (ptr first, val last on top)
             # Pop order: val (top), then ptr (below)
@@ -4199,6 +4624,15 @@ class PseudoGenV37:
                     self.lines.append("%s%sif (!(%s)) {" % (self._ind(), prefix, self._simplify_expr(cond)))
                 self.indent += 1
                 self._if_stack.append((ni, target, "if"))
+                # Patch 75: the short-circuit terminal if must arm
+                # _ternary_check too. A ternary whose condition is A&&B / A||B
+                # (e.g. pad_buffer((flag && cost_type == "cash") ? "cash_1"
+                # : cost_type)) used to fall through to a statement-level if;
+                # the later empty-if/else cleanup then deleted both lines and
+                # left BOTH branch values on the stack, so the following
+                # op_eq bound the true-branch value ("cash_1") as the
+                # assignment lvalue instead of the real target (buf).
+                self._ternary_check = (len(self.lines), len(self.stack), cond, is_jz)
                 return
 
             # Short-circuit OR/AND: this is the FIRST if of the pattern.
@@ -4255,6 +4689,11 @@ class PseudoGenV37:
             # the normal path falls through to target.
             if ni in self._catch_check_skip:
                 self._catch_check_skip.discard(ni)
+                # No extra pop here. The generic do_pop=1 if handler already
+                # popped the condition above (the leaked catch flag, plain '0'
+                # or not-transformed '(!0)'). A second pop would eat the value
+                # underneath it (e.g. the '([ ])' that a following ret needs
+                # for `return ([]);` in start_aaa's Load site).
                 # The instruction after the if (typically ret) is the
                 # exception path. Find it and mark for skip so the
                 # normal code flow continues to L_normal (if target).
@@ -4312,9 +4751,118 @@ class PseudoGenV37:
             # (catch_target is the catch instruction, catch_target+1 is catch body)
             if hasattr(self, '_last_catch_target') and target == self._last_catch_target + 1:
                 del self._last_catch_target
+                self._consumed_goto_targets.add(target)
                 return
             if hasattr(self, '_last_catch_target'):
                 del self._last_catch_target
+            # Patch 68: multi-level exit goto -> merged-condition if.
+            #   if (C1) {                # I1 = _if_stack[-2], kind "if"
+            #       if (C0) { goto L; }  # I0 = _if_stack[-1], then = goto only
+            #       <F0..F1 body>        # straight-line, no external targets
+            #   } ... <F1..L tail>       # straight-line (+ret), targets only
+            #   L:                       # structural stack-level ends
+            # => if (!(C1) || !(C0)) { if (C1) { <F0..F1> } <tail> } ... L:
+            # Exact: !C1 || !C0 preserves short-circuit order (C0 evaluated
+            # only when C1 held, like the bytecode); C1 is re-evaluated in
+            # the synthetic guard, hence the purity whitelist.
+            _p68 = False
+            if (self._if_stack and len(self._if_stack) >= 3
+                    and not getattr(self, '_open_switches', None)
+                    and not self._pending_else_if
+                    and self.lines
+                    and self.lines[-1].rstrip().endswith(" {")
+                    and "if (" in self.lines[-1]
+                    and not self.lines[-1].strip().startswith("} else")):
+                _s68a = self._if_stack[-1]
+                _s68b = self._if_stack[-2]
+                if _s68a[2] == "if" and _s68b[2] == "if":
+                    _F068 = _s68a[1]
+                    _F168 = _s68b[1]
+                    if (_F068 > ni and _F168 > _F068 and target > _F168
+                            and _F068 in self._live):
+                        _k68 = -1
+                        for _i68 in range(len(self._if_stack) - 3, -1, -1):
+                            if self._if_stack[_i68][1] == target:
+                                _k68 = _i68
+                                break
+                        if _k68 >= 0:
+                            _ends68 = set(_e for (_nn, _e, _kk) in self._if_stack)
+                            _bad68 = False
+                            for _t68 in self.all_targets:
+                                if _F068 < _t68 < target and _t68 not in _ends68:
+                                    _bad68 = True
+                                    break
+                            if not _bad68:
+                                for _c68 in range(_F068, min(target, len(self.insts))):
+                                    _a68 = self.insts[_c68][0]
+                                    if _a68 in (0, 29, 46, 73):
+                                        continue
+                                    if _a68 in (31, 33, 35, 44, 80):
+                                        _bad68 = True
+                                        break
+                            if not _bad68:
+                                _i0i68 = len(self.lines[-1]) - len(self.lines[-1].lstrip())
+                                _fl68 = -1
+                                for _j68 in range(len(self.lines) - 2, -1, -1):
+                                    _lf68 = self.lines[_j68]
+                                    if not _lf68.rstrip().endswith(" {"):
+                                        continue
+                                    if "if (" not in _lf68:
+                                        continue
+                                    if len(_lf68) - len(_lf68.lstrip()) < _i0i68:
+                                        _fl68 = _j68
+                                        break
+                                if _fl68 >= 0:
+                                    _lf168 = self.lines[_fl68]
+                                    _o168 = _lf168.index("if (")
+                                    _c168 = _lf168[_o168 + 4:_lf168.rstrip().rfind(") {")]
+                                    _lf068 = self.lines[-1]
+                                    _o068 = _lf068.index("if (")
+                                    _c068 = _lf068[_o068 + 4:_lf068.rstrip().rfind(") {")]
+                                    if (_c168 and _c068
+                                            and self._p68_pure(_c168)):
+                                        self.lines[_fl68] = "%sif (!(%s) || !(%s)) {" % (
+                                            _lf168[:_o168], self._p68_strip(_c168),
+                                            self._p68_strip(_c068))
+                                        self.lines.pop()
+                                        self._if_stack.pop()
+                                        self.indent -= 1
+                                        self._if_stack[-1] = (_s68b[0], target, "if")
+                                        if not hasattr(self, '_synth_wraps'):
+                                            self._synth_wraps = {}
+                                        self._synth_wraps[_F068] = (_F168, _c168)
+                                        self._consumed_goto_targets.add(_F068)
+                                        self._consumed_goto_targets.add(target)
+                                        self._if_with_cond_pop.discard(_s68a[0])
+                                        if hasattr(self, '_ternary_check'):
+                                            del self._ternary_check
+                                        _p68 = True
+            if _p68:
+                return
+            # Patch 57: no-op goto. When the (nop-normalised) target is the very
+            # next real instruction, falling through reaches exactly the same
+            # place, so the jump carries no meaning - emit nothing. Compilers
+            # leave these behind at if/else merge points, e.g.
+            #     [ 99] goto L0101 / [100] nop / [101] <next statement>
+            _nx57 = ni + 1
+            while _nx57 < len(self.insts) and self.insts[_nx57][0] in (0, 29, 46):
+                _nx57 += 1
+            _tg57 = target
+            while _tg57 < len(self.insts) and self.insts[_tg57][0] in (0, 29, 46):
+                _tg57 += 1
+            if _nx57 == _tg57:
+                # Patch 59: inside a switch this goto closes a case body. Even
+                # though it is a no-op, dropping it silently would let the case
+                # fall through into the next one, so emit an explicit break.
+                if self._open_switches:
+                    _s57s, _s57e = self._open_switches[-1]
+                    _s57en = _s57e
+                    while (_s57en < len(self.insts)
+                           and self.insts[_s57en][0] in (0, 29, 46)):
+                        _s57en += 1
+                    if ni >= _s57s and _tg57 >= _s57en:
+                        self.lines.append("%sbreak;" % self._ind())
+                return
             # Dead-code goto: if the previous non-nop instruction is an
             # unconditional jump (goto/ret), this goto is unreachable and
             # must NOT be emitted (it would generate spurious "goto" lines
@@ -4323,6 +4871,7 @@ class PseudoGenV37:
             # and not inside a switch body (case bodies often have consecutive
             # gotos that are all reachable from different case labels).
             if (ni not in self.all_targets
+                    and ni not in self._live
                     and not self._open_switches
                     and (not self._if_stack or self._if_stack[-1][2] != "ternary")):
                 for prev_ni in range(ni - 1, -1, -1):
@@ -4342,6 +4891,7 @@ class PseudoGenV37:
                 for _, loop_exit_ni in self._while_stack:
                     if target == loop_exit_ni:
                         # This goto is a break statement
+                        self._consumed_goto_targets.add(target)
                         # If inside an if block, emit break as the if body
                         if self._if_stack and self._if_stack[-1][2] == "if":
                             self.lines.append("%sbreak;" % self._ind())
@@ -4358,23 +4908,66 @@ class PseudoGenV37:
             # back-edge (which then jumps to the loop head). The for_step
             # instruction is registered in _loop_exits. Also check direct
             # jumps to a loop head (foreach body target).
+            # Patch 55: the recorded target may point at a padding nop run; the
+            # real destination is the first non-nop instruction after it (e.g. a
+            # loop step at 161 recorded as L0159 because 159/160 are nops).
+            # Normalise before the loop-table lookups so such jumps are still
+            # recognised as continue.
+            _tn55 = target
+            while _tn55 < len(self.insts) and self.insts[_tn55][0] in (0, 29, 46):
+                _tn55 += 1
+            # Patch 58: a goto that belongs to an open switch - it sits inside
+            # the switch and lands on/before the switch's end - is the switch's
+            # own break. It must NOT be turned into a loop continue, even when
+            # the switch's end normalises onto the loop's back-edge (which is
+            # exactly what happens when a switch ends a loop body).
             if self._while_stack:
                 matched_loop = False
                 # Case 1: target is a for_step back-edge instruction
-                if target in self._loop_exits:
-                    head_ni, exit_ni = self._loop_exits[target]
+                if target in self._loop_exits or _tn55 in self._loop_exits:
+                    head_ni, exit_ni = self._loop_exits.get(target) or self._loop_exits[_tn55]
                     for _, active_exit in self._while_stack:
                         if exit_ni == active_exit:
                             matched_loop = True
                             break
                 # Case 2: target is a loop head directly (foreach body target)
-                elif target in self._loop_heads:
-                    exit_ni = self._loop_heads[target]
+                elif target in self._loop_heads or _tn55 in self._loop_heads:
+                    exit_ni = self._loop_heads.get(target) or self._loop_heads[_tn55]
                     for _, active_exit in self._while_stack:
                         if exit_ni == active_exit:
                             matched_loop = True
                             break
+                # Case 3 (Patch 46): do-while loop - target is the condition
+                # evaluation start of an active do-while = continue.
+                elif target in self._do_while_cond_starts or _tn55 in self._do_while_cond_starts:
+                    _, _dw_exit = self._do_while_cond_starts.get(target) or self._do_while_cond_starts[_tn55]
+                    for _, active_exit in self._while_stack:
+                        if _dw_exit == active_exit:
+                            matched_loop = True
+                            break
+                else:
+                    # Case 4 (Patch 56): the recorded target may sit on a nop run
+                    # just before the loop's back-edge goto, so a jump that is
+                    # really "go to the back-edge" does not match Case 1 exactly.
+                    # Accept only when the gap is pure padding (nop): if the loop
+                    # step (`++i`) lives in that gap the jump lands BEFORE it and
+                    # must still execute it, which `continue` would skip - that
+                    # would turn the loop into an infinite one, so bail out.
+                    _s56 = _tn55
+                    while _s56 < len(self.insts) and _s56 - _tn55 < 12:
+                        if _s56 in self._loop_exits:
+                            _h56, exit_ni = self._loop_exits[_s56]
+                            for _, active_exit in self._while_stack:
+                                if exit_ni == active_exit:
+                                    matched_loop = True
+                                    break
+                            break
+                        if self.insts[_s56][0] not in (0, 29, 46):
+                            break
+                        _s56 += 1
                 if matched_loop:
+                    self._consumed_goto_targets.add(_tn55)
+                    self._consumed_goto_targets.add(target)
                     if self._if_stack and self._if_stack[-1][2] == "if":
                         self.lines.append("%scontinue;" % self._ind())
                         self._if_stack[-1] = (self._if_stack[-1][0],
@@ -4383,14 +4976,68 @@ class PseudoGenV37:
                         return
                     self.lines.append("%scontinue;" % self._ind())
                     return
+                # Patch 62: goto into the loop-step region (just before
+                # the back-edge). A `for (i = 0; i < n; i++)` loop
+                # compiles to a while whose step (`++i`) sits inline at
+                # the end of the body; `continue` targets that step
+                # region. A bare `continue` would SKIP the step and
+                # hang the loop, so replay the step instructions first,
+                # then emit continue. Only the innermost active loop is
+                # taken (a nested continue would bind to it), and the
+                # region must be nops + `++var` pairs only.
+                _p62 = False
+                for _be62, (_hd62, _ex62) in sorted(
+                        self._loop_exits.items(),
+                        key=lambda _kv: -_kv[1][0]):
+                    if not (_hd62 < _tn55 <= _be62):
+                        continue
+                    if not self._while_stack \
+                            or self._while_stack[-1][1] != _ex62:
+                        continue
+                    _s62 = _tn55
+                    _ok62 = True
+                    while _s62 < _be62:
+                        _o62 = self.insts[_s62][0]
+                        if _o62 in (0, 29, 46):
+                            _s62 += 1
+                            continue
+                        if _o62 == 57 and _s62 + 1 < _be62 \
+                                and self.insts[_s62 + 1][0] == 34:
+                            _s62 += 2
+                            continue
+                        _ok62 = False
+                        break
+                    if not _ok62:
+                        continue
+                    for _r62 in range(_tn55, _be62):
+                        _ra62, _rp62, _rq62 = self.insts[_r62]
+                        if _ra62 in (0, 29, 46):
+                            continue
+                        self._gen_inst(_r62, _ra62, _rp62, _rq62, nc)
+                    self.lines.append("%scontinue;" % self._ind())
+                    self._consumed_goto_targets.add(_tn55)
+                    self._consumed_goto_targets.add(target)
+                    if self._if_stack and self._if_stack[-1][2] == "if":
+                        self._if_stack[-1] = (self._if_stack[-1][0],
+                                              self._if_stack[-1][1], "break")
+                        self._skip_until_if_close = True
+                    _p62 = True
+                    break
+                if _p62:
+                    return
             # Check for break statement: goto jumps to a switch's end point or
             # fallthrough target. This is a "break" out of the switch (but
             # stays in the loop).
             if self._open_switches:
                 for sw_start, sw_end in self._open_switches:
                     fallthru = self._switch_fallthru.get(sw_start)
+                    if os.environ.get('LPCDBG'):
+                        import sys
+                        print("DBG goto(switch-brk) ni=%d target=%d sw=(%d,%d) fallthru=%r" % (
+                            ni, target, sw_start, sw_end, fallthru), file=sys.stderr)
                     if target == sw_end or (fallthru is not None and target == fallthru):
                         # This goto is a break out of the switch
+                        self._consumed_goto_targets.add(target)
                         if self._if_stack and self._if_stack[-1][2] == "if":
                             self.lines.append("%sbreak;" % self._ind())
                             self._if_stack[-1] = (self._if_stack[-1][0],
@@ -4399,7 +5046,62 @@ class PseudoGenV37:
                             return
                         self.lines.append("%sbreak;" % self._ind())
                         return
-            if self._if_stack and self._if_stack[-1][2] == "if":
+            # Patch 46: goto to a shared return tail (push value; ret, or a
+            # bare ret) is a return statement. Emit it directly instead of
+            # a goto. Skipped when a ternary is pending (the goto carries
+            # the true-branch value to a bare ret).
+            # Patch 52: also allow unreachable (dead-code) gotos to a shared
+            # return tail. Such a goto is never executed, so emitting
+            # `return;` for it is harmless and removes a spurious goto.
+            if target < nc and (ni in self._live
+                                or (ni not in self._live
+                                    and ni not in self.all_targets)):
+                _rv = None
+                # Patch 52: the tail may be padded with nops before the
+                # ret / value-push, so skip them first.
+                _t = target
+                while _t < nc and self.insts[_t][0] in (0, 29, 46):
+                    _t += 1
+                if _t < nc and self.insts[_t][0] == 73:
+                    _rv = ""
+                elif _t + 1 < nc and self.insts[_t + 1][0] == 73:
+                    _rv = self._return_tail_value(_t)
+                _tc = getattr(self, '_ternary_check', None)
+                _tern_pending = bool(_tc and _tc[1] + 1 == len(self.stack))
+                if (_rv is not None and not _tern_pending
+                        and (_rv != "" or not self.stack)):
+                    self._consumed_goto_targets.add(target)
+                    _stmt = ("return %s;" % _rv) if _rv else "return;"
+                    if self._if_stack and self._if_stack[-1][2] == "if":
+                        self.lines.append("%s%s" % (self._ind(), _stmt))
+                        self._if_stack[-1] = (self._if_stack[-1][0],
+                                              self._if_stack[-1][1], "break")
+                        self._skip_until_if_close = True
+                    else:
+                        self.lines.append("%s%s" % (self._ind(), _stmt))
+                    self._returned = True
+                    return
+            # Patch 54: a "break"-marked block must still be able to form an
+            # else. That marker only records "a break/return was already emitted
+            # inside this block" (set when a switch case broke, see L4621); it
+            # says nothing about this goto. What matters is where the goto goes:
+            #   * target past the block's end -> the then-branch is skipping an
+            #     else part, e.g.
+            #         if (A) { switch (...) { ... } goto L_END; } else { ... }
+            #     so else detection must run (this is the common case that used
+            #     to be emitted as a bare `goto` and, worse, left the else body
+            #     dangling outside the if).
+            #   * target inside the block -> a switch/case break or similar;
+            #     keep the old behaviour and treat it as a plain goto.
+            _k54 = self._if_stack[-1][2] if self._if_stack else None
+            if _k54 == "break":
+                _pt54 = self._if_stack[-1][1]
+                while (_pt54 < len(self.insts)
+                       and self.insts[_pt54][0] in (0, 29, 46)):
+                    _pt54 += 1
+                if target <= _pt54:
+                    _k54 = None
+            if self._if_stack and _k54 in ("if", "break"):
                 prev_ni, prev_target, _ = self._if_stack[-1]
                 # Patch 19: scan nop to check goto followed by if target
                 # (there may be nop between goto and if target)
@@ -4426,9 +5128,58 @@ class PseudoGenV37:
                     if (ni - 1 > prev_ni and self.insts[ni - 1][0] == 31
                             and ni not in self.all_targets):
                         return
+                    # Patch 46: boundary guard - the else block being formed
+                    # ([prev_target, target)) must stay inside every enclosing
+                    # open block: its end (this goto's target) cannot exceed
+                    # an enclosing if/else block's end target, nor the end of
+                    # the innermost open switch when the if was opened inside
+                    # that switch. A goto escaping these bounds is a control
+                    # transfer (break/continue/return tail), not an else
+                    # splitter; emit it as a plain goto.
+                    # Patch 47: skip STALE if-stack entries. An entry whose
+                    # end target <= the goto's ni no longer encloses the
+                    # goto - the emission point is already past that block's
+                    # end, so the entry can only be a leftover (e.g. an if
+                    # wrapping a switch whose jump target falls inside the
+                    # switch's default case: the if-close loop defers to the
+                    # switch-close path, which never matches the if's target,
+                    # so the entry leaks). Testing such an entry would
+                    # wrongly reject valid else/ternary patterns.
+                    _else_ok = True
+                    for _ei in range(len(self._if_stack) - 1):
+                        _et = self._if_stack[_ei][1]
+                        if _et <= ni:
+                            continue  # stale / already-closed block
+                        # Patch 49: a block's end target may point at a padding
+                        # nop run; the block really ends at the first real
+                        # instruction after it. Compare against that, so a
+                        # goto to the enclosing block's exit point (one nop
+                        # past the recorded target) is still an else splitter.
+                        while (_et < len(self.insts)
+                               and self.insts[_et][0] in (0, 29, 46)):
+                            _et += 1
+                        if target > _et:
+                            _else_ok = False
+                            break
+                    if _else_ok and self._open_switches:
+                        _sw_s, _sw_e = self._open_switches[-1]
+                        if prev_ni >= _sw_s and target > _sw_e:
+                            _else_ok = False
+                    if not _else_ok:
+                        if os.environ.get('LPCDBG'):
+                            import sys
+                            print("DBG goto(else-guard) ni=%d target=%d if_stack=%r" % (
+                                ni, target, self._if_stack), file=sys.stderr)
+                        self.lines.append("%sgoto L%04d;" % (self._ind(), target))
+                        return
                     # Check for ternary pattern: only the "if (...) {" line was
                     # generated in if-block and exactly one value was pushed.
                     tc = getattr(self, '_ternary_check', None)
+                    if os.environ.get('LPCDBG'):
+                        import sys
+                        print("DBG goto ni=%d target=%d tc=%r stack=%r lines_tail=%r" % (
+                            ni, target, tc, self.stack, self.lines[tc[0]:] if tc else None),
+                            file=sys.stderr)
                     if tc and tc[1] + 1 == len(self.stack):
                         # Check if if-block has only label comments or empty lines
                         # beyond the "if (...) {" line (e.g. from catch(error(...)) pattern)
@@ -4543,6 +5294,30 @@ class PseudoGenV37:
                                     break
                             if not _has_code_after:
                                 # Flatten: if (or if-else) spans entire else block.
+                                # Patch 50: when the then-branch emitted
+                                # nothing (its only content was the goto),
+                                # invert the condition instead of producing
+                                # `if (A) { } else if (...) { ... }`.
+                                _tcf = getattr(self, '_ternary_check', None)
+                                if (_tcf is not None
+                                        and _tcf[0] == len(self.lines)
+                                        and self.lines
+                                        and not self._pending_else_if):
+                                    _lf = self.lines[-1]
+                                    if (_lf.rstrip().endswith(" {")
+                                            and "if (" in _lf
+                                            and not _lf.strip().startswith("} else")):
+                                        _opf = _lf.index("if (")
+                                        _cf = _lf[_opf + 4:_lf.rstrip().rfind(") {")]
+                                        self.lines[-1] = "%sif (!(%s)) {" % (
+                                            _lf[:_opf], _cf)
+                                        self._if_stack.pop()
+                                        self._if_stack.append(
+                                            (prev_ni, target, "if"))
+                                        # keep indent at the body level:                                        # _lf is the (possibly nested) `if (...) {`
+                                        # line, its indentation + 1 is the body level.
+                                        self.indent = ((len(_lf) - len(_lf.lstrip())) // 4) + 1
+                                        return
                                 self._pending_else_if = True
                                 self.indent -= 1
                                 self._if_stack.pop()
@@ -4550,9 +5325,107 @@ class PseudoGenV37:
                     self.indent -= 1
                     self._if_stack.pop()
                     self._if_stack.append((prev_ni, target, "else"))
+                    # Patch 50: `if (A) { } else { B }` -> `if (!(A)) { B }`.
+                    # When the then-branch emitted no lines (its only content
+                    # was this goto), the else form produces an empty then
+                    # block; inverting the condition removes it and keeps the
+                    # following code as the (single) block body.
+                    _tc_inv = getattr(self, '_ternary_check', None)
+                    if (_tc_inv is not None and _tc_inv[0] == len(self.lines)
+                            and self.lines and not self._pending_else_if):
+                        _last = self.lines[-1]
+                        if (_last.rstrip().endswith(" {") and "if (" in _last
+                                and not _last.strip().startswith("} else")):
+                            _op = _last.index("if (")
+                            _cond_txt = _last[_op + 4:_last.rstrip().rfind(") {")]
+                            self.lines[-1] = "%sif (!(%s)) {" % (
+                                _last[:_op], _cond_txt)
+                            self._if_stack.pop()
+                            self._if_stack.append((prev_ni, target, "if"))
+                            # body level = indentation of the `if (...) {`
+                            # line + 1 (see Patch 50 comment above).
+                            self.indent = ((len(_last) - len(_last.lstrip())) // 4) + 1
+                            return
                     self.lines.append("%s} else {" % self._ind())
                     self.indent += 1
                     return
+            # Patch 53: redundant goto to the enclosing if-block's own exit.
+            #   if (A) { ...; goto L_END; }  where L_END == the if block's end
+            #   target: the goto lands on the block's natural continuation and
+            #   carries no control-flow meaning, so emit nothing and let the
+            #   block close normally.  Guard: bail out when another jump lands
+            #   strictly inside (ni, target) - those instructions would then be
+            #   reachable only by falling through, and dropping the goto would
+            #   change semantics.
+            if self._if_stack and self._if_stack[-1][1] == target:
+                _k53 = self._if_stack[-1][2]
+                _r53 = False
+                if _k53 == "if":
+                    _r53 = True
+                    for _t in self.all_targets:
+                        if ni < _t < target:
+                            _r53 = False
+                            break
+                elif _k53 == "else":
+                    # Patch 61: `} else { ...; goto L_END; }` where L_END
+                    # is the else block's own end: the goto carries no
+                    # control-flow meaning, so drop it.  Guard: every
+                    # instruction strictly between ni and target must be
+                    # a nop or unreachable - otherwise real code sits
+                    # after the goto and dropping it would run it.
+                    _r53 = True
+                    for _t in self.all_targets:
+                        if ni < _t < target:
+                            _r53 = False
+                            break
+                    if _r53:
+                        _lv53 = getattr(self, '_live', None)
+                        for _c53 in range(ni + 1, min(target, len(self.insts))):
+                            if self.insts[_c53][0] in (0, 29, 46):
+                                continue
+                            if _lv53 is not None and _c53 not in _lv53:
+                                continue
+                            _r53 = False
+                            break
+                if _r53:
+                    if _k53 == "else":
+                        # Close the else block right here instead of
+                        # leaving it to the block-end close loop: that
+                        # loop sees `} else {` as the last emitted line
+                        # and treats the block as an *empty else*,
+                        # deleting the opener without emitting a `}` and
+                        # losing one closing brace. Also skip the dead
+                        # code after the goto (padding nop + loop
+                        # back-edge), which must not be emitted.
+                        _bi53 = self._ind()
+                        self._if_stack.pop()
+                        self.indent -= 1
+                        if (self.lines
+                                and self.lines[-1].rstrip()
+                                == ("%s} else {" % self._ind())):
+                            # The else block is empty: rewrite its opener as a
+                            # plain close. Deleting the line would also drop the
+                            # `}` half that closes the preceding then-branch.
+                            self.lines[-1] = "%s}" % self._ind()
+                        else:
+                            self.lines.append("%s}" % _bi53)
+                        self._skip_until_if_close = True
+                    return
+
+            if os.environ.get('LPCDBG'):
+                import sys
+                try:
+                    _tn = self.insts[target][0] if target < len(self.insts) else -1
+                except Exception:
+                    _tn = -1
+                _pn = self._if_stack[-1][0] if self._if_stack else -1
+                _pt = self._if_stack[-1][1] if self._if_stack else -1
+                _ins = [t for t in self.all_targets if _pn < t < ni]
+                print("DBG goto(plain) ni=%d target=%d nc=%d t_op=%s if_stack=%r "
+                      "while_stack=%r jumps_into_body=%r at_end=%s" % (
+                          ni, target, len(self.insts), _tn,
+                          self._if_stack, self._while_stack, _ins,
+                          (ni + 1 == _pt)), file=sys.stderr)
             self.lines.append("%sgoto L%04d;" % (self._ind(), target))
             return
 
@@ -4601,18 +5474,34 @@ class PseudoGenV37:
                             if m and m.group(1) == loop_var:
                                 init_expr = "%s = %s" % (loop_var, m.group(2))
                                 self.lines.pop()  # remove the standalone init stmt
+                        # P77: for_init snapshots the bound (LoopCtrl[6]) at
+                        # loop start, but the recompiled manual loop re-evaluates
+                        # the bound expression every iteration. Hoist any
+                        # non-literal bound into a temp to restore snapshot
+                        # semantics (e.g. loops that shrink the array).
+                        bound_used = second
+                        if not re.match(r'^-?\d+$', str(second)):
+                            _used = set(v for v in (getattr(self.var_names, 'func_local_vars', None) or {}).values())
+                            for _t, _e in self._loop_bound_temps:
+                                _used.add(_t)
+                            _tn = "loop_bound_%d" % (len(self._loop_bound_temps) + 1)
+                            while _tn in _used:
+                                _tn += "x"
+                            self._loop_bound_temps.append((_tn, second))
+                            self.lines.append("%s%s = %s;" % (self._ind(), _tn, second))
+                            bound_used = _tn
                         if step == "-1":
                             # backward for: for (init; loop_var >= to; loop_var--)
                             if init_expr:
-                                self.lines.append("%sfor (%s; %s >= %s; %s--) {" % (self._ind(), init_expr, loop_var, second, loop_var))
+                                self.lines.append("%sfor (%s; %s >= %s; %s--) {" % (self._ind(), init_expr, loop_var, bound_used, loop_var))
                             else:
-                                self.lines.append("%sfor (; %s >= %s; %s--) {" % (self._ind(), loop_var, second, loop_var))
+                                self.lines.append("%sfor (; %s >= %s; %s--) {" % (self._ind(), loop_var, bound_used, loop_var))
                         else:
                             # forward for: for (init; loop_var <= to; loop_var++)
                             if init_expr:
-                                self.lines.append("%sfor (%s; %s <= %s; %s++) {" % (self._ind(), init_expr, loop_var, second, loop_var))
+                                self.lines.append("%sfor (%s; %s <= %s; %s++) {" % (self._ind(), init_expr, loop_var, bound_used, loop_var))
                             else:
-                                self.lines.append("%sfor (; %s <= %s; %s++) {" % (self._ind(), loop_var, second, loop_var))
+                                self.lines.append("%sfor (; %s <= %s; %s++) {" % (self._ind(), loop_var, bound_used, loop_var))
                 else:
                     cond = self._pop() if self.stack else "1"
                     self.lines.append("%swhile (%s) {" % (self._ind(), self._simplify_expr(cond)))
@@ -4703,17 +5592,61 @@ class PseudoGenV37:
                             # emit `} catch { ... }`, so suppress it.
                             self._catch_skip_gotos.add(g)
                             # At L_body: if_jnz(pop) -> L_normal
-                            if l_body < len(self.insts) and self.insts[l_body][0] == 33:
-                                if_p8 = self.insts[l_body][2] if len(self.insts[l_body]) > 2 else 0
+                            _chk69 = l_body
+                            if (l_body < len(self.insts) and self.insts[l_body][0] == 45
+                                and l_body + 1 < len(self.insts) and self.insts[l_body + 1][0] == 33):
+                                _chk69 = l_body + 1
+                            if _chk69 < len(self.insts) and self.insts[_chk69][0] == 33:
+                                if_p8 = self.insts[_chk69][2] if len(self.insts[_chk69]) > 2 else 0
                                 if (if_p8 & 2) != 0:  # do_pop=1 (pop variant)
-                                    if_p16 = self.insts[l_body][1]
-                                    l_normal = _rel_target(l_body, if_p16)
+                                    if_p16 = self.insts[_chk69][1]
+                                    l_normal = _rel_target(_chk69, if_p16)
                                     # L_normal-1 (skip nops) should be ret(73)
                                     r = l_normal - 1
                                     while r >= 0 and self.insts[r][0] in (0, 29, 46):
                                         r -= 1
-                                    if r >= 0 and self.insts[r][0] == 73:
-                                        self._catch_check_skip.add(l_body)
+                                    if r >= 0 and self.insts[r][0] == 73 and _chk69 == l_body:
+                                        self._catch_check_skip.add(_chk69)
+                                    elif r >= 0 and (self.insts[r][0] in (31, 73) or not any(self.insts[_q][0] in (31, 33, 35, 44, 80, 73, 14, 26) for _q in range(_chk69 + 1, l_normal - 1) if _q < len(self.insts))):
+                                        # Patch 69: exception path is a goto
+                                        # (e.g. `if (catch(expr)) continue;`).
+                                        # Rewrite `try { expr; } catch { }`
+                                        # into `if (catch(expr)) {` so the
+                                        # goto path becomes this if's body
+                                        # instead of leaking `if (0) {...}`.
+                                        _ok69 = (if_p8 & 1) == 0
+                                        if _ok69:
+                                            for _q69 in range(len(self.insts)):
+                                                if _q69 != g and self.insts[_q69][0] == 31:
+                                                    _t69 = _rel_target(_q69, self.insts[_q69][1])
+                                                    if _t69 in (l_body, _chk69):
+                                                        _ok69 = False
+                                                        break
+                                        if (_ok69 and p >= 0 and self.insts[p][1] == 0
+                                                and len(self.lines) >= 3
+                                                and self.lines[-1].strip().startswith("} catch {")
+                                                and self.lines[-3].strip() == "try {"):
+                                            _lb69 = self.lines[-2].strip()
+                                            for _s69 in ("// call (discard result)", "// increment", "// decrement", "// mapping merge", "// allocate stack space", "// free stack space", "// debug tracepoint", "// inherited from parent or forward declaration"):
+                                                if _lb69.endswith("  " + _s69):
+                                                    _lb69 = _lb69[: -len("  " + _s69)].rstrip()
+                                                    break
+                                            if (len(_lb69) > 1 and _lb69.endswith(";")
+                                                    and not _lb69.startswith("{")
+                                                    and "goto " not in _lb69
+                                                    and "return" not in _lb69
+                                                    and "if (" not in _lb69):
+                                                _expr69 = _lb69[:-1].strip()
+                                                if _expr69:
+                                                    self.lines.pop()
+                                                    self.lines.pop()
+                                                    self.lines.pop()
+                                                    self.lines.append("%sif (%scatch(%s)) {" % (self._ind(), "!" if self.insts[_chk69 - 1][0] == 45 else "", _expr69))
+                                                    self.indent += 1
+                                                    self._if_stack.append((_chk69, l_normal, "if"))
+                                                    self._catch_check_skip.add(_chk69)
+                                                    self._consumed_goto_targets.add(l_body)
+                                                    self._consumed_goto_targets.add(g)
             except Exception:
                 pass
             return
@@ -5058,7 +5991,7 @@ def fmt_disasm_v37(an, p16, p8, ni, nc, strings, local_vars, metadata=None,
         # (vm_mapStrNoTo identity-maps when pStrOffsetMapping is NULL)
         idx = p16
         if strings and 0 <= idx < len(strings):
-            s = strings[idx].replace('\n','\\n').replace('\r','\\r').replace('\x00','')
+            s = strings[idx].replace('\\','\\\\').replace('\n','\\n').replace('\r','\\r').replace('"','\\"').replace('\x00','')
             if len(s) > 40:
                 s = s[:40] + "...<trunc>"
             s = s.replace('"', '\\"')
@@ -5293,7 +6226,7 @@ def decompile_file_v37(filepath, out_path=None, mode='both', encoding='gb2312'):
             # character so pure-control-character strings are filtered out.
             if not any(c.isprintable() for c in s):
                 continue
-            esc = s.replace('\n','\\n').replace('\r','\\r').replace('"','\\"')
+            esc = s.replace('\\','\\\\').replace('\n','\\n').replace('\r','\\r').replace('"','\\"')
             if len(esc) > 70:
                 esc = esc[:67] + "...<trunc>"
             lines.append("   [%3d] \"%s\"" % (i, esc))
@@ -5348,14 +6281,161 @@ def decompile_file_v37(filepath, out_path=None, mode='both', encoding='gb2312'):
     decoded_count = 0
     unresolved_count = 0
 
+    # Patch 72: emit definitions in DLT func_table order. Runtime pFunctions
+    # is indexed by DLT table_idx; the compiler assigns table slots by source
+    # definition order (offset = efun count). Recompiling this file only
+    # reproduces the original indices if definitions follow the DLT order.
+    # Shared-segment aliases (several table names, one code segment) emit a
+    # thin forwarder under the alias name; the body keeps the segment's
+    # primary name.
+    # Patch 74B: global programs (header.functionBC != 0, e.g. start_gs)
+    # keep empty stubs for nc=0 entries: those entries occupy runtime
+    # pFunctions slots and must stay for index alignment (Patch 70b/72).
+    # Normal programs must NOT emit stub bodies - see the nc=0 branch below.
+    _is_global_prog = bool((getattr(o, 'header', None) or {}).get('functionBC'))
+    _name_to_idx = getattr(o, 'dlt_name_to_idx', None) or {}
+    _name_to_ns = getattr(o, 'dlt_name_to_ns', None) or {}
+    _seg_by_ns = {}
+    for p in segs:
+        if p['ns'] not in _seg_by_ns:
+            _seg_by_ns[p['ns']] = p
+    _dlt_ordered = sorted(_name_to_idx.keys(), key=lambda n: _name_to_idx[n])
+    _alias_target = {}
+    _stub_names = set()
+    _first_name_at_ns = {}
     all_funcs = []
+    _covered_ns = set()
+    for _n in _dlt_ordered:
+        _ns = _name_to_ns.get(_n)
+        _p = _seg_by_ns.get(_ns) if _ns is not None else None
+        if _p is None or not _p.get('nc'):
+            # Patch 70b: table entry without a code segment (declared-only,
+            # e.g. set_command/get_short in start_gs). It still occupies a
+            # runtime pFunctions slot - emit an empty stub to keep the
+            # original index alignment. Calling it executed zero instructions
+            # in the original program (returns undefined), so an empty body
+            # is behaviorally faithful.
+            _stub_names.add(_n)
+            all_funcs.append((_n, _ns if _ns is not None else -1, 0))
+            continue
+        if _ns in _covered_ns:
+            _alias_target[_n] = _first_name_at_ns[_ns]
+            all_funcs.append((_n, _p['ns'], _p['nc']))
+            continue
+        if _p.get('func_name') and _p['func_name'] != _n:
+            _alias_target[_n] = _p['func_name']
+        _first_name_at_ns[_ns] = _n
+        all_funcs.append((_n, _p['ns'], _p['nc']))
+        _covered_ns.add(_ns)
     for p in sorted(segs, key=lambda x: x['ns']):
-        all_funcs.append((p['func_name'], p['ns'], p['nc']))
+        if p['ns'] not in _covered_ns:
+            all_funcs.append((p['func_name'], p['ns'], p['nc']))
+    no_code_funcs = [f for f in no_code_funcs if f not in _alias_target]
+    if not _is_global_prog:
+        no_code_funcs = [f for f in no_code_funcs if f not in _stub_names]
 
     func_declarations = []  # forward declarations
     func_bodies = []        # full function output lines
 
+    def _alias_signature(_d):
+        _tnames = {0: 'undefined', 1: 'void', 2: 'int', 3: 'float', 4: 'string',
+                   5: 'buffer', 6: 'array', 7: 'mapping', 8: 'pointer',
+                   9: 'function', 10: 'object', 20: 'loop_ctrl', 255: 'mixed'}
+        _ret = _tnames.get(_d.get('ret_type'), 'mixed')
+        if _ret in ('undefined', 'loop_ctrl'):
+            _ret = 'mixed'
+        _attrib = _d.get('attrib', 0) or 0
+        _mods = []
+        if _attrib & 0x2:
+            _mods.append('primitive')
+        if _attrib & 0x8:
+            _mods.append('override')
+        if _attrib & 0x10:
+            _mods.append('nomask')
+        if _attrib & 0x4:
+            _mods.append('private')
+        if _attrib & 0x1:
+            _mods.append('varargs')
+        _mod = (' '.join(_mods) + ' ') if _mods else ''
+        _args = _d.get('args') or []
+        _na = len(_args)
+        _an = ['arg%d' % i for i in range(_na)]
+        for _vi, _nm in _args:
+            if 0 <= _vi < _na and _nm:
+                _an[_vi] = _nm
+        _aty = ['mixed'] * _na
+        for _vi, _tb in (_d.get('arg_types') or {}).items():
+            if 0 <= _vi < _na:
+                _aty[_vi] = _tnames.get(_tb, 'mixed')
+        _params = ', '.join('%s %s' % (_aty[i], _an[i]) for i in range(_na))
+        return _mod, _ret, _params, _an
+
     for fname, ns, nc in all_funcs:
+        if fname in _stub_names:
+            # Patch 74B: nc=0 table entries are compiler forwarding slots.
+            # In the .o binary their Vm_Fun_T code-offset field is 0 (pure
+            # re-export; IDA vm_inheritFunctionPrototype @0x80a2a20 errors
+            # only when BOTH the existing ident and the incoming function
+            # carry code). An empty-bodied stub makes the .c recompile carry
+            # a real implementation that collides with the inherited one
+            # ("Function X is already implemented"). Faithful output is a
+            # live forward declaration only. Global programs keep stubs for
+            # slot alignment (Patch 70b/72).
+            _d = o.func_decl_info_by_name.get(fname) or {}
+            _mod, _ret, _params, _an = _alias_signature(_d)
+            func_declarations.append('%s%s %s(%s);' % (_mod, _ret, fname, _params))
+            if not _is_global_prog:
+                continue
+            _bl = []
+            _bl.append('// ' + '-' * 68)
+            _bl.append('// @code  nc=0, nargs=%d, insts=0' % len(_an))
+            _bl.append('// declared in the original program without a code segment')
+            _bl.append('// ' + '-' * 68)
+            _bl.append('%s%s %s(%s) {' % (_mod, _ret, fname, _params))
+            if mode in ('disasm', 'both'):
+                _bl.append('')
+                _bl.append('    /* ---- Bytecode Disassembly ---- */')
+                _bl.append('    // (no code segment)')
+                _bl.append('')
+            _bl.append('    /* ---- Enhanced Pseudocode ---- */')
+            _bl.append('    // (empty body - no code in the original)')
+            _bl.append('}')
+            _bl.append('')
+            func_bodies.append(_bl)
+            continue
+        if fname in _alias_target:
+            # Patch 72: shared-segment alias - emit a thin forwarder so the
+            # recompiled function table keeps the original slot count and
+            # order. Both names ran the same code in the original program,
+            # so forwarding is behaviorally identical.
+            _d = o.func_decl_info_by_name.get(fname) or {}
+            _mod, _ret, _params, _an = _alias_signature(_d)
+            _na = len(_an)
+            _prim = _alias_target[fname]
+            _params = ', '.join('%s %s' % (_aty[i], _an[i]) for i in range(_na))
+            _call = '%s(%s)' % (_prim, ', '.join(_an))
+            _stmt = ('return %s;' % _call) if _ret != 'void' else ('%s;' % _call)
+            func_declarations.append('%s%s %s(%s);' % (_mod, _ret, fname, _params))
+            _bl = []
+            _bl.append('// ' + '-' * 68)
+            _bl.append('// @code  nc=%d, nargs=%d, insts=%d' % (nc, _na, _na))
+            _bl.append('// alias of %s() - shares its code segment' % _prim)
+            _bl.append('// ' + '-' * 68)
+            _bl.append('%s%s %s(%s) {' % (_mod, _ret, fname, _params))
+            if mode in ('disasm', 'both'):
+                _bl.append('')
+                _bl.append('    /* ---- Bytecode Disassembly ---- */')
+                _bl.append('    // identical code segment as %s() - see its listing' % _prim)
+                _bl.append('')
+            if mode in ('pseudo', 'both'):
+                _bl.append('    /* ---- Enhanced Pseudocode ---- */')
+                _bl.append('    %s' % _stmt)
+            else:
+                _bl.append('    // (forwarder - body shared with %s)' % _prim)
+            _bl.append('}')
+            _bl.append('')
+            func_bodies.append(_bl)
+            continue
         insts = []
         for ni in range(nc):
             off_b = ns + ni*4
@@ -5501,7 +6581,8 @@ def decompile_file_v37(filepath, out_path=None, mode='both', encoding='gb2312'):
         # Extract optional-argument default values from the function
         # header bytecode (push instructions between checkargs and enter).
         # Each pushed constant is the default for arg[min_arg + i].
-        seg_defaults = extract_default_args(insts, seg_min_arg_no, nargs, o.str_table)
+        seg_defaults = extract_default_args(insts, seg_min_arg_no, nargs, o.str_table,
+                                            ovar_names=getattr(o, 'local_vars', None))
         params_parts = []  # body params (no default values)
         decl_params_parts = []  # forward declaration params (with defaults)
         for i in range(nargs):
@@ -5528,6 +6609,11 @@ def decompile_file_v37(filepath, out_path=None, mode='both', encoding='gb2312'):
         # Only real source-level modifiers are emitted (primitive/hidden are
         # driver-internal flags, not written in source).
         modifiers = []
+        if seg_attrib & 0x2:
+            # Patch 73: primitive = the LPC implementation replaces a VM
+            # builtin (vm_yyparse case 40). Required for the C telnet
+            # callback to reach the LPC override with its arguments intact.
+            modifiers.append("primitive")
         if seg_attrib & 0x8:
             modifiers.append("override")
         if seg_attrib & 0x10:
@@ -5601,6 +6687,11 @@ def decompile_file_v37(filepath, out_path=None, mode='both', encoding='gb2312'):
                             body_lines.append("    //%s %s;" % (var_type, var_name_str))
                         else:
                             body_lines.append("    %s %s;" % (var_type, var_name_str))
+                    body_lines.append("")
+                # P77: emit hoisted loop-bound temp declarations
+                if getattr(gen, '_loop_bound_temps', None):
+                    for _tn, _te in gen._loop_bound_temps:
+                        body_lines.append("    int %s;" % _tn)
                     body_lines.append("")
                 for pl in pseudo_lines:
                     body_lines.append(pl)
@@ -5743,6 +6834,40 @@ def decompile_file_v37(filepath, out_path=None, mode='both', encoding='gb2312'):
                     lines[_li] = "%s/* %s %s; */" % (_ind, _vt, _vn)
     except Exception:
         pass
+
+    # Patch 74C: repair "} while (...);" attach-point misplacement. When a
+    # do{...}while sits inside a switch, the switch close was emitted one
+    # step early, producing
+    #     }  // end switch
+    #     } while (0);
+    # while the faithful order is
+    #     } while (0);
+    #     }
+    # Disambiguated from the legit "do{ switch{...} }while" layout by the
+    # opener order: broken only when the nearest do{ opener appears after
+    # the nearest switch opener.
+    _i74 = 0
+    while _i74 < len(lines) - 1:
+        _cur74 = lines[_i74].rstrip()
+        _nxt74 = lines[_i74 + 1].rstrip()
+        if _cur74.endswith('}  // end switch') and \
+                _nxt74.lstrip().startswith('} while (') and _nxt74.endswith(');'):
+            _do_i74 = _sw_i74 = -1
+            for _j74 in range(_i74 - 1, -1, -1):
+                _s74 = lines[_j74].strip()
+                if _do_i74 < 0 and (_s74 == 'do {' or _s74.endswith(' do {')):
+                    _do_i74 = _j74
+                if _sw_i74 < 0 and 'switch (' in _s74 and _s74.endswith('{'):
+                    _sw_i74 = _j74
+                if _do_i74 >= 0 and _sw_i74 >= 0:
+                    break
+            if _do_i74 > _sw_i74 >= 0:
+                _cond74 = _nxt74[_nxt74.index('(') + 1:_nxt74.rindex(')')]
+                _ind174 = lines[_i74][:len(lines[_i74]) - len(lines[_i74].lstrip())]
+                _ind274 = lines[_i74 + 1][:len(lines[_i74 + 1]) - len(lines[_i74 + 1].lstrip())]
+                lines[_i74] = _ind174 + '} while (%s);' % _cond74
+                lines[_i74 + 1] = _ind274 + '}'
+        _i74 += 1
 
     # Write output
     if out_path is None:

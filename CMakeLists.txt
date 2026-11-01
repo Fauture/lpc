@@ -40,6 +40,16 @@ add_executable(lpcvm
     src/lzss.cpp
     src/pak_loader.cpp
     src/original_vm.cpp
+    # ---- vmcore: the new execution core (docs/vm_core_refactor.md v2) ----
+    src/vmcore/pcb.cpp
+    src/vmcore/object.cpp
+    src/vmcore/error.cpp
+    src/vmcore/call.cpp
+    src/vmcore/values.cpp
+    src/vmcore/interp.cpp
+    src/vmcore/sched.cpp
+    src/vmcore/efun_adapt.cpp
+    src/vmcore/driver_model.cpp
     src/map_module.cpp
     src/game_service.cpp
     src/pkt_protocol.cpp

@@ -352,6 +352,15 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\lzss.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\pak_loader.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\original_vm.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\pcb.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\object.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\error.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\call.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\values.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\interp.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\sched.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\efun_adapt.cpp" />
+    <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\vmcore\driver_model.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\map_module.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\game_service.cpp" />
     <ClCompile Include="C:\Users\Administrator\Desktop\lpc\src\pkt_protocol.cpp" />

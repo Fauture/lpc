@@ -198,13 +198,19 @@ bool vmInvokeClosurePush(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
         if (!vmPushFunCall(pcb, ctx, cl->func, all, Interp::masterProgram()))
             return false;
         if (retHook) vmHookCallbackWhenReturn(pcb, std::move(retHook));
-        pcb->efunTakeover = true;
+        // 注意: 这里【不置位】efunTakeover —— 本函数是"压帧+hook 链"语义,
+        // hook 链推进发生在 vmReturnFromFun 的 retHook 里, 不经过任何
+        // dispatchEfun 尾部, 置了无人消费 → 残留 → 下一个无关 efun 的
+        // 返回值被吞 (create_search_terms 循环 ctrl 槽被吃 → Bad loop
+        // ctrl → scand.do_init 中断 → oper_scan_table_flag 恒 0 →
+        // statued 死循环 → post_init 永不排空 → 8160 不开)。外层 efun
+        // (sort_array/mapping_array/fireMapHooks 宿主) 的分支自己置位,
+        // 由各自的 dispatchEfun 尾部消费一次 —— 那才是成对的。
         return true;
     }
     if (!fn) return false;   // efun closure / unresolved: caller falls back
     if (!vmPushFunCall(pcb, owner, fn, all)) return false;
     if (retHook) vmHookCallbackWhenReturn(pcb, std::move(retHook));
-    pcb->efunTakeover = true;
     return true;
 }
 
@@ -279,10 +285,12 @@ static Value efunSort(VmPcb* pcb, std::vector<Value>& args) {
             std::vector<Value> items;
             std::vector<Value> keys;
             bool desc;
+            Value result;          // 排序收尾数组 (hook 链经 rv 交付)
+            bool completed = false;
         };
         static const std::function<void(const std::shared_ptr<SortCtx>&,
-                                        size_t)> sortStep =
-            [](const std::shared_ptr<SortCtx>& st, size_t i) {
+                                        size_t, bool)> sortStep =
+            [](const std::shared_ptr<SortCtx>& st, size_t i, bool viaHook) {
                 if (i >= st->items.size()) {
                     std::vector<std::pair<Value, Value>> keyed(st->items.size());
                     for (size_t k = 0; k < st->items.size(); ++k)
@@ -306,24 +314,33 @@ static Value efunSort(VmPcb* pcb, std::vector<Value>& args) {
                     auto out = std::make_shared<ArrayValue>();
                     out->items.reserve(keyed.size());
                     for (auto& kv : keyed) out->items.push_back(std::move(kv.second));
-                    Interp::pushValue(st->pcb, Value{out});   // efun 返回值
+                    st->result = Value{out};
+                    st->completed = true;
+                    // 仅整条链在 efun 体内同步走完时由这里压栈; hook 链路径
+                    // 由末元素 hook 的 rv 出参交付 —— 在 hook 里 pushValue 会
+                    // 与 vmReturnFromFun 的 pushValue(returnValue) 双重压栈,
+                    // 调用方拿到的是闭包(比较键)返回值而非排序数组(同
+                    // mapping_array 的 [op8ret] 实锤模式)。
+                    if (!viaHook)
+                        Interp::pushValue(st->pcb, st->result);   // efun 返回值
                     return;
                 }
                 if (!vmInvokeClosurePush(
                         st->pcb, st->cl, {st->items[i]},
                         [st, i](Value& rv) {
                             st->keys[i] = std::move(rv);
-                            sortStep(st, i + 1);
+                            sortStep(st, i + 1, true);
+                            if (st->completed) rv = st->result;   // 末元素/链同步走完: 经 rv 交付
                         })) {
                     st->keys[i] =
                         vmInvokeClosure(st->pcb, st->cl, {st->items[i]});
-                    sortStep(st, i + 1);
+                    sortStep(st, i + 1, viaHook);
                 }
             };
         auto st = std::make_shared<SortCtx>();
         st->pcb = pcb; st->cl = cl; st->items = std::move(items);
         st->keys.assign(st->items.size(), Value{}); st->desc = desc;
-        sortStep(st, 0);
+        sortStep(st, 0, false);
         pcb->efunTakeover = true;
         return Value{};
     } else {
@@ -567,7 +584,8 @@ Value vmCloneObjectValue(const std::string& vpath,
 // map hooks (move_in_map / put_in_map / remove_from_map)
 // ---------------------------------------------------------------------------
 static void fireMapHooks(VmPcb* pcb, const std::string& efun,
-                         const std::vector<Value>& args, Value bres) {
+                         const std::vector<Value>& args, const Value& bres,
+                         bool* chainArmed) {
     static thread_local int hookDepth = 0;
     if (hookDepth > 4) return;   // re-entrancy guard (hook moves objects)
     int mapIndex = -1;
@@ -591,54 +609,72 @@ static void fireMapHooks(VmPcb* pcb, const std::string& efun,
     auto hooks = lpc::mapModule().hookSnapshot(mapIndex);
     if (hooks.empty()) return;
     ++hookDepth;
-    // 原版钩子模式：逐钩子压帧调用（结果丢弃），retHook 链推进；链尾压入
-    // 宿主 efun 的返回值（takeover 吞掉的 bres 在这里补回）。park 安全。
+    // 原版钩子模式：逐钩子压帧调用（结果丢弃），retHook 链推进；链尾经
+    // 末 hook 的 rv 出参交付宿主 efun 的返回值（takeover 吞掉的 bres 在
+    // 这里补回）。在 hook 里 pushValue 会与 vmReturnFromFun 的
+    // pushValue(returnValue) 双重压栈（同 mapping_array [op8ret] 实锤）。
+    // park 安全。
     using HookCall =
         std::pair<std::shared_ptr<ClosureValue>, std::vector<Value>>;
-    auto calls = std::make_shared<std::vector<HookCall>>();
+    struct HookCtx {
+        VmPcb* pcb;
+        std::shared_ptr<std::vector<HookCall>> calls;
+        Value bres;
+        bool armed = false;   // 至少一个 hook 帧真实压栈（异步链）
+        int done = 0;         // 已到链尾的次数（=1 即整链走完）
+    };
+    auto st = std::make_shared<HookCtx>();
+    st->pcb = pcb;
+    st->calls = std::make_shared<std::vector<HookCall>>();
     for (const auto& h : hooks) {
         if (h.idFilter != 0 && h.idFilter != id) continue;
         if (efun != "remove_from_map" && nx >= 0 &&
             lpc::MapModule::pointInPoly(nx, ny, h.poly)) {
             if (h.closure.index() == 8)
-                calls->push_back({std::get<std::shared_ptr<ClosureValue>>(
-                                      h.closure),
-                                  {make_int(id), make_int(nx), make_int(ny),
-                                   make_int(1)}});
+                st->calls->push_back({std::get<std::shared_ptr<ClosureValue>>(
+                                          h.closure),
+                                      {make_int(id), make_int(nx), make_int(ny),
+                                       make_int(1)}});
         }
         if (efun != "put_in_map" && ox >= 0 && (ox != nx || oy != ny) &&
             lpc::MapModule::pointInPoly(ox, oy, h.poly)) {
             if (h.closure.index() == 8)
-                calls->push_back({std::get<std::shared_ptr<ClosureValue>>(
-                                      h.closure),
-                                  {make_int(id), make_int(ox), make_int(oy),
-                                   make_int(0)}});
+                st->calls->push_back({std::get<std::shared_ptr<ClosureValue>>(
+                                          h.closure),
+                                      {make_int(id), make_int(ox), make_int(oy),
+                                       make_int(0)}});
         }
     }
-    if (calls->empty()) {
+    if (st->calls->empty()) {
         --hookDepth;
         return;
     }
-    static const std::function<void(
-        VmPcb*, const std::shared_ptr<std::vector<HookCall>>&, size_t, Value)>
-        hookStep = [](VmPcb* pcb2,
-                      const std::shared_ptr<std::vector<HookCall>>& c,
-                      size_t i, Value bres) {
-            if (i >= c->size()) {
-                Interp::pushValue(pcb2, std::move(bres));   // efun 返回值
+    st->bres = bres;
+    static const std::function<void(const std::shared_ptr<HookCtx>&, size_t,
+                                    bool)> hookStep =
+        [](const std::shared_ptr<HookCtx>& st, size_t i, bool viaHook) {
+            if (i >= st->calls->size()) {
+                ++st->done;
                 --hookDepth;
-                return;
+                return;   // 交付: armed → 末 hook 的 rv; 全同步 → 宿主正常返回
             }
             if (!vmInvokeClosurePush(
-                    pcb2, (*c)[i].first, (*c)[i].second,
-                    [pcb2, c, i, bres](Value&) {
-                        hookStep(pcb2, c, i + 1, std::move(bres));
+                    st->pcb, (*st->calls)[i].first, (*st->calls)[i].second,
+                    [st, i](Value& rv) {
+                        hookStep(st, i + 1, true);
+                        if (st->done ==
+                            static_cast<int>(st->calls->size()))
+                            rv = st->bres;   // 链在我这条 hook 内走完: 经 rv 交付
                     })) {
-                vmInvokeClosure(pcb2, (*c)[i].first, (*c)[i].second);
-                hookStep(pcb2, c, i + 1, std::move(bres));
+                vmInvokeClosure(st->pcb, (*st->calls)[i].first,
+                                (*st->calls)[i].second);
+                hookStep(st, i + 1, viaHook);
+            } else {
+                st->armed = true;
             }
         };
-    hookStep(pcb, calls, 0, std::move(bres));
+    hookStep(st, 0, false);
+    if (chainArmed) *chainArmed = st->armed;
 }
 
 // ---------------------------------------------------------------------------
@@ -1263,7 +1299,29 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     if (h == 0x341F07FBDC2DEE30ull || h == 0xBEA8D3F7220BDBD9ull) {
         // vm_f_previous_object (0x80f6b28): the object that called into the
         // current function.
-        if (!pcb || pcb->previousObjectName.empty()) return make_int(0);
+        if (!pcb || pcb->previousObjectName.empty()) {
+            // [pvdbg] register_trigger 依赖 previous_object() 拿触发器实例;
+            // 返回 0 → name_triggers[0]=0 → punishd 永久重试。
+            static const std::atomic<bool>& pvd0 =
+                dynProbeFlag("LPCVM_OP8DBG");
+            if (pvd0.load(std::memory_order_relaxed) && pcb &&
+                !pcb->frames.empty() && pcb->frames.back().fn &&
+                pcb->frames.back().fn->name == "register_trigger")
+                std::cerr << "[pvdbg] previous_object -> 0 (empty prevKey)"
+                          << "\n";
+            return make_int(0);
+        }
+        VmObject* pvOb = Registry::instance().findByName(
+            pcb->previousObjectName);
+        static const std::atomic<bool>& pvd = dynProbeFlag("LPCVM_OP8DBG");
+        if (pvd.load(std::memory_order_relaxed) && pcb &&
+            !pcb->frames.empty() && pcb->frames.back().fn &&
+            pcb->frames.back().fn->name == "register_trigger")
+            std::cerr << "[pvdbg] previous_object -> prevKey='"
+                      << pcb->previousObjectName
+                      << "' resolved="
+                      << (pvOb ? pvOb->key() : "<null>")
+                      << "\n";
         return make_object(pcb->previousObjectName);
     }
     if (h == 0xABCB23648594386Bull) {
@@ -1370,28 +1428,84 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             VmPcb* pcb;
             std::shared_ptr<ClosureValue> cl;
             std::shared_ptr<ArrayValue> src, out;
+            size_t nonzero = 0;   // [mapdbg] 收尾统计
+            bool completed = false;   // 链在本次 C++ 调用内同步走完(无新帧)
         };
+        static const std::atomic<bool>& mapDbg = dynProbeFlag("LPCVM_MAPDBG");
         static const std::function<void(const std::shared_ptr<MapArrCtx>&,
-                                        size_t)> mapArrStep =
-            [](const std::shared_ptr<MapArrCtx>& st, size_t i) {
+                                        size_t, bool)> mapArrStep =
+            [](const std::shared_ptr<MapArrCtx>& st, size_t i, bool viaHook) {
                 if (i >= st->src->items.size()) {
-                    Interp::pushValue(st->pcb, Value{st->out});   // efun 返回值
+                    // [mapdbg] statued 卡死链取证: mapping_array 收尾时统计
+                    // 闭包结果的类型分布 —— find_basic_object_by_import_name
+                    // 全 0 就是 8160 不开的直接原因。
+                    st->completed = true;
+                    if (mapDbg.load(std::memory_order_relaxed) &&
+                        st->cl && st->cl->functionName.find("find_basic") !=
+                                      std::string::npos) {
+                        static std::atomic<int> mapLog{0};
+                        if (mapLog.fetch_add(1) < 500) {
+                            std::string v0 = st->out->items.empty()
+                                                 ? "<empty>"
+                                                 : to_string(st->out->items[0],
+                                                             false)
+                                                       .substr(0, 48);
+                            std::string s0 = st->src->items.empty()
+                                                 ? "<empty>"
+                                                 : to_string(st->src->items[0],
+                                                             false)
+                                                       .substr(0, 48);
+                            std::cerr << "[mapdbg] cl=" << st->cl->functionName
+                                      << " src=" << st->src->items.size()
+                                      << " src0=" << s0
+                                      << " nonzero=" << st->nonzero << "/"
+                                      << st->out->items.size() << " out0=" << v0
+                                      << " caller="
+                                      << (st->pcb->frames.empty() ||
+                                                  !st->pcb->frames.back().fn
+                                              ? "<ctx>"
+                                              : st->pcb->frames.back().fn->name)
+                                      << "\n";
+                        }
+                    }
+                    // 仅当整条链在 efun 体内同步走完(空数组/全 fallback)时
+                    // 由这里压栈交付(viaHook=false); hook 链路径的交付由
+                    // hook 的 rv 出参带回 vmReturnFromFun 的单次 pushValue
+                    // —— 在 hook 里 pushValue 会让返回路径再 push 一次
+                    // returnValue, 双重压栈顶层是闭包返回值(对象),
+                    // query_objects 赋值拿到对象而非数组 → sizeof=0 →
+                    // statued 永久早退 (lw36 [op8ret] type=7 实锤)。
+                    if (!viaHook)
+                        Interp::pushValue(st->pcb, Value{st->out});
                     return;
                 }
                 if (!vmInvokeClosurePush(
                         st->pcb, st->cl, {st->src->items[i]},
                         [st, i](Value& rv) {
+                            if (rv.index() != 0 && rv.index() != 1)
+                                ++st->nonzero;
                             st->out->items[i] = std::move(rv);
-                            mapArrStep(st, i + 1);
+                            if (i + 1 >= st->src->items.size()) {
+                                // 末元素: 结果数组经 rv 出参交付
+                                // (vmReturnFromFun 的 pushValue(returnValue))
+                                rv = Value{st->out};
+                                return;
+                            }
+                            mapArrStep(st, i + 1, true);
+                            // 链在 hook 内同步走完(fallback): 交付改由 rv
+                            if (st->completed) rv = Value{st->out};
                         })) {
                     st->out->items[i] =
                         vmInvokeClosure(st->pcb, st->cl, {st->src->items[i]});
-                    mapArrStep(st, i + 1);
+                    if (st->out->items[i].index() != 0 &&
+                        st->out->items[i].index() != 1)
+                        ++st->nonzero;
+                    mapArrStep(st, i + 1, viaHook);
                 }
             };
         auto st = std::make_shared<MapArrCtx>();
         st->pcb = pcb; st->cl = cl; st->src = srcArr; st->out = outArr;
-        mapArrStep(st, 0);
+        mapArrStep(st, 0, false);
         pcb->efunTakeover = true;
         return outArr;
     }
@@ -1759,8 +1873,15 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     lpc::stubCallCtx().key = fkey;
     Value bres = call_builtin(nullptr, name, args);
     if (name == "move_in_map" || name == "put_in_map" ||
-        name == "remove_from_map")
-        fireMapHooks(pcb, name, args, std::move(bres));
+        name == "remove_from_map") {
+        bool chainArmed = false;
+        fireMapHooks(pcb, name, args, bres, &chainArmed);
+        if (chainArmed) {
+            // hook 链真实压帧 → bres 由链尾的 rv 出参交付, 这里必须 takeover
+            pcb->efunTakeover = true;
+            return Value{};
+        }
+    }
     return bres;
 }
 
@@ -1774,6 +1895,55 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     std::vector<StackItem> raw;
     for (int i = 0; i < argc && !pcb->stack.empty(); ++i)
         raw.push_back(Interp::popItem(pcb));
+
+    // [etime] efun 耗时审计 (touch _probe_on/LPCVM_ETIME 热布防): 每次
+    // dispatchEfun 计时, 按名聚合 调用数/累计µs/最大µs; 每 20000 次调用
+    // dump top10。"整体比原版慢一个量级" — 区分 耗在 efun C++ 实现内 vs
+    // interp 指令循环。
+    struct EtGuard {
+        const std::atomic<bool>& on;
+        std::chrono::steady_clock::time_point t0;
+        std::string name;
+        bool active;
+        ~EtGuard() {
+            if (!active || !on.load(std::memory_order_relaxed)) return;
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - t0)
+                                .count();
+            struct Stat { uint64_t calls = 0, totalUs = 0, maxUs = 0; };
+            static std::mutex mx;
+            static std::map<std::string, Stat> stats;
+            static std::atomic<uint64_t> totalCount{0};
+            std::lock_guard<std::mutex> lk(mx);
+            auto& s = stats[name];
+            s.calls++; s.totalUs += static_cast<uint64_t>(us);
+            if (static_cast<uint64_t>(us) > s.maxUs) s.maxUs = static_cast<uint64_t>(us);
+            if (totalCount.fetch_add(1) % 20000 == 0) {
+                std::vector<std::pair<std::string, Stat>> v(stats.begin(),
+                                                            stats.end());
+                std::sort(v.begin(), v.end(), [](auto& a, auto& b) {
+                    return a.second.totalUs > b.second.totalUs;
+                });
+                std::cerr << "[etime] dump totalCall="
+                          << totalCount.load() << "\n";
+                for (size_t i = 0;
+                     i < v.size() && i < 10; ++i)
+                    std::cerr << "[etime] " << v[i].first
+                              << " calls=" << v[i].second.calls
+                              << " totalMs="
+                              << v[i].second.totalUs / 1000
+                              << " avgUs="
+                              << (v[i].second.calls
+                                      ? v[i].second.totalUs /
+                                            v[i].second.calls
+                                      : 0)
+                              << " maxUs=" << v[i].second.maxUs << "\n";
+                std::cerr.flush();
+            }
+        }
+    } etGuard{dynProbeFlag("LPCVM_ETIME"),
+              std::chrono::steady_clock::now(), name,
+              true};
 
     // ---- RAW-REF intercepts (the reference must SURVIVE the call) --------
     if (name == "sscanf" && raw.size() >= 2) {
@@ -2050,6 +2220,15 @@ Value dispatchEfunClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
         args.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
     }
     Value r = dispatchEfunByName(pcb, cl->functionName, args);
+    if (pcb->efunTakeover) {
+        // efun closure 也会踩到 takeover 型 efun (sort_array 的异步 key
+        // 收集链 / construct / load): 标志置位时结果由 hook 链压栈, 这里
+        // 必须消费标志且不再 push —— 否则标志残留, 下一个无关 efun
+        // (如 implode) 在 dispatchEfun 尾部被吞掉返回值 (净 -2),
+        // create_search_terms 的循环 ctrl 槽被吃掉 → "Bad loop ctrl"。
+        pcb->efunTakeover = false;
+        return r;
+    }
     pushValue(pcb, r);
     return r;
 }

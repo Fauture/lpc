@@ -1,5 +1,7 @@
 #include "map_module.h"
 
+#include "vmcore/object.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -129,22 +131,67 @@ Value MapModule::freeId(const Value& idVal) {
 Value MapModule::getObjectById(const Value& idVal) {
     int64_t id = valToInt(idVal);
     std::lock_guard<std::mutex> lk(g_mapMutex);
-    if (idPool_.empty()) return make_int(0);
-    if (id < poolStartId_ || id >= poolStartId_ + poolSize_) return make_int(0);
+    static const bool probe = getenv("LPCVM_ROOM") != nullptr;
+    if (idPool_.empty()) {
+        if (probe) { std::cerr << "[gobi] FAIL pool-empty id=" << id << "\n"; std::cerr.flush(); }
+        return make_int(0);
+    }
+    if (id < poolStartId_ || id >= poolStartId_ + poolSize_) {
+        if (probe) {
+            static int nA = 0;
+            if (nA++ < 60) {
+                std::cerr << "[gobi] FAIL range id=" << id << " pool=["
+                          << poolStartId_ << "," << (poolStartId_ + poolSize_) << ")\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(0);
+    }
     int64_t off = id - poolStartId_;
     int64_t bi = off >> 6;
     int b = static_cast<int>(off & 63);
-    if (!(idPool_[bi] & (1ULL << b))) return make_int(0);
+    if (!(idPool_[bi] & (1ULL << b))) {
+        if (probe) {
+            static int nB = 0;
+            if (nB++ < 60) {
+                std::cerr << "[gobi] FAIL unalloc id=" << id << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(0);
+    }
     const std::string& key = idInfo_[static_cast<size_t>(off)];
-    if (key.empty()) return make_int(0);
-    // A stored placeholder key ("<this>" / ".") cannot be resolved back to an
-    // object.  allocate_id now normalizes it away, but never hand out a value
-    // that resolves to nothing: gs's open_menu.c::main would either pass
-    // is_object(get_object_by_id(id)) and start_talk_to a broken object (menu
-    // opens with no name/text) or return silently (NPC cannot be clicked open).
+    if (key.empty()) {
+        if (probe) {
+            static int nC = 0;
+            if (nC++ < 60) {
+                std::cerr << "[gobi] FAIL empty-key id=" << id << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(0);
+    }
+    if (probe) {
+        static int nD = 0;
+        if (nD++ < 30) {
+            std::cerr << "[gobi] OK id=" << id << " key=" << key << "\n";
+            std::cerr.flush();
+        }
+    }
     if (key == "<this>" || key == ".") return make_int(0);
     auto ov = std::make_shared<ObjectValue>();
     ov->programName = key;
+    // Bind the LIVE object: is_object() (op-36) tests ov->alive, and method
+    // calls need vmObj — a bare-name reference answers is_object()==0, which
+    // made guardd's npc scan (and every id-based lookup) silently skip every
+    // npc in the room.
+    {
+        vmcore::VmObject* live = vmcore::Registry::instance().findByName(key);
+        if (live && !live->destructed()) {
+            ov->vmObj = live;
+            ov->alive = live->aliveFlag();
+        }
+    }
     return ov;
 }
 
@@ -295,14 +342,45 @@ Value MapModule::getAllMap() {
 
 Value MapModule::putInMap(const std::vector<Value>& args) {
     // put_in_map(mapIndex, x, y, id)
+    static const bool probe = getenv("LPCVM_ROOM") != nullptr;
     if (args.size() < 4) return make_int(0);
     std::lock_guard<std::mutex> lk(g_mapMutex);
     MapInfo* m = getMapInfoByValue(args[0]);
-    if (!m) return make_int(0);
+    if (!m) {
+        if (probe) {
+            static int n1 = 0;
+            if (n1++ < 60) {
+                std::cerr << "[pim] FAIL no-map arg0.t=" << args[0].index()
+                          << " val=" << (args[0].index() == 2 ? std::to_string(std::get<int64_t>(args[0]))
+                                                             : "t" + std::to_string(args[0].index()))
+                          << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(0);
+    }
     int x = static_cast<int>(valToInt(args[1]));
     int y = static_cast<int>(valToInt(args[2]));
     int64_t id = valToInt(args[3]);
-    if (x < 0 || y < 0 || x >= m->width || y >= m->height) return make_int(0);
+    if (x < 0 || y < 0 || x >= m->width || y >= m->height) {
+        if (probe) {
+            static int n2 = 0;
+            if (n2++ < 60) {
+                std::cerr << "[pim] FAIL range map=" << m->name << " (" << x << "," << y
+                          << ") dims=" << m->width << "x" << m->height << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(0);
+    }
+    if (probe) {
+        static int n3 = 0;
+        if (n3++ < 40) {
+            std::cerr << "[pim] OK map=" << m->name << " (" << x << "," << y
+                      << ") id=" << id << "\n";
+            std::cerr.flush();
+        }
+    }
     // remove any existing entry for this id first (put is idempotent-ish)
     for (int cy = 0; cy < m->height; ++cy) {
         for (int cx = 0; cx < m->width; ++cx) {
@@ -420,7 +498,20 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
     // get_from_map(mapIndex[, x, y])
     std::lock_guard<std::mutex> lk(g_mapMutex);
     MapInfo* m = getMapInfoByValue(args[0]);
-    if (!m) return make_array();
+    if (!m) {
+        static const bool probe = getenv("LPCVM_ROOM") != nullptr;
+        if (probe) {
+            static int n4 = 0;
+            if (n4++ < 60) {
+                std::cerr << "[gfm] FAIL no-map arg0.t=" << args[0].index()
+                          << " val=" << (args[0].index() == 2 ? std::to_string(std::get<int64_t>(args[0]))
+                                                             : "t" + std::to_string(args[0].index()))
+                          << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_array();
+    }
     auto arr = std::make_shared<ArrayValue>();
     if (args.size() >= 3) {
         // per-cell: array of ids
@@ -441,6 +532,20 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
                     e->items.push_back(make_int(ob->y));
                     arr->items.push_back(e);
                 }
+            }
+        }
+        static const bool probeW = getenv("LPCVM_ROOM") != nullptr;
+        if (probeW) {
+            static int n5 = 0;
+            if (n5++ < 60) {
+                std::string ids;
+                for (size_t k = 0; k < arr->items.size() && k < 6; ++k) {
+                    auto& e = std::get<std::shared_ptr<ArrayValue>>(arr->items[k])->items;
+                    ids += " " + std::to_string(std::get<int64_t>(e[0]));
+                }
+                std::cerr << "[gfm] map=" << m->name << " objs=" << arr->items.size()
+                          << " first:[" << ids << " ]\n";
+                std::cerr.flush();
             }
         }
     }

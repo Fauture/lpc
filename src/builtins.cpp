@@ -11,6 +11,7 @@
 #include "lzss.h"
 #include "pkt_protocol.h"
 #include "xdbc.h"
+#include "vmcore/vmcore.h"
 #include "sqlite3.h"
 
 #include <winsock2.h>
@@ -598,6 +599,14 @@ bool queueSend(int64_t qid, const Value& v) {
                   << " cls=" << (v.index() == 8 ? 1 : 0) << "\n";
     }
     reg.cv.notify_all();
+    // THE wake for scheduler-parked receivers: the daemon consumer parks in
+    // the SCHEDULER (queueWaiters), not on reg.cv — a plain notify_all here
+    // wakes nobody.  Every send path must route through this (the efun layer's
+    // own wakeQueueOne calls are idempotent no-ops when no waiter is parked).
+    // Missing this made a create_content request queue behind a consumer that
+    // had parked one iteration earlier: no [send-filed], the loader parked on
+    // ev_filed0 forever, and gs boot froze mid auto_recover.
+    vmcore::Scheduler::instance().wakeQueueOne("q:" + std::to_string(qid));
     return true;
 }
 
@@ -2979,7 +2988,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (ismpFlag.load(std::memory_order_relaxed)) {
             static int ismpBudget = 600;
             const std::string& cf = stubCallCtx().fn;
-            if (ismpBudget > 0 && cf.find("query_task") != std::string::npos) {
+            if (ismpBudget > 0 && (cf.find("query_task") != std::string::npos ||
+                                   cf == "daemon")) {
                 --ismpBudget;
                 std::string dump = args.empty() ? std::string("<noargs>") : to_string(args[0], false);
                 if (dump.size() > 130) dump = dump.substr(0, 130) + "...";
@@ -3104,8 +3114,39 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     // is_in_combat() (is_object(temp("combat")) && !cob->...("finished")) go false
     // after monsterd::touch_off_combat destructs a combat object it could not
     // populate with a monster team (the idle_template / "no encounter" path).
-    if (name == "is_object")
+    if (name == "is_object") {
+        // [isodbg] punishd.do_init 重试 5000+ 次但 query_combat_trigger 返回
+        // type=7 —— 实锤 punishd 实际传入 is_object 的值是什么。
+        // 注意: 必须 dynProbeFlag + _probe_on 标记文件热布防; LPCVM_GETENV
+        // 在服务进程里读不到 _run_keep2.py 之外的变量, 探针永远静默。
+        static const std::atomic<bool>& isoDbg = dynProbeFlag("LPCVM_ISODBG");
+        if (isoDbg.load(std::memory_order_relaxed) && !args.empty()) {
+            const auto& c = stubCallCtx();
+            static std::atomic<int> isoLog{0};
+            if (c.fn == "do_init" && isoLog.fetch_add(1) < 30) {
+                const Value& a = args[0];
+                std::string desc;
+                if (a.index() == 7) {
+                    auto ov = std::get<std::shared_ptr<ObjectValue>>(a);
+                    desc = std::string("prog=") +
+                           (ov ? ov->programName : "<null>") +
+                           " owner=" + (ov && ov->owner ? "set" : "null") +
+                           " alive=" +
+                           (ov && ov->alive
+                                ? (ov->alive->load(std::memory_order_relaxed)
+                                       ? "true"
+                                       : "false")
+                                : std::string("nullptr->true"));
+                } else {
+                    desc = to_string(a, false).substr(0, 60);
+                }
+                std::cerr << "[isodbg] idx=" << a.index() << " " << desc
+                          << " caller=" << c.obj << "::" << c.fn << "\n";
+                std::cerr.flush();
+            }
+        }
         return make_int((!args.empty() && args[0].index() == 7 && lpc::objectValueAlive(args[0])) ? 1 : 0);
+    }
     if (name == "to_int" || name == "to_number") return args.empty() ? make_int(0) : make_int(as_int(args[0]));
     if (name == "to_string") return args.empty() ? make_string("") : make_string(as_string(args[0]));
     if (name == "to_float") return args.empty() ? make_float(0.0) : make_float(as_int(args[0]));
@@ -3128,6 +3169,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (name == "map_delete") {
         if (args.size() >= 2 && args[0].index() == 6) {
             auto mp = std::get<6>(args[0]);
+            static const bool mdProbe = LPCVM_GETENV("LPCVM_ISMAP") != nullptr;
+            if (mdProbe && args[1].index() == 2) {
+                std::cerr << "[mapdel] map=" << mp.get()
+                          << " intkey=" << std::get<int64_t>(args[1])
+                          << " size=" << mp->size()
+                          << " caller=" << stubCallCtx().obj << "::"
+                          << stubCallCtx().fn << "\n";
+                std::cerr.flush();
+            }
             mp->erase(args[1]);
         }
         return make_int(1);
@@ -3730,7 +3780,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         {
             static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
             if (ldOn.load(std::memory_order_relaxed) &&
-                vpath.find("/gs/init/") != std::string::npos) {
+                (vpath.find("/gs/init/") != std::string::npos ||
+                 vpath.find("leave_promptd") != std::string::npos)) {
                 Value rv = findObjectInRegistry(vpath, vfsRoot());
                 std::cerr << "[loaddbg] find_object '" << vpath << "' -> type=" << rv.index()
                           << " ret=" << (rv.index() == 7
@@ -4725,6 +4776,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 2 && args[1].index() == 5) {
             auto arr = std::get<std::shared_ptr<ArrayValue>>(args[1]);
             if (!arr->items.empty()) return arr->items[0];
+            return make_int(0);
+        }
+        // AAA's cmd_cfg_read_etc passes BOUND SQL TEXT (string), not a result
+        // array: run the real select and return its first row (the original
+        // vm_f_mysqlSelectSingleResult executes the query).  Returning 0 here
+        // made every read_etc answer result=0 and the whole fleet's config
+        // reads (place_one_item/get_reachable, init_config, ...) spin.
+        if (args.size() >= 2 && args[1].index() == 4) {
+            Value arr = call_builtin(nullptr, "mysql_select", args);
+            if (arr.index() == 5) {
+                auto av = std::get<std::shared_ptr<ArrayValue>>(arr);
+                if (!av->items.empty()) return av->items[0];
+            }
         }
         return make_int(0);
     }
@@ -5540,7 +5604,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         add("total_values", 0);
         add("max_telnet_clients", 4);
         add("max_service_threads", 4);
-        add("max_threads", 128);          // vm_maxProcess (--max-process 128)
+        // 1024, NOT the original's 128: the new core's tids can exceed 128
+        // while parked daemons hold the pool (filed/configd derive their
+        // ev_filed event-group COUNT from this value — with 128 they only
+        // create ev_filed0..3 and a tid >= 128 waits on a nonexistent
+        // ev_filed4+ -> every filed request fails with -101).
+        add("max_threads", 1024);         // vm_maxProcess (--max-process)
         add("max_pend_objects", 256);
         add("max_script_sockets", 256);
         add("scan_socket_page", 1024);
@@ -5719,7 +5788,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // into the event's bits and wakes any blocked wait_event.  0 on
         // success, -101 if the event does not exist.
         if (args.size() < 2) return make_int(-101);
-        return make_int(lpc::eventRaise(args[0], static_cast<uint32_t>(as_int(args[1]))));
+        const int64_t rc =
+            lpc::eventRaise(args[0], static_cast<uint32_t>(as_int(args[1])));
+        // This dispatcher is the one hit by NETWORK-THREAD applyLpc contexts
+        // (filed's msg_read_content/msg_written_content replies).  The
+        // efun_adapt twin wakes scheduler-parked wait_event pcbs on success;
+        // skipping that here left the master parked on ev_filed0 FOREVER
+        // (the reply bit was set in the DriverEvent store, but a parked pcb
+        // waits on the Scheduler's eventWaiters, not that CV) — boot froze
+        // mid load_all_path the first time a script construction parked on a
+        // filed receipt.
+        if (rc == 0) {
+            std::string ename;
+            if (args[0].index() == 4)
+                ename = std::get<SharedString>(args[0]).str();
+            else if (args[0].index() == 2)
+                ename = "oid:" + std::to_string(std::get<int64_t>(args[0]));
+            if (!ename.empty())
+                vmcore::Scheduler::instance().wakeEvent(
+                    ename, static_cast<uint32_t>(as_int(args[1])));
+        }
+        return make_int(rc);
     }
     if (name == "restore_value") {
         // vm_f_restore_value (0x80dae84) -> vm_restoreMixedString: parse one
@@ -6421,6 +6510,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 ++w;
             }
         }
+        // scand.get_all_basic_objects path: clean_array(obs, 10) — if most
+        // mapping keys come back as non-object values, this is where the
+        // scan table shrinks to a handful of rows.
+        if (type == 10 && src->items.size() != w) {
+            static std::atomic<int> objCleanLog{0};
+            if (objCleanLog.fetch_add(1) < 6)
+                std::cerr << "[clean-obj] in=" << src->items.size()
+                          << " kept=" << w << "\n";
+        }
         src->items.resize(w);
         return args[0];   // same (mutated) array, mirroring the reference ABI
     }
@@ -6430,7 +6528,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // an empty array (rarely used by the game).
         return make_array();
     }
-    if (name == "is_compiling") return make_int(0);
+    if (name == "is_compiling") {
+        // 原版 #67: 仅在"编译 LPC 源码"期间为 1。boot 加载的是预编译 .o
+        // (load 模式), 原版 boot 期它就是 0 —— init 段据它选 load/compile
+        // 分支, 恒 0 恰是 boot 的正确取值。别用构造状态冒充编译状态
+        // (anyConstructing 会让 init 段走 compile 分支跳过整个 load)。
+        return make_int(0);
+    }
     if (name == "set_nohalt") return make_int(1);
     if (name == "set_as_daemon") {
         // vm_f_set_as_daemon: marks the current process as a daemon (its
@@ -7641,6 +7745,29 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (sql.find("'wedding_dress'") != std::string::npos)
                 std::cerr << "[scan-row-wd] " << sql << "\n";
         }
+        // SCANDBG: scand.do_init builds the scan table via INSERT INTO scan.
+        // Log per-statement success/failure (name-quoting bugs surface here:
+        // sql_insert wraps strings in quotes with NO escaping, so any value
+        // containing ' breaks the statement and mdb_insert ignores the rc).
+        if (sql.compare(0, 18, "insert into scan (") == 0) {
+            static std::atomic<int> scanInsOk{0}, scanInsBad{0};
+            if (rc == SQLITE_OK) {
+                int ok = ++scanInsOk;
+                // log the curve: first 8, then milestones — where inserts STOP
+                // is the breakpoint of scand.do_init's loop
+                if (ok <= 8 || ok == 20 || ok == 50 || ok == 100 || ok == 300 ||
+                    ok == 600 || ok == 1200 || ok == 2500 || ok == 5000 ||
+                    ok == 9000 || ok == 14000 || ok == 18000 || ok == 25000)
+                    std::cerr << "[scan-ins] ok#" << ok << " sql="
+                              << sql.substr(19, 130) << "\n";
+            } else {
+                int bad = ++scanInsBad;
+                if (bad <= 30)
+                    std::cerr << "[scan-ins] FAIL rc=" << rc << " sql="
+                              << sql.substr(0, 220) << "\n";
+            }
+            std::cerr.flush();
+        }
         return make_int(rc);
     }
     if (name == "sql_query") {
@@ -7705,6 +7832,26 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::lock_guard<std::mutex> lk(sqliteMutex());
             qid = sqliteNextQuery().fetch_add(1);
             sqliteQueries()[qid] = q;
+        }
+        // LPCVM_SCANDBG (runtime-armable): every scan-table query with a row
+        // count.  The post_init while+sleep(1) loop spins forever when the
+        // scand table stays empty (change_lookd / artifactd re-register their
+        // do_init on every empty query) — this says whether the table has
+        // rows and what the gates are actually asking for.
+        {
+            static const std::atomic<bool>& scanDbg = lpc::dynProbeFlag("LPCVM_SCANDBG");
+            if (scanDbg.load(std::memory_order_relaxed) &&
+                sql.find("from scan") != std::string::npos) {
+                int rows = 0;
+                while (sqlite3_step(stmt) == SQLITE_ROW) ++rows;
+                sqlite3_reset(stmt);
+                static std::atomic<int> scanLog{0};
+                if (rows == 0 || scanLog.fetch_add(1) < 40) {
+                    std::cerr << "[scan-q] rows=" << rows
+                              << " sql=" << sql.substr(0, 160) << "\n";
+                    std::cerr.flush();
+                }
+            }
         }
         return make_int(qid);
     }

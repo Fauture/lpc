@@ -536,6 +536,27 @@ void usage() {
 
 } // namespace
 
+// SEH ebp-chain walker for the crash filter above.  Kept free of C++ objects
+// with destructors so __try/__except is legal (MSVC C2712).
+static void walkEbpChain(uintptr_t ebp) {
+    std::cerr << "[crash] ebp-chain:" << std::hex;
+    for (int i = 0; i < 16 && ebp; ++i) {
+        __try {
+            uintptr_t* f = reinterpret_cast<uintptr_t*>(ebp);
+            uintptr_t ret = f[1];
+            uintptr_t next = f[0];
+            if (ret < 0x10000) break;
+            std::cerr << "  ret=0x" << ret << "(ebp=0x" << ebp << ")";
+            ebp = next;
+            if (ebp < 0x10000) break;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            std::cerr << " <bad-ebp>";
+            break;
+        }
+    }
+    std::cerr << std::dec << "\n";
+}
+
 int main(int argc, char** argv) {
     g_mainTid = GetCurrentThreadId();
     // Unbuffered stdout/stderr: the service logs are redirected to files and
@@ -613,6 +634,13 @@ int main(int argc, char** argv) {
                       << (base ? (reinterpret_cast<uintptr_t>(frames[i]) - base) : 0)
                       << std::dec << " in " << mn << "\n";
         }
+        // CaptureStackBackTrace starts at the HANDLER, so for a fault whose
+        // eip is a CFG castguard stub (__castguard_check_failure_os_handled_fptr)
+        // the frames above say nothing about the CALL SITE.  Walk the faulting
+        // thread's EBP chain from the exception context instead: the stub has
+        // no frame of its own, so the first return address is the code that
+        // made the guarded indirect call.
+        if (ep && ep->ContextRecord) walkEbpChain(ep->ContextRecord->Ebp);
         // Last entered LPC functions: a C++-level recursion (a cyclic value
         // walked by padVariableValue/to_string/saveValueAscii/value_equal)
         // never pushes an LPC frame, so this ring is what says WHERE the

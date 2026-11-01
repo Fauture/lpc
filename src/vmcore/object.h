@@ -179,6 +179,7 @@ public:
     bool isInitialized(const std::string& key) const;
     void markConstructing(const std::string& key);
     bool isConstructing(const std::string& key) const;
+    bool anyConstructing() const;
     void clearConstructing(const std::string& key);
 
     // Disk tree root for pak-miss fallback (set from the vfs profile at boot).

@@ -317,6 +317,11 @@ std::string pktPadInterface(uint16_t msgNo, const Value& args) {
 
 void pktInitAnalyser(int maxInterfaces, int) {
     std::lock_guard<std::recursive_mutex> lk(pktMutex());
+    static int initCount = 0;
+    ++initCount;
+    std::cerr << "[pkt-init] #" << initCount << " had_ifaces="
+              << pktState().interfaces.size() << "\n";
+    std::cerr.flush();
     pktState().inited = true;
     pktState().maxInterfaces = maxInterfaces;
     pktState().interfaces.clear();
@@ -400,9 +405,16 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
         if ((cmdNo & 0xFF00) == 0x2300 || (cmdNo & 0xFF00) == 0x2400 || cmdNo == 0x3A01 || cmdNo == 0x3A02)
             std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
                       << " NO INTERFACE\n";
-        if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[pkt] analyse cmd=0x" << std::hex << cmdNo << std::dec
-                      << " no interface\n";
+        if (cmdNo == 0x3400 || cmdNo == 0x4401) {
+            static int missLog = 3;
+            if (missLog > 0) {
+                --missLog;
+                std::cerr << "[pkt-miss] cmd=0x" << std::hex << cmdNo << std::dec
+                          << " inited=" << pktState().inited
+                          << " ifaces=" << pktState().interfaces.size() << "\n";
+                std::cerr.flush();
+            }
+        }
         return 0;   // not handled -> cmdIndex
     }
     const PktInterface& pi = it->second;

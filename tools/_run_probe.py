@@ -68,12 +68,15 @@ if busy:
     print('!! refusing to start a second instance (it would share the DB).', flush=True)
     sys.exit(3)
 
-subprocess.run([sys.executable, '_dbclear.py'], check=True, capture_output=True, timeout=180)
+subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), '_dbclear.py')],
+               check=True, capture_output=True, timeout=180)
 procs = []
 for name in ['aaa', 'dba', 'ccs', 'gs']:
     fn = os.path.join(LOG_DIR, 'live_%s.txt' % name)
     f = open(fn, 'wb', buffering=0)
-    _exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build', 'Release', 'lpcvm.exe')
+    _exe = os.environ.get('LPCVM_EXE') or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), '..', 'build', 'Release', 'lpcvm.exe')
+    _exe = os.path.abspath(_exe)
     p = subprocess.Popen([_exe, 'run', 'linux/%s/pack_data/lib_%s32.pak' % (name, name)],
                          stdout=f, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
     procs.append((name, p, f))

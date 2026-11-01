@@ -457,6 +457,10 @@ bool Registry::isConstructing(const std::string& key) const {
     std::lock_guard<std::recursive_mutex> lk(mtx_);
     return constructing_.count(key) != 0;
 }
+bool Registry::anyConstructing() const {
+    std::lock_guard<std::recursive_mutex> lk(mtx_);
+    return !constructing_.empty();
+}
 void Registry::clearConstructing(const std::string& key) {
     std::lock_guard<std::recursive_mutex> lk(mtx_);
     constructing_.erase(key);

@@ -9,12 +9,17 @@
 // 阻塞 efun 抛 SuspendSignal: 状态原封留在 PCB, 调度器挂起, 唤醒后
 // vmResume 从保存的 ip 续跑 (vm_pendCurrentProcess 模型)。
 // ===========================================================================
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <iostream>
+#include <map>
+#include <mutex>
 
 #include "call.h"
 #include "interp.h"
 #include "object.h"
+#include "original_vm.h"
 #include "values.h"
 #include "vmcore.h"
 #include "efun_table.h"
@@ -335,6 +340,24 @@ bool storeItem(VmPcb* pcb, const StackItem& ref, const Value& v) {
     if (!target) return false;
     if (target->slotIndex >= 0) {
         if (static_cast<size_t>(target->slotIndex) < pcb->stack.size()) {
+            // Tripwire: 活跃循环的 ctrl 槽 (Value index 9) 被非 op35 路径
+            // 覆写 → post_init "Bad loop ctrl" 的元凶现场。
+            // [性能] 必须 dynProbeFlag 门控 (默认关): 构造期帧清理会命中
+            // 十几万次, 无缓冲 stderr 直接把 boot 拖慢 2 倍以上 (lw47 实测
+            // 23.8 万行日志里 21.3 万条 slot-kill)。
+            static const std::atomic<bool>& slotSnag =
+                lpc::dynProbeFlag("LPCVM_SLOTSNAG");
+            const Value& old = pcb->stack[static_cast<size_t>(target->slotIndex)].value;
+            if (slotSnag.load(std::memory_order_relaxed) &&
+                old.index() == 9 && v.index() != 9)
+                std::cerr << "[loop-slot-kill] storeItem slot="
+                          << target->slotIndex << " lastIp=" << pcb->lastIp
+                          << " lastOp=" << static_cast<int>(pcb->lastOp)
+                          << " frames=" << pcb->frames.size()
+                          << " topfn=" << (pcb->frames.empty() || !pcb->frames.back().fn
+                                               ? std::string("<ctx>")
+                                               : pcb->frames.back().fn->name)
+                          << " newVal=" << v.index() << "\n";
             pcb->stack[static_cast<size_t>(target->slotIndex)].value = v;
             return true;
         }
@@ -440,6 +463,9 @@ static OpTraceEntry g_opTrace[kOpTraceN];
 static size_t g_opTracePos = 0;
 static size_t g_opTraceCount = 0;
 static const bool g_opTraceOn = getenv("LPCVM_OPTRACE") != nullptr;
+// [性能] CTRACE/LPCVM 环境开关一律启动时缓存 —— construct 链等热路径上
+// 每条指令 getenv 会线性扫描环境块并加锁(采样实测占 VM 线程 100% 时间)。
+static const bool g_ctraceOn = getenv("LPCVM_CTRACE") != nullptr;
 static inline void opTraceRecord(uint32_t ip, uint8_t op, size_t stackSize,
                                  size_t frames) {
     if (!g_opTraceOn) return;
@@ -466,6 +492,18 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
                                     ? std::string("<ctx>")
                                     : pcb->frames.back().fn->name)
                   << " brk=" << breakOffset << " cont=" << continueOffset << "\n";
+        for (size_t fi = 0; fi < pcb->frames.size(); ++fi) {
+            const VmFrame& fr = pcb->frames[fi];
+            std::cerr << "[loop-bad-fr] i=" << fi
+                      << " fn=" << (fr.fn ? fr.fn->name : std::string("<ctx>"))
+                      << " bp=" << fr.bp << " argNum=" << fr.argNum
+                      << " placeholder=" << (fr.zeroArgPlaceholder ? 1 : 0)
+                      << " pad=" << fr.padArgs << "\n";
+        }
+        for (size_t si = 0; si < pcb->stack.size(); ++si)
+            std::cerr << "[loop-bad-st] s[" << si << "] idx="
+                      << pcb->stack[si].value.index()
+                      << (pcb->stack[si].isRef ? " REF" : "") << "\n";
         if (g_opTraceCount) {
             std::cerr << "[op-trace] last " << g_opTraceCount << " insns (ip op stack frames):\n";
             for (size_t i = 0; i < g_opTraceCount; ++i) {
@@ -481,18 +519,62 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
     if (ctrlSlot < 0 || static_cast<size_t>(ctrlSlot) >= pcb->stack.size())
         badCtrl();
     StackItem& slotItem = pcb->stack[static_cast<size_t>(ctrlSlot)];
-    if (slotItem.value.index() != 9)  // LoopCtrl is variant index 9
-        badCtrl();
-    auto c = std::get<std::shared_ptr<LoopCtrl>>(slotItem.value);
+    // 主存储: frames.back().loops (op35 双写)。栈槽镜像被 park 窗口重入搅掉
+    // 时以 map 为准继续跑（栈槽内容已不可信, 不能再拿它当循环状态), 并留痕。
+    std::shared_ptr<LoopCtrl> c;
+    bool haveMap = false;
+    if (!pcb->frames.empty()) {
+        auto mapIt = pcb->frames.back().loops.find(ctrlSlot);
+        if (mapIt != pcb->frames.back().loops.end() && mapIt->second) {
+            c = mapIt->second;
+            haveMap = true;
+        }
+    }
+    if (haveMap) {
+        if (slotItem.value.index() != 9) {
+            static std::atomic<int> desyncShown{0};
+            if (desyncShown.fetch_add(1) < 3) {
+            std::cerr << "[loop-ctrl-desync] slot=" << ctrlSlot
+                      << " stackIdx=" << slotItem.value.index()
+                      << " val="
+                      << to_string(slotItem.value, false).substr(0, 48)
+                      << " fn=" << (pcb->frames.empty() || !pcb->frames.back().fn
+                                        ? std::string("<ctx>")
+                                        : pcb->frames.back().fn->name)
+                      << " ip=" << pcb->lastOp << "/" << pcb->lastIp;
+            for (size_t fi = 0; fi < pcb->frames.size(); ++fi)
+                std::cerr << " f" << fi << "="
+                          << (pcb->frames[fi].fn ? pcb->frames[fi].fn->name
+                                                 : "<ctx>")
+                          << ":bp" << pcb->frames[fi].bp
+                          << ":a" << pcb->frames[fi].argNum;
+            std::cerr << " stack=";
+            for (size_t si = 0; si < pcb->stack.size() && si < 8; ++si)
+                std::cerr << si << ":" << pcb->stack[si].value.index() << " ";
+            std::cerr << "\n";
+            }
+        }
+    } else {
+        if (slotItem.value.index() != 9)  // LoopCtrl is variant index 9
+            badCtrl();
+        c = std::get<std::shared_ptr<LoopCtrl>>(slotItem.value);
+    }
     if (!c) badCtrl();
     auto setVar = [&](const Value& v) {
         // Prefer the RELATIVE variable operand (frame.bp - varOff): the ctrl
         // lives in a stack slot, and resort/reorder can shift absolute slots
         // while the frame is live.
         int slot = c->varIsSlot ? slotOf(pcb, c->varOff) : c->slotOfVar;
-        if (slot >= 0 && static_cast<size_t>(slot) < pcb->stack.size())
+        if (slot >= 0 && static_cast<size_t>(slot) < pcb->stack.size()) {
+            const Value& old = pcb->stack[static_cast<size_t>(slot)].value;
+            static const std::atomic<bool>& slotSnag2 =
+                lpc::dynProbeFlag("LPCVM_SLOTSNAG");
+            if (slotSnag2.load(std::memory_order_relaxed) &&
+                old.index() == 9 && v.index() != 9)
+                std::cerr << "[loop-slot-kill] setVar slot=" << slot
+                          << " lastIp=" << pcb->lastIp << "\n";
             pcb->stack[static_cast<size_t>(slot)].value = v;
-        else
+        } else
             badCtrl();
     };
     if (c->type == 1 || c->type == -1) {
@@ -504,6 +586,7 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
         ip += past ? static_cast<size_t>(breakOffset)
                    : static_cast<size_t>(continueOffset);
         if (current == c->to) c->done = 1;
+        if (past && !pcb->frames.empty()) pcb->frames.back().loops.erase(ctrlSlot);
     } else if (c->type == 901) {
         if (!c->arr) badCtrl();
         size_t iter = c->iter++;
@@ -511,6 +594,7 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
             setVar(c->arr->items[iter]);
             ip += static_cast<size_t>(continueOffset);
         } else {
+            if (!pcb->frames.empty()) pcb->frames.back().loops.erase(ctrlSlot);
             ip += static_cast<size_t>(breakOffset);
         }
     } else if (c->type == 902) {
@@ -518,6 +602,7 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
         // foreach over a mapping iterates in vm_mappingIndices order.
         const auto entries = c->map->items();
         if (c->mIdx >= entries.size()) {
+            if (!pcb->frames.empty()) pcb->frames.back().loops.erase(ctrlSlot);
             ip += static_cast<size_t>(breakOffset);
         } else {
             const auto& kv = entries[c->mIdx++];
@@ -544,9 +629,121 @@ static VmObject* closureOwner(const std::shared_ptr<ClosureValue>& cl) {
 //   runNested(pcb, depth): until frames.size() returns to depth.
 // ---------------------------------------------------------------------------
 static void loop(VmPcb* pcb, bool nested, size_t depth) {
+    // [loopsplit] loop() 级二分: 每次 run() 的 指令数/耗时 vs 调度间隔。
+    // 若每条指令 12.5µs 但 op 本体平凡 → 时间在 run() 之间的调度往返。
+    struct LS {
+        const std::atomic<bool>& on;
+        std::chrono::steady_clock::time_point t0;
+        VmPcb* pcb;
+        ~LS() {
+            if (!on.load(std::memory_order_relaxed)) return;
+            auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - t0)
+                          .count();
+            static std::mutex mx;
+            static uint64_t calls = 0, inNs = 0, insns = 0;
+            static std::chrono::steady_clock::time_point lastDump =
+                std::chrono::steady_clock::now();
+            static std::chrono::steady_clock::time_point firstT =
+                std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lk(mx);
+            calls++; inNs += static_cast<uint64_t>(ns);
+            insns += pcb->instrCount;
+            auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - lastDump)
+                             .count();
+            if (since >= 5000) {
+                auto wallMs = std::chrono::duration_cast<
+                                  std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - firstT)
+                                  .count();
+                std::cerr << "[loopsplit] calls=" << calls
+                          << " insns=" << insns
+                          << " inLoopMs=" << inNs / 1000000
+                          << " wallMs=" << wallMs
+                          << " insn/call="
+                          << (calls ? insns / calls : 0)
+                          << " rate="
+                          << (wallMs ? static_cast<uint64_t>(insns) *
+                                          1000 / wallMs
+                                     : 0)
+                          << "/s\n";
+                std::cerr.flush();
+                lastDump = std::chrono::steady_clock::now();
+                calls = 0; inNs = 0; insns = 0;
+                firstT = std::chrono::steady_clock::now();
+            }
+        }
+    } lsGuard{dynProbeFlag("LPCVM_LOOP2"), std::chrono::steady_clock::now(),
+              pcb};
+    pcb->instrCount = 0;
     while (pcb->code && pcb->ip < pcb->code->size()) {        const OriginalInsn& in = (*pcb->code)[pcb->ip++];
+        ++pcb->instrCount;
         pcb->lastOp = in.op;
         pcb->lastIp = pcb->ip - 1;
+        // [opns] 按 op 的执行耗时直方图 (touch _probe_on/LPCVM_OPNS 热布防)。
+        // 上一条指令的耗时归因给它自己; 每 4M 条已计指令 dump top10 +
+        // 总速率。 Armed 时每指令一次 chrono(~25ns)。用于定位"每指令
+        // ~2.3µs、比原版慢 3 个量级"的固定开销落在哪类 op。
+        {
+            static const std::atomic<bool>& opnsOn =
+                lpc::dynProbeFlag("LPCVM_OPNS");
+            if (opnsOn.load(std::memory_order_relaxed)) {
+                using clk = std::chrono::steady_clock;
+                static thread_local clk::time_point opnsT0{};
+                static thread_local int opnsLast = -1;
+                static std::atomic<uint64_t> opnsNs[96];
+                static std::atomic<uint64_t> opnsCnt[96];
+                static std::atomic<uint64_t> opnsTotal{0};
+                auto now = clk::now();
+                if (opnsLast >= 0) {
+                    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  now - opnsT0)
+                                  .count();
+                    opnsNs[opnsLast].fetch_add(
+                        static_cast<uint64_t>(ns), std::memory_order_relaxed);
+                    auto c = opnsCnt[opnsLast].fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (opnsTotal.fetch_add(1) % 4000000 == 0) {
+                        uint64_t totNs = 0;
+                        for (int i = 0; i < 96; ++i)
+                            totNs += opnsNs[i].load(std::memory_order_relaxed);
+                        std::cerr << "[opns] dump totalOps="
+                                  << opnsTotal.load() << " accountedMs="
+                                  << totNs / 1000000 << "\n";
+                        for (int r = 0; r < 8; ++r) {
+                            int best = -1;
+                            uint64_t bestNs = 0;
+                            for (int i = 0; i < 96; ++i)
+                                if (opnsNs[i].load(
+                                        std::memory_order_relaxed) > bestNs) {
+                                    bestNs = opnsNs[i].load(
+                                        std::memory_order_relaxed);
+                                    best = i;
+                                }
+                            if (best < 0 || bestNs == 0) break;
+                            opnsNs[best].store(0, std::memory_order_relaxed);
+                            std::cerr << "[opns] op" << best << " ("
+                                      << actionInfo(best).name
+                                      << ") cnt="
+                                      << opnsCnt[best].load(
+                                             std::memory_order_relaxed)
+                                      << " totalMs=" << bestNs / 1000000
+                                      << " avgNs="
+                                      << (opnsCnt[best].load(
+                                              std::memory_order_relaxed)
+                                              ? bestNs / opnsCnt[best].load(
+                                                    std::memory_order_relaxed)
+                                              : 0)
+                                      << "\n";
+                        }
+                        std::cerr.flush();
+                    }
+                }
+                opnsT0 = now;
+                opnsLast = static_cast<int>(in.op);
+            }
+        }
         opTraceRecord(pcb->lastIp, in.op, pcb->stack.size(), pcb->frames.size());
         // ---- time slice (master process; 原版 runTicks) ----
         if (pcb->yieldEvery > 0 && --pcb->yieldCountdown <= 0) {
@@ -581,18 +778,207 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             if (ai.parameters == 2) m1 = readI32(*pcb->meta, off + 4);
         }
         trcStep(pcb, pcb->ip - 1, in.op, ai.name);
-        if (getenv("LPCVM_SETUPTRACE") && !pcb->frames.empty() &&
+        // [hotsample] 时间基采样 profiler: 每 64K 条指令看一次钟, 距上次
+        // 采样 >=150ms 才打一行 (fn/ip/op)。指令基采样会漏掉"单条 op6 efun
+        // 内部烧 10 秒 CPU"的现场 —— 时间基才能如实反映耗时分布。默认关
+        // (touch _probe_on/LPCVM_HOTLOOP 热布防)。
+        {
+            static thread_local uint64_t hotTick = 0;
+            if (((++hotTick) & 0xFFFFull) == 0) {
+                static const std::atomic<bool>& hotOn =
+                    lpc::dynProbeFlag("LPCVM_HOTLOOP");
+                if (hotOn.load(std::memory_order_relaxed)) {
+                    using clk = std::chrono::steady_clock;
+                    static thread_local clk::time_point last =
+                        clk::now() - std::chrono::milliseconds(1000);
+                    auto now = clk::now();
+                    if (now - last >= std::chrono::milliseconds(150)) {
+                        last = now;
+                        static std::atomic<int> hotLog{0};
+                        if (hotLog.fetch_add(1) < 3000 &&
+                            !pcb->frames.empty()) {
+                            std::string extra;
+                            if (in.op == 6) {   // call_in_efun: 解析 efun 名
+                                const int efun =
+                                    fromMeta ? m0 : static_cast<int16_t>(in.a);
+                                const std::vector<std::string>& et =
+                                    efunNameTable();
+                                if (efun >= 0 &&
+                                    static_cast<size_t>(efun) < et.size())
+                                    extra =
+                                        " efun=" + et[static_cast<size_t>(efun)];
+                            }
+                            std::cerr << "[hotsample] tid=" << pcb->tid
+                                      << " fn="
+                                      << (pcb->frames.back().fn
+                                              ? pcb->frames.back().fn->name
+                                              : "<ctx>")
+                                      << " ip=" << (pcb->ip - 1)
+                                      << " op=" << static_cast<int>(in.op)
+                                      << extra
+                                      << " depth=" << pcb->stack.size()
+                                      << " ic=" << hotTick
+                                      << "\n";
+                            std::cerr.flush();
+                        }
+                    }
+                }
+            }
+        }
+        // 环境开关一律启动时缓存 —— 热路径每条指令调 getenv 会线性扫描
+        // 整个环境块并加锁，曾把 gs 启动拖到 11 对象/秒 (单核 100%)。
+        static const bool g_setupTrace = getenv("LPCVM_SETUPTRACE") != nullptr;
+        static const char* const g_fnFilter = getenv("LPCVM_FNFILTER");
+        // 调用链上任一帧命中过滤即 trace（否则被调函数体不可见）；
+        // fn= 打印栈顶帧名以便区分 caller/callee。
+        bool fnHit = false;
+        if (g_fnFilter && !pcb->frames.empty()) {
+            for (const auto& fr : pcb->frames)
+                if (fr.fn && fr.fn->name == g_fnFilter) { fnHit = true; break; }
+        }
+        // [pi-watch] post_init 4 槽影子: tid=0 主链的 post_init 栈区就
+        // [0..3] 四槽 ([3]=ctrl)。op35 布防, 之后每条指令比对 index,
+        // 变了立即打印当前指令 —— 必中写手。
+        {
+            // [性能] 原 g_loopwatchCold 恒 false(env 永未设置) → 每条指令
+            // getenv(线性扫描环境块+锁 ≈12µs) + lwOn.store —— 采样器实测
+            // VM 线程 100% 时间在 getenv, 指令速率 7.5 万/秒。改 dynProbeFlag
+            // (_probe_on/LPCVM_LOOPWATCH 标记热布防), 热路径只剩一次 relaxed load。
+            static const std::atomic<bool>& lwFlag =
+                lpc::dynProbeFlag("LPCVM_LOOPWATCH");
+            const bool lwOn = lwFlag.load(std::memory_order_relaxed);
+            static unsigned char piShadow = 0;      // 只盯 ctrl 槽 (bp+3)
+            static const VmPcb* piPcb = nullptr;
+            static int piBp = 0;
+            static bool piPending = false;   // op35 已取指, 下一条再录影子
+            static std::atomic<int> piHits{0};
+            if (lwOn && piHits.load() < 4) {
+                // 激活条件: 该 pcb 帧链上有 post_init (callee 执行期间照样盯)
+                const VmFrame* pif = nullptr;
+                for (const auto& fr : pcb->frames)
+                    if (fr.fn && fr.fn->name == "post_init") { pif = &fr; break; }
+                if (pif) {
+                    if (piPcb != pcb) { piPcb = pcb; piBp = pif->bp; piPending = false; }
+                    if (in.op == 35 && pcb->frames.back().fn &&
+                        pcb->frames.back().fn->name == "post_init") {
+                        piPending = true;   // ctrl 在本条 switch 里写入
+                    } else if (piPending) {
+                        piPending = false;
+                        size_t sl = static_cast<size_t>(piBp + 3);
+                        piShadow = sl < pcb->stack.size()
+                            ? static_cast<unsigned char>(pcb->stack[sl].value.index())
+                            : 99;
+                    } else {
+                        size_t sl = static_cast<size_t>(piBp + 3);
+                        unsigned char now = sl < pcb->stack.size()
+                            ? static_cast<unsigned char>(pcb->stack[sl].value.index())
+                            : 99;
+                        if (now != piShadow && piHits.fetch_add(1) < 4) {
+                            std::cerr << "[pi-watch] slot3 idx "
+                                      << static_cast<int>(piShadow) << "->"
+                                      << static_cast<int>(now)
+                                      << " at ip=" << (pcb->ip - 1)
+                                      << " op=" << static_cast<int>(in.op)
+                                      << " fn="
+                                      << (pcb->frames.back().fn
+                                              ? pcb->frames.back().fn->name
+                                              : "<ctx>")
+                                      << " frames=" << pcb->frames.size()
+                                      << " stack=" << pcb->stack.size()
+                                      << " tid=" << pcb->tid << "\n";
+                            piShadow = now;
+                        }
+                    }
+                } else {
+                    piPcb = nullptr;
+                }
+            }
+            // [cst-watch] create_search_terms 的循环 ctrl 槽 (bp+9) 影子:
+            // "Bad loop ctrl" 槽在栈内但内容被覆盖 (非越界), 盯写手。
+            // 帧链上任一 create_search_terms 都盯 —— callee 执行期间也比对
+            // (写手可能经由 by-ref 参数/错位 bp 穿过引用写进 ctrl 槽)。
+            {
+                static unsigned char cstShadow = 0;
+                static int cstSlot = -1;
+                static bool cstPending = false;
+                static int cstHits = 0;
+                if (lwOn && cstHits < 8) {
+                    const VmFrame* ctf = nullptr;
+                    for (const auto& fr : pcb->frames)
+                        if (fr.fn && fr.fn->name == "create_search_terms") {
+                            ctf = &fr;
+                            break;
+                        }
+                    if (ctf) {
+                        if (cstSlot != ctf->bp + 9) {
+                            cstSlot = ctf->bp + 9;
+                            cstPending = false;
+                        }
+                        if (in.op == 35 && pcb->frames.back().fn &&
+                            pcb->frames.back().fn->name ==
+                                "create_search_terms") {
+                            cstPending = true;   // ctrl 在本条写入
+                        } else if (cstPending) {
+                            cstPending = false;
+                            size_t sl = static_cast<size_t>(cstSlot);
+                            cstShadow = sl < pcb->stack.size()
+                                ? static_cast<unsigned char>(
+                                      pcb->stack[sl].value.index())
+                                : 99;
+                        } else {
+                            size_t sl = static_cast<size_t>(cstSlot);
+                            unsigned char now = sl < pcb->stack.size()
+                                ? static_cast<unsigned char>(
+                                      pcb->stack[sl].value.index())
+                                : 99;
+                            if (now != cstShadow) {
+                                // 只报 "LoopCtrl 被覆盖" (9->非9): 进出函数的
+                                // 99(越界)/0(重入 undefined) 是正常波动,
+                                // 不占配额 —— 否则真写手出现时配额已耗尽。
+                                if (cstShadow == 9 && now != 9) {
+                                    ++cstHits;
+                                    std::cerr << "[cst-watch] slot" << cstSlot
+                                              << " idx "
+                                              << static_cast<int>(cstShadow)
+                                              << "->" << static_cast<int>(now)
+                                              << " at ip=" << (pcb->ip - 1)
+                                              << " op=" << static_cast<int>(in.op)
+                                              << " fn="
+                                              << (pcb->frames.back().fn
+                                                      ? pcb->frames.back().fn->name
+                                                      : "<ctx>")
+                                              << " depth=" << pcb->stack.size()
+                                              << " tid=" << pcb->tid << "\n";
+                                }
+                                cstShadow = now;
+                            }
+                        }
+                    } else {
+                        cstSlot = -1;
+                    }
+                }
+            }
+        }
+        if (g_setupTrace && !pcb->frames.empty() &&
             pcb->frames.back().fn && pcb->frames.back().fn->name == "setup")
             std::cerr << "[setup-trace] ip=" << (pcb->ip - 1)
                       << " op=" << static_cast<int>(in.op)
                       << " frames=" << pcb->frames.size() << "\n";
-        if (getenv("LPCVM_FNFILTER") && !pcb->frames.empty() &&
-            pcb->frames.back().fn &&
-            pcb->frames.back().fn->name == getenv("LPCVM_FNFILTER"))
-            std::cerr << "[fn-trace] ip=" << (pcb->ip - 1)
+        if (fnHit && !pcb->frames.empty()) {
+            size_t s3 = pcb->frames.back().bp + 3;
+            unsigned char v3 =
+                s3 < pcb->stack.size()
+                    ? static_cast<unsigned char>(pcb->stack[s3].value.index())
+                    : 99;
+            std::cerr << "[fn-trace] fn="
+                      << (pcb->frames.back().fn ? pcb->frames.back().fn->name
+                                                : std::string("<ctx>"))
+                      << " ip=" << (pcb->ip - 1)
                       << " op=" << static_cast<int>(in.op)
                       << " stack=" << pcb->stack.size()
-                      << " bp=" << pcb->frames.back().bp << "\n";
+                      << " bp=" << pcb->frames.back().bp
+                      << " s3=" << static_cast<int>(v3) << "\n";
+        }
         try {
             switch (in.op) {
             case 46: // null_action
@@ -690,19 +1076,42 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 break;
             case 55: // push_local_value
             case 56: { // push_local_var_i (index popped from stack)
+                // [op55t] 解剖 op55: 体前/体后计时, 定位 12.5µs/条 落在
+                // case 体 (slotValue+pushValue) 还是循环机构。
+                static const std::atomic<bool>& o55 =
+                    lpc::dynProbeFlag("LPCVM_LOOP2");
+                auto o55t0 = o55.load(std::memory_order_relaxed)
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
                 int idx = static_cast<int16_t>(in.a);
                 if (in.op == 56) idx = static_cast<int>(toInt(popValue(pcb)));
                 const int slot = slotOf(pcb, idx);
-                // 原版 vm_pushLocalVar：正操作数是参数（param_i = bp-i），
-                // 仅当 i < argNum 有效；负操作数是局部变量。无效访问不报
-                // 错——静默推数字 0（expand_privilege_group 2 参调 3 参时
-                // 的 param2 就是靠这个拿到 0）。
                 bool ok = slot >= 0 &&
                           static_cast<size_t>(slot) < pcb->stack.size();
                 if (ok && idx >= 0)
                     ok = !pcb->frames.empty() &&
                          idx < pcb->frames.back().argNum;
-                pushValue(pcb, ok ? slotValue(pcb, slot) : make_int(0));
+                Value o55v =
+                    (ok ? slotValue(pcb, slot) : make_int(0));
+                auto o55t1 = o55.load(std::memory_order_relaxed)
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+                pushValue(pcb, std::move(o55v));
+                if (o55.load(std::memory_order_relaxed)) {
+                    static std::atomic<uint64_t> aNs{0}, bNs{0}, n{0};
+                    aNs.fetch_add(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            o55t1 - o55t0)
+                            .count());
+                    bNs.fetch_add(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - o55t1)
+                            .count());
+                    if (n.fetch_add(1) % 100000 == 0)
+                        std::cerr << "[op55t] n=" << n.load()
+                                  << " preNs=" << aNs.load() / 1000
+                                  << " pushNs=" << bNs.load() / 1000 << "\n";
+                }
                 break;
             }
             case 57: // push_local_vptr
@@ -784,6 +1193,12 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     if (slot >= 0 && static_cast<size_t>(slot) < pcb->stack.size()) {
                         StackItem& s = pcb->stack[static_cast<size_t>(slot)];
                         Value sv = popValue(pcb);
+                        static const std::atomic<bool>& slotSnag3 =
+                            lpc::dynProbeFlag("LPCVM_SLOTSNAG");
+                        if (slotSnag3.load(std::memory_order_relaxed) &&
+                            s.value.index() == 9 && sv.index() != 9)
+                            std::cerr << "[loop-slot-kill] op77 slot=" << slot
+                                      << " ip=" << (pcb->ip - 1) << "\n";
                         s.value = sv;
                     } else {
                         popValue(pcb);
@@ -1169,7 +1584,29 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                          : "efun#" + std::to_string(efun);
                     trcCallStack(pcb, 6, en, argc);
                 }
+                // [efun-bal] 栈平衡断言: efun 弹 argc 压 1 → 净 1-argc。
+                // 偏差即 efun 实现弹错 —— create_search_terms 循环头 oob
+                // 的最后嫌疑点。
+                static const bool w6 = getenv("LPCVM_LOOPWATCH") != nullptr;
+                int bal0 = 0;
+                bool balWatch = false;
+                if (w6) {
+                    for (const auto& fr : pcb->frames)
+                        if (fr.fn && fr.fn->name == "create_search_terms") {
+                            balWatch = true;
+                            break;
+                        }
+                    if (balWatch) bal0 = static_cast<int>(pcb->stack.size());
+                }
                 dispatchEfun(pcb, efun, argc);   // pushes result (void-aware)
+                if (balWatch) {
+                    int d = static_cast<int>(pcb->stack.size()) - bal0;
+                    if (d != 1 - argc)
+                        std::cerr << "[efun-bal] tid=" << pcb->tid
+                                  << " efun#" << efun << " argc=" << argc
+                                  << " delta=" << d << " expect=" << (1 - argc)
+                                  << " ip=" << (pcb->ip - 1) << "\n";
+                }
                 break;
             }
             case 7: { // call_in_user_fun
@@ -1208,6 +1645,86 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     if (prog) fn = prog->fnAtIndex(funIndex);
                 }
                 if (fn) {
+                    // [rpidbg] post_init 永不排空取证: register_post_init 的
+                    // 每次调用都打印闭包目标 + 调用者 —— 每轮循环重复出现的
+                    // 名字就是卡死 boot 的重注册者。
+                    {
+                        static const std::atomic<bool>& rpi =
+                            lpc::dynProbeFlag("LPCVM_RPIDBG");
+                        if (rpi.load(std::memory_order_relaxed) &&
+                            fn->name == "register_post_init" &&
+                            !pcb->stack.empty()) {
+                            // 只报重复注册者: boot 期每个守护只注册一次,
+                            // 同一闭包第 2+ 次出现 = post_init 轮询的重注册者
+                            // (每轮 register → catch 报错/条件不满足 → 永转)。
+                            static std::mutex rpiMx;
+                            static std::map<std::string, int> rpiCnt;
+                            const Value& top = pcb->stack.back().value;
+                            std::string cdesc =
+                                "<idx" + std::to_string(top.index()) + ">";
+                            if (top.index() == 8) {
+                                auto cl = std::get<
+                                    std::shared_ptr<ClosureValue>>(top);
+                                if (cl)
+                                    cdesc = cl->functionName + "@" +
+                                            cl->ownerKey;
+                            }
+                            int cnt = 0;
+                            {
+                                std::lock_guard<std::mutex> lk(rpiMx);
+                                cnt = ++rpiCnt[cdesc];
+                            }
+                            if (cnt >= 2)
+                                std::cerr << "[rpidbg] #" << cnt
+                                          << " reg_post_init " << cdesc
+                                          << " caller="
+                                          << (obj ? obj->key() : "<null>")
+                                          << "::"
+                                          << (pcb->frames.empty() ||
+                                                      !pcb->frames.back().fn
+                                                  ? "<ctx>"
+                                                  : pcb->frames.back().fn->name)
+                                          << "\n";
+                        }
+                    }
+                    // [op7w] scand 调用链栈深审计: 第二次 create_search_terms
+                    // 循环头 ctrl 槽 oob(栈浅 1), 对比两次链的进入栈深定位。
+                    // 平衡判据: 返回侧 [retw] 的 newSize 必须 == 这里 preStack,
+                    // 差 -1 的 (调用,返回) 对就是栈漂移现场。
+                    static const bool w7 = getenv("LPCVM_LOOPWATCH") != nullptr;
+                    if (w7) {
+                        const char* nm = fn->name.c_str();
+                        if (!std::strcmp(nm, "create_search_terms") ||
+                            !std::strcmp(nm, "query_objects") ||
+                            !std::strcmp(nm, "sql_select") ||
+                            !std::strcmp(nm, "do_init") ||
+                            !std::strcmp(nm, "create_bit_search") ||
+                            !std::strcmp(nm, "do_equipment_filter") ||
+                            !std::strcmp(nm, "mdb_select") ||
+                            !std::strcmp(nm, "revise_scan_items") ||
+                            !std::strcmp(nm, "covert_string") ||
+                            !std::strcmp(nm, "build_xiaobssb_equip_buf"))
+                            std::cerr << "[op7w] tid=" << pcb->tid << " "
+                                      << nm << " caller="
+                                      << (pcb->frames.empty() ||
+                                                  !pcb->frames.back().fn
+                                              ? "<ctx>"
+                                              : pcb->frames.back().fn->name)
+                                      << " preStack=" << pcb->stack.size()
+                                      << " args=" << passedArgs;
+                            if (passedArgs >= 2 && pcb->stack.size() >=
+                                                       static_cast<size_t>(
+                                                           passedArgs)) {
+                                // param1 (index preStack-args+1): types 数组
+                                const StackItem& p1 = pcb->stack[pcb->stack
+                                                                      .size() -
+                                                                  static_cast<size_t>(passedArgs) + 1];
+                                std::cerr << " p1="
+                                          << to_string(p1.value, false)
+                                                 .substr(0, 60);
+                            }
+                            std::cerr << "\n";
+                    }
                     trcCallStack(pcb, 7, fn->name, passedArgs);
                     if (pushFrameInPlace(pcb, obj, prog, fn, passedArgs, true, 0))
                         break;   // inline start: the callee pushes its own result
@@ -1244,6 +1761,29 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 std::vector<StackItem> items;
                 for (int i = 0; i < argn && !pcb->stack.empty(); ++i)
                     items.push_back(popItem(pcb));
+                {
+                    // [trg-dbg] punishd 轮询取证: query_combat_trigger 的名字
+                    // 参数原样(含 hex)打印 —— 与 register_trigger 注册键比对。
+                    static const std::atomic<bool>& td =
+                        lpc::dynProbeFlag("LPCVM_OP8DBG");
+                    if (td.load(std::memory_order_relaxed) &&
+                        (funName == "query_combat_trigger" ||
+                         funName == "register_trigger") &&
+                        !items.empty() && items.back().value.index() == 4) {
+                        const std::string s = std::get<SharedString>(
+                                                  items.back().value)
+                                                  .str();
+                        std::string hex;
+                        for (unsigned char ch : s) {
+                            char b[4];
+                            snprintf(b, sizeof(b), "%02x", ch);
+                            hex += b;
+                        }
+                        std::cerr << "[trg-dbg] " << funName << " arg0='"
+                                  << s.substr(0, 40) << "' hex=" << hex
+                                  << "\n";
+                    }
+                }
                 auto pushItemsBack = [&]() {
                     for (auto it = items.rbegin(); it != items.rend(); ++it)
                         pushItem(pcb, *it);
@@ -1311,7 +1851,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // object values whose vmObj/registry lookup failed
                     // (index 7) — the silent drop here is what shrinks
                     // scand.do_init's scan table (ob->query("type") -> 0).
-                    if (vmcore::traceOn() || getenv("LPCVM_CTRACE")) {
+                    if (vmcore::traceOn() || g_ctraceOn) {
                         static std::atomic<int> op8MissLog{0};
                         if (op8MissLog.fetch_add(1) < 40) {
                             std::string p = pathVal.index() == 4
@@ -1357,7 +1897,85 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 const int total = fromMeta ? m1 : in.b;
                 StackItem funItem = popItem(pcb);
                 const int argc = total - 1;
+                {
+                    static const bool lw5 = getenv("LPCVM_LOOPWATCH") != nullptr;
+                    if (lw5 && !pcb->frames.empty() &&
+                        pcb->frames.back().fn &&
+                        pcb->frames.back().fn->name == "post_init") {
+                        std::cerr << "[op5x] p16=" << in.a << " p8="
+                                  << static_cast<int>(in.b)
+                                  << " total=" << total
+                                  << " funIdx=" << funItem.value.index()
+                                  << " fun="
+                                  << to_string(funItem.value, false).substr(0, 40)
+                                  << " preStack=" << (pcb->stack.size() + 1)
+                                  << " top=";
+                        for (size_t si = pcb->stack.size() > 4
+                                             ? pcb->stack.size() - 4 : 0;
+                             si < pcb->stack.size(); ++si)
+                            std::cerr << pcb->stack[si].value.index() << "/";
+                        std::cerr << "\n";
+                    }
+                }
                 if (funItem.value.index() != 8) {
+                    // 原版 vm_callFunPtr(0x809441c) type==4 分支: 栈顶是
+                    // 函数名字符串 → 在 this 对象 program 按名查找
+                    // (vm_findProgramFunction), 找不到再查 master ident;
+                    // isGlobal 命中时用 master program 的函数体调用。
+                    // 找不到且 mayNull(p8) → pop args + pushVoid; 否则报错。
+                    // (此前这里直接 push 0 顶替 —— post_init 对每个 daemon
+                    // 的 do_init 按名调用全部被吞, daemon 永不初始化。)
+                    if (funItem.value.index() == 4) {
+                        const auto& nameS =
+                            std::get<SharedString>(funItem.value);
+                        std::vector<StackItem> callItems;
+                        for (int i = 0; i < argc && !pcb->stack.empty(); ++i)
+                            callItems.push_back(popItem(pcb));
+                        VmObject* thisObj = curObj(pcb);
+                        const OriginalFunction* sfn = nullptr;
+                        const VmProgram* sprog = nullptr;
+                        if (thisObj) {
+                            sfn = thisObj->prog()->findFn(nameS.str());
+                            if (sfn) sprog = thisObj->prog();
+                        }
+                        if (!sfn && masterProgram()) {
+                            sfn = masterProgram()->findFn(nameS.str());
+                            if (sfn) sprog = masterProgram();
+                        }
+                        if (sfn) {
+                            // 原版 vm_callFunPtr(0x0809441c) 弹 funItem 后把该
+                            // 槽"清零保留"(vm_stack[vm_sp].type=0; ++vm_sp) ——
+                            // 种子槽在参数之下, 让 callee 的 bp 落在 caller 数据
+                            // 之上(argNum=0 时无种子则 callee bp 直接压进 caller
+                            // 栈区, op27 压局部覆盖 caller ctrl 槽)。返回收缩
+                            // newSize = bp-argNum+1 恰为种子槽+1, resize 天然把
+                            // 种子裁掉, 栈深精确复原 —— 公式无需任何改动。
+                            pushValue(pcb, Value{});
+                            for (auto it = callItems.rbegin();
+                                 it != callItems.rend(); ++it)
+                                pushItem(pcb, *it);
+                            pcb->previousObjectName =
+                                curObj(pcb) ? curObj(pcb)->key()
+                                            : std::string();
+                            if (!pushFrameInPlace(pcb, thisObj, sprog, sfn,
+                                                  argc, true, 0))
+                                pushValue(pcb, make_int(0));
+                            else
+                                pcb->frames.back().zeroArgPlaceholder = true;
+                            break;
+                        }
+                        // 原版 mayNull 时 pop args + pushVoid; 这里按宽限
+                        // 处理 (post_init 调的 daemon 函数都在 master 里,
+                        // 走不到这条), 留痕以便观察。
+                        std::cerr << "[op5-name-miss] fn=" << nameS.str()
+                                  << " thisObj="
+                                  << (thisObj ? thisObj->key() : "<null>")
+                                  << "\n";
+                        for (int i = 0; i < argc && !pcb->stack.empty(); ++i)
+                            popItem(pcb);
+                        pushValue(pcb, Value{});
+                        break;
+                    }
                     // Non-closure: consume args, result 0.
                     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) popItem(pcb);
                     pushValue(pcb, make_int(0));
@@ -1422,13 +2040,51 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 // pushItemsBack) — a forward push flipped the call args
                 // internally (operate_done saw cookie==got_result swapped and
                 // the ne check always reported a mismatch).
+                // 原版 funptr 槽"清零保留"(0x0809441c: type=0; ++sp): 种子槽
+                // 在参数之下隔离 callee 帧与 caller 栈区(argNum=0 时无种子则
+                // callee bp 直接指进 caller 数据, op27 压局部覆盖 caller ctrl)。
+                // 返回收缩 newSize = bp-argNum+1 恰为种子槽+1, resize 天然裁掉
+                // 种子、栈深复原 —— 帧约定 bp=最后参数 与 resort/[bp-i] 取参
+                // 全不受影响(种子在参数区之下一个槽, 相对位置不变)。
+                // 此前一次补种子失败(load_all 循环变量 undefined)是种子补在
+                // 栈深敏感路径之外/次序不对所致, 现按原版语义在回压参数前补。
+                pushValue(pcb, Value{});
                 for (auto it = callItems.rbegin(); it != callItems.rend(); ++it)
                     pushItem(pcb, *it);
                 for (int i = static_cast<int>(cl->boundArgs.size()) - 1; i >= 0; --i)
                     pushValue(pcb, cl->boundArgs[static_cast<size_t>(i)]);
+                {
+                    static const bool lw = getenv("LPCVM_LOOPWATCH") != nullptr;
+                    if (lw && !pcb->frames.empty()) {
+                        const VmFrame& cf = pcb->frames.back();
+                        // 弹掉调用项是否会吃掉当前帧栈区之下的槽: 弹前栈深
+                        // 与弹项数的差 < 1 就是吃到了更低的槽(局部/ctrl)。
+                        int before = static_cast<int>(pcb->stack.size()) +
+                                     static_cast<int>(callItems.size());
+                        std::cerr << "[op5] caller="
+                                  << (cf.fn ? cf.fn->name : "<ctx>")
+                                  << " bp=" << cf.bp
+                                  << " stackBefore=" << before
+                                  << " argc=" << argc
+                                  << " bound=" << cl->boundArgs.size()
+                                  << " callee="
+                                  << (fn ? fn->name : std::string("?"))
+                                  << " calleeLocals="
+                                  << (fn ? fn->localCount : -1)
+                                  << " ctrlSlots=";
+                        for (const auto& kv : cf.loops)
+                            std::cerr << kv.first << " ";
+                        std::cerr << "\n";
+                    }
+                }
                 const int passed = static_cast<int>(cl->boundArgs.size()) + argc;
                 pcb->previousObjectName = curObj(pcb) ? curObj(pcb)->key()
                                                       : std::string();
+                // 注意: 原版 funptr 槽"清零保留"(vm_stack[vm_sp].type=0;
+                // ++vm_sp) —— 但本 VM 的帧约定是 bp=最后参数(参数=[bp-argNum
+                // ..bp-1], 局部=[bp+1..]), resort_stack/check_args 全按此写。
+                // 补种子会把 bp 推到参数区外, resort 取参 [bp-i] 全体错位
+                // (load_all 循环变量变 undefined, daemons 永远加载不出)。
                 // globalFn closure: the BODY comes from the master program
                 // (原版 vm_callInUserFunBody(bit7,...,vm_pGlobalProgram)),
                 // with the resolved owner object as this-object context.
@@ -1437,6 +2093,8 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                                    : ownerObj->prog(),
                                       fn, passed, true, 0))
                     pushValue(pcb, make_int(0));
+                else
+                    pcb->frames.back().zeroArgPlaceholder = true;
                 break;
             }
             // ---- jumps / conditionals / switch ----
@@ -1455,7 +2113,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 }
                 if (jump) {
                     pcb->ip += static_cast<size_t>(static_cast<int64_t>(offset));
-                    if (pcb->ip > pcb->code->size() && getenv("LPCVM_CTRACE")) {
+                    if (pcb->ip > pcb->code->size() && g_ctraceOn) {
                         const VmFrame& fr = pcb->frames.back();
                         std::cerr << "[if-overflow] fn="
                                   << (fr.fn ? fr.fn->name : std::string("<ctx>"))
@@ -1507,9 +2165,40 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             case 27: { // enter_function: push localCount undefineds
                 if (!pcb->frames.empty()) {
                     const VmFrame& f = pcb->frames.back();
-                    if (f.fn)
+                    // 写手探测: 新帧压局部会从当前栈顶向上占槽 —— 若下层
+                    // 帧的循环 ctrl 槽号 >= 压入前栈深, 就是帧重叠实锤。
+                    if (f.fn) {
+                        const int base = static_cast<int>(pcb->stack.size());
+                        for (size_t fi = 0; fi + 1 < pcb->frames.size(); ++fi)
+                            for (const auto& kv : pcb->frames[fi].loops)
+                                if (kv.first >= base)
+                                    std::cerr << "[op27-clobbers-lower] newFn="
+                                              << f.fn->name
+                                              << " locals=" << f.fn->localCount
+                                              << " base=" << base
+                                              << " lowerF" << fi << "="
+                                              << (pcb->frames[fi].fn
+                                                      ? pcb->frames[fi].fn->name
+                                                      : "<ctx>")
+                                              << " ctrlSlot=" << kv.first
+                                              << "\n";
+                        static const bool w27 =
+                            getenv("LPCVM_LOOPWATCH") != nullptr;
+                        if (w27) {
+                            const char* nm27 = f.fn->name.c_str();
+                            if (!std::strcmp(nm27, "create_search_terms") ||
+                                !std::strcmp(nm27, "query_objects") ||
+                                !std::strcmp(nm27, "do_init"))
+                                std::cerr << "[op27w] " << nm27
+                                          << " locals=" << f.fn->localCount
+                                          << " before=" << base
+                                          << " after="
+                                          << (base + f.fn->localCount)
+                                          << " bp=" << f.bp << "\n";
+                        }
                         for (int i = 0; i < f.fn->localCount; ++i)
                             pushValue(pcb, Value{});
+                    }
                 }
                 break;
             }
@@ -1593,6 +2282,12 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 }
                 if (slot >= 0 && static_cast<size_t>(slot) < pcb->stack.size())
                     pcb->stack[static_cast<size_t>(slot)].value = ctrl;
+                // ctrl 的主存储放 pcb->loops（按槽号）：post_init 的 daemon
+                // do_init 通过 op5 调用后内部 db 查询异步 park 整条链，park
+                // 窗口内同 pcb 被其他事件重入会搅掉栈槽镜像 —— 只认栈槽会让
+                // op80 读到 undefined → "Bad loop ctrl" → 主 boot 链中止。
+                if (slot >= 0 && !pcb->frames.empty())
+                    pcb->frames.back().loops[slot] = ctrl;
                 break;
             }
             case 18: { // cond_jmp_for_loop
@@ -1660,7 +2355,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             // Probe: when this fires INSIDE a construct chain (master boot /
             // inline script construction) the whole boot chain dies silently —
             // identify the thrower (fn + object + remaining plans).
-            if (!pcb->constructStack.empty() && getenv("LPCVM_CTRACE")) {
+            if (!pcb->constructStack.empty() && g_ctraceOn) {
                 const VmFrame* tf =
                     pcb->frames.empty() ? nullptr : &pcb->frames.back();
                 std::cerr << "[threadexit-in-construct] tid=" << pcb->tid
@@ -1732,6 +2427,15 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 int newSize = fr.bp - fr.argNum + 1 -
                               (fr.zeroArgPlaceholder ? 1 : 0) - fr.padArgs;
                 if (newSize < 0) newSize = 0;
+                static const std::atomic<bool>& slotSnagU =
+                    lpc::dynProbeFlag("LPCVM_SLOTSNAG");
+                for (size_t i = static_cast<size_t>(newSize); i < pcb->stack.size(); ++i)
+                    if (slotSnagU.load(std::memory_order_relaxed) &&
+                        pcb->stack[i].value.index() == 9)
+                        std::cerr << "[loop-slot-kill] unwind-resize slot=" << i
+                                  << " newSize=" << newSize
+                                  << " fn=" << (fr.fn ? fr.fn->name : std::string("<ctx>"))
+                                  << " bp=" << fr.bp << " argNum=" << fr.argNum << "\n";
                 pcb->frames.pop_back();
                 pcb->stack.resize(static_cast<size_t>(newSize));
                 if (fr.retCode) {
@@ -1745,6 +2449,14 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 pcb->catches.back().frameCount != pcb->frames.size())
                 throw;
             pcb->catches.pop_back();
+            static const std::atomic<bool>& slotSnagC =
+                lpc::dynProbeFlag("LPCVM_SLOTSNAG");
+            for (size_t ki = static_cast<size_t>(rec.stackSize); ki < pcb->stack.size(); ++ki)
+                if (slotSnagC.load(std::memory_order_relaxed) &&
+                    pcb->stack[ki].value.index() == 9)
+                    std::cerr << "[loop-slot-kill] catch-resize slot=" << ki
+                              << " recSize=" << rec.stackSize
+                              << " recIp=" << rec.ipTarget << "\n";
             pcb->stack.resize(rec.stackSize);
             pushValue(pcb, make_string(std::string(e.what())));
             pcb->ip = rec.ipTarget;
@@ -1768,7 +2480,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
     // ran past the segment) with the loop returning "normally": the original
     // treats ip-out-of-range as -8102 deleteProcess; frames still on the
     // chain here mean state corruption (the silent boot killer) — surface it.
-    if (!pcb->frames.empty() && getenv("LPCVM_CTRACE")) {
+    if (!pcb->frames.empty() && g_ctraceOn) {
         const VmFrame* tf = &pcb->frames.back();
         std::cerr << "[loop-exit-midchain] tid=" << pcb->tid
                   << " ip=" << pcb->ip

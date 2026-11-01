@@ -14,16 +14,21 @@
 //   * 帧内开的 catch 区随帧关闭 (vm_endThreadCatch)。
 //   * 边界帧 (retCode==nullptr) 弹出 = 整条链结束。
 // ===========================================================================
+#include <atomic>
 #include <cstring>
 
 #include "call.h"
 #include "interp.h"
+#include "original_vm.h"
 #include "values.h"
 #include "vmcore.h"
 #include "trace.h"
 
 namespace lpc {
 namespace vmcore {
+
+// [性能] CTRACE 环境开关启动时缓存 (construct-done 热路径)。
+static const bool g_ctraceOn = std::getenv("LPCVM_CTRACE") != nullptr;
 
 using Interp::pushItem;
 using Interp::pushValue;
@@ -194,9 +199,61 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
     std::vector<std::function<void(Value&)>> hooks =
         std::move(pcb->frames.back().retHooks);
     pcb->frames.pop_back();
+    // Tripwire: 截断范围内若有活跃 LoopCtrl 槽 (index 9) —— 帧尺寸算错，
+    // post_init "Bad loop ctrl" 元凶现场。
+    // [性能] dynProbeFlag 门控 (默认关): 构造期每次帧返回都扫, 命中十余万
+    // 次, 无缓冲 stderr 把 boot 拖慢 2 倍+ (lw47 实测 21.3 万条噪声)。
+    static const std::atomic<bool>& slotSnagR =
+        dynProbeFlag("LPCVM_SLOTSNAG");
+    if (slotSnagR.load(std::memory_order_relaxed) &&
+        pcb->stack.size() > static_cast<size_t>(newSize))
+        for (size_t i = static_cast<size_t>(newSize); i < pcb->stack.size(); ++i)
+            if (pcb->stack[i].value.index() == 9)
+                std::cerr << "[loop-slot-kill] tid=" << pcb->tid
+                          << " frames=" << pcb->frames.size()
+                          << " resize-drop slot=" << i
+                          << " newSize=" << newSize
+                          << " retfn=" << (f.fn ? f.fn->name : std::string("<ctx>"))
+                          << " bp=" << f.bp << " argNum=" << f.argNum << "\n";
     pcb->stack.resize(static_cast<size_t>(newSize));
+    {
+        // [retw] 栈深平衡审计: op7 进入侧 [op7w] 打了 preStack, 正常返回
+        // newSize == preStack(收缩回调用点) —— 差非 0 即栈漂移现场。
+        static const bool wret = getenv("LPCVM_LOOPWATCH") != nullptr;
+        if (wret && f.fn) {
+            const char* rn = f.fn->name.c_str();
+            if (!std::strcmp(rn, "create_search_terms") ||
+                !std::strcmp(rn, "query_objects") ||
+                !std::strcmp(rn, "sql_select") ||
+                !std::strcmp(rn, "create_bit_search") ||
+                !std::strcmp(rn, "do_equipment_filter") ||
+                !std::strcmp(rn, "mdb_select") ||
+                !std::strcmp(rn, "revise_scan_items") ||
+                !std::strcmp(rn, "covert_string") ||
+                !std::strcmp(rn, "build_xiaobssb_equip_buf"))
+                std::cerr << "[retw] tid=" << pcb->tid << " " << rn
+                          << " newSize=" << newSize
+                          << " bp=" << f.bp << " argNum=" << f.argNum
+                          << " ph=" << (f.zeroArgPlaceholder ? 1 : 0)
+                          << " depth=" << pcb->stack.size() << "\n";
+        }
+    }
     if (retCode == nullptr) {
         // Boundary frame: the chain is done; result stays in returnValue.
+        // retHooks MUST still run: a single-step construct plan's Init frame
+        // IS a boundary frame (resumeCurrentStream captured a null stream),
+        // and its hook is the only thing that calls vmConstructFinish —
+        // dropping hooks here left the master <main> plan unfinished forever
+        // ([construct-nopark] steps=1/1, boot dead after "Driver startup",
+        // 8160 never opened).
+        for (auto& hook : hooks) {
+            Value hv = pcb->returnValue;
+            const size_t framesBefore = pcb->frames.size();
+            hook(hv);
+            pcb->returnValue = hv;
+            if (pcb->frames.size() > framesBefore)
+                return Interp::RET_CONTINUE;   // hook pushed a frame: keep running
+        }
         return Interp::RET_CHAIN_END;
     }
     pcb->code = retCode;
@@ -215,6 +272,55 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
             return Interp::RET_CONTINUE;
         }
         pcb->returnValue = hv;
+    }
+    // [op8ret] post_init 重注册者取证: 所有 query_objects 的返回值 + 调用
+    // 者函数名 —— statued/change_lookd/artifactd/vendued 的门槛查询返回
+    // 一目了然, 找出每轮 register_post_init 的守护。
+    {
+        static const std::atomic<bool>& r8 = dynProbeFlag("LPCVM_OP8DBG");
+        if (r8.load(std::memory_order_relaxed) && f.fn &&
+            (f.fn->name == "query_objects" || f.fn->name == "register_trigger" ||
+             f.fn->name == "query_combat_trigger" ||
+             (f.fn->name == "get_name" && !pcb->frames.empty() &&
+              pcb->frames.back().fn &&
+              pcb->frames.back().fn->name == "register_trigger"))) {
+            static std::atomic<int> r8Log{0};
+            if (r8Log.fetch_add(1) < 300) {
+                size_t asz = 0;
+                if (pcb->returnValue.index() == 5 &&
+                    std::get<std::shared_ptr<ArrayValue>>(pcb->returnValue))
+                    asz = std::get<std::shared_ptr<ArrayValue>>(
+                              pcb->returnValue)
+                              ->items.size();
+                std::string extra;
+                if (f.fn->name == "get_name" &&
+                    pcb->returnValue.index() == 4) {
+                    const std::string s = std::get<SharedString>(
+                                              pcb->returnValue)
+                                              .str();
+                    std::string hex;
+                    for (unsigned char ch : s) {
+                        char b[4];
+                        snprintf(b, sizeof(b), "%02x", ch);
+                        hex += b;
+                    }
+                    extra = " hex=" + hex;
+                }
+                std::cerr << "[op8ret] " << f.fn->name << " ret type="
+                          << pcb->returnValue.index()
+                          << " arrSize=" << asz << extra
+                          << " depth=" << pcb->stack.size()
+                          << " caller="
+                          << (pcb->frames.empty() || !pcb->frames.back().fn
+                                  ? "<ctx>"
+                                  : pcb->frames.back().fn->name)
+                          << "@"
+                          << (pcb->frames.back().obj
+                                  ? pcb->frames.back().obj->key()
+                                  : "<null>")
+                          << "\n";
+            }
+        }
     }
     Interp::pushValue(pcb, pcb->returnValue);
     return Interp::RET_CONTINUE;
@@ -255,6 +361,17 @@ Value vmResumeSlice(VmPcb* pcb) {
 Value vmApplySync(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
                   const std::vector<Value>& args,
                   const VmProgram* progOverride) {
+    // park 窗口重入取证: cond.kind != 0 说明该 pcb 正 park 在表达式中间
+    // (SuspendSignal 已抛、还没 resume) —— 此时往它栈上压帧就是毁链元凶。
+    if (pcb && pcb->cond.kind != 0) {
+        std::cerr << "[apply-on-parked] kind=" << pcb->cond.kind
+                  << " ev=" << pcb->cond.ename << " q=" << pcb->cond.qkey
+                  << " fn=" << (fn ? fn->name : "?")
+                  << " obj=" << (obj ? obj->key() : std::string("<null>"))
+                  << " stack=" << pcb->stack.size()
+                  << " frames=" << pcb->frames.size() << "\n";
+        std::cerr.flush();
+    }
     VmPcbSetter setPcb(pcb);
     const size_t depth = pcb->frames.size();
     pushArgs(pcb, fn, args);
@@ -275,6 +392,15 @@ bool vmPushFunCall(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
                    const std::vector<Value>& args,
                    const VmProgram* progOverride) {
     if (!pcb || !fn) return false;
+    if (pcb->cond.kind != 0) {
+        std::cerr << "[push-on-parked] kind=" << pcb->cond.kind
+                  << " ev=" << pcb->cond.ename << " q=" << pcb->cond.qkey
+                  << " fn=" << fn->name
+                  << " obj=" << (obj ? obj->key() : std::string("<null>"))
+                  << " stack=" << pcb->stack.size()
+                  << " frames=" << pcb->frames.size() << "\n";
+        std::cerr.flush();
+    }
     pushArgs(pcb, fn, args);
     return pushFrameInPlace(pcb, obj,
                             progOverride ? progOverride
@@ -498,7 +624,7 @@ static Value vmConstructFinish(VmPcb* pcb,
     // construct "finishing" silently mid load_all (gs froze at loads=3697,
     // scheduler idle) — without naming the plan there was no way to tell a
     // legit completion from a wrong one.
-    if (getenv("LPCVM_CTRACE")) {
+    if (g_ctraceOn) {
         std::cerr << "[construct-done] obj="
                   << (plan->obj ? plan->obj->key() : std::string("<null>"))
                   << " failed=" << failed

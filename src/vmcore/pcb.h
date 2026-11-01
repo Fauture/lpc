@@ -239,6 +239,7 @@ struct VmPcb : std::enable_shared_from_this<VmPcb> {
     // ---- time slice (master process: 原版 runTicks) ----
     int yieldEvery = 0;
     int yieldCountdown = 0;
+    uint64_t instrCount = 0;   // [loopsplit] 本次 run() 已执行指令数
     // True when the last exit was a runTicks/relinquish SLICE yield (not a
     // park): the resume continues WITHOUT pushing a value — relinquish()
     // pushed its 1 before yielding (the old core's exact rule).

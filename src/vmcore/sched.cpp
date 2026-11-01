@@ -41,6 +41,10 @@
 namespace lpc {
 namespace vmcore {
 
+// [性能] CTRACE 环境开关启动时缓存: wakeEvent/park 每次都 getenv 会在
+// boot 高频事件路径上线性扫描环境块+锁。
+static const bool g_ctraceOn = ::getenv("LPCVM_CTRACE") != nullptr;
+
 using lpc::vmchainBegin;
 using lpc::vmchainEnd;
 using lpc::vmchainRun;
@@ -191,7 +195,7 @@ VmPcb* Scheduler::spawnEfunThread(VmObject* owner,
                                   const std::shared_ptr<struct ClosureValue>& cl) {
     auto p = makePcb(*impl_, owner, "<efun-thread>", {});
     p->threadClosure = cl;
-    if (getenv("LPCVM_CTRACE")) {
+    if (g_ctraceOn) {
         std::cerr << "[spawn-efun-thread] tid=" << p->tid
                   << " fn=" << cl->functionName << "\n";
         std::cerr.flush();
@@ -358,7 +362,7 @@ void Scheduler::wakeQueueOne(const std::string& qkey) {
 }
 
 void Scheduler::wakeEvent(const std::string& ename, uint32_t raisedMask) {
-    const bool ctrace = getenv("LPCVM_CTRACE") && ename.compare(0, 11, "ev_readetcd") == 0;
+    const bool ctrace = g_ctraceOn && ename.compare(0, 11, "ev_readetcd") == 0;
     if (vmcore::traceOn() || ctrace) {
         std::cerr << "[raise] ev=" << ename << " mask=0x" << std::hex
                   << raisedMask << std::dec;
@@ -448,10 +452,12 @@ void Scheduler::parkCurrent(const ResumeCond& cond) {
         std::cerr << "[sched-park] SuspendSignal outside a process (dropped)\n";
         return;
     }
-    if (getenv("LPCVM_CTRACE")) {
+    if (g_ctraceOn) {
         std::cerr << "[park] tid=" << p->tid << " kind=" << cond.kind
                   << " ev=" << cond.ename << " q=" << cond.qkey
-                  << " fd=" << cond.fd << " entry=" << p->entry
+                  << " fd=" << cond.fd << " wakeAt=" << cond.wakeAtMs
+                  << " now=" << impl_->nowMs()
+                  << " entry=" << p->entry
                   << " frames=[" << p->frameChainText(6) << "]\n";
         std::cerr.flush();
     }
@@ -690,7 +696,7 @@ static void finishTopConstructPlan(Scheduler::Impl& im,
             // when the loading process resumes, before fresh daemons run).
             Registry::instance().markInitialized(plan->obj->key());
         }
-        if (getenv("LPCVM_CTRACE")) {
+        if (g_ctraceOn) {
             std::cerr << "[construct-done] obj=" << plan->obj->key()
                       << " failed=" << failed << "\n";
         }
@@ -730,8 +736,41 @@ static void finishConstruct(Scheduler::Impl& im,
     }
 }
 
-static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
-    // currentProcess snapshot/restore: a nested process run (execOnMain from
+// park 窗口取证 (LPCVM_LOOPWATCH 开启时): 打印 pcb 上每个循环 ctrl 的
+// (帧, 槽, ctrl 指针, 栈槽 variant index)。park 前与 resume 时各打一次,
+// 两条日志用 tid 串联 —— 指针或 idx 对不上就是 park 期间有人搅了栈。
+static void loopWatchDump(const char* tag, const VmPcb* p) {
+    static const bool on = getenv("LPCVM_LOOPWATCH") != nullptr;
+    if (!on) return;
+    std::cerr << "[loopwatch-" << tag << "] tid=" << p->tid
+              << " stack=" << p->stack.size()
+              << " frames=" << p->frames.size();
+    for (size_t fi = 0; fi < p->frames.size(); ++fi) {
+        for (const auto& kv : p->frames[fi].loops) {
+            const int slot = kv.first;
+            const auto& ctrl = kv.second;
+            unsigned char idx = 99;
+            const void* ptr = nullptr;
+            if (slot >= 0 && static_cast<size_t>(slot) < p->stack.size() &&
+                p->stack[static_cast<size_t>(slot)].value.index() == 9) {
+                const auto& sp = std::get<std::shared_ptr<LoopCtrl>>(
+                    p->stack[static_cast<size_t>(slot)].value);
+                ptr = sp.get();
+            }
+            idx = slot >= 0 && static_cast<size_t>(slot) < p->stack.size()
+                      ? static_cast<unsigned char>(
+                            p->stack[static_cast<size_t>(slot)].value.index())
+                      : 99;
+            std::cerr << " f" << fi << ":s" << slot << "=p" << ptr
+                      << "/i" << static_cast<int>(idx) << "(m" << ctrl.get()
+                      << ")";
+        }
+    }
+    std::cerr << "\n";
+    std::cerr.flush();
+}
+
+static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {    // currentProcess snapshot/restore: a nested process run (execOnMain from
     // inside a process) must not leave ITS process behind — get_thread_id()
     // changing inside one LPC statement is the [vmown]/9112 failure class.
     auto prevProc = im.currentProcess;
@@ -776,14 +815,13 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         }
     } tidBack{im, p};
 
-    const bool wd = getenv("LPCVM_CTRACE") != nullptr;
+    const bool wd = g_ctraceOn;
     if (wd) {
         std::lock_guard<std::mutex> lk(im.mtx);
         im.runSince[p->tid] = {im.nowMs(), p};
     }
 
-    VmPcbSetter setPcb(p.get());   // the interpreter's current PCB
-    // Chain-probe / per-connection gate bookkeeping (driver side): one chain
+    VmPcbSetter setPcb(p.get());   // the interpreter's current PCB    // Chain-probe / per-connection gate bookkeeping (driver side): one chain
     // is in flight while this process runs; a parked continuation keeps
     // counting until its chain really ends.
     const int64_t cno = p->clientNo;
@@ -849,7 +887,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
                     // Ready made it spin between requeue and runProcess with
                     // zero progress (gs boot froze mid load_all; the master
                     // plan never completed and 8160 never opened).
-                    if (getenv("LPCVM_CTRACE")) {
+                    if (g_ctraceOn) {
                         std::cerr << "[construct-nopark] obj="
                                   << (p->construct->obj
                                           ? p->construct->obj->key()
@@ -893,6 +931,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
             // Resume — the construction's retHook chain advances ITSELF when
             // a step frame returns (原版 vm_hookCallbackWhenReturn 语义):
             // no driver loop here.  vmResume runs to the next chain end.
+            loopWatchDump("resume", p.get());
+            p->cond.kind = 0;   // no longer parked; guards see a clean pcb
             if (vmcore::traceOn()) {
                 std::cerr << "[resume] tid=" << p->tid
                           << " slice=" << (p->sliceYield ? 1 : 0)
@@ -903,6 +943,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
             }
             if (p->sliceYield) {
                 p->sliceYield = false;
+                loopWatchDump("sliceresume", p.get());
                 result = vmResumeSlice(p.get());
             } else {
                 if (p->resumeHook) {
@@ -945,6 +986,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         // shared slot — two processes never share a PCB).
         p->state = VmPcb::State::Parked;
         chainExit.parked = true;
+        loopWatchDump("park", p.get());
         vmchainPark(cno, chainKey, p.get(), p->entry, p->cond.kind,
                     p->cond.qkey.empty() ? p->cond.ename : p->cond.qkey);
         Scheduler::instance().parkCurrent(p->cond);
@@ -954,7 +996,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         p->state = VmPcb::State::Ready;
         p->sliceYield = true;
         chainExit.parked = true;   // the run exited mid-chain (will RESUME)
-        if (getenv("LPCVM_CTRACE")) {
+        loopWatchDump("slicepark", p.get());
+        if (g_ctraceOn) {
             std::cerr << "[slice-requeue] tid=" << p->tid << " inReady="
                       << p->inReady << "\n";
             std::cerr.flush();
@@ -962,7 +1005,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         Scheduler::instance().requeue(p.get());
     } catch (const ThreadExitSignal&) {
         // exit/exit_thread: the chain ended (interp already cleaned the PCB).
-        if (p->construct && getenv("LPCVM_CTRACE")) {
+        if (p->construct && g_ctraceOn) {
             std::cerr << "[threadexit-kill] tid=" << p->tid << " obj="
                       << (p->obj ? p->obj->key() : std::string("<null>"))
                       << " chain=[" << p->frameChainText(8) << "]\n";
@@ -1010,7 +1053,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         // Deferred real-frees: an object destructed from inside its own call
         // chain leaves the registry only now (the issuing process finished).
         vmFlushPendingFrees(static_cast<const void*>(p.get()));
-    } else if (p->state != VmPcb::State::Parked && getenv("LPCVM_CTRACE")) {
+    } else if (p->state != VmPcb::State::Parked && g_ctraceOn) {
         // Process left runProcess neither Done nor Parked — its PCB must be
         // reachable somewhere (ready/tidStarved); if not, it is LOST.
         bool reachable = p->inReady;
@@ -1040,7 +1083,7 @@ void Scheduler::run() {
     impl_->schedThreadId = std::this_thread::get_id();
     while (true) {
         lpc::liveness().schedIters.fetch_add(1, std::memory_order_relaxed);
-        if (getenv("LPCVM_CTRACE") && !impl_->runSince.empty()) {
+        if (g_ctraceOn && !impl_->runSince.empty()) {
             const int64_t now = impl_->nowMs();
             for (auto it = impl_->runSince.begin();
                  it != impl_->runSince.end();) {
@@ -1203,7 +1246,7 @@ void Scheduler::run() {
                     // A DUE timer whose pcb gets skipped here NEVER wakes
                     // (the entry is erased right above) — this silently ate
                     // the master's post_init sleep once; log the reason.
-                    if (getenv("LPCVM_CTRACE") && tp)
+                    if (g_ctraceOn && tp)
                         std::cerr << "[timer-skip] tid=" << tp->tid
                                   << " evW=" << tp->eventWoken
                                   << " st=" << static_cast<int>(tp->state)
