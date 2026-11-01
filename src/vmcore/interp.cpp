@@ -1455,10 +1455,13 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 Value v = pcb->stack.back().value;
                 int got = vmTypeOf(v);
                 // A really-freed object behaves as the int 0 (原版引用失效):
-                // is_object() must report 0 for it.
+                // is_object() must report 0 for it.  alive==nullptr 的对象值
+                // (匿名/未锚定, 如旧版 previous_object 的 make_object) 视为
+                // 活 —— 与 builtins objectValueAlive 语义一致 (lw62 实锤:
+                // 两处语义相反曾致 punishd 永久重试)。
                 if (got == t && t == 10 && v.index() == 7) {
                     auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
-                    if (!ov || !ov->alive || !ov->alive->load()) got = -1;
+                    if (!ov || (ov->alive && !ov->alive->load())) got = -1;
                 }
                 if (vmcore::traceOn() && t == 7 && got != 7) {
                     std::cerr << "[ismp-miss] got=" << got

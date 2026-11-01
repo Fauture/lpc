@@ -1322,6 +1322,13 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                       << "' resolved="
                       << (pvOb ? pvOb->key() : "<null>")
                       << "\n";
+        // [isobj-fix] 返回 Registry 锚定的对象值 (携带真实 alive 标志)。
+        // 原 make_object(name) 的 alive==nullptr 在 op36 (typeof 10) 的
+        // is_object 语义里被判非对象 (lw62: punishd.do_init 的
+        // is_object(triggerd->query_combat_trigger(...)) 恒 0 → 永久重试),
+        // 而同值在 builtins is_object (objectValueAlive) 里却是活 —— 两个
+        // 实现语义相反。统一锚定到注册表对象。
+        if (pvOb) return Registry::makeObjectValue(pvOb);
         return make_object(pcb->previousObjectName);
     }
     if (h == 0xABCB23648594386Bull) {
