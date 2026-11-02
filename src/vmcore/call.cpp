@@ -62,18 +62,44 @@ static Value popValueNested(VmPcb* pcb) {
 // ---------------------------------------------------------------------------
 static void pushArgs(VmPcb* pcb, const OriginalFunction* fn,
                      const std::vector<Value>& args) {
-    const int n = fn->argCount;
+    // Push ONLY the caller-supplied args (param0 ends on top).  Do NOT pad
+    // missing params with placeholders: the callee's check_args_num +
+    // resort_stack prologue executes the DECLARED DEFAULTS for them
+    // (original vm semantics).  Padding here made checkargs see
+    // passed==argCount and skip the default block — build_msg_message's
+    // server/show_extra reached the wire as ""/0 and chat packets lost the
+    // 线路 (server name) field.
     const int passed = static_cast<int>(args.size());
-    bool placeholder = false;
-    if (n == 0 && passed == 0) {
+    const int n = fn ? fn->argCount : 0;
+    if (passed == 0 && n == 0) {
         pushItem(pcb, makeItem(Value{}));   // frame slot so bp >= 0
-        placeholder = true;
+        return;
     }
-    const int pushCount = (passed > n) ? passed : n;
-    for (int i = pushCount - 1; i >= 0; --i)
-        pushValue(pcb, i < static_cast<int>(args.size())
-                            ? args[static_cast<size_t>(i)] : Value{});
-    (void)placeholder;
+    for (int i = passed - 1; i >= 0; --i) {
+        const Value& v = args[static_cast<size_t>(i)];
+        // CrossVmRef 载体 (dispatchEfunClosure 的转发型引用): 还原为栈引用
+        // 槽 —— 原版 vm_callFunPtr 把 pArgs 原样压栈 (vptr 保留), 被调方
+        // 参数槽就是同一 vptr, 读 (slotValue) / 写 (op77 storeItem) 都落在
+        // 调用方的槽上。
+        if (v.index() == 11) {
+            const auto& r =
+                std::get<std::shared_ptr<CrossVmRef>>(v);
+            if (r && r->slotIndex >= 0) {
+                StackItem ref;
+                ref.isRef = true;
+                ref.slotIndex = r->slotIndex;
+                pushItem(pcb, ref);
+                continue;
+            }
+        }
+        pushValue(pcb, v);
+    }
+}
+
+// The frame's argNum: how many args the caller REALLY supplied (not the
+// declared count) — check_args_num compares against this.
+static int passedArgCount(const std::vector<Value>& args) {
+    return static_cast<int>(args.size());
 }
 
 // Resolve the frame's string table: the function's own table when the .o
@@ -133,7 +159,7 @@ bool vmCallPushFrame(VmPcb* pcb, VmObject* obj, const VmProgram* prog,
     if (!pcb || !fn) return false;
     pushArgs(pcb, fn, args);
     return pushFrameInPlace(pcb, obj, prog, fn,
-                            fn->argCount, true, padArgs);
+                            passedArgCount(args), true, padArgs);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +360,7 @@ Value vmRunFunction(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
     VmPcbSetter setPcb(pcb);
     pushArgs(pcb, fn, args);
     pushFrameInPlace(pcb, obj, obj ? obj->prog() : nullptr, fn,
-                     fn->argCount, false, 0);
+                     passedArgCount(args), false, 0);
     Interp::run(pcb);
     return pcb->returnValue;
 }
@@ -377,7 +403,7 @@ Value vmApplySync(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
     pushArgs(pcb, fn, args);
     pushFrameInPlace(pcb, obj, progOverride ? progOverride
                                             : (obj ? obj->prog() : nullptr),
-                     fn, fn->argCount, true, 0);
+                     fn, passedArgCount(args), true, 0);
     Interp::runNested(pcb, depth);
     return popValueNested(pcb);
 }
@@ -405,7 +431,7 @@ bool vmPushFunCall(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
     return pushFrameInPlace(pcb, obj,
                             progOverride ? progOverride
                                          : (obj ? obj->prog() : nullptr),
-                            fn, fn->argCount, true, 0);
+                            fn, passedArgCount(args), true, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +515,7 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
         }
     }
     pushArgs(pcb, fn, args);
-    pushFrameInPlace(pcb, obj, obj->prog(), fn, fn->argCount, true, 0);
+    pushFrameInPlace(pcb, obj, obj->prog(), fn, passedArgCount(args), true, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +543,7 @@ static void broadcastStartNext(VmPcb* pcb, const std::shared_ptr<BroadcastState>
         }
         pushArgs(pcb, fn, st->args);
         pcb->previousObjectName = st->caller ? st->caller->key() : std::string();
-        pushFrameInPlace(pcb, obj, obj->prog(), fn, fn->argCount, true, 0);
+        pushFrameInPlace(pcb, obj, obj->prog(), fn, passedArgCount(st->args), true, 0);
         vmHookCallbackWhenReturn(pcb, [pcb, st](Value& rv) {
             if (st->idx < st->targets.size()) {
                 st->results->items.push_back(rv);
@@ -710,7 +736,7 @@ static void vmConstructRunStep(VmPcb* pcb,
     ++plan->idx;
     pushArgs(pcb, st.fn, st.args);
     pushFrameInPlace(pcb, plan->obj, plan->obj->prog(), st.fn,
-                     st.fn->argCount, true, 0);
+                     passedArgCount(st.args), true, 0);
     vmHookCallbackWhenReturn(pcb, [pcb, plan](Value& rv) {
         if (plan->idx >= plan->steps.size()) {
             rv = vmConstructFinish(pcb, plan);   // rv = the efun return value

@@ -1091,8 +1091,16 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 if (ok && idx >= 0)
                     ok = !pcb->frames.empty() &&
                          idx < pcb->frames.back().argNum;
+                // Missing/late arg: the original answers the out-of-range
+                // param read with an UNDEFINED value (type 0), not int 0 —
+                // mudlib code like time_to_string() { is_int(t) ? t : time() }
+                // called with no args relies on is_int(undefined)==0 to fall
+                // back to time(); pushing int 0 made is_int(0)==1 and the
+                // caller saw 19700101080000 (aaa account UPDATE wrote epoch-0
+                // last_login_time, affected=0, and every mall purchase then
+                // failed with 余额不足).
                 Value o55v =
-                    (ok ? slotValue(pcb, slot) : make_int(0));
+                    (ok ? slotValue(pcb, slot) : Value{});
                 auto o55t1 = o55.load(std::memory_order_relaxed)
                                  ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
@@ -1199,7 +1207,14 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                             s.value.index() == 9 && sv.index() != 9)
                             std::cerr << "[loop-slot-kill] op77 slot=" << slot
                                       << " ip=" << (pcb->ip - 1) << "\n";
-                        s.value = sv;
+                        // 原版 vm_setLocalVar (0x808f6dc): 目标槽是引用
+                        // (type 8 / vptr) 时把值写穿到 vptr 指向处 ——
+                        // call_other 转发的引用参数 (precost_coin 的
+                        // result = ([...])) 靠这条落回调用方栈槽。
+                        if (s.isRef)
+                            storeItem(pcb, s, sv);
+                        else
+                            s.value = sv;
                     } else {
                         popValue(pcb);
                     }
@@ -1648,6 +1663,32 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     if (prog) fn = prog->fnAtIndex(funIndex);
                 }
                 if (fn) {
+                    {
+                        // [skilldbg] global-fn path (call_in_user_fun):
+                        // register_skill_ob/get_skill_ob run through HERE, not
+                        // op8 — probe the actual no values.
+                        static const std::atomic<bool>& skG =
+                            lpc::dynProbeFlag("LPCVM_SKILLDBG");
+                        if (skG.load(std::memory_order_relaxed) &&
+                            (fn->name == "register_skill_ob" ||
+                             fn->name == "get_skill_ob") &&
+                            !pcb->stack.empty()) {
+                            std::cerr << "[skilldbg-g] " << fn->name
+                                      << "(arg0="
+                                      << to_string(pcb->stack.back().value, false)
+                                      .substr(0, 40)
+                                      << ") argc=" << (flags & 0x3F) << "\n";
+                            std::cerr.flush();
+                            if (fn->name == "get_skill_ob") {
+                                vmcore::vmHookCallbackWhenReturn(
+                                    pcb, [](Value& rv) {
+                                        std::cerr << "[skilldbg-g]   -> idx"
+                                                  << rv.index() << "\n";
+                                        std::cerr.flush();
+                                    });
+                            }
+                        }
+                    }
                     // [rpidbg] post_init 永不排空取证: register_post_init 的
                     // 每次调用都打印闭包目标 + 调用者 —— 每轮循环重复出现的
                     // 名字就是卡死 boot 的重注册者。
@@ -1771,7 +1812,10 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         lpc::dynProbeFlag("LPCVM_OP8DBG");
                     if (td.load(std::memory_order_relaxed) &&
                         (funName == "query_combat_trigger" ||
-                         funName == "register_trigger") &&
+                         funName == "register_trigger" ||
+                         funName == "register_skill_ob" ||
+                         funName == "get_skill_ob" ||
+                         funName == "set_attrib") &&
                         !items.empty() && items.back().value.index() == 4) {
                         const std::string s = std::get<SharedString>(
                                                   items.back().value)
@@ -1785,6 +1829,32 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         std::cerr << "[trg-dbg] " << funName << " arg0='"
                                   << s.substr(0, 40) << "' hex=" << hex
                                   << "\n";
+                    }
+                }
+                {
+                    // [skilldbg] 0x21c1 empty skill list: all_skills[no] stays
+                    // empty when register_skill_ob gets no==0 (importd
+                    // set_attrib never landed "no" in the skill's dbase) or
+                    // get_skill_ob misreads the global mapping.  Log the
+                    // actual no values and lookup results.
+                    static const std::atomic<bool>& skFlag =
+                        lpc::dynProbeFlag("LPCVM_SKILLDBG");
+                    if (skFlag.load(std::memory_order_relaxed) &&
+                        (funName == "register_skill_ob" ||
+                         funName == "get_skill_ob")) {
+                        std::string a0;
+                        if (!items.empty())
+                            a0 = to_string(items.back().value, false);
+                        std::cerr << "[skilldbg] " << funName << "(" << a0
+                                  << ") argc=" << items.size() << "\n";
+                        std::cerr.flush();
+                        if (funName == "get_skill_ob") {
+                            vmcore::vmHookCallbackWhenReturn(pcb, [](Value& rv) {
+                                std::cerr << "[skilldbg]   -> idx"
+                                          << rv.index() << "\n";
+                                std::cerr.flush();
+                            });
+                        }
                     }
                 }
                 auto pushItemsBack = [&]() {
@@ -2292,6 +2362,25 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         ? 0 : pcb->frames.back().fn->argCount;
                 const int maxArgNo = declared;
                 if (!pcb->frames.empty()) pcb->frames.back().maxArgNo = maxArgNo;
+                {
+                    // [defdbg] build_msg_message's server/show_extra came out
+                    // 0/"" on the wire while the time() default applied —
+                    // watch which functions skip the default block and with
+                    // what passed/declared counts.
+                    static const std::atomic<bool>& dd =
+                        lpc::dynProbeFlag("LPCVM_DEFDBG");
+                    if (dd.load(std::memory_order_relaxed) && !pcb->frames.empty() &&
+                        pcb->frames.back().fn) {
+                        const std::string& fnn = pcb->frames.back().fn->name;
+                        if (fnn.rfind("build_msg_message", 0) == 0 ||
+                            fnn.rfind("build_msg_long_message", 0) == 0)
+                            std::cerr << "[defdbg] checkargs " << fnn
+                                      << " passed=" << passed
+                                      << " declared=" << declared
+                                      << " skip=" << skipAll << "\n",
+                                std::cerr.flush();
+                    }
+                }
                 // All declared args passed -> skip the inline default block;
                 // otherwise fall through (defaults + resort_stack run).
                 if (passed >= maxArgNo)
@@ -2314,6 +2403,21 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         if (missing < defaultPushed) keep = missing;
                     }
                     if (keep < 0) keep = 0;
+                    {
+                        static const std::atomic<bool>& dd =
+                            lpc::dynProbeFlag("LPCVM_DEFDBG");
+                        if (dd.load(std::memory_order_relaxed) && f.fn) {
+                            const std::string& fnn = f.fn->name;
+                            if (fnn.rfind("build_msg_message", 0) == 0 ||
+                                fnn.rfind("build_msg_long_message", 0) == 0)
+                                std::cerr << "[defdbg] resort " << fnn
+                                          << " pushed=" << defaultPushed
+                                          << " keep=" << keep
+                                          << " argNum=" << f.argNum
+                                          << " maxArgNo=" << f.maxArgNo << "\n",
+                                    std::cerr.flush();
+                        }
+                    }
                     std::vector<StackItem> defaults;
                     for (int i = defaultPushed - keep; i < defaultPushed; ++i)
                         defaults.push_back(

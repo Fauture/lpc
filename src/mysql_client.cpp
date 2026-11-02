@@ -506,9 +506,11 @@ bool MysqlClient::execute(const std::string& sql, Result& out, std::string& erro
         if (e.ok && e.remaining() >= 6 && e.p[0] == '#') { e.u8(); e.u8(); e.u8(); e.u8(); e.u8(); e.u8(); }
         msg = e.nullTerm();
         error = "SQL error " + std::to_string(code) + ": " + msg;
+        lastError_ = error;
         sqlLog("SQLERR", -1);
         return false;
     }
+    lastError_.clear();  // every success wipes the sticky error
     if (first[0] == 0x00) {
         // OK packet (write statement)
         Cursor o(first);

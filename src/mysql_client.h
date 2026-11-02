@@ -44,6 +44,10 @@ public:
     // or server ERR packets.  Write statements fill affectedRows/insertId.
     bool execute(const std::string& sql, Result& out, std::string& error);
 
+    // Last server error text (mysql_get_error efun source); empty when the
+    // most recent statement on this connection succeeded.
+    const std::string& lastError() const { return lastError_; }
+
 private:
     bool readPacket(std::vector<uint8_t>& body, std::string& error);
     bool writePacket(const std::vector<uint8_t>& body, std::string& error);
@@ -53,6 +57,7 @@ private:
     uintptr_t sock_ = 0;  // SOCKET (kept opaque to avoid winsock in the header)
     uint8_t seq_ = 0;
     std::string serverSalt_;
+    std::string lastError_;
     uint32_t serverCapabilities_ = 0;
 };
 

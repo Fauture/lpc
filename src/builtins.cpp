@@ -4569,7 +4569,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "mysql_get_error" || name == "mysql_finalize" ||
+    if (name == "mysql_get_error") {
+        // mysql_get_error(cno) -> last server error text for that connection
+        // ("" when the last statement succeeded).  The original stub returned
+        // 0, which swallowed every SQL failure into "update_account_info
+        // mysql error: 0" with no diagnostic.
+        if (!args.empty()) {
+            int cno = static_cast<int>(as_int(args[0]));
+            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(cno);
+            if (it != mysqlHandles().end() && it->second.client)
+                return make_string(it->second.client->lastError());
+        }
+        return make_string("");
+    }
+    if (name == "mysql_finalize" ||
         name == "mysql_num_fields" || name == "mysql_int_field" ||
         name == "mysql_get_insert_id") return make_int(0);
     if (name == "mysql_execute") {
@@ -4601,7 +4615,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr << "[mysql_execute] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
             MysqlClient::Result res;
             std::string err;
+            static const std::atomic<bool>& sqlDbg = lpc::dynProbeFlag("LPCVM_MYSQLDBG");
+            bool dbg = sqlDbg.load(std::memory_order_relaxed) &&
+                       (sql.rfind("update account", 0) == 0 ||
+                        sql.rfind("INSERT INTO account", 0) == 0 ||
+                        sql.rfind("insert into account", 0) == 0);
+            if (dbg) {
+                std::cerr << "[mysqldbg] cno=" << cno << " sql=" << sql << "\n";
+                std::cerr.flush();
+            }
             if (mysqlExecReal(cno, sql, res, err)) {
+                if (dbg) {
+                    std::cerr << "[mysqldbg] OK affected=" << res.affectedRows << "\n";
+                    std::cerr.flush();
+                }
                 if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                     std::cerr << "[mysql_execute] OK cno=" << cno << " affected=" << res.affectedRows
                               << " resultSet=" << (res.hasResultSet ? 1 : 0) << "\n";
@@ -4624,6 +4651,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             }
             if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
                 std::cerr << "[mysql_execute] ERR cno=" << cno << " err=" << err << "\n";
+            if (dbg) {
+                std::cerr << "[mysqldbg] ERR " << err << "\n";
+                std::cerr.flush();
+            }
             return make_int(0);
         }
         return make_int(0);

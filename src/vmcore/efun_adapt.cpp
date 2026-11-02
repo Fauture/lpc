@@ -2318,9 +2318,25 @@ Value dispatchEfunClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
     // semantics preserved for closures like (: call_other, path, fn :) that
     // forward by-ref arguments).
     std::vector<Value> args = cl->boundArgs;
+    // 原版 (vm_callFunPtr 0x809441c): funptr 的 pArgs 经 vm_pushValue 原样
+    // 压栈 —— vptr 引用原样进栈; vm_callInOtherFun(0x8094cd8) 不搬运参数,
+    // 被调方参数槽就是同一 vptr, 被调方的读写直接落在调用方栈槽上。
+    // 跨 vector<Value> 边界时用 CrossVmRef 载体携带【栈槽】引用 (仅限
+    // call_other/call_other_arg 型 efun closure —— 只有转发型 efun 需要
+    // 保引用; 普通 efun 收参数按值, deref 即原版 vm_popValue 语义)。
+    // pushArgs 见到 CrossVmRef 会还原成栈引用槽 (call.cpp)。
+    const bool forwarding =
+        cl->functionName == "call_other" || cl->functionName == "call_other_arg";
     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) {
         StackItem it = Interp::popItem(pcb);
-        args.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+        if (forwarding && it.isRef && it.slotIndex >= 0) {
+            auto r = std::make_shared<CrossVmRef>();
+            r->vm = pcb;
+            r->slotIndex = it.slotIndex;
+            args.push_back(make_crossvm_ref(std::move(r)));
+        } else {
+            args.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+        }
     }
     Value r = dispatchEfunByName(pcb, cl->functionName, args);
     if (pcb->efunTakeover) {
