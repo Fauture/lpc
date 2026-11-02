@@ -2089,6 +2089,28 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                       << tk << "::" << funName << "\n";
                             std::cerr.flush();
                         }
+                        // [monlist] 野外暗雷取证: satisfy_template_condition
+                        // 的 env->query("monster_list") 返回值 (lw127 实锤
+                        // standard 模板走 [57] !sizeof return —— 房间
+                        // monster_list 空数组, room.list 明明有
+                        // ({huli,yegou}), 差异在 import/form 解析或 << 合并)。
+                        if (funName == "query" && argn == 1 && !items.empty() &&
+                            items[0].value.index() == 4) {
+                            const std::string qk =
+                                std::get<SharedString>(items[0].value).str();
+                            if (qk == "monster_list" || qk == "template" ||
+                                qk == "map_index" || qk == "exits") {
+                                const std::string tk0 = target->key();
+                                vmcore::vmHookCallbackWhenReturn(
+                                    pcb, [tk0, qk](Value& rv) {
+                                        std::string s = to_string(rv, false);
+                                        std::cerr << "[monlist] " << tk0
+                                                  << " :: " << qk << " -> "
+                                                  << s.substr(0, 150) << "\n";
+                                        std::cerr.flush();
+                                    });
+                            }
+                        }
                         // Capture get_start_room's actual result — the save's
                         // "position" comes verbatim from it; shows which branch
                         // produced the persisted room/x/y/dir.

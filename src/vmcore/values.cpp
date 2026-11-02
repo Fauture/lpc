@@ -3,6 +3,7 @@
 // ===========================================================================
 #include "values.h"
 #include "trace.h"
+#include "original_vm.h"
 
 #include <cmath>
 #include <cstring>
@@ -191,6 +192,33 @@ Value lshValues(const Value& a, const Value& b) {
     if (a.index() == 6 && b.index() == 6) {
         auto left = std::get<std::shared_ptr<MappingValue>>(a);
         auto right = std::get<std::shared_ptr<MappingValue>>(b);
+        // [lshdbg] import 合并取证: room import 的 dbase<<room_info 若左值
+        // 是副本（非 dbase 引用）合并即丢失 (monster_list undefined 实锤)。
+        static const std::atomic<bool>& ldFlag =
+            lpc::dynProbeFlag("LPCVM_LSHDBG");
+        if (ldFlag.load(std::memory_order_relaxed)) {
+            const auto lk = left->items();
+            const auto rk = right->items();
+            if (rk.size() >= 4) {   // room_info 这类多字段合并才打
+                std::cerr << "[lshdbg] merge left_sz=" << lk.size()
+                          << " right_sz=" << rk.size() << " keys=";
+                int n = 0;
+                for (const auto& kv : rk) {
+                    if (n++ >= 10) break;
+                    std::cerr << to_string(kv.first, false).substr(0, 20)
+                              << ",";
+                }
+                // monster_list 的实际值 (暗雷取证: 合并时的真实内容)
+                for (const auto& kv : rk) {
+                    if (to_string(kv.first, false) == "monster_list") {
+                        std::cerr << " ML="
+                                  << to_string(kv.second, false).substr(0, 120);
+                        break;
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
         for (const auto& kv : right->items()) left->insert(kv.first, kv.second);
         return left;   // same shared_ptr, mutated in place
     }
