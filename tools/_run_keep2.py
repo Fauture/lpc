@@ -69,7 +69,12 @@ if os.environ.get('EXTRA_LPCVM'):
         else:
             env[k] = '1'
 
-clear_db()
+# KEEP_DB=1: skip the destructive wipe (user asked to keep progress).
+# Default behavior remains the documented wipe for a fresh run.
+if os.environ.get('KEEP_DB') != '1':
+    clear_db()
+else:
+    print('KEEP_DB=1: keeping database as-is', flush=True)
 procs = []
 for name in ['aaa', 'dba', 'ccs', 'gs']:
     fn = os.path.join(LOG_DIR, 'live_%s.txt' % name)

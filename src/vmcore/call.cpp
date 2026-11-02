@@ -184,15 +184,39 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
         if (!pcb->stack.empty()) pcb->returnValue = Interp::popValue(pcb);
         else pcb->returnValue = make_int(0);
     } else {
-        const size_t expectedVoid = static_cast<size_t>(f.bp) + 1;
-        if (pcb->stack.size() == expectedVoid)
+        // 原版 vm_returnFromFun (0x8094978): 残留槽数 v8 相对
+        // "参数+局部全在栈上" 的期望位置计 —— v8 = bp - localCount - sp
+        // (原版向下栈)。本 VM 向上栈等价: 期望 void 位置 =
+        // bp + 1 + localCount (参数 [bp-argNum+1..bp], 局部
+        // [bp+1..bp+localCount] 由 op27 enter 压入)。
+        // 此前漏加 localCount: localCount==1 的函数正常跑完 ret 时
+        // stack == expectedVoid+1 被误判为"返回了 1 个值", 局部槽残留
+        // 内容成了返回值 —— test_popup_menu 局部槽恰有玩家对象,
+        // create_menu 的 is_object 判真 → 剧情战斗走错菜单分支
+        // (lw108 fn-trace 逐指令栈深实锤: bp=87 stack=89 localCount=1)。
+        const size_t expectedVoid = static_cast<size_t>(f.bp) + 1 +
+                                    static_cast<size_t>(f.localCount);
+        const size_t residual =
+            pcb->stack.size() > expectedVoid
+                ? pcb->stack.size() - expectedVoid : 0;
+        if (residual == 0)
             pcb->returnValue = Value{};               // void return (undefined)
-        else if (pcb->stack.size() == expectedVoid + 1)
+        else if (residual == 1)
             pcb->returnValue = Interp::popValue(pcb);
-        else if (!pcb->stack.empty())
-            pcb->returnValue = Interp::popValue(pcb); // non-canonical: take top
-        else
-            pcb->returnValue = Value{};
+        else {
+            // 原版: 无原型函数残留>1 = vm_endProcess; 有原型 = 报错。
+            // 先留兜底取栈顶 + 常开日志定位残余调用点 (对齐收紧一步到位)。
+            std::cerr << "[ret-mismatch] fn="
+                      << (f.fn ? f.fn->name : std::string("<ctx>"))
+                      << " residual=" << residual
+                      << " bp=" << f.bp << " locals=" << f.localCount
+                      << " depth=" << pcb->stack.size() << "\n";
+            std::cerr.flush();
+            if (!pcb->stack.empty())
+                pcb->returnValue = Interp::popValue(pcb);
+            else
+                pcb->returnValue = Value{};
+        }
     }
     pcb->returned = true;
     if (vmcore::traceOn()) {
