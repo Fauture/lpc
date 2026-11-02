@@ -1339,7 +1339,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                   << (curProg(pcb) ? curProg(pcb)->src().sourceName : std::string("(null)"))
                                   << " obj=" << (curObj(pcb) ? curObj(pcb)->key() : std::string("(null)"))
                                   << " ip=" << (pcb->ip - 1) << "\n";
-                    pushValue(pcb, make_int(0));
+                    pushValue(pcb, Value{});   // failed closure: void (原版 pushVoid 语义)
                 }
                 break;
             }
@@ -1803,7 +1803,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                                  : pcb->frames.back().fn->name)
                               << "\n";
                 }
-                pushValue(pcb, make_int(0));
+                pushValue(pcb, Value{});   // missing fn: void (对齐 vm_pushVoid)
                 break;
             }
             case 8: { // call_in_other_fun_ex
@@ -1968,14 +1968,24 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                             std::cerr.flush();
                         }
                     }
-                    pushValue(pcb, make_int(0));   // missing/destructed: call dropped
+                    pushValue(pcb, Value{});   // missing/destructed: call dropped (void, 非 int 0)
                     break;
                 }
                 const OriginalFunction* fn = funName.empty()
                     ? target->prog()->fnAtIndex(funIndex)
                     : target->prog()->findFn(funName);
                 if (!fn) {
-                    pushValue(pcb, make_int(0));   // missing function: 0
+                    // 原版 vm_callInOtherFun (0x8094cd8): 函数缺失 →
+                    // flags&4 (静默) 时 popNStack(argn) + vm_pushVoid() ——
+                    // 压 **undefined** 而非 0。mudlib 依赖 undefined!=0:
+                    // easy_task.go_to_next_state 的
+                    // `0 == easy_taskd->prepare_for_state(...)` 在
+                    // sub_ob(easy_task 模板)缺该函数时 (flags=4 静默) 必须为
+                    // 假, 压 int 0 使 0==0 判真 → "获取任务信息失败"弹窗
+                    // (lw114 fn-trace: call_other 后零 mudlib 帧进入=缺失实锤)。
+                    // 无 flags&4 时原版 vm_error("Function is not found.");
+                    // 本 VM 一律静默 (历史行为), 仅对齐返回值类型。
+                    pushValue(pcb, Value{});   // missing function: void
                     break;
                 }
                 VmObject* caller = pcb->frames.empty() ? nullptr
@@ -2040,7 +2050,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 }
                 pushItemsBack();
                 if (!pushFrameInPlace(pcb, target, target->prog(), fn, argn, true, 0))
-                    pushValue(pcb, make_int(0));
+                    pushValue(pcb, Value{});   // frame refused: void
                 else {
                     // LPCVM_NSDBG: capture what query("not_start_room") returns
                     // on rooms — move.c::enter_room gates start_room updates on
@@ -2130,7 +2140,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                             : std::string();
                             if (!pushFrameInPlace(pcb, thisObj, sprog, sfn,
                                                   argc, true, 0))
-                                pushValue(pcb, make_int(0));
+                                pushValue(pcb, Value{});   // frame refused: void
                             else
                                 pcb->frames.back().zeroArgPlaceholder = true;
                             break;
@@ -2149,13 +2159,13 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     }
                     // Non-closure: consume args, result 0.
                     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) popItem(pcb);
-                    pushValue(pcb, make_int(0));
+                    pushValue(pcb, Value{});   // non-closure: void
                     break;
                 }
                 auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
                 if (!cl) {
                     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) popItem(pcb);
-                    pushValue(pcb, make_int(0));
+                    pushValue(pcb, Value{});   // null closure: void
                     break;
                 }
                 // Collect the call args as ITEMS (refs stay live: the callee
@@ -2201,7 +2211,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     }
                 }
                 if (!fn || !ownerObj) {
-                    pushValue(pcb, make_int(0));
+                    pushValue(pcb, Value{});   // missing fn/owner: void
                     break;
                 }
                 // Parameter order: bound[0..N-1] then the call args.  The
@@ -2263,7 +2273,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                       cl->globalFn ? masterProgram()
                                                    : ownerObj->prog(),
                                       fn, passed, true, 0))
-                    pushValue(pcb, make_int(0));
+                    pushValue(pcb, Value{});   // frame refused: void
                 else {
                     pcb->frames.back().zeroArgPlaceholder = true;
                     // [menucond] "求师傅指点" 卡菜单战斗取证: create_menu 的

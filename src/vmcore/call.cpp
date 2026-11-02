@@ -148,7 +148,7 @@ bool pushFrameInPlace(VmPcb* pcb, VmObject* obj, const VmProgram* prog,
     pcb->code = &fn->code;
     pcb->meta = &fn->metaData;
     pcb->ip = 0;
-    pcb->returnValue = make_int(0);
+    pcb->returnValue = Value{};   // 占位: 原版 pushVoid 语义
     pcb->returned = false;
     return true;
 }
@@ -182,7 +182,7 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
     const VmFrame f = pcb->frames.back();   // copy: popped below
     if (op == 72) {
         if (!pcb->stack.empty()) pcb->returnValue = Interp::popValue(pcb);
-        else pcb->returnValue = make_int(0);
+        else pcb->returnValue = Value{};   // 栈空: void
     } else {
         // 原版 vm_returnFromFun (0x8094978): 残留槽数 v8 相对
         // "参数+局部全在栈上" 的期望位置计 —— v8 = bp - localCount - sp
@@ -539,7 +539,7 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
                       << "\n";
             std::cerr.flush();
         }
-        Interp::pushValue(pcb, make_int(0));
+        Interp::pushValue(pcb, Value{});   // 无效目标: void 结果元素
         return;
     }
     // previous_object() in the callee names the caller.
@@ -590,7 +590,7 @@ static void broadcastStartNext(VmPcb* pcb, const std::shared_ptr<BroadcastState>
         const OriginalFunction* fn =
             (obj && !obj->reallyGone()) ? obj->prog()->findFn(st->funName) : nullptr;
         if (!fn) {
-            st->results->items.push_back(make_int(0));
+            st->results->items.push_back(Value{});   // 缺函数: void 结果元素
             continue;
         }
         pushArgs(pcb, fn, st->args);
@@ -770,7 +770,7 @@ static Value vmConstructFinish(VmPcb* pcb,
         Registry::instance().markInitialized(plan->obj->key());
     if (plan->resultPromise) {
         plan->resultPromise->set_value(
-            failed ? make_int(0) : Registry::makeObjectValue(plan->obj));
+            failed ? Value{} : Registry::makeObjectValue(plan->obj));
         plan->resultPromise.reset();
     }
     if (!plan->doneEvent.empty())
@@ -778,7 +778,7 @@ static Value vmConstructFinish(VmPcb* pcb,
     if (!pcb->constructStack.empty()) pcb->constructStack.pop_back();
     pcb->construct = pcb->constructStack.empty()
                          ? nullptr : pcb->constructStack.back();
-    return failed ? Value(make_int(0)) : Registry::makeObjectValue(plan->obj);
+    return failed ? Value{} : Registry::makeObjectValue(plan->obj);
 }
 
 static void vmConstructRunStep(VmPcb* pcb,
@@ -829,7 +829,7 @@ Value vmRunConstructionSync(VmPcb* scratch,
     vmStartInlineConstruction(scratch, plan);
     if (plan->finished) {
         scratch->construct = nullptr;
-        return plan->failed ? Value(make_int(0))
+        return plan->failed ? Value{}
                             : Registry::makeObjectValue(plan->obj);
     }
     try {
@@ -838,7 +838,7 @@ Value vmRunConstructionSync(VmPcb* scratch,
         plan->failed = true;
         Registry::instance().clearConstructing(plan->obj->key());
         scratch->construct = nullptr;
-        return make_int(0);
+        return Value{};   // 构造失败: void
     }
     scratch->construct = nullptr;
     return plan->failed ? Value(make_int(0))

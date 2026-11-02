@@ -121,7 +121,7 @@ static void parkAndSuspend(VmPcb* pcb, const ResumeCond& cond,
 // ---------------------------------------------------------------------------
 Value vmInvokeClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
                       const std::vector<Value>& extra) {
-    if (!cl) return make_int(0);
+    if (!cl) return Value{};   // null closure: void
     std::vector<Value> all = cl->boundArgs;
     all.insert(all.end(), extra.begin(), extra.end());
     // globalFn closure (op23 bit7): run the master-program body with the
@@ -152,7 +152,7 @@ Value vmInvokeClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
     if (!fn) {
         if (!cl->functionName.empty())
             return dispatchEfunByName(pcb, cl->functionName, all);
-        return make_int(0);
+        return Value{};   // fn 缺失且非 efun closure: void
     }
     if (!pcb) {
         // Outside a process (should not happen on the scheduler): run on a
@@ -401,7 +401,7 @@ Value vmLoadObjectValue(const std::string& vpath,
                         const std::string& progImage) {
     VmPcb* pcb = currentPcb();
     Registry& reg = Registry::instance();
-    if (vpath.empty()) return make_int(0);
+    if (vpath.empty()) return Value{};   // load_object 失败: void
 
     // ---- dynamic image / source branch (check_server's challenge) ----
     if (!progImage.empty()) {
@@ -412,7 +412,7 @@ Value vmLoadObjectValue(const std::string& vpath,
             } catch (const std::exception& e) {
                 std::cerr << "[dyn-load] " << vpath
                           << " source compile failed: " << e.what() << "\n";
-                return make_int(0);
+                return Value{};   // compile 失败: void
             }
             const std::string key = "dyn:" + vpath;
             // Register/REPLACE the program: check_server reloads fresh content
@@ -431,7 +431,7 @@ Value vmLoadObjectValue(const std::string& vpath,
             } catch (const std::exception& e) {
                 std::cerr << "[dyn-load] " << vpath << " parse failed: "
                           << e.what() << "\n";
-                return make_int(0);
+                return Value{};   // parse 失败: void
             }
             auto progRaw = std::make_shared<VmProgram>(
                 src, [](const std::string& vp) {
@@ -447,7 +447,7 @@ Value vmLoadObjectValue(const std::string& vpath,
                       << " funcs=" << src->functions.size() << "\n";
         }
         VmObject* obj = reg.find(key);
-        if (!obj) return make_int(0);
+        if (!obj) return Value{};   // 对象缺失: void
         if (reg.isInitialized(key)) return Registry::makeObjectValue(obj);
         // Recursive load_object of the object THIS process is constructing.
         if (pcb && pcb->construct && pcb->construct->obj == obj)
@@ -459,7 +459,7 @@ Value vmLoadObjectValue(const std::string& vpath,
                 VmPcb scratch;
                 Value r = vmRunConstructionSync(&scratch, plan);
                 if (r.index() == 7) return r;
-                return make_int(0);
+                return Value{};   // 构造失败: void
             }
             reg.markConstructing(key);
             auto plan = buildConstructPlan(obj, createArgs);
@@ -478,7 +478,7 @@ Value vmLoadObjectValue(const std::string& vpath,
         pcb->construct = plan;
         vmStartInlineConstruction(pcb, plan);   // frame takeover (see file load)
         if (!plan->finished) pcb->efunTakeover = true;
-        return make_int(0);
+        return Value{};   // 构造走 takeover: 占位 void
     }
 
     // ---- file/pak load ----
@@ -487,7 +487,7 @@ Value vmLoadObjectValue(const std::string& vpath,
     VmObject* obj = reg.find(ckey);
     if (!obj) {
         auto prog = reg.loadProgram(vpath, reg.diskRootOf());
-        if (!prog) return make_int(0);
+        if (!prog) return Value{};   // 程序加载失败: void
         obj = new VmObject(prog, ckey);
         parkVmObject(obj);
         reg.registerObject(ckey, obj);
