@@ -787,6 +787,22 @@ static void vmConstructRunStep(VmPcb* pcb,
     const ConstructStep& st = plan->steps[plan->idx];
     ++plan->idx;
     pushArgs(pcb, st.fn, st.args);
+    // [consdbg] 栈账实锤: 每步骤帧的进入栈深/锚位 (residual=2 主力取证,
+    // lw118: create 带参路径比 init-seg 路径每帧多漏 1)。
+    {
+        static const std::atomic<bool>& cdFlag =
+            lpc::dynProbeFlag("LPCVM_CONSDBG");
+        if (cdFlag.load(std::memory_order_relaxed))
+            std::cerr << "[consdbg] step idx=" << (plan->idx - 1) << "/"
+                      << plan->steps.size() << " kind="
+                      << (st.kind == ConstructStep::Kind::Create ? "create"
+                                                                 : "init")
+                      << " fn=" << (st.fn ? st.fn->name : "<null>")
+                      << " argNum=" << passedArgCount(st.args)
+                      << " locals=" << (st.fn ? st.fn->localCount : -1)
+                      << " depth=" << pcb->stack.size() << " obj="
+                      << (plan->obj ? plan->obj->key() : "<null>") << "\n";
+    }
     // 0-实参步骤 (init-seg 常见): caller 栈顶恰好是 load_object 等 efun 的
     // 返回值槽 —— pushFrameInPlace 的 bp=栈顶 会把它当成"参数区顶"(argNum=0
     // 的帧 bp 无锚), op72 收尾时 pop 1 弹掉的就是那个 rv, 且清栈 newSize =
@@ -815,6 +831,14 @@ static void vmConstructRunStep(VmPcb* pcb,
 
 void vmStartInlineConstruction(VmPcb* pcb,
                                const std::shared_ptr<ConstructPlan>& plan) {
+    {
+        static const std::atomic<bool>& cdFlag =
+            lpc::dynProbeFlag("LPCVM_CONSDBG");
+        if (cdFlag.load(std::memory_order_relaxed))
+            std::cerr << "[consdbg] start steps=" << plan->steps.size()
+                      << " depth=" << pcb->stack.size() << " obj="
+                      << (plan->obj ? plan->obj->key() : "<null>") << "\n";
+    }
     if (plan->idx >= plan->steps.size()) {
         vmConstructFinish(pcb, plan);   // empty plan: finish immediately
         return;

@@ -1636,14 +1636,43 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         }
                     if (balWatch) bal0 = static_cast<int>(pcb->stack.size());
                 }
+                // [consdbg] load_object 结算差: 构造链多帧泄漏取证
+                // (lw118: create 带参路径 op6 净 +1, init-seg 路径净 0,
+                // 语义应 -1)。
+                {
+                    const std::vector<std::string>& et6 = efunNameTable();
+                    const std::string en6 =
+                        (efun >= 0 && static_cast<size_t>(efun) < et6.size())
+                            ? et6[static_cast<size_t>(efun)]
+                            : std::string();
+                    if (en6 == "load_object") {
+                        static const std::atomic<bool>& cd6 =
+                            lpc::dynProbeFlag("LPCVM_CONSDBG");
+                        if (cd6.load(std::memory_order_relaxed)) {
+                            bal0 = static_cast<int>(pcb->stack.size());
+                            balWatch = true;
+                        }
+                    }
+                }
                 dispatchEfun(pcb, efun, argc);   // pushes result (void-aware)
                 if (balWatch) {
                     int d = static_cast<int>(pcb->stack.size()) - bal0;
+                    const std::vector<std::string>& et6b = efunNameTable();
+                    const bool isLoad6 =
+                        efun >= 0 && static_cast<size_t>(efun) < et6b.size() &&
+                        et6b[static_cast<size_t>(efun)] == "load_object";
                     if (d != 1 - argc)
                         std::cerr << "[efun-bal] tid=" << pcb->tid
                                   << " efun#" << efun << " argc=" << argc
                                   << " delta=" << d << " expect=" << (1 - argc)
                                   << " ip=" << (pcb->ip - 1) << "\n";
+                    else if (isLoad6) {
+                        static const std::atomic<bool>& cd6b =
+                            lpc::dynProbeFlag("LPCVM_CONSDBG");
+                        if (cd6b.load(std::memory_order_relaxed))
+                            std::cerr << "[consdbg] op6 load_object delta="
+                                      << d << " argc=" << argc << "\n";
+                    }
                 }
                 break;
             }
