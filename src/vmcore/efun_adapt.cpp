@@ -578,7 +578,12 @@ Value vmCloneObjectValue(const std::string& vpath,
     pcb->construct = plan;
     vmStartInlineConstruction(pcb, plan);
     if (!plan->finished) pcb->efunTakeover = true;
-    return make_int(0);
+    // 占位必须是 void (Value{}) 而非 int 0: dispatchEfun 对 void 结果不压栈,
+    // 返回值由构造 hook 尾的 rv 出参单次交付; 压 int 0 会与 hook 交付双重
+    // 压栈 —— 递归构造每层 +1 (lw122 fn-trace 实锤: add_goods 内
+    // clone_object 前 70 → 后 89, 19 层嵌套构造净 +19 → residual=20 主力
+    // 1141 次)。与 load_object 的 takeover 分支 (return Value{}) 同构。
+    return Value{};
 }
 
 // ---------------------------------------------------------------------------

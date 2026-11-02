@@ -216,7 +216,7 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
                           << " bp=" << f.bp << " locals=" << f.localCount
                           << " depth=" << pcb->stack.size() << "\n";
                 static std::atomic<int> mmShown{0};
-                if (f.fn && mmShown.fetch_add(1) < 40) {
+                if (f.fn && mmShown.fetch_add(1) < 400) {
                     size_t hist[16] = {};
                     for (size_t i = expectedVoid;
                          i < pcb->stack.size() && i < expectedVoid + 40; ++i) {
@@ -289,11 +289,26 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
                           << " newSize=" << newSize
                           << " retfn=" << (f.fn ? f.fn->name : std::string("<ctx>"))
                           << " bp=" << f.bp << " argNum=" << f.argNum << "\n";
+    const int consDbgDepthIn = static_cast<int>(pcb->stack.size());
     pcb->stack.resize(static_cast<size_t>(
         newSize > static_cast<int>(pcb->stack.size())
             ? pcb->stack.size()          // 帧清栈只缩不扩: 扩=核算错误,
                                          // 扩出来的空槽就是 residual 泄漏
             : newSize));
+    {
+        // [consdbg-ret] 构造帧 ret 边界栈账 (lw122: 递归构造每层 +1,
+        // add_goods residual=20 主力 —— 需要 ret 侧 newSize/depth 实锤)。
+        static const std::atomic<bool>& cdr =
+            lpc::dynProbeFlag("LPCVM_CONSDBG");
+        if (cdr.load(std::memory_order_relaxed) && f.fn &&
+            (f.fn->name == "<init-seg>" || f.fn->name == "create"))
+            std::cerr << "[consdbg-ret] fn=" << f.fn->name
+                      << " bp=" << f.bp << " argNum=" << f.argNum
+                      << " ph=" << (f.zeroArgPlaceholder ? 1 : 0)
+                      << " pads=" << f.padArgs << " depthIn="
+                      << consDbgDepthIn
+                      << " newSize=" << newSize << "\n";
+    }
     {
         // [retw] 栈深平衡审计: op7 进入侧 [op7w] 打了 preStack, 正常返回
         // newSize == preStack(收缩回调用点) —— 差非 0 即栈漂移现场。
@@ -811,13 +826,18 @@ static void vmConstructRunStep(VmPcb* pcb,
     // undefined, 与 depend_files 递归深度吻合)。
     // 修复: 无实参时压 1 个种子槽并标记 zeroArgPlaceholder —— 与 op5
     // call_fun_ptr 的种子机制同构, op72 pop 种子、清栈裁种子, 栈复原。
+    // 0-实参步骤帧的占位: pushArgs 对 0 实参帧已压 1 个 frame slot
+    // (bp >= 0 锚, 见 pushArgs) —— 它就是 zeroArgPlaceholder 占位槽。
+    // 7b45fd4 又在此压一个种子 → 双压, 清栈只裁 1 个 → 每步净 +1:
+    // 34 步 plan +34 (lw124 实锤: gather_item start depth=422, 34 步后
+    // 下一对象 start depth=456; add_goods residual=20 = 20 步 plan)。
+    // 修复: 不再重复压种子, pushArgs 的 frame slot 即占位。
     const bool zeroArg = passedArgCount(st.args) == 0;
-    if (zeroArg) Interp::pushValue(pcb, Value{});
     if (pushFrameInPlace(pcb, plan->obj, plan->obj->prog(), st.fn,
                          passedArgCount(st.args), true, 0)) {
         if (zeroArg) pcb->frames.back().zeroArgPlaceholder = true;
     } else if (zeroArg) {
-        Interp::popValue(pcb);   // frame refused: undo the seed
+        Interp::popValue(pcb);   // frame refused: undo the frame slot
         return;
     }
     vmHookCallbackWhenReturn(pcb, [pcb, plan](Value& rv) {

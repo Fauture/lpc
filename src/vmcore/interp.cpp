@@ -974,8 +974,16 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                       << (pcb->frames.back().fn ? pcb->frames.back().fn->name
                                                 : std::string("<ctx>"))
                       << " ip=" << (pcb->ip - 1)
-                      << " op=" << static_cast<int>(in.op)
-                      << " stack=" << pcb->stack.size()
+                      << " op=" << static_cast<int>(in.op);
+            if (in.op == 6) {   // call_efun: 附加 efun 名 (栈账定位用)
+                const int ef6 = fromMeta ? m0 : static_cast<int16_t>(in.a);
+                const std::vector<std::string>& et6 = efunNameTable();
+                std::cerr << " efun="
+                          << (ef6 >= 0 && static_cast<size_t>(ef6) < et6.size()
+                                  ? et6[static_cast<size_t>(ef6)]
+                                  : "ef#" + std::to_string(ef6));
+            }
+            std::cerr << " stack=" << pcb->stack.size()
                       << " bp=" << pcb->frames.back().bp
                       << " s3=" << static_cast<int>(v3) << "\n";
         }
