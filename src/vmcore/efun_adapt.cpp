@@ -557,7 +557,8 @@ Value vmCloneObjectValue(const std::string& vpath,
         if (!tmpl) return make_int(0);
     }
     VmObject* inst = cloneObject(tmpl);
-    if (!inst) return make_int(0);
+    if (!inst)
+        vmcore::vmError("Can not clone object.");   // 原版 vm_cloneObject null 分支
     const std::string ckey = inst->key();
     reg.markConstructing(ckey);
     auto plan = buildConstructPlan(inst, createArgs);
@@ -1856,13 +1857,23 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     if (name == "clone_object" && !args.empty()) {
         // vm_f_clone_object (0x80f8eac): the argument may be a path or an
         // object value (cloning that very instance); extra args -> create().
-        std::string path;
+        // 原版语义: 参数既非字符串也非对象值 → vm_error("Not found the
+        // object for clone_object.") (place_char 的内部 catch 靠它吸收
+        // 失效 NPC 配置 —— 原版 gs.log 零错误的闭环点); 对象参数已析构 →
+        // 同 error; 字符串模板未加载 → 静默 pushNumber(0) (唯一静默路径)。
         if (args[0].index() == 7) {
             VmObject* o = objOfValue(args[0]);
-            path = o ? o->key() : keyOfArg(args[0]);
-        } else {
-            path = to_string(args[0], false);
+            if (!o || o->reallyGone())
+                vmcore::vmError("Not found the object for clone_object.");
+            return vmCloneObjectValue(o->key(),
+                                      std::vector<Value>(args.begin() + 1,
+                                                         args.end()));
         }
+        if (args[0].index() != 4)
+            vmcore::vmError("Not found the object for clone_object.");
+        std::string path;
+        if (args[0].index() == 4) path = std::get<SharedString>(args[0]).str();
+        else path = to_string(args[0], false);
         std::vector<Value> createArgs(args.begin() + 1, args.end());
         return vmCloneObjectValue(path, createArgs);
     }

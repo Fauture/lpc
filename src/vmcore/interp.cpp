@@ -1990,7 +1990,13 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // object values whose vmObj/registry lookup failed
                     // (index 7) — the silent drop here is what shrinks
                     // scand.do_init's scan table (ob->query("type") -> 0).
-                    if (vmcore::traceOn() || g_ctraceOn) {
+                    // 原版 gs.log 对照: 原版 boot+运行期 0 条该错误, 我们有
+                    // (roomd.place_char×2 / check_server.main) —— 行为差异,
+                    // 需实锤缺失目标 (LPCVM_OP8ERR 热布防)。
+                    static const std::atomic<bool>& op8ErrFlag =
+                        lpc::dynProbeFlag("LPCVM_OP8ERR");
+                    if (vmcore::traceOn() || g_ctraceOn ||
+                        op8ErrFlag.load(std::memory_order_relaxed)) {
                         static std::atomic<int> op8MissLog{0};
                         if (op8MissLog.fetch_add(1) < 40) {
                             std::string p = pathVal.index() == 4
