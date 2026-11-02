@@ -1803,11 +1803,28 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                                  : pcb->frames.back().fn->name)
                               << "\n";
                 }
-                pushValue(pcb, Value{});   // missing fn: void (对齐 vm_pushVoid)
+                // 原版 vm_callInUserFun (0x8094080): 索引越界一律 vm_error
+                // (可被 LPC catch 捕获)。bit7=GLOBAL 表 → "Global function
+                // (index = %d) is not existed!"; 局部表 (含 baseFunOffset) →
+                // "Function (index = %d) in %s is not existed!"。
+                if (flags & 0x80)
+                    vmError("Global function (index = "
+                            + std::to_string(
+                                  fromMeta ? m0
+                                           : static_cast<int16_t>(in.a))
+                            + ") is not existed!");
+                else
+                    vmError("Function (index = " + std::to_string(funIndex)
+                            + ") in " + (prog ? prog->name() : "<null prog>")
+                            + " is not existed!");
+                pushValue(pcb, Value{});   // unreachable (vmError noreturn)
                 break;
             }
             case 8: { // call_in_other_fun_ex
                 const int argn = fromMeta ? m1 : in.b;
+                // 原版 vm_callInOtherFun(p16 flags, p8 argn) 0x8094cd8:
+                // flags bit2(4) = "允许目标缺该函数的静默调用"。
+                const int op8flags = fromMeta ? m0 : in.a;
                 Value pathVal = popValue(pcb);
                 Value funVal = popValue(pcb);
                 std::string funName;
@@ -1968,7 +1985,10 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                             std::cerr.flush();
                         }
                     }
-                    pushValue(pcb, Value{});   // missing/destructed: call dropped (void, 非 int 0)
+                    // 原版 vm_callInOtherFun (0x8094cd8): 目标缺失/析构 →
+                    // 无条件 vm_error("Object is not found.") (可被 LPC
+                    // catch 捕获, 不存在静默吞错)。
+                    vmError("Object is not found.");
                     break;
                 }
                 const OriginalFunction* fn = funName.empty()
@@ -1983,9 +2003,21 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // sub_ob(easy_task 模板)缺该函数时 (flags=4 静默) 必须为
                     // 假, 压 int 0 使 0==0 判真 → "获取任务信息失败"弹窗
                     // (lw114 fn-trace: call_other 后零 mudlib 帧进入=缺失实锤)。
-                    // 无 flags&4 时原版 vm_error("Function is not found.");
-                    // 本 VM 一律静默 (历史行为), 仅对齐返回值类型。
-                    pushValue(pcb, Value{});   // missing function: void
+                    // 原版 vm_callInOtherFun (0x8094cd8): 函数缺失 →
+                    // flags&4 (静默) 时 popNStack(argn) + vm_pushVoid() ——
+                    // 压 **undefined** 而非 0。mudlib 依赖 undefined!=0:
+                    // easy_task.go_to_next_state 的
+                    // `0 == easy_taskd->prepare_for_state(...)` 在
+                    // sub_ob(easy_task 模板)缺该函数时 (flags=4 静默) 必须为
+                    // 假, 压 int 0 使 0==0 判真 → "获取任务信息失败"弹窗
+                    // (lw114 fn-trace: call_other 后零 mudlib 帧进入=缺失实锤)。
+                    // 无 flags&4 时原版 vm_error("Function is not found.")。
+                    // (原版在 error 前还会先找 default_interface 兜底转发;
+                    // 本 mudlib 的 easy_task 模板链无该 feature, 暂不实现。)
+                    if (op8flags & 4)
+                        pushValue(pcb, Value{});   // missing function: void
+                    else
+                        vmError("Function is not found.");
                     break;
                 }
                 VmObject* caller = pcb->frames.empty() ? nullptr
@@ -2076,6 +2108,10 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             }
             case 5: { // call_fun_ptr
                 const int total = fromMeta ? m1 : in.b;
+                // 原版 vm_callFunPtr(mayNull, argn) 0x809441c: p16=mayNull,
+                // p8=argn(含 funptr 槽) —— 函数缺失且 mayNull 时才静默
+                // pushVoid, 否则 vm_error("No such function.")。
+                const int mayNull5 = fromMeta ? m0 : in.a;
                 StackItem funItem = popItem(pcb);
                 const int argc = total - 1;
                 {
@@ -2145,21 +2181,26 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                 pcb->frames.back().zeroArgPlaceholder = true;
                             break;
                         }
-                        // 原版 mayNull 时 pop args + pushVoid; 这里按宽限
-                        // 处理 (post_init 调的 daemon 函数都在 master 里,
-                        // 走不到这条), 留痕以便观察。
+                        // 原版 vm_callFunPtr (0x809441c): 按名查找失败 →
+                        // mayNull(p16) 时 pop args + pushVoid (undefined);
+                        // 否则 vm_error("No such function.")。
                         std::cerr << "[op5-name-miss] fn=" << nameS.str()
                                   << " thisObj="
                                   << (thisObj ? thisObj->key() : "<null>")
                                   << "\n";
                         for (int i = 0; i < argc && !pcb->stack.empty(); ++i)
                             popItem(pcb);
-                        pushValue(pcb, Value{});
+                        if (mayNull5)
+                            pushValue(pcb, Value{});
+                        else
+                            vmError("No such function.");
                         break;
                     }
-                    // Non-closure: consume args, result 0.
+                    // Non-closure: 原版 vm_callFunPtr (0x809441c) type 既非
+                    // funptr(9) 也非字符串(4) → 无条件 vm_error。
                     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) popItem(pcb);
-                    pushValue(pcb, Value{});   // non-closure: void
+                    vmError("Bad type of the value to call, expected a "
+                            "function or string.");
                     break;
                 }
                 auto cl = std::get<std::shared_ptr<ClosureValue>>(funItem.value);
@@ -2210,8 +2251,21 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         }
                     }
                 }
-                if (!fn || !ownerObj) {
-                    pushValue(pcb, Value{});   // missing fn/owner: void
+                if (!ownerObj) {
+                    // 原版 vm_callFunPtr (0x809441c): owner 析构
+                    // (flags&0x8000) → vm_error("Owner object is destructed,
+                    // can't invoke function.")。
+                    vmError("Owner object is destructed, can't invoke "
+                            "function.");
+                    break;
+                }
+                if (!fn) {
+                    // 闭包函数体解析失败 (原版 funcptr 构造期已校验, 此处属
+                    // 内部不一致): 按调用点 mayNull 语义交付。
+                    if (mayNull5)
+                        pushValue(pcb, Value{});
+                    else
+                        vmError("No such function.");
                     break;
                 }
                 // Parameter order: bound[0..N-1] then the call args.  The

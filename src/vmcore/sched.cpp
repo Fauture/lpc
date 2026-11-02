@@ -1256,10 +1256,13 @@ void Scheduler::run() {
                 tp->eventWoken = true;
                 {
                     // LPCVM_TIMERDBG: log the actual FIRE of disconnect-chain
-                    // timers (time_expired = the save trigger).
+                    // timers (time_expired = the save trigger) and the gather
+                    // chain (finish_gather_item = chest disappearance).
                     static const std::atomic<bool>& tfFlag = dynProbeFlag("LPCVM_TIMERDBG");
                     if (tfFlag.load(std::memory_order_relaxed) &&
-                        (tp->entry == "time_expired" || tp->entry == "logout"))
+                        (tp->entry == "time_expired" || tp->entry == "logout" ||
+                         tp->entry == "finish_gather_item" ||
+                         tp->entry == "<efun-timer>"))
                         std::cerr << "[timer-fire] t=" << msSinceStart()
                                   << "ms tid=" << tp->tid << " obj="
                                   << (tp->obj ? tp->obj->key() : std::string("(null)"))
