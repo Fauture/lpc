@@ -78,6 +78,7 @@ public:
     struct InitSeg {
         std::shared_ptr<const OriginalObject> prog;
         int varOffset;
+        int funOffset = 0;   // this segment's baseFunOffset in the merged table
     };
     const std::vector<InitSeg>& initSegments() const { return initSegs_; }
     // The create() chain: every program along the inherit chain whose create
@@ -86,6 +87,22 @@ public:
     // own records — a merged-table lookup could return an inherited create
     // sharing the same index).
     const std::vector<const OriginalFunction*>& createChain() const { return createFns_; }
+
+    // ---- destructor chain (vm_f_destruct_object2 0x80f9284) ----
+    // The ORIGINAL destruct_object does NOT run a single merged findFn
+    // ("destruct"): it walks initOrderList BACKWARDS (most derived first)
+    // and runs EACH constitution's own destructor — the hidden "destruct"
+    // record (flag 0x800) — under that segment's context, chaining each fire
+    // through hookCallbackWhenReturn.  Only when every segment's destructor
+    // has run does vm_destructObject free the object.
+    // Consequence: feature/common/move.c::destruct (leave() → 4287/12221
+    // disappear broadcast + remove_from_map) lives on a PARENT segment; a
+    // single-lookup destructor (npc.c's children cleanup) silently skipped it
+    // and gathered chests never vanished from the client.
+    // Children-first list of per-segment destructor copies (each carries its
+    // segment's strings/varOffset/funOffset); segments without one are
+    // skipped.  Copies are owned here — programs are immutable.
+    const std::vector<const OriginalFunction*>& destructChain() const { return destructFns_; }
 
     // The live shared_ptr every VmObject holds — keeps the program alive.
     std::shared_ptr<const VmProgram> self() const { return self_; }
@@ -104,6 +121,9 @@ private:
     // Construction data (see the accessors above).
     std::vector<InitSeg> initSegs_;
     std::vector<const OriginalFunction*> createFns_;
+    // Destructor chain (see destructChain()); owned copies live here.
+    std::vector<std::shared_ptr<OriginalFunction>> ownedDtorCopies_;
+    std::vector<const OriginalFunction*> destructFns_;
     std::shared_ptr<const VmProgram> self_;
 };
 

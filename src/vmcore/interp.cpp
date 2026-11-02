@@ -1328,6 +1328,17 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     cl->ownerKey = curObj(pcb) ? curObj(pcb)->key() : std::string();
                     pushValue(pcb, cl);
                 } else {
+                    // [newfunc0] closure creation FAILED -> silent int 0; a
+                    // set_timer(callback=int 0) then never registers and the
+                    // gather chest never destructs.  Hot probe to spot it.
+                    static const std::atomic<bool>& nfFlag =
+                        lpc::dynProbeFlag("LPCVM_NEWFUNC0");
+                    if (nfFlag.load(std::memory_order_relaxed))
+                        std::cerr << "[newfunc0] op23 index=" << in.a
+                                  << " b=" << (int)in.b << " prog="
+                                  << (curProg(pcb) ? curProg(pcb)->src().sourceName : std::string("(null)"))
+                                  << " obj=" << (curObj(pcb) ? curObj(pcb)->key() : std::string("(null)"))
+                                  << " ip=" << (pcb->ip - 1) << "\n";
                     pushValue(pcb, make_int(0));
                 }
                 break;
@@ -1600,6 +1611,15 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                       static_cast<size_t>(efun) < et.size())
                                          ? et[static_cast<size_t>(efun)]
                                          : "efun#" + std::to_string(efun);
+                    // [op6st] op6 set_timer watch: try_gather's chest timer
+                    // hinges on this call actually reaching the efun layer.
+                    static const std::atomic<bool>& op6Flag =
+                        lpc::dynProbeFlag("LPCVM_OP6ST");
+                    if (op6Flag.load(std::memory_order_relaxed) && en == "set_timer")
+                        std::cerr << "[op6st] set_timer argc=" << argc
+                                  << " obj=" << (curObj(pcb) ? curObj(pcb)->key() : std::string("(null)"))
+                                  << " fn=" << (pcb->frames.empty() || !pcb->frames.back().fn ? "(null)" : pcb->frames.back().fn->name)
+                                  << " ip=" << (pcb->ip - 1) << "\n";
                     trcCallStack(pcb, 6, en, argc);
                 }
                 // [efun-bal] 栈平衡断言: efun 弹 argc 压 1 → 净 1-argc。

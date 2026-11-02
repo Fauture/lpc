@@ -1713,7 +1713,18 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             fnName = std::get<SharedString>(fn);
         }
         for (size_t ai = 3; ai < args.size(); ++ai) bound.push_back(args[ai]);
-        if (fnName.empty()) return make_int(0);
+        if (fnName.empty()) {
+            // [timer0] set_timer(callback=NOT closure/string) -> silent no-op.
+            // The gather chest timer hinges on this: a failed op23 closure
+            // arrives as int 0 and the timer never registers.
+            static const std::atomic<bool>& t0Flag = dynProbeFlag("LPCVM_TIMERDBG");
+            if (t0Flag.load(std::memory_order_relaxed))
+                std::cerr << "[timer0] set_timer callback type="
+                          << fn.index() << " args=" << args.size()
+                          << " caller=" << fkey << "::" << frameFnName(pcb)
+                          << "\n";
+            return make_int(0);
+        }
         // An EFUN closure callback ((: call_other, ob, "fn" :)): schedule the
         // fire as an efun process (spawnDelayedEfun).  Without this the fire
         // resolved "call_other" in the owner's program table, findFn failed
@@ -1740,10 +1751,11 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             // LPCVM_TIMERDBG: the disconnect->save chain hinges on this timer
             // (user.o::disconnected -> set_timer(0/180,&_timer_id,"time_expired")
             //  -> time_expired -> destruct -> userd::destroy_user -> save).
+            // gather 收集链 (finish_gather_item) 同样依赖本定时器。
             static const std::atomic<bool>& tmFlag = dynProbeFlag("LPCVM_TIMERDBG");
             if (tmFlag.load(std::memory_order_relaxed) &&
                 (fnName == "time_expired" || fnName == "logout" ||
-                 timerName == "_timer_id")) {
+                 fnName == "finish_gather_item" || timerName == "_timer_id")) {
                 std::cerr << "[timer] set_timer id=" << id << " delay=" << timeout
                           << "s fn=" << fnName << " name=" << timerName
                           << " owner=" << owner->key() << "\n";

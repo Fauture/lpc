@@ -80,7 +80,7 @@ VmProgram::VmProgram(std::shared_ptr<const OriginalObject> src,
             walk(*parentObj, funOff, varOff);
             // Construction data: the parent's init segment runs after its
             // own ancestors' (runInheritedInitsOf order).
-            initSegs_.push_back(InitSeg{parentObj, varOff});
+            initSegs_.push_back(InitSeg{parentObj, varOff, funOff});
             if (seenPrograms.insert(inh.path).second) {
                 for (const auto& fn : parentObj->functions) {
                     if (fn.name == "create" && fn.index >= 0 && !fn.code.empty())
@@ -197,6 +197,34 @@ VmProgram::VmProgram(std::shared_ptr<const OriginalObject> src,
         (void)isRoot;
     };
     varWalk(*src_, 0, true);
+
+    // ---- destructor chain (vm_f_destruct_object2 0x80f9284) ----
+    // initOrderList walked BACKWARDS (most derived first); each segment runs
+    // its OWN "destruct" record — the .o function table is the WHOLE
+    // constitution's (own + inherited expansion), so a segment's destructor
+    // lives in its own program at its LOCAL index and lands in the merged
+    // table at funOff + index.  Segments without one are skipped
+    // (v3 == 0xFFFF in the original).  Measured: npc.o hiddenCount == 0 —
+    // the hidden-flag theory was wrong; these are plain visible records.
+    auto collectSegDtor = [&](const std::shared_ptr<const OriginalObject>& prog,
+                              int funOff, int varOff) {
+        for (const auto& f : prog->functions) {
+            if (f.index < 0 || f.name != "destruct" || f.code.empty()) continue;
+            auto copy = std::make_shared<OriginalFunction>(f);
+            copy->strings =
+                std::make_shared<const std::vector<std::string>>(prog->strings);
+            copy->varOffset = varOff;
+            copy->funOffset = funOff;
+            ownedDtorCopies_.push_back(std::move(copy));
+            destructFns_.push_back(ownedDtorCopies_.back().get());
+            return;   // one destructor record per segment
+        }
+    };
+    // Own (most derived) segment first — the original starts at the LAST
+    // initOrderList entry.
+    collectSegDtor(src_, 0, 0);
+    for (auto it = initSegs_.rbegin(); it != initSegs_.rend(); ++it)
+        collectSegDtor(it->prog, it->funOffset, it->varOffset);
 }
 
 const OriginalFunction* VmProgram::fnAtIndex(int index) const {

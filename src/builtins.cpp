@@ -5076,6 +5076,25 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     uint16_t m2 = static_cast<uint16_t>(
                         (static_cast<unsigned char>(data[0]) << 8) |
                         static_cast<unsigned char>(data[1]));
+                    // [pkt12221] item-disappear broadcast hot probe: did the
+                    // move_out() 12221 notice ever reach send_to_client?
+                    if (m2 == 12221) {
+                        static const std::atomic<bool>& pkt12221 =
+                            lpc::dynProbeFlag("LPCVM_PKT12221");
+                        if (pkt12221.load(std::memory_order_relaxed)) {
+                            std::string h;
+                            static const char* hx = "0123456789ABCDEF";
+                            size_t n = std::min<size_t>(data.size(), 24);
+                            for (size_t i = 0; i < n; ++i) {
+                                h.push_back(hx[(static_cast<unsigned char>(data[i]) >> 4) & 0xF]);
+                                h.push_back(hx[static_cast<unsigned char>(data[i]) & 0xF]);
+                                h.push_back(' ');
+                            }
+                            std::cerr << "[pkt12221] cno=" << cno
+                                      << " size=" << data.size() << " " << h << "\n";
+                            std::cerr.flush();
+                        }
+                    }
                     if (m2 == 0x4401 || m2 == 0x2403 || m2 == 0x3400 || m2 == 0x236F) {
                         std::string hex;
                         static const char* hx = "0123456789ABCDEF";

@@ -841,7 +841,16 @@ bool destructObjectByKey(const std::string& keyIn) {
     // chain runs — user.o::destruct -> userd::destroy_user -> me->save() is
     // the ONLY dbase writer and resolves `me` through the registry.
     obj->markDestructed();
-    const OriginalFunction* dtr = obj->prog()->findFn("destruct");
+    // 原版 vm_f_destruct_object2 (0x80f9284)：析构是【链式】的 —— 按
+    // initOrderList 逆序（最派生段先跑），逐个 constitution 跑它自己的
+    // 析构函数（hidden "destruct" 记录），每段跑完 hookCallbackWhenReturn
+    // 接下一段，全部跑完才 vm_destructObject 真释放。只跑 findFn 合并表
+    // 的单个 destruct 会漏掉父段的析构 —— feature/common/move.c::destruct
+    // (leave(): remove_from_map + 4287/12221 disappear 广播) 就是这样被
+    // 跳过的，采集宝箱 destruct 后客户端永不消失。
+    const std::vector<const OriginalFunction*>& chain = obj->prog()->destructChain();
+    const OriginalFunction* dtr =
+        !chain.empty() ? chain.front() : obj->prog()->findFn("destruct");
     {
         // LPCVM_LIFE (once-cached env, driver context only): was the mudlib
         // destructor actually resolvable?  A MISSING here means the whole
@@ -854,7 +863,7 @@ bool destructObjectByKey(const std::string& keyIn) {
         if (lifeProbe2)
             std::cerr << "[life] destruct-chain " << keyIn << " dtr="
                       << (dtr ? "FOUND" : "MISSING (destructor never runs!)")
-                      << "\n";
+                      << " chain=" << chain.size() << "\n";
     }
     if (dtr) {
         vmcore::VmPcb* pcb = vmcore::currentPcb();
@@ -867,18 +876,10 @@ bool destructObjectByKey(const std::string& keyIn) {
             // 会销毁收尾路径，boot 曾因此静默死亡）。
             vmPushFunCall(pcb, obj, dtr, {});
             const std::string okey = obj->key();
-            vmcore::vmHookCallbackWhenReturn(pcb, [okey](Value& rv) {
-                // LPCVM_LIFE: the destructor frame RETURNED (the whole
-                // user.o::destruct body ran to its end, whichever branch).
-                {
-                    static const bool lifeProbe3 = [] {
-                        const char* e = std::getenv("LPCVM_LIFE");
-                        return e && *e;
-                    }();
-                    if (lifeProbe3)
-                        std::cerr << "[life] destruct-chain " << okey
-                                  << " BODY-DONE\n";
-                }
+            // 链式逐段：chain[1..] 在前一段返回后依次压帧（原版
+            // chain 引用的是 VmProgram 的不可变成员，程序由 self_ 持有，
+            // 对象 unregister 不影响它。
+            std::function<void(Value&)> tail = [okey](Value& rv) {
                 auto& reg2 = vmcore::Registry::instance();
                 if (vmcore::VmObject* o = reg2.findByName(okey)) {
                     vmcore::VmPcb* pcb2 = vmcore::currentPcb();
@@ -898,7 +899,35 @@ bool destructObjectByKey(const std::string& keyIn) {
                     }
                 }
                 rv = make_int(1);   // destruct_object 的返回值
-            });
+            };
+            if (chain.size() > 1) {
+                // 递归 hook：第 i 段返回 → 压第 i+1 段帧并挂第 i+1 hook；
+                // 最后一段挂 tail 收尾。递归 self-reference 用 shared_ptr
+                // (捕获未初始化的 std::function 自身是悬空引用)。
+                auto next = std::make_shared<size_t>(1);
+                auto stepFn = std::make_shared<std::function<void(Value&)>>();
+                *stepFn = [okey, chain, next, stepFn, tail](Value& rv) {
+                    if (*next < chain.size()) {
+                        const OriginalFunction* seg = chain[*next];
+                        (*next)++;
+                        vmcore::VmPcb* pcb2 = vmcore::currentPcb();
+                        vmcore::VmObject* o =
+                            vmcore::Registry::instance().findByName(okey);
+                        if (pcb2 && o && seg) {
+                            vmPushFunCall(pcb2, o, seg, {});
+                            vmcore::vmHookCallbackWhenReturn(
+                                pcb2, [stepFn](Value& r2) { (*stepFn)(r2); });
+                            rv = make_int(1);
+                            return;
+                        }
+                    }
+                    tail(rv);
+                };
+                vmcore::vmHookCallbackWhenReturn(
+                    pcb, [stepFn](Value& r2) { (*stepFn)(r2); });
+            } else {
+                vmcore::vmHookCallbackWhenReturn(pcb, tail);
+            }
             pcb->efunTakeover = true;
             return true;
         }
