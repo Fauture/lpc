@@ -205,13 +205,37 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
             pcb->returnValue = Interp::popValue(pcb);
         else {
             // 原版: 无原型函数残留>1 = vm_endProcess; 有原型 = 报错。
-            // 先留兜底取栈顶 + 常开日志定位残余调用点 (对齐收紧一步到位)。
-            std::cerr << "[ret-mismatch] fn="
-                      << (f.fn ? f.fn->name : std::string("<ctx>"))
-                      << " residual=" << residual
-                      << " bp=" << f.bp << " locals=" << f.localCount
-                      << " depth=" << pcb->stack.size() << "\n";
-            std::cerr.flush();
+            // 本 VM 保留 take top 兜底 (栈顶恰为返回值, 行为与修复前一致);
+            // 泄漏取证用 LPCVM_RETMIS 热布防 (boot 期上万条 stderr 拖启动)。
+            static const std::atomic<bool>& rmFlag =
+                lpc::dynProbeFlag("LPCVM_RETMIS");
+            if (rmFlag.load(std::memory_order_relaxed)) {
+                std::cerr << "[ret-mismatch] fn="
+                          << (f.fn ? f.fn->name : std::string("<ctx>"))
+                          << " residual=" << residual
+                          << " bp=" << f.bp << " locals=" << f.localCount
+                          << " depth=" << pcb->stack.size() << "\n";
+                static std::atomic<int> mmShown{0};
+                if (f.fn && mmShown.fetch_add(1) < 40) {
+                    size_t hist[16] = {};
+                    for (size_t i = expectedVoid;
+                         i < pcb->stack.size() && i < expectedVoid + 40; ++i) {
+                        unsigned k = pcb->stack[i].value.index();
+                        if (k < 16) hist[k]++;
+                    }
+                    std::cerr << "[ret-mismatch]   slots idx:";
+                    for (int k = 0; k < 16; ++k)
+                        if (hist[k])
+                            std::cerr << " " << k << "x" << hist[k];
+                    std::cerr << " caller="
+                              << (pcb->frames.empty() ||
+                                          !pcb->frames.back().fn
+                                      ? "<ctx>"
+                                      : pcb->frames.back().fn->name)
+                              << "\n";
+                }
+                std::cerr.flush();
+            }
             if (!pcb->stack.empty())
                 pcb->returnValue = Interp::popValue(pcb);
             else
@@ -265,7 +289,11 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
                           << " newSize=" << newSize
                           << " retfn=" << (f.fn ? f.fn->name : std::string("<ctx>"))
                           << " bp=" << f.bp << " argNum=" << f.argNum << "\n";
-    pcb->stack.resize(static_cast<size_t>(newSize));
+    pcb->stack.resize(static_cast<size_t>(
+        newSize > static_cast<int>(pcb->stack.size())
+            ? pcb->stack.size()          // 帧清栈只缩不扩: 扩=核算错误,
+                                         // 扩出来的空槽就是 residual 泄漏
+            : newSize));
     {
         // [retw] 栈深平衡审计: op7 进入侧 [op7w] 打了 preStack, 正常返回
         // newSize == preStack(收缩回调用点) —— 差非 0 即栈漂移现场。
@@ -759,8 +787,23 @@ static void vmConstructRunStep(VmPcb* pcb,
     const ConstructStep& st = plan->steps[plan->idx];
     ++plan->idx;
     pushArgs(pcb, st.fn, st.args);
-    pushFrameInPlace(pcb, plan->obj, plan->obj->prog(), st.fn,
-                     passedArgCount(st.args), true, 0);
+    // 0-实参步骤 (init-seg 常见): caller 栈顶恰好是 load_object 等 efun 的
+    // 返回值槽 —— pushFrameInPlace 的 bp=栈顶 会把它当成"参数区顶"(argNum=0
+    // 的帧 bp 无锚), op72 收尾时 pop 1 弹掉的就是那个 rv, 且清栈 newSize =
+    // bp-argNum+1 (ph 未设) 会 resize 扩栈补 1 个空槽 —— 每个 0 参步骤帧
+    // 净漏 2 槽 (lw110 fn-trace: safe_load_object residual=2/17/34 全
+    // undefined, 与 depend_files 递归深度吻合)。
+    // 修复: 无实参时压 1 个种子槽并标记 zeroArgPlaceholder —— 与 op5
+    // call_fun_ptr 的种子机制同构, op72 pop 种子、清栈裁种子, 栈复原。
+    const bool zeroArg = passedArgCount(st.args) == 0;
+    if (zeroArg) Interp::pushValue(pcb, Value{});
+    if (pushFrameInPlace(pcb, plan->obj, plan->obj->prog(), st.fn,
+                         passedArgCount(st.args), true, 0)) {
+        if (zeroArg) pcb->frames.back().zeroArgPlaceholder = true;
+    } else if (zeroArg) {
+        Interp::popValue(pcb);   // frame refused: undo the seed
+        return;
+    }
     vmHookCallbackWhenReturn(pcb, [pcb, plan](Value& rv) {
         if (plan->idx >= plan->steps.size()) {
             rv = vmConstructFinish(pcb, plan);   // rv = the efun return value

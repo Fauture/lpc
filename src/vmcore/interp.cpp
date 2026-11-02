@@ -2264,8 +2264,26 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                                    : ownerObj->prog(),
                                       fn, passed, true, 0))
                     pushValue(pcb, make_int(0));
-                else
+                else {
                     pcb->frames.back().zeroArgPlaceholder = true;
+                    // [menucond] "求师傅指点" 卡菜单战斗取证: create_menu 的
+                    // 返回值决定 start_new_round 走 wait_menu_commands(弹菜单,
+                    // 无操作面板) 还是 wait_commands(普通战斗)。打印
+                    // popup_menu_func (test_popup_menu) 的实际返回值。
+                    static const std::atomic<bool>& mcFlag =
+                        lpc::dynProbeFlag("LPCVM_MENUCOND");
+                    if (mcFlag.load(std::memory_order_relaxed) &&
+                        cl->functionName == "test_popup_menu") {
+                        vmcore::vmHookCallbackWhenReturn(
+                            pcb, [](Value& rv) {
+                                std::cerr << "[menucond] test_popup_menu rv idx="
+                                          << rv.index() << " val="
+                                          << to_string(rv, false).substr(0, 80)
+                                          << "\n";
+                                std::cerr.flush();
+                            });
+                    }
+                }
                 break;
             }
             // ---- jumps / conditionals / switch ----
@@ -2642,7 +2660,10 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                   << " fn=" << (fr.fn ? fr.fn->name : std::string("<ctx>"))
                                   << " bp=" << fr.bp << " argNum=" << fr.argNum << "\n";
                 pcb->frames.pop_back();
-                pcb->stack.resize(static_cast<size_t>(newSize));
+                // 帧清栈只缩不扩 (扩=核算错误, 扩出的空槽即 residual 泄漏)。
+                pcb->stack.resize(static_cast<size_t>(
+                    newSize > static_cast<int>(pcb->stack.size())
+                        ? pcb->stack.size() : newSize));
                 if (fr.retCode) {
                     pcb->code = fr.retCode;
                     pcb->meta = fr.retMeta;
