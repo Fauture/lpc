@@ -7408,14 +7408,48 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             m->bits[idx] = static_cast<uint8_t>(m->bits[idx] & ~(flag & 0xFF));
         return make_int(1);
     }
-    if (name == "write_buffer") {
-        // vm_f_write_buffer (0x80dd90c): write_buffer(&buf, offset, int|buffer|
-        // string) writes big-endian int / raw bytes into a REFERENCED buffer
-        // and returns the length written.  The efun bridge passes values by
-        // copy, so a true write-back is not possible here; notice_others_appear
-        // (gs basic.o) is the only caller at boot (5 calls) and tolerates a
-        // failure - return 0.
-        return make_int(0);
+    if (name == "write_buffer" && args.size() >= 3) {
+        // vm_f_write_buffer (0x80dd90c): write_buffer(&buf, offset, val).
+        // arg0 arrives here DEREFED by dispatchEfun, so the write-back goes
+        // through the CrossVmRef-free path: dispatchEfun's raw item was a
+        // stack ref, but the buffer VALUE itself is a shared_ptr — mutating
+        // it in place reaches every alias (the appear_buf temp keeps the
+        // same shared_ptr), which is exactly the original's semantics
+        // (memcpy into pBuffer->ptr[offset]).
+        //   arg2: int -> 4 bytes big-endian; buffer/string -> raw bytes.
+        //   offset OOB -> error (catchable), returns bytes written.
+        // Real caller: move.o notice_others_appear refreshes the cached
+        // appear_buf coordinates (x,y,dir) before every 61533 broadcast —
+        // the old constant-0 stub left stale coordinates in the cached
+        // appearance packet, and the client snapped the character back to
+        // the OLD position after every fast move (0x4130).
+        if (args[0].index() != 10)
+            throw std::runtime_error("The first argument need a buffer.");
+        auto buf = std::get<std::shared_ptr<BufferValue>>(args[0]);
+        const int64_t off = as_int(args[1]);
+        const Value& v = args[2];
+        std::string data;
+        if (v.index() == 2) {
+            const int64_t n = std::get<int64_t>(v);
+            data.assign(4, '\0');
+            data[0] = static_cast<char>((n >> 24) & 0xFF);
+            data[1] = static_cast<char>((n >> 16) & 0xFF);
+            data[2] = static_cast<char>((n >> 8) & 0xFF);
+            data[3] = static_cast<char>(n & 0xFF);
+        } else if (v.index() == 10) {
+            data = std::get<std::shared_ptr<BufferValue>>(v)->data;
+        } else if (v.index() == 4) {
+            data = std::get<SharedString>(v).str();
+        } else {
+            throw std::runtime_error("Bad type of argument 3, expeced buffer, string or IntR.");
+        }
+        if (off < 0 ||
+            off + static_cast<int64_t>(data.size()) >
+                static_cast<int64_t>(buf->data.size())) {
+            throw std::runtime_error("Data can't be written into buffer (out of range).");
+        }
+        buf->data.replace(static_cast<size_t>(off), data.size(), data);
+        return make_int(static_cast<int64_t>(data.size()));
     }
     if (name == "get_client_stat") {
         // vm_f_get_client_stat: stats for a client number.
