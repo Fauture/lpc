@@ -158,8 +158,12 @@ bool vmCallPushFrame(VmPcb* pcb, VmObject* obj, const VmProgram* prog,
                      int padArgs) {
     if (!pcb || !fn) return false;
     pushArgs(pcb, fn, args);
-    return pushFrameInPlace(pcb, obj, prog, fn,
-                            passedArgCount(args), true, padArgs);
+    const bool ok = pushFrameInPlace(pcb, obj, prog, fn,
+                                     passedArgCount(args), true, padArgs);
+    // [fix] 同 vmCallOtherPush: 0 参调用的占位槽标记。
+    if (ok && args.empty() && fn->argCount == 0 && !pcb->frames.empty())
+        pcb->frames.back().zeroArgPlaceholder = true;
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +587,10 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
     }
     pushArgs(pcb, fn, args);
     pushFrameInPlace(pcb, obj, obj->prog(), fn, passedArgCount(args), true, 0);
+    // [fix] 0 参调用 pushArgs 压了占位槽 (bp 锚), ret 清栈必须扣除 ——
+    // 不标记则每次 0 参 call_other 泄漏 1 槽。
+    if (args.empty() && fn->argCount == 0 && !pcb->frames.empty())
+        pcb->frames.back().zeroArgPlaceholder = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -611,12 +619,21 @@ static void broadcastStartNext(VmPcb* pcb, const std::shared_ptr<BroadcastState>
         pushArgs(pcb, fn, st->args);
         pcb->previousObjectName = st->caller ? st->caller->key() : std::string();
         pushFrameInPlace(pcb, obj, obj->prog(), fn, passedArgCount(st->args), true, 0);
+        // [fix] 同 vmCallOtherPush: 0 参广播元素的占位槽要在 ret 清栈时扣除。
+        if (st->args.empty() && fn->argCount == 0 && !pcb->frames.empty())
+            pcb->frames.back().zeroArgPlaceholder = true;
         vmHookCallbackWhenReturn(pcb, [pcb, st](Value& rv) {
             if (st->idx < st->targets.size()) {
                 st->results->items.push_back(rv);
                 broadcastStartNext(pcb, st);   // frame push — consumes the value
                 rv = Value{};
             } else {
+                // [fix] 末元素的结果也必须 collect!  原实现直接 rv=results
+                // 返回, 单元素广播 (最常见: 队伍里只有玩家自己) 的 results
+                // 永远是空数组 —— count_total(obs->is_player())=0 → 刷怪数
+                // 0 → 空队伍 → init_thief "It is not a object!" → 暗雷/GM
+                // 战斗全挂。全 mudlib 的 arr->fn() 单元素调用都中招。
+                st->results->items.push_back(rv);
                 rv = Value(st->results);        // last element: result = the array
             }
         });
