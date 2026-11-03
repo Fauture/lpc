@@ -200,7 +200,8 @@ Value lshValues(const Value& a, const Value& b) {
             const auto lk = left->items();
             const auto rk = right->items();
             if (rk.size() >= 4) {   // room_info 这类多字段合并才打
-                std::cerr << "[lshdbg] merge left_sz=" << lk.size()
+                std::cerr << "[lshdbg] merge left=" << (const void*)left.get()
+                          << " left_sz=" << lk.size()
                           << " right_sz=" << rk.size() << " keys=";
                 int n = 0;
                 for (const auto& kv : rk) {
@@ -220,6 +221,9 @@ Value lshValues(const Value& a, const Value& b) {
             }
         }
         for (const auto& kv : right->items()) left->insert(kv.first, kv.second);
+        if (ldFlag.load(std::memory_order_relaxed) && right->size() >= 4)
+            std::cerr << "[lshdbg] merged left=" << (const void*)left.get()
+                      << " post_sz=" << left->size() << "\n";
         return left;   // same shared_ptr, mutated in place
     }
     return make_int(i32(static_cast<uint32_t>(toInt(a)) << (static_cast<uint32_t>(toInt(b)) & 31)));

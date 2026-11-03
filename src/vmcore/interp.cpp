@@ -579,6 +579,19 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
     };
     if (c->type == 1 || c->type == -1) {
         int64_t current = c->current;
+        {
+            // [loop35] 配对取证: op18 判定时的 current/to。
+            static const std::atomic<bool>& l35s =
+                lpc::dynProbeFlag("LPCVM_LOOP35");
+            if (l35s.load(std::memory_order_relaxed))
+                std::cerr << "[loop35-step] fn="
+                          << (pcb->frames.empty() || !pcb->frames.back().fn
+                                  ? "<ctx>"
+                                  : pcb->frames.back().fn->name)
+                          << " current=" << current << " to=" << c->to
+                          << " done=" << (c->done ? 1 : 0)
+                          << " type=" << c->type << "\n";
+        }
         c->current = current + c->type;
         setVar(make_int(current));
         bool past = c->done || (c->type > 0 && current > c->to) ||
@@ -1461,6 +1474,18 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             }
             case 79: { // sizeof: string bytes / buffer bytes / array/mapping count
                 Value v = popValue(pcb);
+                // [sizeofx] 暗雷取证: satisfy/permit 帧的 sizeof 目标值打印
+                // (sizeof(monster_list)==0 的实值来源 —— 进过滤前后对比)。
+                if (vmcore::traceOn()) {
+                    const std::string sf = trcFnName(pcb);
+                    if (sf.find("satisfy") != std::string::npos ||
+                        sf.find("permit") != std::string::npos)
+                        std::cerr << "[sizeofx] " << sf
+                                  << " ip=" << (pcb->ip - 1)
+                                  << " type=" << v.index()
+                                  << " val=" << to_string(v, false).substr(0, 90)
+                                  << "\n";
+                }
                 switch (v.index()) {
                 case 4:
                     pushValue(pcb, make_int(static_cast<int64_t>(
@@ -2089,28 +2114,9 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                       << tk << "::" << funName << "\n";
                             std::cerr.flush();
                         }
-                        // [monlist] 野外暗雷取证: satisfy_template_condition
-                        // 的 env->query("monster_list") 返回值 (lw127 实锤
-                        // standard 模板走 [57] !sizeof return —— 房间
-                        // monster_list 空数组, room.list 明明有
-                        // ({huli,yegou}), 差异在 import/form 解析或 << 合并)。
-                        if (funName == "query" && argn == 1 && !items.empty() &&
-                            items[0].value.index() == 4) {
-                            const std::string qk =
-                                std::get<SharedString>(items[0].value).str();
-                            if (qk == "monster_list" || qk == "template" ||
-                                qk == "map_index" || qk == "exits") {
-                                const std::string tk0 = target->key();
-                                vmcore::vmHookCallbackWhenReturn(
-                                    pcb, [tk0, qk](Value& rv) {
-                                        std::string s = to_string(rv, false);
-                                        std::cerr << "[monlist] " << tk0
-                                                  << " :: " << qk << " -> "
-                                                  << s.substr(0, 150) << "\n";
-                                        std::cerr.flush();
-                                    });
-                            }
-                        }
+                        // [monlist]/[qed] 探针已移至 pushFrameInPlace 之后
+                        // (此前误挂 caller 帧 —— 钩子在注册时的 frames.back()
+                        // 触发, 压帧前注册拿到的是 caller 的 rv, 数据全废)。
                         // Capture get_start_room's actual result — the save's
                         // "position" comes verbatim from it; shows which branch
                         // produced the persisted room/x/y/dir.
@@ -2167,6 +2173,48 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                       << "\n";
                             std::cerr.flush();
                         });
+                    }
+                    // [monlist] 野外暗雷取证 (压帧后注册 —— 钩子挂 callee 帧,
+                    // 触发时拿到的是 callee 的 rv): satisfy_template_condition
+                    // 的 env->query("monster_list") 返回值。
+                    if (funName == "query" && argn == 1 && !items.empty() &&
+                        items[0].value.index() == 4) {
+                        const std::string qk =
+                            std::get<SharedString>(items[0].value).str();
+                        if (qk == "monster_list" || qk == "template" ||
+                            qk == "map_index" || qk == "exits") {
+                            const std::string tk0 = target->key();
+                            vmcore::vmHookCallbackWhenReturn(
+                                pcb, [tk0, qk](Value& rv) {
+                                    std::string s = to_string(rv, false);
+                                    std::cerr << "[monlist] " << tk0 << " :: "
+                                              << qk << " -> " << s.substr(0, 150)
+                                              << "\n";
+                                    std::cerr.flush();
+                                });
+                        }
+                    }
+                    // [qed] query_entire_dbase 返回指针关联 (压帧后注册):
+                    // 与 [lshdbg] merge left= 指针对比 —— dbase 实例是否换人。
+                    if (funName == "query_entire_dbase") {
+                        const std::string tk0 = target->key();
+                        vmcore::vmHookCallbackWhenReturn(
+                            pcb, [tk0](Value& rv) {
+                                if (rv.index() == 6) {
+                                    auto m = std::get<
+                                        std::shared_ptr<MappingValue>>(rv);
+                                    std::cerr << "[qed] " << tk0
+                                              << " map=" << (const void*)m.get()
+                                              << " sz=" << m->size() << "\n";
+                                } else {
+                                    std::cerr << "[qed] " << tk0
+                                              << " rv-idx=" << rv.index()
+                                              << " rv="
+                                              << to_string(rv, false).substr(0, 70)
+                                              << "\n";
+                                }
+                                std::cerr.flush();
+                            });
                     }
                 }
                 break;
@@ -2423,10 +2471,19 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 const bool jump = (zero != ((flags & 1) != 0));
                 if (vmcore::traceOn()) {
                     const std::string trc_f = trcFnName(pcb);
-                    if (vmcore::traceWant(trc_f) && vmcore::traceWantOp(33))
+                    // [if] 暗雷取证: permit/satisfy 帧的条件判断全打印
+                    // (traceWant 按帧名过滤会漏掉栈匹配的 satisfy 链)。
+                    static const bool ifAny =
+                        getenv("LPCVM_TRACE_OPS") != nullptr;
+                    const bool ifHit =
+                        (vmcore::traceWant(trc_f) && vmcore::traceWantOp(33)) ||
+                        (ifAny && (trc_f.find("permit") != std::string::npos ||
+                                   trc_f.find("satisfy") != std::string::npos));
+                    if (ifHit)
                         std::cerr << "[if] cond="
                                   << to_string(pcb->stack.back().value, false).substr(0, 48)
                                   << " -> " << (jump ? "jump" : "fall")
+                                  << " ip=" << (pcb->ip - 1)
                                   << " fn=" << trc_f << "\n";
                 }
                 if (jump) {
@@ -2611,6 +2668,47 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 Value second = popValue(pcb);
                 StackItem varRef = popItem(pcb);
                 const int number = static_cast<int>(toInt(typeV));
+                {
+                    // [loop35] 暗雷空队取证: create_monster_team 的
+                    // loop (i upto monster_amount) 首轮即退 —— 打印 op35
+                    // 实际收到的 type/second/varRef 值, 对照 op18 的 current/to。
+                    static const std::atomic<bool>& l35 =
+                        lpc::dynProbeFlag("LPCVM_LOOP35");
+                    if (l35.load(std::memory_order_relaxed)) {
+                        Value curV = varRef.slotIndex >= 0
+                                         ? derefItem(pcb, varRef)
+                                         : make_int(-999);
+                        std::cerr << "[loop35] fn="
+                                  << (pcb->frames.empty() || !pcb->frames.back().fn
+                                          ? "<ctx>"
+                                          : pcb->frames.back().fn->name)
+                                  << " number=" << number
+                                  << " second=" << to_string(second, false).substr(0, 48)
+                                  << " secondIdx=" << second.index()
+                                  << " varRefSlot=" << varRef.slotIndex
+                                  << " current=" << to_string(curV, false).substr(0, 24)
+                                  << " slot=" << slot
+                                  << " bp=" << (pcb->frames.empty() ? -1 : pcb->frames.back().bp)
+                                  << "\n";
+                        // 帧局部槽全量 dump (仅限目标函数, boot 期 foreach
+                        // 太多否则日志爆炸): 定位 generate 返回值落在哪个槽。
+                        if (!pcb->frames.empty() && pcb->frames.back().fn &&
+                            pcb->frames.back().fn->name == "create_monster_team") {
+                            const VmFrame& lf = pcb->frames.back();
+                            int lo = lf.bp + 1;
+                            int hi = lf.bp + lf.fn->localCount;
+                            if (lo < 0) lo = 0;
+                            if (hi >= static_cast<int>(pcb->stack.size()))
+                                hi = static_cast<int>(pcb->stack.size()) - 1;
+                            for (int si = lo; si <= hi; ++si)
+                                std::cerr << "[loop35-loc] s" << si
+                                          << "=" << to_string(pcb->stack[static_cast<size_t>(si)].value, false).substr(0, 40)
+                                          << (pcb->stack[static_cast<size_t>(si)].isRef ? " REF" : "")
+                                          << "\n";
+                        }
+                        std::cerr.flush();
+                    }
+                }
                 auto ctrl = std::make_shared<LoopCtrl>();
                 ctrl->slotOfVar = varRef.slotIndex >= 0 ? varRef.slotIndex : slot;
                 ctrl->varIsSlot = (varRef.slotIndex >= 0);

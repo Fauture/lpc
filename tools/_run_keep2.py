@@ -45,9 +45,12 @@ _require_single_instance()
 
 env = dict(os.environ)
 for k in ['LPCVM_TRACE', 'LPCVM_INHINIT', 'LPCVM_EVENT_TRACE', 'LPCVM_TAIL', 'LPCVM_TRACE_C8',
-          'LPCVM_SQL_TRACE', 'LPCVM_ERR_TRACE', 'LPCVM_QUEUE_TRACE', 'LPCVM_TRACE_FN',
+          'LPCVM_SQL_TRACE', 'LPCVM_ERR_TRACE', 'LPCVM_QUEUE_TRACE',
           'LPCVM_LOCK_TRACE', 'LPCVM_STUCK_TRACE', 'LPCVM_CONSTRUCT_TRACE', 'LPCVM_TRACE_CREATE',
           'LPCVM_PWD_DIAG']:
+    # LPCVM_TRACE_FN deliberately NOT popped: it carries comma-separated fn
+    # lists which EXTRA_LPCVM (split on ',') cannot express — export it in the
+    # parent shell instead.
     env.pop(k, None)
 # LPCVM_QUIET=1: skip the default TAIL/MEM2 chatter.  Boot with this when the
 # only probe needed is a targeted one (e.g. LPCVM_INSN_FN=<fn>): those fire
