@@ -453,11 +453,14 @@ bool cfgLedgerArmed() { return g_cfgLedger; }
 // Selected once in runPakOriginal() from the pak path (aaa vs dba).
 // ---------------------------------------------------------------------------
 struct VfsProfile {
-    std::string vfsRoot = "linux/aaa - bak";   // extracted .o tree root
-    std::string dataRoot = "linux/aaa";        // run/data directory (ini, pak)
-    std::string etcDir = "linux/etc";          // unpacked etc directory
-    std::string pakPrefix = "/aaa/pack_data/"; // virtual pak mount prefix
-    std::string objPrefix = "aaa";             // "/<objPrefix>/..." object prefix
+    // No built-in defaults: the driver mode always sets these from the
+    // command line (-r/-e/-b); when unset (raw dev entries) they stay empty
+    // instead of pointing at a hard-coded repo layout.
+    std::string vfsRoot;      // extracted .o tree root
+    std::string dataRoot;     // run/data directory (ini, pak)
+    std::string etcDir;       // unpacked etc directory
+    std::string pakPrefix;    // virtual pak mount prefix
+    std::string objPrefix;    // "/<objPrefix>/..." object prefix
 };
 VfsProfile& vfsProfile() {
     static VfsProfile p;
@@ -1088,12 +1091,10 @@ bool mysqlExecReal(int cno, const std::string& sql, MysqlClient::Result& out, st
 }
 
 std::string vfsRoot() {
-    std::error_code ec;
-    const std::string& pr = vfsProfile().vfsRoot;
-    if (fs::exists(pr, ec)) return pr;
-    if (fs::exists("linux/aaa - bak", ec)) return "linux/aaa - bak";
-    if (fs::exists("out/game", ec)) return "out/game";
-    return "out/lib_aaa32";
+    // Only the command-line profile: no hard-coded layout probing (the old
+    // "linux/aaa - bak" / "out/game" fallbacks pointed at trees that no
+    // longer exist anywhere).
+    return vfsProfile().vfsRoot;
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,13 +1103,8 @@ std::string vfsRoot() {
 
 // The driver's run directory (see above).  "/<objPrefix>/x" -> <runDir>/x.
 std::string dataRoot() {
-    std::error_code ec;
-    const std::string& pr = vfsProfile().dataRoot;
-    if (fs::exists(pr, ec)) return pr;
-    if (fs::exists("linux/aaa/magic_Linux32", ec) || fs::exists("linux/aaa/runaaa", ec))
-        return "linux/aaa";
-    if (fs::exists("linux/aaa/aaa", ec)) return "linux/aaa";
-    return vfsRoot();
+    // Command-line profile only (no "linux/aaa" auto-detection).
+    return vfsProfile().dataRoot;
 }
 
 bool hasSuffix(const std::string& s, const std::string& suffix);   // defined below
@@ -1117,11 +1113,8 @@ bool hasSuffix(const std::string& s, const std::string& suffix);   // defined be
 // read etc files from inside etc.pak; this is the same content already
 // unpacked, so both are supported.
 std::string etcRoot() {
-    std::error_code ec;
-    const std::string& pr = vfsProfile().etcDir;
-    if (fs::exists(pr, ec)) return pr;
-    if (fs::exists("linux/etc", ec)) return "linux/etc";
-    return "";
+    // Command-line profile only (no "linux/etc" auto-detection).
+    return vfsProfile().etcDir;
 }
 
 std::string normalizeSlashes(std::string s) {
@@ -1680,487 +1673,11 @@ Value regexpMatch(const std::string& str, const std::string& pattern) {
 
 } // namespace mini_regex
 
-struct SqlCol {
-    std::string name;
-    bool numeric = false;
-};
-struct SqlTable {
-    std::vector<SqlCol> cols;
-    std::vector<std::vector<Value>> rows;
-};
-
-static std::unordered_map<std::string, SqlTable>& sqlDb() {
-    static std::unordered_map<std::string, SqlTable> db;
-    return db;
-}
-static std::mutex& sqlDbMutex() {
-    static std::mutex m;
-    return m;
-}
-
-static std::string sqlLower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
 static std::string sqlTrim(const std::string& s) {
     size_t b = s.find_first_not_of(" \t\r\n");
     if (b == std::string::npos) return std::string();
     size_t e = s.find_last_not_of(" \t\r\n");
     return s.substr(b, e - b + 1);
-}
-static bool sqlIsWord(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
-}
-
-// Find the matching ')' for the '(' at `start`, ignoring backtick-quoted
-// identifiers, single-quoted strings (with '' escapes) and nesting.
-static size_t sqlFindParenEnd(const std::string& s, size_t start) {
-    int depth = 0;
-    bool inBq = false, inSq = false;
-    for (size_t k = start; k < s.size(); ++k) {
-        char c = s[k];
-        if (inSq) {
-            if (c == '\'') {
-                if (k + 1 < s.size() && s[k + 1] == '\'') ++k;
-                else inSq = false;
-            }
-            continue;
-        }
-        if (inBq) {
-            if (c == '`') inBq = false;
-            continue;
-        }
-        if (c == '\'') inSq = true;
-        else if (c == '`') inBq = true;
-        else if (c == '(') ++depth;
-        else if (c == ')') {
-            if (--depth == 0) return k;
-        }
-    }
-    return std::string::npos;
-}
-
-// Split [begin,end) on top-level commas (depth 0, outside quotes/backticks).
-static std::vector<std::string> sqlSplitTop(const std::string& s, size_t begin, size_t end) {
-    std::vector<std::string> out;
-    size_t seg = begin;
-    int depth = 0;
-    bool inBq = false, inSq = false;
-    for (size_t k = begin; k < end; ++k) {
-        char c = s[k];
-        if (inSq) {
-            if (c == '\'') {
-                if (k + 1 < end && s[k + 1] == '\'') ++k;
-                else inSq = false;
-            }
-            continue;
-        }
-        if (inBq) {
-            if (c == '`') inBq = false;
-            continue;
-        }
-        if (c == '\'') inSq = true;
-        else if (c == '`') inBq = true;
-        else if (c == '(') ++depth;
-        else if (c == ')') --depth;
-        else if (c == ',' && depth == 0) {
-            out.push_back(s.substr(seg, k - seg));
-            seg = k + 1;
-        }
-    }
-    out.push_back(s.substr(seg, end - seg));
-    return out;
-}
-
-static bool sqlTypeNumeric(const std::string& ty) {
-    std::string t = sqlLower(sqlTrim(ty));
-    static const char* nums[] = {"tinyint", "smallint", "mediumint", "bigint", "int",
-                                 "integer", "float",    "double",    "decimal", "numeric",
-                                 "real",    "bit",      "year"};
-    for (const char* n : nums)
-        if (t.compare(0, std::strlen(n), n) == 0) return true;
-    return false;
-}
-
-// Convert one raw SQL literal into a Value.
-// Numeric columns become ints even when the text is quoted ('8001').
-static Value sqlValue(const std::string& raw, bool numeric) {
-    std::string t = sqlTrim(raw);
-    if (t.empty()) return numeric ? make_int(0) : make_string("");
-    std::string low = sqlLower(t);
-    if (low == "null" || low == "default") return numeric ? make_int(0) : make_string("");
-    if (t.front() == '\'') {
-        std::string out;
-        for (size_t k = 1; k + 1 < t.size(); ++k) {
-            if (t[k] == '\'' && k + 1 < t.size() && t[k + 1] == '\'') {
-                out += '\'';
-                ++k;
-            } else if (t[k] == '\\' && k + 1 < t.size()) {
-                // MySQL backslash escapes (mysql_bind_parameters writes \',
-                // \\, \n, \r, \0, \Z, \" ...) - unescape so a written value
-                // round-trips byte-exactly (filed's read_content re-checks
-                // the stored checksum against the decoded content).
-                char nc = t[k + 1];
-                switch (nc) {
-                case 'n': out += '\n'; break;
-                case 'r': out += '\r'; break;
-                case '0': out += '\0'; break;
-                case 'Z': out += '\x1a'; break;
-                case 'b': out += '\b'; break;
-                case 't': out += '\t'; break;
-                default: out += nc; break;
-                }
-                ++k;
-            } else {
-                out += t[k];
-            }
-        }
-        if (numeric) {
-            char* end = nullptr;
-            long long v = std::strtoll(out.c_str(), &end, 10);
-            if (end && *end == '\0' && !out.empty()) return make_int(v);
-        }
-        return make_string(out);
-    }
-    if (numeric) {
-        char* end = nullptr;
-        long long v = std::strtoll(t.c_str(), &end, 10);
-        if (end && *end == '\0' && !t.empty()) return make_int(v);
-    }
-    return make_string(t);
-}
-
-// Parse "col = literal [AND col = literal]*" starting at k (a mysql_execute
-// WHERE clause; bind_parameters has already substituted literals).  Returns
-// false when the clause does not fit that shape (caller then refuses to
-// emulate the statement).
-static bool sqlParseConds(const std::string& s, size_t k, size_t n,
-                          std::vector<std::pair<std::string, Value>>& out) {
-    while (k < n) {
-        while (k < n && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r' || s[k] == '\n' || s[k] == ';')) ++k;
-        if (k >= n) break;
-        std::string col;
-        if (s[k] == '`') {
-            ++k;
-            while (k < n && s[k] != '`') col += s[k++];
-            if (k < n) ++k;
-        } else {
-            while (k < n && sqlIsWord(s[k])) col += s[k++];
-        }
-        while (k < n && (s[k] == ' ' || s[k] == '\t')) ++k;
-        if (k >= n || s[k] != '=') return false;
-        ++k;
-        while (k < n && (s[k] == ' ' || s[k] == '\t')) ++k;
-        if (k >= n) return false;
-        std::string lit;
-        if (s[k] == '\'') {
-            ++k;
-            while (k < n) {
-                if (s[k] == '\'') {
-                    if (k + 1 < n && s[k + 1] == '\'') { lit += '\''; k += 2; continue; }
-                    ++k;
-                    break;
-                }
-                if (s[k] == '\\' && k + 1 < n) { lit += s[k + 1]; k += 2; continue; }
-                lit += s[k++];
-            }
-            out.emplace_back(col, make_string(lit));
-        } else {
-            while (k < n && s[k] != ' ' && s[k] != ';' && s[k] != ',') lit += s[k++];
-            out.emplace_back(col, sqlValue(lit, true));
-        }
-        size_t q = k;
-        while (q < n && (s[q] == ' ' || s[q] == '\t' || s[q] == ';' || s[q] == ',')) ++q;
-        if (q + 2 < n && sqlLower(s.substr(q, 3)) == "and") { k = q + 3; continue; }
-        break;
-    }
-    return true;
-}
-
-// Row/column matcher for the DELETE/UPDATE emulations: compare the condition
-// literal against the stored cell as strings (filed's data-table keys -
-// path/name/branch - are all string columns).
-static bool sqlRowMatches(const SqlTable& t, const std::vector<Value>& row,
-                          const std::vector<std::pair<std::string, Value>>& conds) {
-    for (const auto& cd : conds) {
-        int hit = -1;
-        for (size_t ci = 0; ci < t.cols.size() && ci < row.size(); ++ci) {
-            if (sqlLower(t.cols[ci].name) == sqlLower(cd.first)) { hit = static_cast<int>(ci); break; }
-        }
-        if (hit < 0) return false;
-        if (as_string(row[static_cast<size_t>(hit)]) != as_string(cd.second)) return false;
-    }
-    return true;
-}
-
-// Find a SQL keyword occurrence at [from, to) outside string literals
-// (backslash-escape aware) with word boundaries on both sides.
-static size_t sqlFindKeyword(const std::string& s, size_t from, size_t to, const char* kw) {
-    const size_t len = strlen(kw);
-    bool inSq = false;
-    for (size_t k = from; k < to;) {
-        char c = s[k];
-        if (c == '\\') { k += 2; continue; }
-        if (c == '\'') { inSq = !inSq; ++k; continue; }
-        if (!inSq && k + len <= to && sqlLower(s.substr(k, len)) == kw) {
-            bool b0 = (k == 0) || !sqlIsWord(s[k - 1]);
-            bool b1 = (k + len >= to) || !sqlIsWord(s[k + len]);
-            if (b0 && b1) return k;
-        }
-        ++k;
-    }
-    return std::string::npos;
-}
-
-// Apply a SQL script (CREATE/INSERT/DELETE/UPDATE statements) to the
-// in-memory fallback tables.  Returns the number of rows the write
-// statements affected (0 for schema statements).
-static int64_t sqlParseScript(const std::string& s) {
-    const size_t n = s.size();
-    size_t i = 0;
-    int64_t affected = 0;
-    while (i < n) {
-        // Skip comments and string literals so keywords inside them don't match.
-        if (s[i] == '-' && i + 1 < n && s[i + 1] == '-') {  // -- line comment
-            while (i < n && s[i] != '\n') ++i;
-            continue;
-        }
-        if (s[i] == '#' && (i == 0 || s[i - 1] == '\n')) {  // # line comment
-            while (i < n && s[i] != '\n') ++i;
-            continue;
-        }
-        if (s[i] == '/' && i + 1 < n && s[i + 1] == '*') {  // /* block comment */
-            i += 2;
-            while (i + 1 < n && !(s[i] == '*' && s[i + 1] == '/')) ++i;
-            i += 2;
-            continue;
-        }
-        if (s[i] == '\'') {  // string literal
-            ++i;
-            while (i < n) {
-                if (s[i] == '\'') {
-                    if (i + 1 < n && s[i + 1] == '\'') {
-                        i += 2;
-                        continue;
-                    }
-                    ++i;
-                    break;
-                }
-                ++i;
-            }
-            continue;
-        }
-        // CREATE TABLE `name` ( ... )
-        if (i + 11 < n && sqlLower(s.substr(i, 12)) == "create table") {
-            size_t j = i + 12;
-            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
-            std::string name;
-            if (j < n && s[j] == '`') {
-                ++j;
-                while (j < n && s[j] != '`') name += s[j++];
-                if (j < n) ++j;
-            } else {
-                while (j < n && sqlIsWord(s[j])) name += s[j++];
-            }
-            while (j < n && s[j] != '(') ++j;
-            if (j < n) {
-                size_t end = sqlFindParenEnd(s, j);
-                if (end != std::string::npos) {
-                    SqlTable t;
-                    for (const std::string& piece : sqlSplitTop(s, j + 1, end)) {
-                        std::string pc = sqlTrim(piece);
-                        if (pc.empty()) continue;
-                        if (pc[0] == '`') {
-                            size_t e2 = pc.find('`', 1);
-                            if (e2 != std::string::npos) {
-                                SqlCol c;
-                                c.name = pc.substr(1, e2 - 1);
-                                std::string rest = sqlTrim(pc.substr(e2 + 1));
-                                c.numeric = sqlTypeNumeric(rest.substr(0, rest.find_first_of(" \t\r\n(")));
-                                t.cols.push_back(std::move(c));
-                            }
-                        }
-                        // PRIMARY KEY / KEY / UNIQUE / CONSTRAINT ... lines are skipped.
-                    }
-                    if (!t.cols.empty()) {
-                        // First definition wins so adb.sql (which carries the
-                        // data rows) is not clobbered by an empty schema later.
-                        sqlDb().emplace(sqlLower(name), std::move(t));
-                    }
-                    i = end + 1;
-                    continue;
-                }
-            }
-        }
-        // INSERT INTO `name` VALUES (...),(...);
-        if (i + 10 < n && sqlLower(s.substr(i, 11)) == "insert into") {
-            size_t j = i + 11;
-            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
-            std::string name;
-            if (j < n && s[j] == '`') {
-                ++j;
-                while (j < n && s[j] != '`') name += s[j++];
-                if (j < n) ++j;
-            } else {
-                while (j < n && sqlIsWord(s[j])) name += s[j++];
-            }
-            while (j + 5 < n && sqlLower(s.substr(j, 6)) != "values") ++j;  // skip optional column list
-            if (j + 5 >= n) {
-                i = n;
-                break;
-            }
-            j += 6;
-            auto it = sqlDb().find(sqlLower(name));
-            if (it == sqlDb().end()) {
-                i = j;
-                continue;
-            }
-            while (j < n) {
-                while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
-                if (j >= n || s[j] != '(') break;
-                size_t end = sqlFindParenEnd(s, j);
-                if (end == std::string::npos) break;
-                const auto& cols = it->second.cols;
-                auto parts = sqlSplitTop(s, j + 1, end);
-                std::vector<Value> row;
-                row.reserve(parts.size());
-                for (size_t k = 0; k < parts.size(); ++k)
-                    row.push_back(sqlValue(parts[k], k < cols.size() && cols[k].numeric));
-                // Idempotent insert: a row identical to an existing one (the
-                // game's retry loops re-send the same create) counts as
-                // affected=0 instead of accumulating duplicates - duplicates
-                // would break cmd_read_content's "exactly one row" contract.
-                bool dup = false;
-                for (const auto& ex : it->second.rows) {
-                    if (ex.size() != row.size()) continue;
-                    bool same = true;
-                    for (size_t k = 0; k < row.size(); ++k)
-                        if (as_string(ex[k]) != as_string(row[k])) { same = false; break; }
-                    if (same) { dup = true; break; }
-                }
-                if (!dup) {
-                    it->second.rows.push_back(std::move(row));
-                    ++affected;
-                }
-                j = end + 1;
-                while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
-                if (j < n && s[j] == ',') {
-                    ++j;
-                    continue;
-                }
-                break;  // expect ';' or end of statement
-            }
-            i = j;
-            continue;
-        }
-        // DELETE FROM `name` WHERE col = 'v' AND ...  (mysql_execute offline
-        // emulation; the original cmd_delete_content issues exactly this form
-        // with bound path/name/branch literals).
-        if (i + 11 < n && sqlLower(s.substr(i, 11)) == "delete from") {
-            size_t j = i + 11;
-            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
-            std::string name;
-            if (j < n && s[j] == '`') {
-                ++j;
-                while (j < n && s[j] != '`') name += s[j++];
-                if (j < n) ++j;
-            } else {
-                while (j < n && sqlIsWord(s[j])) name += s[j++];
-            }
-            std::vector<std::pair<std::string, Value>> conds;
-            size_t w = sqlFindKeyword(s, j, n, "where");
-            if (w != std::string::npos) sqlParseConds(s, w + 5, n, conds);
-            auto it = sqlDb().find(sqlLower(name));
-            if (it != sqlDb().end() && !conds.empty()) {
-                auto& rows = it->second.rows;
-                std::vector<std::vector<Value>> keep;
-                keep.reserve(rows.size());
-                for (auto& row : rows) {
-                    if (sqlRowMatches(it->second, row, conds)) ++affected;
-                    else keep.push_back(std::move(row));
-                }
-                rows = std::move(keep);
-            }
-            i = n;
-            continue;
-        }
-        // UPDATE `name` SET col = 'v', ... WHERE col = 'v' AND ... (the
-        // original cmd_write_content issues exactly this form).
-        if (i + 6 < n && sqlLower(s.substr(i, 7)) == "update ") {
-            size_t j = i + 7;
-            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) ++j;
-            std::string name;
-            if (j < n && s[j] == '`') {
-                ++j;
-                while (j < n && s[j] != '`') name += s[j++];
-                if (j < n) ++j;
-            } else {
-                while (j < n && sqlIsWord(s[j])) name += s[j++];
-            }
-            size_t setKw = sqlFindKeyword(s, j, n, "set");
-            if (setKw == std::string::npos) { i = n; continue; }
-            size_t setStart = setKw + 3;
-            while (setStart < n && (s[setStart] == ' ' || s[setStart] == '\t')) ++setStart;
-            size_t whereKw = sqlFindKeyword(s, setStart, n, "where");
-            size_t setEnd = (whereKw != std::string::npos) ? whereKw : n;
-            auto it = sqlDb().find(sqlLower(name));
-            if (it != sqlDb().end()) {
-                SqlTable& t = it->second;
-                std::vector<std::pair<std::string, Value>> sets;
-                for (const std::string& piece : sqlSplitTop(s, setStart, setEnd)) {
-                    size_t eq = piece.find('=');
-                    if (eq == std::string::npos) continue;
-                    std::string cn = sqlTrim(piece.substr(0, eq));
-                    if (!cn.empty() && cn[0] == '`') {
-                        size_t e2 = cn.find('`', 1);
-                        if (e2 != std::string::npos) cn = cn.substr(1, e2 - 1);
-                    }
-                    sets.emplace_back(cn, sqlValue(sqlTrim(piece.substr(eq + 1)), false));
-                }
-                std::vector<std::pair<std::string, Value>> conds;
-                if (whereKw != std::string::npos)
-                    sqlParseConds(s, whereKw + 5, n, conds);
-                for (auto& row : t.rows) {
-                    if (!sqlRowMatches(t, row, conds)) continue;
-                    ++affected;
-                    for (auto& st : sets) {
-                        for (size_t ci = 0; ci < t.cols.size() && ci < row.size(); ++ci)
-                            if (sqlLower(t.cols[ci].name) == sqlLower(st.first)) row[ci] = st.second;
-                    }
-                }
-            }
-            i = n;
-            continue;
-        }
-        ++i;
-    }
-    return affected;
-}
-
-static void sqlLoadFile(const fs::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return;
-    std::stringstream ss;
-    ss << in.rdbuf();
-    sqlParseScript(ss.str());
-}
-
-static void sqlLoadAll() {
-    static std::once_flag once;
-    std::call_once(once, [] {
-        std::lock_guard<std::mutex> lk(sqlDbMutex());
-        for (const char* f : {"adb.sql", "mdb.sql", "ldb.sql", "ddb.sql"}) {
-            sqlLoadFile(fs::path("linux/new_sql") / f);
-            sqlLoadFile(fs::path("new_sql") / f);
-        }
-        if (LPCVM_GETENV("LPCVM_TRACE")) {
-            std::cerr << "[sql] loaded " << sqlDb().size() << " tables\n";
-            for (const auto& kv : sqlDb())
-                std::cerr << "  " << kv.first << ": cols=" << kv.second.cols.size()
-                          << " rows=" << kv.second.rows.size() << "\n";
-        }
-    });
 }
 
 // [keyt] probe: print the key and value TYPE INDEX of every entry of a
@@ -2211,24 +1728,12 @@ void dumpDbaseKeys(const Value& v, const char* tag) {
     std::cerr.flush();
 }
 
+// Offline fallback for mysql_query / mysql_select (MySQL down or SQL error):
+// the SQL file import (new_sql/*.sql) is gone - no in-memory table set is
+// loaded, so an offline query always yields an empty result set.
 Value simpleDbSelect(const std::string& table) {
-    auto arr = std::make_shared<ArrayValue>();
-    sqlLoadAll();
-    {
-        std::lock_guard<std::mutex> lk(sqlDbMutex());
-        auto it = sqlDb().find(sqlLower(table));
-        if (it != sqlDb().end()) {
-            const SqlTable& t = it->second;
-            for (const auto& row : t.rows) {
-                auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(t.cols.size()));
-                for (size_t i = 0; i < t.cols.size() && i < row.size(); ++i)
-                    mp->insert(make_string(t.cols[i].name), row[i]);
-                arr->items.push_back(mp);
-            }
-        }
-    }
-    // Tables not present in the in-memory set return an empty result set.
-    return arr;
+    (void)table;
+    return make_array();
 }
 
 Value get_index(const Value& c, const Value& idx) {

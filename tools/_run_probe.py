@@ -18,6 +18,7 @@ can be measured independently.
 """
 import os
 import subprocess, time, os, sys, io, shutil, socket
+from _svc_args import svc_args  # original-style driver command line per service
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 LOG_DIR = sys.argv[1] if len(sys.argv) > 1 else 'probe1'
@@ -77,7 +78,7 @@ for name in ['aaa', 'dba', 'ccs', 'gs']:
     _exe = os.environ.get('LPCVM_EXE') or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), '..', 'build', 'Release', 'lpcvm.exe')
     _exe = os.path.abspath(_exe)
-    p = subprocess.Popen([_exe, 'run', 'linux/%s/pack_data/lib_%s32.pak' % (name, name)],
+    p = subprocess.Popen([_exe] + svc_args(name),
                          stdout=f, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
     procs.append((name, p, f))
     time.sleep(3)

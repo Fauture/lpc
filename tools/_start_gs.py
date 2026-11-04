@@ -4,6 +4,7 @@ usage: python -X utf8 tools/_start_gs.py <tmp_logdir> <seconds>
 """
 import os
 import subprocess, time, sys, io, socket
+from _svc_args import svc_args  # original-style driver command line per service
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 LOG_DIR = sys.argv[1]
@@ -27,7 +28,7 @@ else:
     _exe = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                         '..', 'build', 'Release', 'lpcvm.exe'))
 # break away from the shell Job so gs survives task/session teardown
-p = subprocess.Popen([_exe, 'run', 'linux/gs/pack_data/lib_gs32.pak'],
+p = subprocess.Popen([_exe] + svc_args('gs'),
                      stdout=f, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
 print('[start] gs pid=%d -> %s' % (p.pid, fn), flush=True)
 

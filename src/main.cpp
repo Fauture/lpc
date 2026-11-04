@@ -218,119 +218,151 @@ int runServer(const std::string& path, int port) {
 
 namespace fs = std::filesystem;
 
-void printLoadDir(const fs::path& root, const std::string& virtualDir) {
-    fs::path dir = root / virtualDir.substr(1);
-    std::error_code ec;
-    if (!fs::exists(dir, ec)) return;
-    std::cout << "Load sub dir: " << virtualDir << "\n";
-    std::vector<std::string> files;
-    for (auto& p : fs::recursive_directory_iterator(dir, ec)) {
-        if (p.is_regular_file() && p.path().extension() == ".o") {
-            fs::path rel = fs::relative(p.path(), root);
-            std::string name = "/" + rel.generic_string();
-            if (name.size() > 2 && name.substr(name.size() - 2) == ".o") name = name.substr(0, name.size() - 2) + ".c";
-            files.push_back(name);
-        }
-    }
-    std::sort(files.begin(), files.end());
-    for (auto& f : files) std::cout << "Load: " << f << "... OK\n";
+// ---------------------------------------------------------------------------
+// Original-style driver options (vm_analyseArguments 0x80b9a64).
+//
+// The original launchers (linux/gs/rungs, linux/aaa/runaaa, ...) pass:
+//   ./magic_Linux32 /r ./ /e /gs/pack_data/lib_gs32.pak/gs/start_gs.o
+//                   /b /gs/pack_data/lib_gs32.pak -m gs/gsmem.cfg
+//                   /D _RELEASE /D CONFIG=gs/gs1.ini /D AUTH= ...
+//                   --enable-socket-daemon 0 --stack-size 1024
+// Single-char options accept BOTH '-' and '/' prefixes (the parser rejects
+// anything else: `v5 != 45 && v5 != 47` -> "Bad syntax"); the value may be a
+// separate argv token (rungs form) or attached ("/r./").  -D declares a
+// predefine (vm_addPredefine 0x8080128) and may repeat, with or without '='
+// (e.g. _RELEASE / AUTH= / CONFIG=gs/gs1.ini).
+// ---------------------------------------------------------------------------
+struct DriverArgs {
+    std::string rootDir = "./";     // -r <dir>   (VM root; informational here)
+    std::string startScript;        // -e <script>   REQUIRED: boot .o, may live inside -b pak
+    std::string binaryDir;          // -b <pak>      REQUIRED: binary/pak directory
+    std::string memoryConfig;       // -m <cfg>   (vmmemlib config; informational here)
+    std::string telnetPassword;     // -w <pwd>
+    int telnetPort = 0;             // -p <port>
+    int serviceThreads = 0;         // -s <n>     (informational)
+    // -D NAME[=VALUE] predefines; NAME without '=' defines an empty macro.
+    std::vector<std::pair<std::string, std::string>> defines;
+    bool hasStartScript = false;
+    bool hasBinaryDir = false;
+};
+
+namespace {
+
+bool isOptionToken(const std::string& s) {
+    return s.size() >= 2 && (s[0] == '-' || s[0] == '/') && s != "--";
 }
 
-
-int startSimpleTcpServer(int port) {
-    WSADATA wsa{};
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 1;
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == INVALID_SOCKET) return 1;
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(static_cast<u_short>(port));
-    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-        std::cerr << "bind port " << port << " failed: " << WSAGetLastError() << "\n";
-        return 1;
+// Value of an option token: attached ("/r./" -> "./") or the next argv token
+// ("/r ./" -> "./", the original takes argv[i+1] unconditionally).
+bool optionValue(int argc, char** argv, size_t& i, std::string& out) {
+    const std::string tok = argv[i];
+    if (tok.size() > 2) {
+        out = tok.substr(2);
+        return true;
     }
-    listen(s, 16);
-    std::cout << "AAA service listening on 0.0.0.0:" << port << "\n";
-    while (true) {
-        SOCKET c = accept(s, nullptr, nullptr);
-        if (c == INVALID_SOCKET) continue;
-        const char* msg = "Welcome to AAA LPC service!\r\n";
-        send(c, msg, static_cast<int>(strlen(msg)), 0);
-        char buf[1024];
-        int n = recv(c, buf, sizeof(buf) - 1, 0);
-        if (n > 0) {
-            buf[n] = 0;
-            const char* resp = "OK\r\n";
-            send(c, resp, static_cast<int>(strlen(resp)), 0);
-        }
-        closesocket(c);
+    if (i + 1 < static_cast<size_t>(argc)) {
+        out = argv[i + 1];
+        ++i;
+        return true;
     }
-    return 0;
+    std::cerr << "Miss argument for " << tok << "\n";
+    return false;
 }
 
-// Debug helper: run one SQL statement against the configured MySQL and print
-// the result as a table (reads [ADB]/[MDB] from linux/aaa/aaa/aaa.ini).
-int sqlDebug(const std::string& sql, const std::string& which) {
-    lpc::MysqlClient cl;
-    std::string err;
-    // same defaults assure_connection uses (aaa.ini [ADB])
-    std::string host = "192.168.200.128";
-    std::string user = "root";
-    std::string pass = "123456";
-    std::string db = (which == "mdb") ? "dl_mdb_all" : "dl_adb_all";
-    int port = 3306;
-    lpc::MysqlClient::Result res;
-    if (!cl.connect(host, port, user, pass, db, err)) {
-        std::cerr << "connect failed: " << err << "\n";
-        return 1;
-    }
-    if (!cl.execute(sql, res, err)) {
-        std::cerr << "query failed: " << err << "\n";
-        return 1;
-    }
-    if (!res.hasResultSet) {
-        std::cout << "affected rows: " << res.affectedRows << "\n";
-        return 0;
-    }
-    for (size_t i = 0; i < res.cols.size(); ++i) {
-        if (i) std::cout << " | ";
-        std::cout << res.cols[i];
-    }
-    std::cout << "\n";
-    for (const auto& row : res.rows) {
-        for (size_t i = 0; i < row.size(); ++i) {
-            if (i) std::cout << " | ";
-            const auto& c = row[i];
-            if (c.isNull) std::cout << "NULL";
-            else if (c.isNumber) std::cout << c.num;
-            else std::cout << c.str;
+bool parseDriverArgs(int argc, char** argv, DriverArgs& out) {
+    for (size_t i = 1; i < static_cast<size_t>(argc); ++i) {
+        std::string tok = argv[i];
+        if (!isOptionToken(tok)) {
+            std::cerr << "Bad syntax - " << tok << "\n";
+            return false;
         }
-        std::cout << "\n";
+        std::string val;
+        switch (tok[1]) {
+            case 'r':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.rootDir = val;
+                break;
+            case 'e':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.startScript = val;
+                out.hasStartScript = true;
+                break;
+            case 'b':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.binaryDir = val;
+                out.hasBinaryDir = true;
+                break;
+            case 'm':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.memoryConfig = val;
+                break;
+            case 'D':
+                if (!optionValue(argc, argv, i, val)) return false;
+                {
+                    size_t eq = val.find('=');
+                    if (eq == std::string::npos)
+                        out.defines.emplace_back(val, std::string());
+                    else
+                        out.defines.emplace_back(val.substr(0, eq), val.substr(eq + 1));
+                }
+                break;
+            case 'w':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.telnetPassword = val;
+                break;
+            case 'p':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.telnetPort = std::atoi(val.c_str());
+                break;
+            case 's':
+                if (!optionValue(argc, argv, i, val)) return false;
+                out.serviceThreads = std::atoi(val.c_str());
+                break;
+            default:
+                // Long options used by the original launchers
+                // (--enable-socket-daemon 0 / --max-process 128 /
+                // --stack-size 1024 / ...) are accepted and skipped together
+                // with their value; anything else is "Bad option" like the
+                // original (which also just keeps going).
+                if (tok.compare(0, 2, "--") == 0) {
+                    if (i + 1 < static_cast<size_t>(argc) && !isOptionToken(argv[i + 1])) ++i;
+                    break;
+                }
+                std::cerr << "Bad option -- " << tok << "\n";
+                break;
+        }
     }
-    return 0;
+    return true;
 }
 
-int runPakOriginal(const std::string& path) {
-    // Faithful driver emulation of "runaaa":
-    //   ./magic_Linux32 /r ./ /e /aaa/pack_data/lib_aaa32.pak/aaa/start_aaa.o
-    //                    /b /aaa/pack_data/lib_aaa32.pak ...
-    // The pak is mounted as the binary directory (any ".pak/" path is a
-    // packed volume, vm_isInPackedVolume), the boot object comes from inside
-    // the pak, and object loading is driven entirely by the LPC startup code
-    // in start_aaa.o.
+} // namespace
+
+int runPakOriginal(const DriverArgs& opt) {
+    // Faithful driver emulation of the original launchers (linux/gs/rungs etc.):
+    //   ./magic_Linux32 /r ./ /e /gs/pack_data/lib_gs32.pak/gs/start_gs.o
+    //                  /b /gs/pack_data/lib_gs32.pak /D CONFIG=gs/gs1.ini ...
+    // -e is the boot script (vm_setStartScriptFile) INSIDE the -b pak
+    // (vm_setBinaryDir); both are REQUIRED from the command line - nothing is
+    // hard-coded here.  The pak mount, the extracted-tree fallback and the VFS
+    // profile all derive from -e/-b.  The ini file comes exclusively from
+    // -D CONFIG=... (rungs); when absent, the boot object's own startup code
+    // resolves the file internally (start_aaa.o fallback), so nothing is
+    // injected on its behalf.
     std::cout << "PDB is initialized by vmmemlib.\n";   // vmmemlib static init (0x816eb20)
-    std::error_code ec;
-    if (!fs::exists(path, ec)) {
-        std::cerr << "Missing pak file: " << path << "\n";
+    if (!opt.hasStartScript || !opt.hasBinaryDir) {
+        std::cerr << "Missing required option: " << (opt.hasStartScript ? "-b <pak>" : "-e <start script>")
+                  << " (see linux/gs/rungs for the original form)\n";
         return 1;
     }
-    std::string absPak = fs::absolute(fs::path(path)).string();
-    std::string pakFile = fs::path(path).filename().string();
+    std::string binaryDir = opt.binaryDir;
+    if (binaryDir[0] != '/') binaryDir = "/" + binaryDir;
+    const std::string& startScript = opt.startScript;
 
-    // Per-project profile (aaa / dba / ccs / gs).  The boot object, the
-    // extracted .o tree, the run directory and the pak mount prefix all derive
-    // from the pak filename: lib_<prefix>32.pak -> <prefix>.
+    std::string pakFile = fs::path(binaryDir).filename().string();
+
+    // Per-project profile (aaa / dba / ccs / gs).  The extracted .o tree, the
+    // run directory and the pak mount prefix all derive from the pak filename:
+    // lib_<prefix>32.pak -> <prefix>.
     std::string objPrefix = "aaa";
     {
         std::string pf = pakFile;
@@ -339,34 +371,53 @@ int runPakOriginal(const std::string& path) {
         if (pf.rfind("lib_", 0) == 0) pf = pf.substr(4);
         if (!pf.empty()) objPrefix = pf;
     }
-    std::string bootRel = objPrefix + "/start_" + objPrefix + ".o";
-    std::string vfsRoot = "linux/" + objPrefix + "/pack_data/lib_" + objPrefix + "32";
-    std::string dataRoot = "linux";
-    std::string etcDir = "linux/" + objPrefix + "/pack_data/etc";
-    std::string pakPrefix = "/" + objPrefix + "/pack_data/";
-    std::string prefix = pakPrefix + pakFile;
+
+    // Boot object relative path: -e with the -b pak prefix stripped
+    // ("/gs/pack_data/lib_gs32.pak/gs/start_gs.o" -> "gs/start_gs.o").
+    std::string pakInner = binaryDir + "/";
+    std::string bootRel;
+    if (startScript.compare(0, pakInner.size(), pakInner) == 0) {
+        bootRel = startScript.substr(pakInner.size());
+    } else {
+        size_t p = startScript.find(".pak/");
+        if (p != std::string::npos) bootRel = startScript.substr(p + 5);
+    }
+    if (bootRel.empty()) {
+        std::cerr << "Start script " << startScript << " is not inside binary dir "
+                  << binaryDir << "\n";
+        return 1;
+    }
+
+    // Physical data root comes from -r (vm_setRootDir 0x80bd900 - the original
+    // launchers point it at the deployment cwd, "/r ./").  Nothing about the
+    // data location is hard-coded here: the launcher decides where the tree
+    // lives (this repo passes -r linux, where the original cwd layout is kept).
+    std::string dataRoot = opt.rootDir;
+    while (dataRoot.size() > 1 && (dataRoot.back() == '/' || dataRoot.back() == '\\'))
+        dataRoot.pop_back();
+    if (dataRoot.empty()) dataRoot = ".";
+    std::string pakPrefix = binaryDir.substr(0, binaryDir.find_last_of('/') + 1);
+    std::string vfsRoot = dataRoot + binaryDir.substr(0, binaryDir.size() - 4);  // strip ".pak"
+    std::string etcDir = dataRoot + pakPrefix + "etc";
+    std::string absPak = fs::absolute(dataRoot + binaryDir).string();
     lpc::setVfsProfile(vfsRoot, dataRoot, etcDir, pakPrefix, objPrefix);
-    lpc::setPakMount(absPak, prefix);
+    lpc::setPakMount(absPak, binaryDir);
 
-    // The original boot scripts pass /D CONFIG=<prefix>/<prefix>.ini (rungs:
-    // /D CONFIG=gs/gs1.ini).  start_<prefix>.o resolves INI_FILE via
-    // expand_macro("CONFIG") with a "/<prefix>/game_server.ini" fallback that
-    // only aaa/dba/ccs happen to match; inject the real config file so gs
-    // reads gs1.ini (and the others read their own ini) instead of falling
-    // back to the missing game_server.ini.
-    std::string iniRel = objPrefix + "/" + objPrefix + ".ini";
-    if (objPrefix == "gs") iniRel = "gs/gs1.ini";  // rungs: /D CONFIG=gs/gs1.ini
-    lpc::injectDefine("CONFIG", iniRel);
+    // Command-line defines only (vm_addPredefine 0x8080128).  CONFIG, if the
+    // launcher passes it, lands here; no CONFIG means the boot object falls
+    // back internally - exactly like the original driver.
+    for (const auto& [nm, val] : opt.defines) lpc::injectDefine(nm, val);
 
-    // Boot object: <pak>/<objPrefix>/start_<objPrefix>.o (runaaa/rundba -e).
+    // Boot object: inside the pak first, extracted tree as fallback.
     lpc::OriginalObject obj;
     std::vector<uint8_t> bootBytes;
-    bool fromPak = lpc::pakReadFile(prefix + "/" + bootRel, bootBytes);
+    bool fromPak = lpc::pakReadFile(binaryDir + "/" + bootRel, bootBytes);
     if (fromPak) {
         obj = lpc::loadOriginalObjectFromBytes(bootBytes);
-        std::cout << "Loaded boot object from pak: " << prefix << "/" << bootRel << "\n";
+        std::cout << "Loaded boot object from pak: " << binaryDir << "/" << bootRel << "\n";
     } else {
         std::string oPath = vfsRoot + "/" + bootRel;
+        std::error_code ec;
         if (!fs::exists(oPath, ec)) {
             std::cerr << "Missing boot object (pak has no " << bootRel
                       << " and no " << oPath << ")\n";
@@ -392,10 +443,30 @@ int runPakOriginal(const std::string& path) {
     return 0;
 }
 
+// Legacy dev shim for "lpcvm run <pak>" / "lpcvm orig <pak>": rebuild the
+// original-style args from the pak path alone.  Dev/debug entry only - the
+// driver mode above requires -e/-b from the command line.
 int runPak(const std::string& path) {
-    // Execute the pak through the original bytecode VM. Network/service startup
-    // is expected to be performed by the LPC code itself, not by this C++ launcher.
-    return runPakOriginal(path);
+    DriverArgs opt;
+    std::string pf = fs::path(path).filename().string();
+    size_t p = pf.rfind("32.pak");
+    if (p != std::string::npos) pf = pf.substr(0, p);
+    if (pf.rfind("lib_", 0) == 0) pf = pf.substr(4);
+    std::string objPrefix = pf.empty() ? "aaa" : pf;
+    std::string pakVfs = "/" + objPrefix + "/pack_data/lib_" + objPrefix + "32.pak";
+    opt.binaryDir = pakVfs;
+    opt.hasBinaryDir = true;
+    opt.startScript = pakVfs + "/" + objPrefix + "/start_" + objPrefix + ".o";
+    opt.hasStartScript = true;
+    // Historical dev invocation runs from the repo root; keep the data-root
+    // convention the driver mode now takes from -r (original cwd layout).
+    opt.rootDir = "linux";
+    // The old dev entry injected the ini itself; keep that so historical
+    // invocations ("lpcvm run linux/gs/pack_data/lib_gs32.pak") still boot.
+    std::string iniRel = objPrefix + "/" + objPrefix + ".ini";
+    if (objPrefix == "gs") iniRel = "gs/gs1.ini";
+    opt.defines.emplace_back("CONFIG", iniRel);
+    return runPakOriginal(opt);
 }
 
 // ---- C stack high-water watchdog (LPCVM_STACKPROBE=1) ----------------------
@@ -527,11 +598,21 @@ static void startStackProbe() {
 }
 
 void usage() {
-    std::cout << "Usage:\n"
+    std::cout << "Usage (driver mode, mirrors magic_Linux32 - see linux/gs/rungs):\n"
+              << "  lpcvm -r ./ -e /gs/pack_data/lib_gs32.pak/gs/start_gs.o\n"
+              << "        -b /gs/pack_data/lib_gs32.pak [-D CONFIG=gs/gs1.ini] ...\n"
+              << "Options:\n"
+              << "  -r <dir>        VM root / physical data root (e.g. ./ or linux)\n"
+              << "  -e <script>     start script (.o), may live inside the -b pak (required)\n"
+              << "  -b <pak>        binary/pak directory (required)\n"
+              << "  -m <cfg>        memory config (accepted, informational)\n"
+              << "  -s <n>          service thread count (informational)\n"
+              << "  -w <pwd>        telnet password\n"
+              << "  -p <port>       telnet port\n"
+              << "  -D NAME[=VALUE] declare a predefine (repeatable)\n"
+              << "Dev tools:\n"
               << "  lpcvm run <file.c|file.o|file.pak>\n"
-              << "  lpcvm server <file.c> [port]\n"
-              << "  lpcvm disasm <file.o>\n"
-              << "  lpcvm unpack <file.pak> [outdir]\n";
+              << "  lpcvm orig|disasm|opstats|disfn|unpack|server ...\n";
 }
 
 } // namespace
@@ -659,37 +740,37 @@ int main(int argc, char** argv) {
     });
     startStackProbe();
     try {
-        // Driver-level telnet options (mirroring the original driver's
-        // -w <password> / -p <port>): telnet is only enabled when a port is
-        // configured.  Without these options the driver does not listen.
-        std::string telnetPwd;
-        int telnetPort = 0;
-        std::vector<std::string> args;
-        for (int i = 1; i < argc; ++i) {
-            if (std::strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
-                telnetPwd = argv[++i];
-            } else if (std::strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
-                telnetPort = std::atoi(argv[++i]);
-            } else {
-                args.push_back(argv[i]);
+        // Dev subcommands keep their historical form; anything else is parsed
+        // as the original driver command line (vm_analyseArguments 0x80b9a64).
+        static const char* const kDevCmds[] = { "run",   "orig",     "disasm", "opstats",
+                                                "disfn", "server", "unpack" };
+        const std::string first = argc > 1 ? argv[1] : "";
+        const bool devCmd = std::find(std::begin(kDevCmds), std::end(kDevCmds), first) != std::end(kDevCmds);
+        if (!devCmd) {
+            DriverArgs drv;
+            if (!parseDriverArgs(argc, argv, drv)) {
+                usage();
+                return 1;
             }
+            if (!drv.telnetPassword.empty()) lpc::setDriverTelnetPassword(drv.telnetPassword);
+            if (drv.telnetPort >= 1024) lpc::startDriverTelnet(drv.telnetPort);
+            return runPakOriginal(drv);
         }
-        if (!telnetPwd.empty()) lpc::setDriverTelnetPassword(telnetPwd);
-        if (telnetPort >= 1024) lpc::startDriverTelnet(telnetPort);
 
-        if (args.size() < 2) {
+        if (argc < 3) {
             usage();
             return 1;
         }
-        std::string cmd = args[0];
-        std::string path = args[1];
+        std::string cmd = argv[1];
+        std::string path = argv[2];
+        std::vector<std::string> args(argv + 1, argv + argc);
         if (cmd == "run") {
             if (hasSuffix(path, ".pak")) return runPak(path);
             if (hasSuffix(path, ".o")) return runOriginalObject(path);
             return runLpcSource(path);
         }
         if (cmd == "orig") {
-            if (hasSuffix(path, ".pak")) return runPakOriginal(path);
+            if (hasSuffix(path, ".pak")) return runPak(path);
             return runOriginalObject(path);
         }
         if (cmd == "disasm") {
@@ -702,105 +783,6 @@ int main(int argc, char** argv) {
             if (args.size() < 3) { usage(); return 1; }
             return disasmFunction(path, args[2]);
         }
-        if (cmd == "sscantest") {
-            // Quick unit check of lpcSscanf quote handling (coupon .list):
-            //   sscanf("\"ABC123\"", "\"%s\"")  should unquote to ABC123.
-            std::string in = "\"ABC123\"";
-            std::string fmt = "\"%s\"";
-            std::vector<lpc::Value> out;
-            int m = lpc::lpcSscanf(in, fmt, out, 1);
-            std::cout << "case1 match=" << m << " out=" << out.size();
-            if (!out.empty() && out[0].index() == 4)
-                std::cout << " str(" << std::get<lpc::SharedString>(out[0]).size() << ")"
-                          << " [" << std::get<lpc::SharedString>(out[0]).str() << "]";
-            std::cout << "\n";
-            std::string in2 = "2016-02-free_gift";
-            std::string fmt2 = "%d-%d-%s";
-            std::vector<lpc::Value> out2;
-            int m2 = lpc::lpcSscanf(in2, fmt2, out2, 3);
-            std::cout << "case2 match=" << m2 << "\n";
-            // case3: GBK bytes quoted (coupon name, 24 bytes inside quotes)
-            // 2016年02月份充值送奖励活动 in GBK
-            std::string gbk;
-            gbk += "\x32\x30\x31\x36\xc4\xea\x30\x32\xd4\xc2\xb7\xdd"; // 2016年02月份
-            gbk += "\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // 充值送奖励活动
-            std::string in3 = "\"" + gbk + "\"";
-            std::vector<lpc::Value> out3;
-            int m3 = lpc::lpcSscanf(in3, fmt, out3, 1);
-            std::cout << "case3 match=" << m3 << " out=" << out3.size();
-            if (!out3.empty() && out3[0].index() == 4)
-                std::cout << " str(" << std::get<lpc::SharedString>(out3[0]).size() << ")";
-            std::cout << "\n";
-            // case4: same but ASCII inner of identical 24 length
-            std::string in4 = "\"" + std::string(24, 'A') + "\"";
-            std::vector<lpc::Value> out4;
-            int m4 = lpc::lpcSscanf(in4, fmt, out4, 1);
-            std::cout << "case4 match=" << m4 << " out=" << out4.size();
-            if (!out4.empty() && out4[0].index() == 4)
-                std::cout << " str(" << std::get<lpc::SharedString>(out4[0]).size() << ")";
-            std::cout << "\n";
-            // case5: coupon-name format on the real name
-            std::string gbk2;
-            gbk2 += "\x32\x30\x31\x36\xc4\xea\x30\x32\xd4\xc2\xb7\xdd";      // 2016年02月份
-            gbk2 += "\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // 充值送奖励活动
-            std::string fmt5;
-            fmt5 += "%d\xc4\xea";                        // %d年
-            fmt5 += "%d\xd4\xc2\xb7\xdd";                // %d月份
-            fmt5 += "%s\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // %s充值送奖励活动
-            std::vector<lpc::Value> out5;
-            int m5 = lpc::lpcSscanf(gbk2, fmt5, out5, 3);
-            std::cout << "case5 match=" << m5 << " out=" << out5.size();
-            if (!out5.empty() && out5[0].index() == 2)
-                std::cout << " y=" << std::get<int64_t>(out5[0]);
-            if (out5.size() > 1 && out5[1].index() == 2)
-                std::cout << " m=" << std::get<int64_t>(out5[1]);
-            if (out5.size() > 2 && out5[2].index() == 4)
-                std::cout << " s=str";
-            std::cout << "\n";
-            // case6: the 09-month coupon name, and case7 with trailing CR
-            std::string gbk6;
-            gbk6 += "\x32\x30\x31\x36\xc4\xea\x30\x39\xd4\xc2\xb7\xdd"; // 2016年09月份
-            gbk6 += "\xb3\xe4\xd6\xb5\xcb\xcd\xbd\xb1\xc0\xf8\xbb\xee\xb6\xaf"; // 充值送奖励活动
-            std::vector<lpc::Value> out6;
-            int m6 = lpc::lpcSscanf(gbk6, fmt5, out6, 3);
-            std::cout << "case6 match=" << m6 << "\n";
-            std::string gbk7 = gbk6 + "\r";
-            std::vector<lpc::Value> out7;
-            int m7 = lpc::lpcSscanf(gbk7, fmt5, out7, 3);
-            std::cout << "case7(CR) match=" << m7 << "\n";
-            // case8/9: the newbie-welfare bonus item string that
-            // sbonusd::get_bonus_item_info parses:
-            //   功能卷轴·报效师门(100)#非卖品
-            //   sscanf(text, "%s#非卖品", &t) -> t = 功能卷轴·报效师门(100)
-            //   sscanf(t,    "%s(%s)", &name, &extra) -> name, extra="100"
-            // If either parse is wrong, explode(extra,"*") has a size the switch
-            // rejects, every entry is dropped and a gathered 石头 grants nothing.
-            std::string itemText = "\xb9\xa6\xc4\xdc\xbe\xed\xd6\xe1\xa1\xa4\xb1\xa8\xd0\xa7\xca\xa6\xc3\xc5"
-                                   "(100)#\xb7\xc7\xc2\xf4\xc6\xb7";
-            std::vector<lpc::Value> outA;
-            int mA = lpc::lpcSscanf(itemText, "%s#\xb7\xc7\xc2\xf4\xc6\xb7", outA, 1);
-            std::cout << "case8 sscanf(%s#非卖品) match=" << mA << " out=" << outA.size();
-            if (!outA.empty() && outA[0].index() == 4)
-                std::cout << " len=" << std::get<lpc::SharedString>(outA[0]).size();
-            std::cout << "\n";
-            std::string itemText2 = "\xb9\xa6\xc4\xdc\xbe\xed\xd6\xe1\xa1\xa4\xb1\xa8\xd0\xa7\xca\xa6\xc3\xc5"
-                                    "(100)";
-            std::vector<lpc::Value> outB;
-            int mB = lpc::lpcSscanf(itemText2, "%s(%s)", outB, 2);
-            std::cout << "case9 sscanf(%s(%s)) match=" << mB << " out=" << outB.size();
-            for (size_t i = 0; i < outB.size(); ++i) {
-                if (outB[i].index() == 4)
-                    std::cout << " [" << i << "]=" << std::get<lpc::SharedString>(outB[i]).str();
-            }
-            std::cout << "\n";
-            // case10: the failing durability probe must NOT clobber its output.
-            std::string keep = itemText2;
-            std::vector<lpc::Value> outC;
-            int mC = lpc::lpcSscanf(itemText2, "%s#\xd7\xee\xb4\xf3\xc4\xcd\xbe\xc3(%d)", outC, 2);
-            std::cout << "case10 sscanf(%s#最大耐久(%d)) match=" << mC << " out=" << outC.size() << "\n";
-            (void)keep;
-            return 0;
-        }
         if (cmd == "server") {
             int port = 4000;
             if (args.size() >= 3) port = std::atoi(args[2].c_str());
@@ -812,12 +794,6 @@ int main(int argc, char** argv) {
             lpc::extractPak(path, outDir);
             std::cout << "Unpacked " << path << " to " << outDir << "\n";
             return 0;
-        }
-        if (cmd == "sqlcmd") {
-            // Debug helper: query the configured MySQL directly.
-            //   lpcvm sqlcmd "select ..." [adb|mdb]
-            if (args.size() < 2) { usage(); return 1; }
-            return sqlDebug(path, args.size() >= 3 ? args[2] : std::string());
         }
         usage();
         return 1;

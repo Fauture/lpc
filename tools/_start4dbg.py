@@ -9,6 +9,7 @@ usage: python -X utf8 tools/_start4dbg.py <tmp_logdir>
 """
 import os
 import subprocess, sys, io, shutil, time
+from _svc_args import svc_args  # original-style driver command line per service
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 LOG_DIR = sys.argv[1]
@@ -39,7 +40,7 @@ procs = []
 for name in ['aaa', 'dba', 'ccs', 'gs']:
     fn = os.path.join(LOG_DIR, 'live_%s.txt' % name)
     f = open(fn, 'wb', buffering=0)
-    p = subprocess.Popen([_exe, 'run', 'linux/%s/pack_data/lib_%s32.pak' % (name, name)],
+    p = subprocess.Popen([_exe] + svc_args(name),
                          stdout=f, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
     procs.append((name, p.pid, fn))
     time.sleep(3)

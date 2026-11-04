@@ -6,6 +6,7 @@ usage: python -X utf8 tools/_run_alltrace.py <tmp_logdir> <seconds>
 """
 import os
 import subprocess, time, sys, io, shutil, socket
+from _svc_args import svc_args  # original-style driver command line per service
 
 # Windows: detach from the launching shell's Job Object — when a background
 # task ends, its Job kills the whole process tree (services died at 23:01/23:03
@@ -61,8 +62,7 @@ for name in ['aaa', 'dba', 'ccs']:   # gs joins later, after ccs boots
     f = open(fn, 'wb', buffering=0)
     _exe = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         '..', 'build', 'Release', 'lpcvm.exe')
-    p = subprocess.Popen([os.path.abspath(_exe), 'run',
-                          'linux/%s/pack_data/lib_%s32.pak' % (name, name)],
+    p = subprocess.Popen([os.path.abspath(_exe)] + svc_args(name),
                          stdout=f, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd(),
                          creationflags=_CREATE_FLAGS)
     procs.append((name, p, f))
