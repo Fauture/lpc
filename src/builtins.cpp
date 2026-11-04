@@ -3016,12 +3016,29 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(0);
     }
     if (name == "allocate_array") {
-        // allocate_array(n) -> an array with n undefined slots (original
-        // type 0 "undefined").
-        auto arr = std::make_shared<ArrayValue>();
+        // vm_f_allocate_array (0x80d58b4 IDA 实证):
+        //   argNum > 2            -> vm_error("Too many parameters to allocate_array.\n")
+        //   size < 0              -> vm_error("Size(%d) of array cann't be negative.\n")
+        //   allocate_array(n)     -> n 个 undefined 槽
+        //   allocate_array(n, v)  -> 每个槽都填 v (原版循环 vm_pushValue +
+        //                            dup2 逐槽写入, NOT undefined!)
+        // 两参填值语义是 mudlib 广泛依赖的: upgrade_equipment 的
+        // allocate_array(item_num, item_name) (自动改造辅助石头表),
+        // anqi.c 的 allocate_array(32, 255) 棋盘等。此前忽略第 2 参导致
+        // 自动改造 assist 全 undefined -> rate=0 -> 改造必定失败。
+        if (args.size() > 2)
+            lpc::vmcore::vmError("Too many parameters to allocate_array.\n");
         int64_t n = args.empty() ? 0 : as_int(args[0]);
-        if (n < 0) n = 0;
-        for (int64_t i = 0; i < n; ++i) arr->items.push_back(Value{});
+        if (n < 0) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "Size(%lld) of array cann't be negative.\n",
+                          static_cast<long long>(n));
+            lpc::vmcore::vmError(buf);
+        }
+        auto arr = std::make_shared<ArrayValue>();
+        if (n > 0) arr->items.reserve(static_cast<size_t>(n));
+        for (int64_t i = 0; i < n; ++i)
+            arr->items.push_back(args.size() >= 2 ? args[1] : Value{});
         return arr;
     }
     if (name == "defined") {

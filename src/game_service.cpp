@@ -188,8 +188,6 @@ const CmdEntry kCmdList[] = {
     // serverCmdList entries (Vm_Command_List_T, .data:083C8E40):
     //   <5351h, 4, vm_msgLAuth>      - MSG_L_AUTH
     //   <0F9D3h, 4, vm_msgLoginDone>
-    { 0x5351, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_l_auth", 0 }, // vm_msgLAuth
-    { 0xF9D3, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "msg_login_done", 0 }, // vm_msgLoginDone
     { 0x20D2, ATTRIB_CLIENT_USER | ATTRIB_INTERNAL_COMM | ATTRIB_FROM_SERVER, "cmd_echo", 0 }, // vm_cmdEcho
     // 0xF9C3 MSG_REPLY_ECHO - inbound echo reply (cmdList entry at
     // .data:083CA158: cmd=0xF9C3 type=3 vm_msgReplyEcho).  Registered so the
@@ -345,7 +343,6 @@ const CmdEntry kCmdList[] = {
 { 0x2EEE, ATTRIB_CLIENT_USER, "cmd_admin_fetch_pics", 0 },
 { 0xCF06, ATTRIB_CLIENT_USER, "cmd_admin_kickoff", 0 },
 { 0x2176, ATTRIB_CLIENT_USER, "cmd_admin_oper_sys_broadcast", 0 },
-{ 0x3A12, ATTRIB_CLIENT_USER, "cmd_admin_print_screen", 0 },
 { 0x1AFC, ATTRIB_CLIENT_USER, "cmd_admin_query_map", 0 },
 { 0x20F6, ATTRIB_CLIENT_USER, "cmd_admin_query_net_info", 0 },
 { 0x301C, ATTRIB_CLIENT_USER, "cmd_admin_query_npc", 0 },
@@ -627,7 +624,6 @@ const CmdEntry kCmdList[] = {
 { 0x1AF8, ATTRIB_CLIENT_USER, "cmd_oper_visual_packs", 0 },
 { 0xF4, ATTRIB_CLIENT_USER, "cmd_oper_xiaobao_songshenbing", 0 },
 { 0x2168, ATTRIB_CLIENT_USER, "cmd_other_move_to", 0 },
-{ 0x1A04, ATTRIB_CLIENT_USER, "cmd_party_black_list", 0 },
 { 0x20DA, ATTRIB_CLIENT_USER, "cmd_party_info", 0 },
 { 0x1FB6, ATTRIB_CLIENT_USER, "cmd_party_job_privilege_list", 0 },
 { 0xCC, ATTRIB_CLIENT_USER, "cmd_party_members", 0 },
@@ -658,7 +654,6 @@ const CmdEntry kCmdList[] = {
 { 0x2179, ATTRIB_CLIENT_USER, "cmd_request_item_info", 0 },
 { 0x1020, ATTRIB_CLIENT_USER, "cmd_request_join", 0 },
 { 0x3A14, ATTRIB_CLIENT_USER, "cmd_request_join_recruitment", 0 },
-{ 0x3070, ATTRIB_CLIENT_USER, "cmd_request_levelup", 0 },
 { 0x3704, ATTRIB_CLIENT_USER, "cmd_request_minerals_in_map", 0 },
 { 0x21B6, ATTRIB_CLIENT_USER, "cmd_request_my_card_packages", 0 },
 { 0x236C, ATTRIB_CLIENT_USER, "cmd_request_new_deck", 0 },
@@ -764,6 +759,13 @@ const CmdEntry kCmdList[] = {
 { 0x3E00, ATTRIB_CLIENT_USER, "cmd_admin_query_report_info", 0 },
 { 0x2208, ATTRIB_CLIENT_USER, "cmd_query_upgrade_cash", 0 },
 { 0x4126, ATTRIB_CLIENT_USER, "cmd_query_upgrade_cash", 0 },
+{ 0x4, ATTRIB_CLIENT_USER, "cmd_query_upgrade_rate", 0 },
+{ 0x1002, ATTRIB_CLIENT_USER, "cmd_login", 0 },
+{ 0x105A, ATTRIB_CLIENT_USER, "cmd_request_select_card_compete_card", 0 },
+{ 0x10DA, ATTRIB_CLIENT_USER, "cmd_request_select_card_compete_deck", 0 },
+{ 0x1B0C, ATTRIB_CLIENT_USER, "cmd_request_select_card_compete_hero", 0 },
+{ 0x281A, ATTRIB_CLIENT_USER, "cmd_request_onlinemall_card_packages", 0 },
+{ 0x40D8, ATTRIB_CLIENT_USER, "cmd_request_bind_shitu_relation", 0 },
 { 0x1212, ATTRIB_CLIENT_USER, "cmd_query_upgrade_coin", 0 },
 { 0x408A, ATTRIB_CLIENT_USER, "cmd_quit_chat_group", 0 },
 { 0x3016, ATTRIB_CLIENT_USER, "cmd_quit_look_on", 0 },
@@ -837,9 +839,6 @@ const CmdEntry kCmdList[] = {
 { 0x2230, ATTRIB_CLIENT_USER, "cmd_shouwu_zudao", 0 },
 { 0x7002, ATTRIB_CLIENT_USER, "cmd_show_sale_log", 0 },
 { 0xE004, ATTRIB_CLIENT_USER, "cmd_show_upgrade_equip_items", 0 },
-{ 0x2724, ATTRIB_CLIENT_USER, "cmd_sign_in", 0 },
-{ 0x2088, ATTRIB_CLIENT_USER, "cmd_sign_in_draw", 0 },
-{ 0x2256, ATTRIB_CLIENT_USER, "cmd_sign_in_open", 0 },
 { 0x13AC, ATTRIB_CLIENT_USER, "cmd_skill_level_down", 0 },
 { 0x1106, ATTRIB_CLIENT_USER, "cmd_sort_pack", 0 },
 { 0x141A, ATTRIB_CLIENT_USER, "cmd_special_move_event", 0 },
@@ -869,25 +868,19 @@ const CmdEntry kCmdList[] = {
 { 0x6382, ATTRIB_CLIENT_USER, "cmd_window_size_change", 0 },
 { 0x4062, ATTRIB_CLIENT_USER, "cmd_wishing", 0 },
 { 0x304E, ATTRIB_CLIENT_USER, "cmd_wishing_buy_item", 0 },
-{ 0x2214, ATTRIB_CLIENT_USER, "cmd_wishing_open", 0 },
 { 0x1AFE, ATTRIB_CLIENT_USER, "cmd_wishing_sale_item", 0 },
 { 0x21CA, ATTRIB_CLIENT_USER, "cmd_withdraw", 0 },
-{ 0x3E32, ATTRIB_CLIENT_USER, "cmd_world_level_reset_seal", 0 },
-{ 0x3E34, ATTRIB_CLIENT_USER, "cmd_world_level_seal_info", 0 },
 { 0xF0C8, ATTRIB_CLIENT_USER, "cmd_workshop_buy_order", 0 },
 { 0x306A, ATTRIB_CLIENT_USER, "cmd_workshop_query_order_cash", 0 },
 { 0x21B2, ATTRIB_CLIENT_USER, "cmd_workshop_query_order_rate", 0 },
 { 0x1160, ATTRIB_CLIENT_USER, "cmd_workshop_release_order", 0 },
-{ 0x10B2, ATTRIB_CLIENT_USER, "cmd_wudao_add_attrib_auto", 0 },
 { 0x5202, ATTRIB_CLIENT_USER, "cmd_wudao_add_attrib_rep", 0 },
-{ 0x1254, ATTRIB_CLIENT_USER, "cmd_wudao_batch_add_rep", 0 },
 { 0x2202, ATTRIB_CLIENT_USER, "cmd_wudao_buy_rep_card", 0 },
 { 0x2112, ATTRIB_CLIENT_USER, "cmd_wudao_convert_extra_attrib", 0 },
 { 0x20A6, ATTRIB_CLIENT_USER, "cmd_wudao_draw_rep_card", 0 },
 { 0x21B8, ATTRIB_CLIENT_USER, "cmd_wudao_pre_add_attrib_rep", 0 },
 { 0x3390, ATTRIB_CLIENT_USER, "cmd_wudao_set_attrib_status", 0 },
 { 0x2602, ATTRIB_CLIENT_USER, "cmd_wudao_stage_info", 0 },
-{ 0x2232, ATTRIB_CLIENT_USER, "cmd_x_set_setting", 0 },
 { 0xFD1E, ATTRIB_CLIENT_USER, "cmd_double_bonus_time", 0 },
 { 0x5018, ATTRIB_CLIENT_USER, "cmd_get_instruction_bonus", 0 },
 { 0x3508, ATTRIB_CLIENT_USER, "cmd_oper_garden_instruction", 0 },
@@ -938,7 +931,6 @@ const CmdEntry kCmdList[] = {
 { 0x410A, ATTRIB_CLIENT_USER, "cmd_tell", 0 },
 { 0x2192, ATTRIB_CLIENT_USER, "cmd_tell_ex", 0 },
 { 0x307A, ATTRIB_CLIENT_USER, "cmd_temp_npc_event", 0 },
-{ 0xFD68, ATTRIB_CLIENT_USER, "cmd_test_cs_login", 0 },
 { 0x1220, ATTRIB_CLIENT_USER, "cmd_tower_clicked", 0 },
 { 0x3208, ATTRIB_CLIENT_USER, "cmd_tower_selected", 0 },
 { 0x5112, ATTRIB_CLIENT_USER, "cmd_trade_add_goods", 0 },
@@ -958,8 +950,6 @@ const CmdEntry kCmdList[] = {
 { 0x2228, ATTRIB_CLIENT_USER, "cmd_train", 0 },
 { 0x2294, ATTRIB_CLIENT_USER, "cmd_try_place_pattern", 0 },
 { 0x1070, ATTRIB_CLIENT_USER, "cmd_turn_dir", 0 },
-{ 0x122E, ATTRIB_CLIENT_USER, "cmd_txss_reset_bingo", 0 },
-{ 0x122C, ATTRIB_CLIENT_USER, "cmd_txss_start_award", 0 },
 { 0xFD0A, ATTRIB_CLIENT_USER, "cmd_unequip", 0 },
 { 0x1112, ATTRIB_CLIENT_USER, "cmd_unequip_inborn_stone", 0 },
 { 0x23AA, ATTRIB_CLIENT_USER, "cmd_unequip_pet_dress", 0 },
@@ -7399,6 +7389,33 @@ void handle_vm_cmdQueryUpgradeCashEx(GameClient& cl, const uint8_t* body, size_t
     applyLpc("cmd_query_upgrade_cash", {make_int(cl.clientNo), make_int((int)npcId), make_int(type), arr});
 }
 
+
+// vm_cmdQueryUpgradeRate (0x8056da4): npcId u32, type u16, count u8,
+// count x u32 positions -> LPC cmd_query_upgrade_rate(clientNo, npcId, type, arr).
+// IDA cmdList[174] = <0x0004, 1, vm_cmdQueryUpgradeRate>; macro CMD_QUERY_UPGRADE_RATE
+// 0x0004 (start_gs.c:34985) - ghost-cube UI success-rate display query.
+void handle_vm_cmdQueryUpgradeRate(GameClient& cl, const uint8_t* body, size_t len)
+{
+    uint32_t npcId = 0;
+    uint16_t type = 0;
+    auto arr = std::make_shared<ArrayValue>();
+    if (len >= 4)
+    {
+        npcId = rd32be(body, 0);
+        if (len >= 6)
+        {
+            type = rd16be(body, 4);
+            size_t off = 6;
+            if (off < len)
+            {
+                uint8_t count = body[off++];
+                for (uint8_t i = 0; i < count && off + 4 <= len; ++i, off += 4)
+                    arr->items.push_back(make_int((int)rd32be(body, off)));
+            }
+        }
+    }
+    applyLpc("cmd_query_upgrade_rate", {make_int(cl.clientNo), make_int((int)npcId), make_int(type), arr});
+}
 void handle_vm_cmdQueryUpgradeCoin(GameClient& cl, const uint8_t* body, size_t len)
 {
     uint32_t npcId = 0;
@@ -7422,6 +7439,49 @@ void handle_vm_cmdQueryUpgradeCoin(GameClient& cl, const uint8_t* body, size_t l
     applyLpc("cmd_query_upgrade_coin", {make_int(cl.clientNo), make_int((int)npcId), make_int(type), arr});
 }
 
+
+// vm_cmdRequestSelectCardCompeteCard/Deck/Hero (0x08076668/0807661C/080765D0):
+// body = u16 -> (clientNo, u16). IDA cmdList[?]: 0x105A/0x10DA/0x1B0C.
+void handle_vm_cmdRequestSelectCardCompeteCard(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    applyLpc("cmd_request_select_card_compete_card",
+        {make_int(cl.clientNo), make_int(rd16be(body, 0))});
+}
+void handle_vm_cmdRequestSelectCardCompeteDeck(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    applyLpc("cmd_request_select_card_compete_deck",
+        {make_int(cl.clientNo), make_int(rd16be(body, 0))});
+}
+void handle_vm_cmdRequestSelectCardCompeteHero(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    applyLpc("cmd_request_select_card_compete_hero",
+        {make_int(cl.clientNo), make_int(rd16be(body, 0))});
+}
+// vm_cmdRequestOnlinemallCardPackages (0x08076714): no body -> (clientNo).
+void handle_vm_cmdRequestOnlinemallCardPackages(GameClient& cl, const uint8_t* body, size_t len)
+{
+    applyLpc("cmd_request_onlinemall_card_packages", {make_int(cl.clientNo)});
+}
+// vm_cmd_Request_Bind_Shitu_Relation (0x0805047C): u8 n, name[n], u8 m, type[m]
+// -> (clientNo, name, type). IDA cmdList: 0x40D8.
+void handle_vm_cmdRequestBindShituRelation(GameClient& cl, const uint8_t* body, size_t len)
+{
+    if (len < 2) return;
+    size_t off = 0;
+    uint8_t n = body[off++];
+    if (off + n > len) return;
+    std::string name(reinterpret_cast<const char*>(body) + off, n);
+    off += n;
+    if (off >= len) return;
+    uint8_t m = body[off++];
+    if (off + m > len) return;
+    std::string type(reinterpret_cast<const char*>(body) + off, m);
+    applyLpc("cmd_request_bind_shitu_relation",
+        {make_int(cl.clientNo), make_string(name), make_string(type)});
+}
 void handle_vm_cmdQuitChatGroup(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 1) return;
@@ -12587,7 +12647,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
             std::cerr.flush();
         }
     }
-    case 0x5351: handleMsgLAuth(cl, body, len); break;
     case 0x20D2: handleCmdEcho(cl, body, len); break;
     case 0xF9C3: handleMsgReplyEcho(cl, body, len); break;
     case 0x3365: handleMsgCfgMyInfo(cl, body, len); break;
@@ -12735,7 +12794,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x2EEE: handle_vm_cmdAdminFetchPics(cl, body, len); break;
     case 0xCF06: handle_vm_cmdAdminKickoff(cl, body, len); break;
     case 0x2176: handle_vm_cmdAdminOperSysBroadcast(cl, body, len); break;
-    case 0x3A12: handle_vm_cmdAdminPrintScreen(cl, body, len); break;
     case 0x1AFC: handle_vm_cmdAdminQueryMap(cl, body, len); break;
     case 0x20F6: handle_vm_cmdAdminQueryNetInfo(cl, body, len); break;
     case 0x301C: handle_vm_cmdAdminQueryNpc(cl, body, len); break;
@@ -12864,7 +12922,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x10AA: handle_vm_cmdRequestDecomposeCard(cl, body, len); break;
     case 0x10AC: handle_vm_cmdGetSafeQuestion(cl, body, len); break;
     case 0x10AE: handle_vm_cmdStartAutomatismStall(cl, body, len); break;
-    case 0x10B2: handle_vm_cmdWudaoAddAttribAuto(cl, body, len); break;
     case 0x10B3: handle_vm_cmdShopViewSaleLog(cl, body, len); break;
     case 0x10BD: handle_vm_cmdVendueVendueMerch(cl, body, len); break;
     case 0x10C0: handle_vm_cmdStartStall(cl, body, len); break;
@@ -12913,6 +12970,12 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x1206: handle_vm_cmdDraftRequestMyInfo(cl, body, len); break;
     case 0x1208: handle_vm_cmdSetGcslAttribs(cl, body, len); break;
     case 0x120E: handle_vm_cmdGetUpdateNotice(cl, body, len); break;
+    case 0x4: handle_vm_cmdQueryUpgradeRate(cl, body, len); break;
+    case 0x105A: handle_vm_cmdRequestSelectCardCompeteCard(cl, body, len); break;
+    case 0x10DA: handle_vm_cmdRequestSelectCardCompeteDeck(cl, body, len); break;
+    case 0x1B0C: handle_vm_cmdRequestSelectCardCompeteHero(cl, body, len); break;
+    case 0x281A: handle_vm_cmdRequestOnlinemallCardPackages(cl, body, len); break;
+    case 0x40D8: handle_vm_cmdRequestBindShituRelation(cl, body, len); break;
     case 0x1212: handle_vm_cmdQueryUpgradeCoin(cl, body, len); break;
     case 0x1216: handle_vm_cmdStartRaise(cl, body, len); break;
     case 0x1218: handle_vm_cmdFriendDrinkRefresh(cl, body, len); break;
@@ -12925,14 +12988,11 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x1226: handle_vm_cmdPutDown(cl, body, len); break;
     case 0x1228: handle_vm_cmdEquip(cl, body, len); break;
     case 0x122A: handle_vm_cmdOperElixir(cl, body, len); break;
-    case 0x122C: handle_vm_cmdTxssStartAward(cl, body, len); break;
-    case 0x122E: handle_vm_cmdTxssResetBingo(cl, body, len); break;
     case 0x1230: handle_vm_cmdRequestCityList(cl, body, len); break;
     case 0x123E: handle_vm_cmdRefreshSafeLogin(cl, body, len); break;
     case 0x1247: handle_vm_cmdShopSale(cl, body, len); break;
     case 0x1249: handle_vm_msgGsLogin(cl, body, len); break;
     case 0x1252: handle_vm_cmdMovFromQiankundai(cl, body, len); break;
-    case 0x1254: handle_vm_cmdWudaoBatchAddRep(cl, body, len); break;
     case 0x1256: handle_vm_cmdRaceHitNpc(cl, body, len); break;
     case 0x1258: handle_vm_cmdFight(cl, body, len); break;
     case 0x125C: handle_vm_cmdRecharge(cl, body, len); break;
@@ -12962,7 +13022,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x141A: handle_vm_cmdSpecialMoveEvent(cl, body, len); break;
     case 0x141C: handle_vm_cmdViewAchieveOverview(cl, body, len); break;
     case 0x1A02: handle_vm_cmdQueryRecruitInfo(cl, body, len); break;
-    case 0x1A04: handle_vm_cmdPartyBlackList(cl, body, len); break;
     case 0x1A08: handle_vm_cmdWarViewHistoryInfo(cl, body, len); break;
     case 0x1AE6: handle_vm_cmdTeamCancelSeek(cl, body, len); break;
     case 0x1AEA: handle_vm_cmdSelectVisiblePet(cl, body, len); break;
@@ -13005,7 +13064,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x207E: handle_vm_cmdMergeMagicPicture(cl, body, len); break;
     case 0x2082: handle_vm_cmdEquipInbornStone(cl, body, len); break;
     case 0x2086: handle_vm_cmdPartywarOper(cl, body, len); break;
-    case 0x2088: handle_vm_cmdSignInDraw(cl, body, len); break;
     case 0x20A6: handle_vm_cmdWuDaoDrawRepCard(cl, body, len); break;
     case 0x20AE: handle_vm_cmdUpgradeMagicPicture(cl, body, len); break;
     case 0x20B0: handle_vm_cmdEquipPetDress(cl, body, len); break;
@@ -13077,20 +13135,17 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x220A: handle_vm_cmdRefreshpartyFragment(cl, body, len); break;
     case 0x2210: handle_vm_cmdGbuyingFetchCoin(cl, body, len); break;
     case 0x2212: handle_vm_cmdEnterRoom2(cl, body, len); break;
-    case 0x2214: handle_vm_cmdWishingOpen(cl, body, len); break;
     case 0x2220: handle_vm_cmdDraftRoll(cl, body, len); break;
     case 0x2224: handle_vm_cmdRefresh(cl, body, len); break;
     case 0x2226: handle_vm_cmdViewAchieve(cl, body, len); break;
     case 0x2228: handle_vm_cmdTrain(cl, body, len); break;
     case 0x2230: handle_vm_cmdShouWuZuDao(cl, body, len); break;
-    case 0x2232: handle_vm_cmdXSetSetting(cl, body, len); break;
     case 0x2234: handle_vm_cmdViewCsMatchesSummary(cl, body, len); break;
     case 0x2236: handle_vm_cmdDrop(cl, body, len); break;
     case 0x2238: handle_vm_cmdSetTaskTrace(cl, body, len); break;
     case 0x2244: handle_vm_cmdDrawCardRankBonus(cl, body, len); break;
     case 0x2246: handle_vm_cmdTeamSeekLeader(cl, body, len); break;
     case 0x2254: handle_vm_cmdOperSortTask(cl, body, len); break;
-    case 0x2256: handle_vm_cmdSignInOpen(cl, body, len); break;
     case 0x2258: handle_vm_cmdOpenAskTaoShowMall(cl, body, len); break;
     case 0x225A: handle_vm_cmdOperEnvelope(cl, body, len); break;
     case 0x225C: handle_vm_cmdDraftRequestStageInfo(cl, body, len); break;
@@ -13188,7 +13243,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x2714: handle_vm_cmdLookOn(cl, body, len); break;
     case 0x271A: handle_vm_cmdPasswordDlg(cl, body, len); break;
     case 0x2720: handle_vm_cmdLotterySelect(cl, body, len); break;
-    case 0x2724: handle_vm_cmdSignIn(cl, body, len); break;
     case 0x2726: handle_vm_cmdOperLotteryTicket(cl, body, len); break;
     case 0x2728: handle_vm_cmdGetAwardInfo(cl, body, len); break;
     case 0x272A: handle_vm_cmdRequestStartCardCompete(cl, body, len); break;
@@ -13232,7 +13286,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x3068: handle_vm_cmdTakeStoringCash(cl, body, len); break;
     case 0x306A: handle_vm_cmdWorkshopQueryOrderCash(cl, body, len); break;
     case 0x306C: handle_vm_cmdRequestCityInfo(cl, body, len); break;
-    case 0x3070: handle_vm_cmdRequestLevelUp(cl, body, len); break;
     case 0x307A: handle_vm_cmdTempNpcEvent(cl, body, len); break;
     case 0x30AC: handle_vm_cmdXGameOper(cl, body, len); break;
     case 0x30CA: handle_vm_cmdSelectMenuItem1(cl, body, len); break;
@@ -13302,8 +13355,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x3E28: handle_vm_cmdModifyCustomNpcList(cl, body, len); break;
     case 0x3E2A: handle_vm_cmdLogout(cl, body, len); break;
     case 0x3E2C: handle_vm_cmdRequestStallList(cl, body, len); break;
-    case 0x3E32: handle_vm_cmdWLResetSeal(cl, body, len); break;
-    case 0x3E34: handle_vm_cmdWLSealInfo(cl, body, len); break;
     case 0x4002: handle_vm_cmdTradeCancelSale(cl, body, len); break;
     case 0x4004: handle_vm_cmdReselectChar(cl, body, len); break;
     case 0x4006: handle_vm_cmdDropChild(cl, body, len); break;
@@ -13333,6 +13384,7 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0x4116: handle_vm_cmdSubmitConfirmDlg(cl, body, len); break;
     case 0x4118: handle_vm_cmdTradeFavorite(cl, body, len); break;
     case 0x4120: handle_vm_cmdPromptBeforeLeave(cl, body, len); break;
+    case 0x1002: handle_vm_cmdLogin(cl, body, len); break;
     case 0x4124: handle_vm_cmdLogin(cl, body, len); break;
     case 0x4126: handle_vm_cmdQueryUpgradeCashEx(cl, body, len); break;
     case 0x4130: handle_vm_cmdMoveTo(cl, body, len); break;
@@ -13480,7 +13532,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     case 0xFD57: handle_vm_msgSellTreasure(cl, body, len); break;
     case 0xFD62: handle_vm_cmdPutChildItemDown(cl, body, len); break;
     case 0xFD64: handle_vm_cmdGeneralNotify(cl, body, len); break;
-    case 0xFD68: handle_vm_cmdTestCsLogin(cl, body, len); break;
     case 0xFD6A: handle_vm_cmdFinishInterfaceStatus(cl, body, len); break;
     case 0xFD6C: handle_vm_cmdRevokeConvenant(cl, body, len); break;
     case 0xFD70: handle_vm_cmdUpgradeByAmount(cl, body, len); break;
