@@ -3484,21 +3484,26 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (!args.empty() && args[0].index() == 7) {
             auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
             std::string p = ov->programName;
-            if (p.compare(0, 4, "pak:") == 0) p = p.substr(4);
-            else if (p.compare(0, 6, "clone:") == 0) {
-                // clone:<rel>#<seq> -> keep the rel part (the original clone's
-                // object_name is the program path, no instance suffix).
+            // [fix] 双前缀归一化: clone:pak:... 两层都要剥 (与 efun_adapt
+            // 的 object_name 同步修复), 否则 roomd 的 sscanf THIS_PLACE
+            // 解析拿到的还是带 pak: 的原始键。
+            if (p.compare(0, 6, "clone:") == 0) {
                 p = p.substr(6);
-                size_t hash = p.find('#');
-                if (hash != std::string::npos) p = p.substr(0, hash);
+                if (p.compare(0, 4, "pak:") == 0) p = p.substr(4);
+            } else if (p.compare(0, 4, "pak:") == 0) {
+                p = p.substr(4);
             }
+            // [fix] #实例后缀先摘下再判 .o (1 参调用保留后缀, 结尾非 .o)
+            std::string hashPart;
+            const size_t hpos = p.find('#');
+            if (hpos != std::string::npos) {
+                hashPart = p.substr(hpos);
+                p = p.substr(0, hpos);
+            }
+            if (!noInstance) { /* 1 参: 保留实例后缀 */ } else hashPart.clear();
             if (!p.empty() && p.front() != '/') p = "/" + p;
-            if (!p.empty() && noInstance) {
-                size_t hash = p.find('#');
-                if (hash != std::string::npos) p = p.substr(0, hash);
-            }
             if (!p.empty() && hasSuffix(p, ".o")) p.replace(p.size() - 2, 2, ".c");
-            if (!p.empty()) return make_string(p);
+            if (!p.empty()) return make_string(p + hashPart);
         }
         return make_string("");
     }

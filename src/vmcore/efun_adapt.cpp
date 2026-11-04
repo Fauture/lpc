@@ -1355,8 +1355,13 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // vm_f_object_name, no argument: the CURRENT object's full virtual
         // path (".c" spelling; clone keys keep their "#<seq>" suffix).
         std::string n = fkey;
-        if (n.compare(0, 4, "pak:") == 0) n = n.substr(4);
-        else if (n.compare(0, 6, "clone:") == 0) n = n.substr(6);
+        // [fix] 同双前缀归一化 (见下方带参版本)
+        if (n.rfind("clone:", 0) == 0) {
+            n = n.substr(6);
+            if (n.rfind("pak:", 0) == 0) n = n.substr(4);
+        } else if (n.rfind("pak:", 0) == 0) {
+            n = n.substr(4);
+        }
         if (!n.empty() && n.front() != '/') n = "/" + n;
         if (n.size() >= 2 && n.compare(n.size() - 2, 2, ".o") == 0)
             n.replace(n.size() - 2, 2, ".c");
@@ -1369,16 +1374,29 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         std::string key = keyOfArg(args[0]);
         if (key.empty() || key == "<this>" || key == ".") key = fkey;
         if (key.rfind("oid:", 0) == 0) key.clear();
-        if (key.rfind("clone:", 0) == 0) key = key.substr(6);
-        else if (key.rfind("pak:", 0) == 0) key = key.substr(4);
-        if (args.size() >= 2 && toInt(args[1]) != 0) {
-            const size_t hp = key.find('#');
-            if (hp != std::string::npos) key = key.substr(0, hp);
+        // [fix] 双前缀归一化: clone:pak:... 必须两层都剥 —— 只剥 clone: 会让
+        // roomd 的 sscanf("/gs/zone/%s/%*s") 失配, THIS_PLACE 被替换成整条
+        // 原始键 ("/pak:gs/zone/...o#5927/mingrentang-guanshi") → 查基础对象
+        // 落空 → clone_object(0) → place_char 报 "Not found the object..."。
+        if (key.rfind("clone:", 0) == 0) {
+            key = key.substr(6);
+            if (key.rfind("pak:", 0) == 0) key = key.substr(4);
+        } else if (key.rfind("pak:", 0) == 0) {
+            key = key.substr(4);
         }
+        // [fix] #实例后缀先摘下来再判 .o 后缀: 1 参调用保留后缀时,
+        // "xxx.o#5927" 结尾不是 .o, 原实现连 .o→.c 都替换不到。
+        std::string hashPart;
+        const size_t hpos = key.find('#');
+        if (hpos != std::string::npos) {
+            hashPart = key.substr(hpos);
+            key = key.substr(0, hpos);
+        }
+        if (args.size() >= 2 && toInt(args[1]) != 0) hashPart.clear();
         if (!key.empty() && key.front() != '/') key = "/" + key;
         if (key.size() >= 2 && key.compare(key.size() - 2, 2, ".o") == 0)
             key.replace(key.size() - 2, 2, ".c");
-        return make_string(key);
+        return make_string(key + hashPart);
     }
     if (name == "call_other" && args.size() >= 2) {
         // vm_f_call_other (0x80f5aa0): call_other(ob, fun, a1..aN).
