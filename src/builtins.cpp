@@ -2702,7 +2702,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return arr;
         std::string s = as_string(args[0]);
         std::string sep = args.size() >= 2 ? as_string(args[1]) : "\n";
-        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
+        // [fix] 原版 vm_f_explode (0x80d5c68 IDA 实证): if (len) {...分割...}
+        // else vm_pushArray(空数组) —— 空串输入恒返回空数组 ({})。此前返回
+        // ({""}) 一元素, itemd::load_attrib_list 的 arr[14]=explode(trim(col),
+        // "|") 拿到 ({"}) → sizeof!=0 → 关联字段成空串 → reset_equipment_
+        // attrib 把粉属性 set 到 "prop3/" 废槽 → 炼化粉装永远没有粉属性。
+        if (s.empty()) return arr;
+        // 热路径铁律: getenv 缓存为 static const bool, 严禁每次调用查询。
+        static const bool s_explodeTrace =
+            LPCVM_GETENV("LPCVM_TRACE") != nullptr &&
+            LPCVM_GETENV("LPCVM_TRACE_EXPLODE") != nullptr;
+        if (s_explodeTrace)
             std::cerr << "[explode] len=" << s.size() << " sep=" << (args.size() >= 2 ? "explicit" : "newline")
                       << " first8=[" << s.substr(0, 8) << "]\n";
         if (sep.empty()) {
