@@ -75,6 +75,12 @@ struct ConstructStep {
     const std::vector<OriginalInsn>* code = nullptr;
     const std::vector<uint8_t>* meta = nullptr;
     int varOffset = 0;
+    // Init: the segment's constitution baseFunOffset in the merged table.
+    // Class-body code of an INHERITED program indexes functions in ITS OWN
+    // constitution numbering (e.g. combat_trigger.o's (:test_popup_menu:)
+    // emits create_function_value a=115) - resolving it needs this offset,
+    // exactly like op7 local-index calls from an inherited body.
+    int funOffset = 0;
     const std::vector<std::string>* strings = nullptr;
     // Create: the function to call as a normal frame.
     const OriginalFunction* fn = nullptr;

@@ -736,6 +736,7 @@ std::shared_ptr<ConstructPlan> buildConstructPlan(VmObject* obj,
             st.code = &seg.prog->globalCode;
             st.meta = &seg.prog->globalMeta;
             st.varOffset = seg.varOffset;
+            st.funOffset = seg.funOffset;
             st.strings = &seg.prog->strings;
             plan->steps.push_back(std::move(st));
         }
@@ -769,6 +770,7 @@ std::shared_ptr<ConstructPlan> buildConstructPlan(VmObject* obj,
         fk->strings = std::make_shared<const std::vector<std::string>>(
             st.strings ? *st.strings : std::vector<std::string>{});
         fk->varOffset = st.varOffset;
+        fk->funOffset = st.funOffset;
         st.fakeFn = std::move(fk);
         st.fn = st.fakeFn.get();
     }
