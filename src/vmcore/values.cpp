@@ -173,13 +173,17 @@ Value divValues(const Value& a, const Value& b) {
 }
 
 Value modValues(const Value& a, const Value& b) {
+    // vm_modValue (0x808e7bc, IDA): 结果类型跟随左操作数——
+    //   int%int -> int（模 0 -> error）；左 float -> float fmod；
+    //   左 int 右 float -> fmod 后 v0[1].type=3，结果是 FLOAT（不截断回 int，
+    //   与 add/sub/mul 的 ftol 行为不同）。
     if (a.index() == 3) {
         double d = f32(toReal(b));
         return make_float(d == 0.0 ? 0.0 : std::fmod(f32(toReal(a)), d));
     }
     if (b.index() == 3) {
         double d = f32(toReal(b));
-        return make_int(d == 0.0 ? 0 : truncWrap(std::fmod(f32(toReal(a)), d)));
+        return make_float(d == 0.0 ? 0.0 : std::fmod(f32(toReal(a)), d));
     }
     int64_t d = toInt(b);
     return make_int(i32(d == 0 ? 0 : toInt(a) % d));

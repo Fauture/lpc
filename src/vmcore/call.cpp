@@ -214,14 +214,18 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
             // 泄漏取证用 LPCVM_RETMIS 热布防 (boot 期上万条 stderr 拖启动)。
             static const std::atomic<bool>& rmFlag =
                 lpc::dynProbeFlag("LPCVM_RETMIS");
-            if (rmFlag.load(std::memory_order_relaxed)) {
+            // [target] _do_combat_team 栈残留直接导致剧本刷怪断链
+            // (join_combat_team 后 add_member 不执行 → 战斗误判结束 →
+            //  scenario26/五色灵石永不触发), 对它单独取证, 不占通用配额。
+            const bool targetFn = f.fn && f.fn->name == "_do_combat_team";
+            if (rmFlag.load(std::memory_order_relaxed) || targetFn) {
                 std::cerr << "[ret-mismatch] fn="
                           << (f.fn ? f.fn->name : std::string("<ctx>"))
                           << " residual=" << residual
                           << " bp=" << f.bp << " locals=" << f.localCount
                           << " depth=" << pcb->stack.size() << "\n";
                 static std::atomic<int> mmShown{0};
-                if (f.fn && mmShown.fetch_add(1) < 400) {
+                if (f.fn && (targetFn || mmShown.fetch_add(1) < 400)) {
                     size_t hist[16] = {};
                     for (size_t i = expectedVoid;
                          i < pcb->stack.size() && i < expectedVoid + 40; ++i) {
@@ -238,6 +242,17 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
                                       ? "<ctx>"
                                       : pcb->frames.back().fn->name)
                               << "\n";
+                    // [target] 目标函数额外打每个残留槽的短值, 定位压栈指令
+                    if (targetFn) {
+                        size_t n = 0;
+                        for (size_t i = expectedVoid;
+                             i < pcb->stack.size() && n < 20; ++i, ++n)
+                            std::cerr << "[ret-mismatch]     slot[" << n
+                                      << "] = "
+                                      << to_string(pcb->stack[i].value, false)
+                                             .substr(0, 80)
+                                      << "\n";
+                    }
                 }
                 std::cerr.flush();
             }
@@ -479,9 +494,12 @@ Value vmApplySync(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
     VmPcbSetter setPcb(pcb);
     const size_t depth = pcb->frames.size();
     pushArgs(pcb, fn, args);
-    pushFrameInPlace(pcb, obj, progOverride ? progOverride
+    const bool okA = pushFrameInPlace(pcb, obj, progOverride ? progOverride
                                             : (obj ? obj->prog() : nullptr),
                      fn, passedArgCount(args), true, 0);
+    // [fix] 同 vmPushFunCall: 0 参占位槽必须标记, 否则同步 apply 泄漏 1 槽。
+    if (okA && args.empty() && fn->argCount == 0 && !pcb->frames.empty())
+        pcb->frames.back().zeroArgPlaceholder = true;
     Interp::runNested(pcb, depth);
     return popValueNested(pcb);
 }
@@ -506,10 +524,21 @@ bool vmPushFunCall(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
         std::cerr.flush();
     }
     pushArgs(pcb, fn, args);
-    return pushFrameInPlace(pcb, obj,
-                            progOverride ? progOverride
-                                         : (obj ? obj->prog() : nullptr),
-                            fn, passedArgCount(args), true, 0);
+    const bool ok = pushFrameInPlace(pcb, obj,
+                                     progOverride ? progOverride
+                                                  : (obj ? obj->prog() : nullptr),
+                                     fn, passedArgCount(args), true, 0);
+    // [fix] 0 参 0 声明压了 bp 锚占位槽 (pushArgs 75-77), 帧弹出清栈公式
+    // 依赖 zeroArgPlaceholder 把它清掉 —— 漏标则每次调用漏 1 个 undefined
+    // 槽。destruct 链每段都是 0 参 vmPushFunCall, monster 析构链 8 段 =
+    // 每次 destruct_object 泄漏 8 个 undefined 到调用者栈 (fn-trace 实锤:
+    // _do_combat_team residual=9/17, do_destruct residual=8; 残留值全是
+    // undefined + 栈顶真返回值, 数量=析构段数×被析构对象数) —— 暴怒真君
+    // 因此没进防守方 (join_combat_team 后 add_member 不执行), 战斗误判
+    // 结束, scenario26/五色灵石永不触发。与 vmCallPushFrame 的标记对齐。
+    if (ok && args.empty() && fn->argCount == 0 && !pcb->frames.empty())
+        pcb->frames.back().zeroArgPlaceholder = true;
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

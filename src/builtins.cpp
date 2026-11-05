@@ -12,6 +12,7 @@
 #include "pkt_protocol.h"
 #include "xdbc.h"
 #include "vmcore/vmcore.h"
+#include "vmcore/values.h"
 #include "vmcore/object.h"
 #include "sqlite3.h"
 
@@ -2822,8 +2823,23 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                             // `cob->set_temp("failed_count", n) >= 2` needs the new count.
                             return args[2];
                         } else if (name == "express_add") {
+                            // Original vm_addPathInMapping (0x80b7204) does NOT
+                            // hardcode numeric addition: it pushes the existing
+                            // slot value and the new value and calls the generic
+                            // vm_addValue (the LPC `+` operator) — int+int adds,
+                            // ARRAY+ARRAY CONCATENATES, string+string concats.
+                            // xlibd's safe_add() relies on this: the second
+                            // drama->add("events_table/sf_try_finished/*/决战",
+                            // ({"derive_scene25"})) must APPEND to the existing
+                            // ({"derive_scene24"}) list.  Numeric-only addition
+                            // turned array+array into as_int(0)+as_int(0)==0 and
+                            // silently zeroed the star-lord script's 决战/比试
+                            // sf_try_finished handlers, so the settlement derive
+                            // (derive_scene24/25/27) never ran and scenario26
+                            // (五色灵石 bonus) never fired.
                             Value* hit = cur->find(k);
-                            Value nv = !hit ? args[2] : make_int(as_int(*hit) + as_int(args[2]));
+                            Value nv = !hit ? args[2]
+                                            : lpc::vmcore::addValues(*hit, args[2]);
                             cur->insert(k, nv);
                             return nv;   // add()/add_temp() return the new value
                         } else { // express_delete
