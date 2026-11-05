@@ -613,8 +613,11 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
         }
     } else if (c->type == 902) {
         if (!c->map) badCtrl();
-        // foreach over a mapping iterates in vm_mappingIndices order.
-        const auto entries = c->map->items();
+        // foreach over a mapping iterates buckets ASCENDING
+        // (vm_cmpAndJmpInLoop 0x80bcae0 ctrl 902) — NOT the descending
+        // vm_mappingIndices order that keys()/values() use.  wizardd's
+        // equip_type_map menu (武器,头盔,衣服,鞋子,腰带) is the proof.
+        const auto entries = c->map->itemsAscending();
         if (c->mIdx >= entries.size()) {
             if (!pcb->frames.empty()) pcb->frames.back().loops.erase(ctrlSlot);
             ip += static_cast<size_t>(breakOffset);
@@ -1271,16 +1274,30 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 pushValue(pcb, arr);
                 break;
             }
-            case 24: { // create_mapping: (value,key) pairs, reversed back
+            case 24: { // create_mapping: (value,key) pairs, key on top
                 const uint32_t count = in.a;
                 std::vector<Value> items;
                 for (uint32_t i = 0; i < count && !pcb->stack.empty(); ++i)
                     items.push_back(popValue(pcb));
-                std::reverse(items.begin(), items.end());
+                // Stack layout per literal pair: value pushed first, key on top
+                // -> pop order is (key,value) of the LAST literal pair first:
+                //   items[0]=keyN, items[1]=valueN, items[2]=key(N-1), ...
+                // vm_createMapping (0x8091af0, IDA) inserts exactly in this pop
+                // order (key = vm_stack[v6], value = vm_stack[v6+1], v6 walking
+                // from the top upward) = REVERSE literal order; with the head
+                // insertion of vm_findForInsert, same-bucket chains come out in
+                // literal order, so vm_mappingIndices (buckets high->low, chain
+                // head first) visits keys in literal order (wizardd's
+                // equip_type_map: 武器,头盔,衣服,鞋子,腰带).
+                // CAUTION: insert(items[i], items[i+1]) - the KEY is the EVEN
+                // index.  The previous attempt kept insert(items[i+1], items[i])
+                // after dropping the reverse and swapped EVERY literal's
+                // key/value (["module": ob] became ([ob: "module"]) -> aaa boot
+                // died with "Object is not found" cascades).
                 auto mp = std::make_shared<MappingValue>(
                     static_cast<uint32_t>(items.size() / 2));
                 for (size_t i = 0; i + 1 < items.size(); i += 2)
-                    mp->insert(items[i + 1], items[i]);
+                    mp->insert(items[i], items[i + 1]);
                 pushValue(pcb, mp);
                 break;
             }

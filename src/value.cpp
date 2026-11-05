@@ -556,10 +556,25 @@ void MappingValue::setCaseCheck(bool cs, int obsorb) {
 
 std::vector<std::pair<Value, Value>> MappingValue::items() const {
     // vm_mappingIndices (0x809e688): buckets from tableSize DOWN TO 0,
-    // each chain head first.
+    // each chain head first — the order keys()/values() return.
+    // NOTE the loop statement does NOT use this order: vm_cmpAndJmpInLoop
+    // (0x80bcae0, ctrl[2]==902) walks buckets ASCENDING 0..maxSize-1 —
+    // see itemsAscending(), which the loop opcode must use instead
+    // (wizardd's equip_type_map menu order proved it empirically).
     std::vector<std::pair<Value, Value>> out;
     out.reserve(cnt);
     for (int32_t b = static_cast<int32_t>(tableSize); b >= 0; --b)
+        for (int32_t ni = table[b]; ni != -1; ni = nodes[ni].next)
+            out.emplace_back(nodes[ni].key, nodes[ni].value);
+    return out;
+}
+
+std::vector<std::pair<Value, Value>> MappingValue::itemsAscending() const {
+    // vm_cmpAndJmpInLoop (0x80bcae0) ctrl 902: buckets ASCENDING 0..maxSize-1,
+    // each chain head first, yielding (key, value, counter) triples.
+    std::vector<std::pair<Value, Value>> out;
+    out.reserve(cnt);
+    for (size_t b = 0; b < table.size(); ++b)
         for (int32_t ni = table[b]; ni != -1; ni = nodes[ni].next)
             out.emplace_back(nodes[ni].key, nodes[ni].value);
     return out;

@@ -309,13 +309,18 @@ struct MappingValue {
 
     // (key, value) pairs in vm_mappingIndices order (bucket high->low).
     std::vector<std::pair<Value, Value>> items() const;
+    // Loop-statement order (vm_cmpAndJmpInLoop ctrl 902): buckets ASCENDING.
+    std::vector<std::pair<Value, Value>> itemsAscending() const;
 
     // Walk every LIVE entry (bucket chains only - erased nodes stay in the
     // nodes vector but are unreachable) without allocating a copy.  fn(key,
-    // value) is invoked in vm_mappingIndices order.
+    // value) is invoked in vm_mappingIndices order (0x809e688: buckets from
+    // tableSize DOWN TO 0, each chain head first) — the keys()/values()
+    // order.  The loop statement uses a DIFFERENT (ascending) order — see
+    // itemsAscending().
     template <typename F>
     void forEachActive(F&& fn) const {
-        for (size_t b = 0; b < table.size(); ++b)
+        for (int32_t b = static_cast<int32_t>(tableSize); b >= 0; --b)
             for (int32_t ni = table[b]; ni != -1; ni = nodes[static_cast<size_t>(ni)].next)
                 fn(nodes[static_cast<size_t>(ni)].key, nodes[static_cast<size_t>(ni)].value);
     }
