@@ -246,8 +246,11 @@ static void freeOrphanedContents(vmcore::VmObject* o) {
         std::cerr.flush();
     }
     for (auto* c : owned) {
-        if (!c || c->destructed()) continue;
-        c->markDestructed();
+        if (!c || c->destructed() || c->destructing()) continue;
+        // 原版 0x2000 (destructing): the spawned destructor chain below
+        // keeps the object registered and is_object()==1 until its chain
+        // tail / pendingFree flush sets destructed_ (=0x8000).
+        c->markDestructing();
         // The mudlib destructor (iid.c::destruct -> unregister_iid) must run
         // while the object is still registered — master's iid_map holds a
         // live ObjectValue the destructor compares against this_object().
@@ -278,6 +281,10 @@ void vmFlushPendingFrees(const void* proc) {
             ++it;
         }
     }
+    // 原版 0x4000 重试的 execRef 门 (vm_destructObject 0x80b1894):
+    // execRef>0 (还有帧在执行该对象) → 真释放继续延迟, 等下一次帧弹出。
+    vmcore::VmPcb* curPcb = vmcore::currentPcb();
+    const bool samePcb = curPcb && static_cast<const void*>(curPcb) == proc;
     for (auto& e : now) {
         vmcore::VmObject* obj = vmcore::Registry::instance().findByName(e.key);
         static const std::atomic<bool>& cscDbg0 = dynProbeFlag("LPCVM_CASCADE");
@@ -288,9 +295,26 @@ void vmFlushPendingFrees(const void* proc) {
                       << "\n";
             std::cerr.flush();
         }
-        if (obj && obj->destructed()) {
+        if (obj && (obj->destructed() || obj->destructing())) {
+            if (samePcb) {
+                bool executing = false;
+                for (const auto& fr : curPcb->frames)
+                    if (fr.obj == obj) { executing = true; break; }
+                if (executing) {
+                    // Still on the frame stack (e.g. the mid-chain deferral
+                    // tail recorded while dismissing from a team method) —
+                    // requeue for the NEXT frame pop / chain end.
+                    pf.push_back(e);
+                    continue;
+                }
+            }
             // Free the carried items/pets first (their destructors unregister
             // the iids — see freeOrphanedContents), then the owner itself.
+            // 原版 vm_destructObject (0x80b1894): execRef>0 → flags|=0x4000
+            // (deferred) — the real free happens when the owning frame pops /
+            // the process ends.  destructed_ (= 0x8000 "freed") is set HERE,
+            // at the real free, not when destruct_object entered.
+            obj->markDestructed();
             freeOrphanedContents(obj);
             // The object leaves the registry here: every ObjectValue that
             // carries its flag stops being an object (the original driver's
@@ -812,6 +836,17 @@ bool objectValueAlive(const Value& v) {
     if (v.index() != 7) return false;
     auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
     if (!ov) return false;
+    // 原版 O_DESTRUCTED 语义: 析构标记一置, is_object/find_object 视角下
+    // 对象即死 (引用视角); 真正释放 (alive=false, 引用失效) 延迟到链结束
+    // —— 链内 mudlib 代码仍可 call_other 自己跑析构收尾 (op8 走 reallyGone
+    // 把门), 但 is_object 已判假。与 op36 (interp.cpp case 36) 保持一致。
+    // 实证: dismiss 析构的 team 留在 combat 的 all_team 缓存里被 is_object
+        // 判真复用 (僵尸队), 杀坐骑时队长判定失败, 星君变身被跳过。
+        // (回退注: 原版语义是 0x2000 析构中判真 / 0x8000 真释放判假 —
+        // destructed_ 提前置曾令 destroy_user 链内 is_object(this_object)
+        // 判假, logout 后半全跳过, 二次登录空界面。僵尸 team 的剔除靠
+        // 链尾 markDestructed+closeReferences 的 destructed_/alive 判定,
+        // destructed_ 现在只在真释放时置位, 此处无需重复判定。)
     return !ov->alive || ov->alive->load(std::memory_order_relaxed);
 }
 bool objectValueFreed(const Value& v) {
@@ -830,17 +865,19 @@ bool destructObjectByKey(const std::string& keyIn) {
     auto& reg = vmcore::Registry::instance();
     vmcore::VmObject* obj = reg.findByName(keyIn);
     if (!obj) return false;
-    if (obj->destructed()) {
-        // Re-entrant destruct_object(<same key>) from inside the destructor
-        // chain: the OUTER call owns the registry teardown, so leave the
-        // entry in place — the chain keeps calling back into the object
-        // (me->save()).
+    if (obj->destructed() || obj->destructing()) {
+        // Re-entrant destruct_object(<same key>) — the original primitive
+        // no-ops on (flags & 0xE000) (0x80f9420).  The OUTER call owns the
+        // registry teardown, so leave the entry in place — the chain keeps
+        // calling back into the object (me->save()).
         return true;
     }
-    // Phase 1 "marked": the object stays registered while its destructor
-    // chain runs — user.o::destruct -> userd::destroy_user -> me->save() is
-    // the ONLY dbase writer and resolves `me` through the registry.
-    obj->markDestructed();
+    // Phase 1 = 原版 0x2000: set the moment destruct_object enters; the
+    // object stays registered and is_object()==1 while its destructor chain
+    // runs (userd::destroy_user -> grantd::valid_grant(this_object) requires
+    // that).  destructed_ (= 原版 0x8000, "freed") is only set at the chain
+    // tail, next to closeReferences().
+    obj->markDestructing();
     // 原版 vm_f_destruct_object2 (0x80f9284)：析构是【链式】的 —— 按
     // initOrderList 逆序（最派生段先跑），逐个 constitution 跑它自己的
     // 析构函数（hidden "destruct" 记录），每段跑完 hookCallbackWhenReturn
@@ -892,6 +929,10 @@ bool destructObjectByKey(const std::string& keyIn) {
                         pendingFrees().push_back(
                             PendingFree{okey, static_cast<const void*>(pcb2)});
                     } else {
+                        // 原版链尾 (0x80f9284): clear 0x2000 (由析构收尾语义
+                        // 隐含) + vm_destructObject 真释放 = 0x8000("freed")
+                        // + 摘注册表。is_object 从这里开始判假。
+                        o->markDestructed();
                         freeOrphanedContents(o);
                         o->closeReferences();
                         reg2.unregisterObject(okey);

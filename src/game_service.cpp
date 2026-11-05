@@ -12428,6 +12428,10 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     const bool gateNeeded = flowGated(cl.attrib);
     if (gateNeeded) {
         lpc::vmchainMailbox(gateCno, -1, "dispatch-wait");
+        // LPCVM_GATEDBG: how long the one-command-per-connection gate held
+        // this packet (menu-click latency suspects the previous chain hogging
+        // the connection for seconds).
+        const auto gateStart = std::chrono::steady_clock::now();
         if (!lpc::waitClientCommandIdle(gateCno, kGateTimeoutMs)) {
             // The connection's previous command never finished.  Dropping this
             // packet is the honest option (the client retries); dispatching it
@@ -12437,6 +12441,18 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
                 std::cerr << "[chain-gate] cno=" << gateCno << " cmd=0x" << std::hex << cmdNo
                           << std::dec << " dropped: previous command still running\n";
             return;
+        }
+        {
+            static const std::atomic<bool>& gd = dynProbeFlag("LPCVM_GATEDBG");
+            if (gd.load(std::memory_order_relaxed)) {
+                const auto heldMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - gateStart).count();
+                if (heldMs > 0)
+                    std::cerr << "[gate-wait] t=" << lpc::msSinceStart() << "ms cno=" << gateCno
+                              << " cmd=0x" << std::hex << cmdNo << std::dec
+                              << " held=" << heldMs << "ms\n";
+                std::cerr.flush();
+            }
         }
         lpc::vmchainMailbox(gateCno, -1, "dispatch-go");
         // Attribute the LPC chain(s) this packet starts to this connection.

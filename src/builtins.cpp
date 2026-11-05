@@ -12,6 +12,7 @@
 #include "pkt_protocol.h"
 #include "xdbc.h"
 #include "vmcore/vmcore.h"
+#include "vmcore/object.h"
 #include "sqlite3.h"
 
 #include <winsock2.h>
@@ -6115,6 +6116,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                           ctx.obj.find("random_coupond") != std::string::npos;
         auto keepOf = [&](const Value& e) {
             int vt = (e.index() < 11) ? idxToType[e.index()] : 0;
+            if (vt == 10) {
+                // vm_getVarType (0x808cb3c): an object value whose target is
+                // destructed (zombie flags 0x8000) is CLEANED IN PLACE - its
+                // type reads as undefined.  clean_array(10) therefore drops
+                // freed members: get_defense_corps()'s clean_array self-heals
+                // the corps after _do_combat_team destructs a member that
+                // stays listed (Star-Lord-mount combat hang).  Match op8's
+                // dead test exactly.
+                auto ov = std::get<std::shared_ptr<ObjectValue>>(e);
+                const lpc::vmcore::VmObject* t = ov ? ov->vmObj : nullptr;
+                if (ov && !t && !ov->programName.empty())
+                    t = lpc::vmcore::Registry::instance().findByName(
+                        ov->programName);
+                if (!t || t->reallyGone()) vt = 0;
+            }
             if (type == 255) {
                 // default: drop nil/undefined (reference type 0) and (as the
                 // validated engine build did) numeric zeros as well.

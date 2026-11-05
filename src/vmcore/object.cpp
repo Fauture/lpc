@@ -14,10 +14,13 @@
 #include "object.h"
 
 #include <cstring>
+#include <iostream>
 #include <set>
 
 #include "driver_model.h"
 #include "pak_loader.h"
+#include "original_vm.h"
+#include "vmcore.h"
 
 namespace lpc {
 namespace vmcore {
@@ -523,6 +526,23 @@ VmObject* cloneObject(VmObject* tmpl) {
     parkVmObject(inst);                    // immortal lifetime (raw-pointer identity)
     reg.registerObject(key, inst);
     return inst;
+}
+
+// [deslog] (LPCVM_DESLOG hot probe): who destroyed this object - used to
+// chase "corps member destructed before first round" combat hangs.
+void logDestructed(VmObject* obj) {
+    static const std::atomic<bool>& desLog = dynProbeFlag("LPCVM_DESLOG");
+    if (!desLog.load(std::memory_order_relaxed)) return;
+    VmPcb* pcb = currentPcb();
+    std::string by = "<none>";
+    if (pcb && !pcb->frames.empty()) {
+        const auto& fr = pcb->frames.back();
+        by = (fr.obj ? fr.obj->key() : std::string("<null>")) + "::" +
+             (fr.fn ? fr.fn->name : std::string("<ctx>"));
+    }
+    std::cerr << "[deslog] " << (obj ? obj->key() : std::string("<null>"))
+              << " by=" << by << "\n";
+    std::cerr.flush();
 }
 
 bool destructObject(VmObject* obj) {

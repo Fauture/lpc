@@ -37,6 +37,11 @@ namespace vmcore {
 
 class VmObject;
 
+// [deslog] (LPCVM_DESLOG hot probe): single-point destruct logger, called
+// from VmObject::markDestructed so EVERY destruct path (efun primitive,
+// failed construction, registry teardown) is covered.
+void logDestructed(VmObject* obj);
+
 // ---------------------------------------------------------------------------
 // VmProgram — a loaded .o's read-only program, shared by the template object
 // and every clone.  Built once at load time; immutable afterwards.
@@ -145,7 +150,18 @@ public:
     const std::vector<Value>& vars() const { return vars_; }
 
     bool destructed() const { return destructed_.load(); }
-    void markDestructed() { destructed_.store(true); }
+    void markDestructed() {
+        destructed_.store(true);
+        logDestructed(this);   // [deslog] hot probe (no-op unless armed)
+    }
+    // 原版 0x2000 flag (vm_f_destruct_object 0x80f9420): set the moment
+    // destruct_object enters, CLEARED at the tail of the destructor chain
+    // (vm_f_destruct_object2 0x80f9284) right before the real free.  During
+    // this window the object still answers is_object()==1 (destroy_user's
+    // grantd::valid_grant(this_object) relies on that) and re-entrant
+    // destruct_object() no-ops on (flags & 0xE000).
+    bool destructing() const { return destructing_.load(); }
+    void markDestructing() { destructing_.store(true); }
     // The call-dispatch dead test (op8 / call_other / broadcast): a merely
     // MARKED object is still executing its destructor chain — user.o::destruct
     // -> userd::destroy_user -> me->save() is the ONLY dbase writer and every
@@ -176,6 +192,7 @@ private:
     std::string key_;                          // registry key / instance name
     std::vector<Value> vars_;                  // instance variables
     std::atomic<bool> destructed_{false};
+    std::atomic<bool> destructing_{false};   // 原版 0x2000: destructor chain in flight
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
 };
 

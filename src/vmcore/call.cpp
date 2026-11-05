@@ -20,6 +20,7 @@
 #include "call.h"
 #include "interp.h"
 #include "original_vm.h"
+#include "driver_model.h"
 #include "values.h"
 #include "vmcore.h"
 #include "trace.h"
@@ -277,6 +278,12 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
     std::vector<std::function<void(Value&)>> hooks =
         std::move(pcb->frames.back().retHooks);
     pcb->frames.pop_back();
+    // 原版 0x4000 语义 (vm_destructObject 0x80b1894): 帧弹出使 execRef 回落,
+    // 该对象若挂有待真释放 (pendingFree) 且帧栈已无它的帧 → 立即真释放。
+    // 同一条命令链内 dismiss 后紧接的 is_object (all_team 复用点) 由此才能
+    // 判假 (此前拖到整链 Done 才 flush, 中途判真复用了僵尸 team, 星君变身
+    // 被跳过)。pendingFrees 为空时仅一次空检查即返回。
+    vmFlushPendingFrees(static_cast<const void*>(pcb));
     // Tripwire: 截断范围内若有活跃 LoopCtrl 槽 (index 9) —— 帧尺寸算错，
     // post_init "Bad loop ctrl" 元凶现场。
     // [性能] dynProbeFlag 门控 (默认关): 构造期每次帧返回都扫, 命中十余万

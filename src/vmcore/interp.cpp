@@ -20,6 +20,7 @@
 #include "interp.h"
 #include "object.h"
 #include "original_vm.h"
+#include "driver_model.h"
 #include "values.h"
 #include "vmcore.h"
 #include "efun_table.h"
@@ -1518,6 +1519,12 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 // (匿名/未锚定, 如旧版 previous_object 的 make_object) 视为
                 // 活 —— 与 builtins objectValueAlive 语义一致 (lw62 实锤:
                 // 两处语义相反曾致 punishd 永久重试)。
+                // 原版三分标志 (IDA 0x80f9420/0x80f9284/0x80b1894):
+                //   0x2000 析构中(进入即置, 链尾清) → is_object 仍判真
+                //   (destroy_user 链内 grantd::valid_grant(this_object)
+                //   实证依赖; 误判假曾令 logout 后半全跳过, 二次登录空界面)
+                //   0x8000/已摘表 真释放(链尾 markDestructed+closeReferences)
+                //   → is_object 判假 (all_team 缓存里的僵尸 team 靠此剔除)。
                 if (got == t && t == 10 && v.index() == 7) {
                     auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
                     if (!ov || (ov->alive && !ov->alive->load())) got = -1;
@@ -2887,6 +2894,9 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                   << " fn=" << (fr.fn ? fr.fn->name : std::string("<ctx>"))
                                   << " bp=" << fr.bp << " argNum=" << fr.argNum << "\n";
                 pcb->frames.pop_back();
+                // 原版 0x4000: 异常 unwind 弹帧同样使 execRef 回落 → 重试
+                // pendingFree (flush 内部按帧栈过滤, 无候选时空转)。
+                lpc::vmcore::vmFlushPendingFrees(static_cast<const void*>(pcb));
                 // 帧清栈只缩不扩 (扩=核算错误, 扩出的空槽即 residual 泄漏)。
                 pcb->stack.resize(static_cast<size_t>(
                     newSize > static_cast<int>(pcb->stack.size())
