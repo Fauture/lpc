@@ -2201,7 +2201,14 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // [monlist] 野外暗雷取证 (压帧后注册 —— 钩子挂 callee 帧,
                     // 触发时拿到的是 callee 的 rv): satisfy_template_condition
                     // 的 env->query("monster_list") 返回值。
-                    if (funName == "query" && argn == 1 && !items.empty() &&
+                    // LPCVM_MONLIST 热布防门控: 此前无条件打印, boot 2 小时
+                    // 1258 条; query_entire_dbase 族 ([qed]) 更是 119 万条
+                    // (占全部日志 80%), 每条一行阻塞 cerr 成为点化宠物等
+                    // dbase 密集操作的 1-2 秒周期卡顿源。
+                    static const std::atomic<bool>& monListFlag =
+                        dynProbeFlag("LPCVM_MONLIST");
+                    if (monListFlag.load(std::memory_order_relaxed) &&
+                        funName == "query" && argn == 1 && !items.empty() &&
                         items[0].value.index() == 4) {
                         const std::string qk =
                             std::get<SharedString>(items[0].value).str();
@@ -2220,7 +2227,14 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     }
                     // [qed] query_entire_dbase 返回指针关联 (压帧后注册):
                     // 与 [lshdbg] merge left= 指针对比 —— dbase 实例是否换人。
-                    if (funName == "query_entire_dbase") {
+                    // LPCVM_QED 热布防门控: 此前无条件打印, 点化宠物一次
+                    // 操作 5 万次 query_entire_dbase = 5 万行阻塞 cerr
+                    // (实测点化窗口 54525 行日志中 qed 占 50931=93%,
+                    // 时间轴 831-2187ms 空档与"点化卡 1-2 秒"一一对应)。
+                    static const std::atomic<bool>& qedFlag =
+                        dynProbeFlag("LPCVM_QED");
+                    if (qedFlag.load(std::memory_order_relaxed) &&
+                        funName == "query_entire_dbase") {
                         const std::string tk0 = target->key();
                         vmcore::vmHookCallbackWhenReturn(
                             pcb, [tk0](Value& rv) {

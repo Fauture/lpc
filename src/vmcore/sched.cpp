@@ -224,6 +224,16 @@ VmPcb* Scheduler::spawnDelayed(VmObject* obj, const std::string& entry,
                                std::vector<Value> args, int64_t atMs,
                                std::shared_ptr<std::atomic<bool>> cancelled) {
     auto p = makePcb(*impl_, obj, entry, std::move(args));
+    // 原版 max_threads = 同时**运行**的进程上限: 睡眠中的 call_out 不占 tid,
+    // tid 在任务真正被调度运行时才租借 (下面的 ready 取用路径对 tid<0 就是
+    // 这么做的)。此前 makePcb 创建即分配, 数百个周期性 call_out
+    // (refresh_top_list/init_btimer/task_timer_execute/boss 系列, PCDUMP 实测
+    // 343 个 pending) 长期占用池 tid, ~85 分钟后 1024 全部耗尽, 此后每条
+    // 新命令都要等其他链退场腾位 -> 挂机数小时后间歇性 4-5 秒卡顿。
+    if (p->tid >= 0) {
+        impl_->tidPool.release(p->tid);
+        p->tid = -1;
+    }
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
         p->state = VmPcb::State::Parked;
@@ -239,6 +249,11 @@ VmPcb* Scheduler::spawnDelayedEfun(VmObject* obj,
                                    std::shared_ptr<std::atomic<bool>> cancelled) {
     if (!cl) return nullptr;
     auto p = makePcb(*impl_, obj, "<efun-timer>", {});
+    // 同 spawnDelayed: 睡眠中的 efun 定时不占池 tid, 运行时再租借。
+    if (p->tid >= 0) {
+        impl_->tidPool.release(p->tid);
+        p->tid = -1;
+    }
     p->threadClosure = cl;
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
