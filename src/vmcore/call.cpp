@@ -216,9 +216,10 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
                 lpc::dynProbeFlag("LPCVM_RETMIS");
             // [target] _do_combat_team 栈残留直接导致剧本刷怪断链
             // (join_combat_team 后 add_member 不执行 → 战斗误判结束 →
-            //  scenario26/五色灵石永不触发), 对它单独取证, 不占通用配额。
+            //  scenario26/五色灵石永不触发), 归入 LPCVM_RETMIS 门控,
+            // 开启时对它跳过通用配额并打印每个残留槽的短值。
             const bool targetFn = f.fn && f.fn->name == "_do_combat_team";
-            if (rmFlag.load(std::memory_order_relaxed) || targetFn) {
+            if (rmFlag.load(std::memory_order_relaxed)) {
                 std::cerr << "[ret-mismatch] fn="
                           << (f.fn ? f.fn->name : std::string("<ctx>"))
                           << " residual=" << residual
