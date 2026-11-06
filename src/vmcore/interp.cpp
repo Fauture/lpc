@@ -2829,8 +2829,34 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 pushValue(pcb, make_int(isRef ? 1 : 0));
                 break;
             }
-            case 17: case 19: case 74: case 84:
-                break;   // convert_to_ptr/rev/trace: no-ops
+            case 74: { // rev_value (原版 vm_revValue 0x808e9cc): 一元按位反 ~x,
+                       // 非整型报 "Bad ~, type invalid of right value."。
+                       // 此前被当 no-op —— child_set_combat_mode 的
+                       // make_combat_type (cur & ~combat_type 编译为
+                       // push cur/push type/op74/op2) 因此返回未修改的
+                       // combat_mode, 娃娃参战取消勾选后客户端显示不变
+                       // (响应 0x1365 的 01 04, 原版 01 03)。
+                Value v = popValue(pcb);
+                if (v.index() != 2) vmError("Bad ~, type invalid of right value.");
+                pushValue(pcb, make_int(~static_cast<int32_t>(toInt(v))));
+                break; }
+            case 17: case 19: case 84:
+                // op.txt 全表审计(2026-11-06, 6781 个 .o 只扫真实命名函数段):
+                //   op17 check_is_ref_type_i (vm_checkIsRefTypeI 0x08091850):
+                //     发布 mudlib 0 处使用; 原版做栈槽实型转整+引用类型校验,
+                //     无可见栈效果, 我们的值模型无 C 级栈指针, no-op 等价。
+                //   op19 convert_to_ptr (vm_convertToPtr 0x0808a220): 真实使用
+                //     12 处, 全部是 query_member(67)→to_ptr→query_member_ptr(68)
+                //     链式取成员。原版把聚合值复制到堆并改栈槽为 type8 指针;
+                //     我们的 Value 聚合类型本就是 shared handle, op67 直推
+                //     共享句柄, op68 可直接以 Value 为容器, no-op 语义等价。
+                //   op84 trace (vm_trace 0x080bacd4): mudlib 0 处使用(调试
+                //     tracepoint, 发布版编译器不生成), no-op。
+                //   op49 pickup_os_value (vm_pickupOSValue 0x080b0a34): mudlib
+                //     0 处使用(读 .o metaData 字节压栈, 发布版不生成), 落
+                //     default no-op 正确。
+                // 另: op0 invalid / op86 null 本就无实现。
+                break;
             default:
                 break;   // 9/49/86 and unknown: no-ops (matches the old engine)
             }
