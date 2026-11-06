@@ -175,94 +175,14 @@ void parkVmObject(VmObject* obj) {
 }
 
 // ---------------------------------------------------------------------------
-// Orphaned-contents cascade.  The original driver garbage-collects objects
-// that lose their last reference when their owner is destructed — a logged-
-// out character's carried items/pets are collected and their destructors run
-// (iid.c::destruct -> unregister_iid on the master's global iid map).  Our
-// port keeps objects immortal, so those iids stayed registered forever and
-// every re-login restore hit register_iid -> duplicate ->
-// when_iid_duplicated(deny) -> "原因码9202/9211" on login.  Walk the dying
-// object's instance variables and free the per-character clones
-// (item/pet/guard/child) it held: each clone's mudlib destructor runs in its
-// own scheduler process, then the clone leaves the registry.
-// ---------------------------------------------------------------------------
-static bool isOwnedCloneKey(const std::string& k) {
-    if (k.find('#') == std::string::npos) return false;   // clones only
-    return k.find("/clone/item/") != std::string::npos ||
-           k.find("/clone/pet/") != std::string::npos ||
-           k.find("/clone/char/guard") != std::string::npos ||
-           k.find("/clone/char/child") != std::string::npos;
-}
-static void collectOwnedClones(const Value& v,
-                               std::set<const void*>& seen,
-                               std::vector<vmcore::VmObject*>& out,
-                               int depth) {
-    if (depth > 8) return;
-    switch (v.index()) {
-    case 7: {
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
-        if (!ov) return;
-        vmcore::VmObject* o = ov->vmObj;
-        if (!o && !ov->programName.empty() && ov->programName != "<this>")
-            o = vmcore::Registry::instance().findByName(ov->programName);
-        if (!o || !seen.insert(static_cast<const void*>(o)).second) return;
-        if (isOwnedCloneKey(o->key())) {
-            out.push_back(o);
-            // recurse into the item (nested bags/gems) but not into rooms/NPCs
-            for (const auto& vv : o->vars())
-                collectOwnedClones(vv, seen, out, depth + 1);
-        }
-        return;
-    }
-    case 5: {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
-        if (!arr || !seen.insert(static_cast<const void*>(arr.get())).second) return;
-        for (const auto& e : arr->items)
-            collectOwnedClones(e, seen, out, depth + 1);
-        return;
-    }
-    case 6: {
-        auto mp = std::get<std::shared_ptr<MappingValue>>(v);
-        if (!mp || !seen.insert(static_cast<const void*>(mp.get())).second) return;
-        mp->forEachActive([&](const Value&, const Value& val) {
-            collectOwnedClones(val, seen, out, depth + 1);
-        });
-        return;
-    }
-    default: return;
-    }
-}
-static void freeOrphanedContents(vmcore::VmObject* o) {
-    std::set<const void*> seen;
-    std::vector<vmcore::VmObject*> owned;
-    for (const auto& v : o->vars())
-        collectOwnedClones(v, seen, owned, 0);
-    static const std::atomic<bool>& cscDbg = dynProbeFlag("LPCVM_CASCADE");
-    if (cscDbg.load(std::memory_order_relaxed)) {
-        std::cerr << "[cascade] " << o->key() << " owned=" << owned.size();
-        std::cerr.flush();
-        for (auto* c : owned) std::cerr << " " << (c ? c->key() : "?");
-        std::cerr << "\n";
-        std::cerr.flush();
-    }
-    for (auto* c : owned) {
-        if (!c || c->destructed() || c->destructing()) continue;
-        // 原版 0x2000 (destructing): the spawned destructor chain below
-        // keeps the object registered and is_object()==1 until its chain
-        // tail / pendingFree flush sets destructed_ (=0x8000).
-        c->markDestructing();
-        // The mudlib destructor (iid.c::destruct -> unregister_iid) must run
-        // while the object is still registered — master's iid_map holds a
-        // live ObjectValue the destructor compares against this_object().
-        // Closing references first (an earlier attempt) nulled that value
-        // and the unregister silently no-opped.  Instead defer the real
-        // free to the destructor process's own chain end.
-        vmcore::VmPcb* sp =
-            vmcore::Scheduler::instance().spawn(c, "destruct", {});
-        pendingFrees().push_back(
-            PendingFree{c->key(), static_cast<const void*>(sp)});
-    }
-}
+// Orphaned-contents cascade: REMOVED - 对齐原版 vm_destructObject (0x80b1894):
+// 真释放只析构对象自己 (markDestructed/closeReferences/摘注册表), 逐变量
+// vm_destructStaticValue 递减引用, 不级联任何被引用对象。item/pet/guard/child
+// clone 的登记与回收由 mudlib primitive 管理 (start_gs.c 的 register_iid/
+// unregister_iid/iid_map + feature/common/iid.c 的 create/destruct 钩子, 随
+// pak 字节码加载运行)。此前移植的 owned-clone 级联 (任何对象析构都杀它引用
+// 的 guard/pet/item/child) 是"对象 immortal"时代的兜底, 会把参战守护/宠物
+// 本体误杀 (combat 析构时成员数组引用着本体) -> 守护打一场战斗就消失。
 
 std::string vmKeyOfObjectPtr(const void* objPtr) {
     std::lock_guard<std::mutex> lk(objParkMx());
@@ -308,14 +228,20 @@ void vmFlushPendingFrees(const void* proc) {
                     continue;
                 }
             }
-            // Free the carried items/pets first (their destructors unregister
-            // the iids — see freeOrphanedContents), then the owner itself.
             // 原版 vm_destructObject (0x80b1894): execRef>0 → flags|=0x4000
             // (deferred) — the real free happens when the owning frame pops /
             // the process ends.  destructed_ (= 0x8000 "freed") is set HERE,
             // at the real free, not when destruct_object entered.
+            // 原版真释放只做三件事: markDestructed / closeReferences (逐变量
+            // vm_destructStaticValue 递减引用) / 摘哈希表。没有对被引用对象
+            // 的任何级联 — item/pet/guard/child 的回收由 mudlib 自己显式
+            // destruct (iid primitive: register_iid/unregister_iid 在
+            // start_gs.c, 随 pak 字节码加载)。此前移植的 owned-clone 级联
+            // (任何对象析构都杀掉它引用的 guard/pet/item/child) 是
+            // "对象 immortal" 时代的兜底, 误杀了参战守护/宠物 (combat 析构
+            // 时成员数组还引用着本体, 玩家 guard_set 留僵尸 -> 守护打一场
+            // 战斗就消失)。
             obj->markDestructed();
-            freeOrphanedContents(obj);
             // The object leaves the registry here: every ObjectValue that
             // carries its flag stops being an object (the original driver's
             // reference invalidation on a real free).
@@ -933,7 +859,6 @@ bool destructObjectByKey(const std::string& keyIn) {
                         // 隐含) + vm_destructObject 真释放 = 0x8000("freed")
                         // + 摘注册表。is_object 从这里开始判假。
                         o->markDestructed();
-                        freeOrphanedContents(o);
                         o->closeReferences();
                         reg2.unregisterObject(okey);
                         reg2.clearConstructing(okey);
@@ -991,7 +916,8 @@ bool destructObjectByKey(const std::string& keyIn) {
             PendingFree{obj->key(), static_cast<const void*>(pcb)});
         return true;
     }
-    freeOrphanedContents(obj);
+    // 原版 vm_destructObject (0x80b1894): 真释放只摘自己, 不级联被引用对象。
+    obj->markDestructed();
     obj->closeReferences();
     reg.unregisterObject(obj->key());
     reg.clearConstructing(obj->key());
