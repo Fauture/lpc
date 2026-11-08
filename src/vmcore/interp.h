@@ -28,7 +28,7 @@ inline StackItem makeItem(Value v) {
     it.value = std::move(v);
     return it;
 }
-inline void pushItem(VmPcb* pcb, StackItem it) {
+inline void pushItem(VmPcb* pcb, StackItem&& it) {
     pcb->stack.push_back(std::move(it));
 }
 inline void pushValue(VmPcb* pcb, Value v) {

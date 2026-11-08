@@ -292,14 +292,14 @@ std::string saveValueAscii(const Value& v) {
         return out;
     }
     case 5: {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+        auto arr = std::get<lpc::Ref<ArrayValue>>(v);
         std::string out = "({";
         for (const auto& item : arr->items) out += saveValueAscii(item) + ",";
         out += "})";
         return out;
     }
     case 6: {
-        auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+        auto mp = std::get<lpc::Ref<MappingValue>>(v);
         std::string out = "([";
         for (const auto& kv : mp->items()) {
             out += saveValueAscii(kv.first) + ":" + saveValueAscii(kv.second) + ",";
@@ -314,7 +314,7 @@ std::string saveValueAscii(const Value& v) {
         return "U";
     case 10: {
         // buffer -> ":HEX:"
-        const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+        const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
         static const char* hex = "0123456789ABCDEF";
         std::string out = ":";
         for (unsigned char c : s) { out += hex[c >> 4]; out += hex[c & 0xF]; }
@@ -397,7 +397,7 @@ struct SaveParser {
         if (pos >= s.size()) return false;
         if (s[pos] == '{') {
             ++pos;
-            auto arr = std::make_shared<ArrayValue>();
+            auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
             skipWs();
             while (pos < s.size() && s[pos] != '}') {
                 Value item;
@@ -417,7 +417,7 @@ struct SaveParser {
         }
         if (s[pos] == '[') {
             ++pos;
-            auto mp = std::make_shared<MappingValue>();
+            auto mp = lpc::Ref<MappingValue>(new MappingValue());
             skipWs();
             while (pos < s.size() && s[pos] != ']') {
                 Value k, v;
@@ -542,7 +542,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
     // para is a mapping; missing pieces degrade gracefully
     auto get = [&para](const char* k) -> Value {
         if (para.index() != 6) return Value{};   // missing -> undefined (type 0)
-        const Value* hit = std::get<std::shared_ptr<MappingValue>>(para)->find(make_string(k));
+        const Value* hit = std::get<lpc::Ref<MappingValue>>(para)->find(make_string(k));
         return hit ? *hit : Value{};             // missing -> undefined (type 0)
     };
     std::string cmd;
@@ -645,7 +645,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
             return Value{};   // missing -> undefined (type 0)
         const XdbcView& v = it->second;
         const auto& row = v.rows[v.cursor - 1];
-        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(v.cols.size()));
+        auto mp = lpc::Ref<MappingValue>(new MappingValue(static_cast<uint32_t>(v.cols.size())));
         for (size_t i = 0; i < v.cols.size() && i < row.size(); ++i)
             mp->insert(make_string(v.cols[i]), make_string(cellToValue(row[i])));
         return mp;
@@ -655,7 +655,7 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
         std::lock_guard<std::mutex> lk(viewsMutex());
         auto it = globalViews().find(vno);
         if (it == globalViews().end()) return Value{};   // missing -> undefined (type 0)
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         for (const auto& c : it->second.cols) arr->items.push_back(make_string(c));
         return arr;
     }
@@ -701,10 +701,10 @@ void processXdbcFrames(SocketEntry& se) {
         Value result = handleXdbcCommand(conn, para);
         std::string cmd = "unknown";
         {
-            const Value* c = std::get<std::shared_ptr<MappingValue>>(para)->find(make_string("cmd"));
+            const Value* c = std::get<lpc::Ref<MappingValue>>(para)->find(make_string("cmd"));
             if (c && c->index() == 4) cmd = std::get<SharedString>(*c);
         }
-        auto resp = std::make_shared<MappingValue>();
+        auto resp = lpc::Ref<MappingValue>(new MappingValue());
         resp->insert(make_string("cmd"), make_string(cmd));
         resp->insert(make_string("result"), result);
         resp->insert(make_string("error"), make_string(""));
@@ -1142,7 +1142,7 @@ Value xdbcGetSockInfo(int fd) {
     auto it = socketTable().find(fd);
     if (it == socketTable().end() || !it->second.used) return make_mapping();
     const SocketEntry& se = it->second;
-    auto mp = std::make_shared<MappingValue>();
+    auto mp = lpc::Ref<MappingValue>(new MappingValue());
     auto addInt = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
     auto addStr = [&](const char* k, const std::string& v) { mp->insert(make_string(k), make_string(v)); };
     // vm_generateSocketInfo: id (fd+1), vm_fd, local_address/port,

@@ -500,7 +500,7 @@ void Registry::clearConstructing(const std::string& key) {
 Value Registry::makeObjectValue(VmObject* obj) {
     if (!obj) return make_int(0);
     Value v = make_object(obj->key());
-    auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+    auto ov = std::get<lpc::Ref<ObjectValue>>(v);
     ov->vmObj = obj;                       // the pointer IS the identity
     ov->alive = obj->aliveFlag();          // liveness of the instance
     return v;

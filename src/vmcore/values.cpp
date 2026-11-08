@@ -21,8 +21,8 @@ int64_t toInt(const Value& v) {
         const std::string& s = std::get<SharedString>(v);
         return s.empty() ? 0 : std::strtoll(s.c_str(), nullptr, 10);
     }
-    case 5: return static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size());
-    case 6: return static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size());
+    case 5: return static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(v)->items.size());
+    case 6: return static_cast<int64_t>(std::get<lpc::Ref<MappingValue>>(v)->size());
     default: return 0;
     }
 }
@@ -47,7 +47,7 @@ bool isZero(const Value& v) {
         // whose alive flag was cleared at real free IS 0 — master's iid map
         // entries and every other stored reference stop being truthy, so
         // `if (global_95[iid])` skips instead of reporting a duplicate iid.
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+        auto ov = std::get<lpc::Ref<ObjectValue>>(v);
         if (!ov) return true;
         return ov->alive && !ov->alive->load(std::memory_order_relaxed);
     }
@@ -81,27 +81,27 @@ static int64_t truncWrap(double v) { return i32(static_cast<int64_t>(v)); }
 
 Value addValues(const Value& a, const Value& b) {
     if (a.index() == 5 && b.index() == 5) {
-        auto r = std::make_shared<ArrayValue>();
-        const auto& aa = std::get<std::shared_ptr<ArrayValue>>(a)->items;
-        const auto& bb = std::get<std::shared_ptr<ArrayValue>>(b)->items;
+        auto r = lpc::Ref<ArrayValue>(new ArrayValue());
+        const auto& aa = std::get<lpc::Ref<ArrayValue>>(a)->items;
+        const auto& bb = std::get<lpc::Ref<ArrayValue>>(b)->items;
         r->items.reserve(aa.size() + bb.size());
         r->items.insert(r->items.end(), aa.begin(), aa.end());
         r->items.insert(r->items.end(), bb.begin(), bb.end());
         return r;
     }
     if (a.index() == 6 && b.index() == 6) {
-        auto r = std::make_shared<MappingValue>(
-            static_cast<uint32_t>(std::get<std::shared_ptr<MappingValue>>(a)->size()));
-        for (const auto& kv : std::get<std::shared_ptr<MappingValue>>(a)->items())
+        auto r = lpc::Ref<MappingValue>(new MappingValue(
+            static_cast<uint32_t>(std::get<lpc::Ref<MappingValue>>(a)->size())));
+        for (const auto& kv : std::get<lpc::Ref<MappingValue>>(a)->items())
             r->insert(kv.first, kv.second);
-        for (const auto& kv : std::get<std::shared_ptr<MappingValue>>(b)->items())
+        for (const auto& kv : std::get<lpc::Ref<MappingValue>>(b)->items())
             r->insert(kv.first, kv.second);
         return r;
     }
     if (a.index() == 10 || b.index() == 10) {
         // buffer concatenation: buffer + anything = raw byte concat.
         auto cat = [](const Value& v) -> std::string {
-            if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+            if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
             return to_string(v, false);
         };
         return make_buffer(cat(a) + cat(b));
@@ -122,9 +122,9 @@ Value addValues(const Value& a, const Value& b) {
 Value subValues(const Value& a, const Value& b) {
     // array - array: remove b's elements from a (vm_subValue / vm_subArray)
     if (a.index() == 5 && b.index() == 5) {
-        auto r = std::make_shared<ArrayValue>();
-        const auto& bb = std::get<std::shared_ptr<ArrayValue>>(b)->items;
-        for (const auto& item : std::get<std::shared_ptr<ArrayValue>>(a)->items) {
+        auto r = lpc::Ref<ArrayValue>(new ArrayValue());
+        const auto& bb = std::get<lpc::Ref<ArrayValue>>(b)->items;
+        for (const auto& item : std::get<lpc::Ref<ArrayValue>>(a)->items) {
             bool found = false;
             for (const auto& x : bb)
                 if (value_equal(item, x)) { found = true; break; }
@@ -134,14 +134,14 @@ Value subValues(const Value& a, const Value& b) {
     }
     // mapping - mapping/array: remove keys present in b
     if (a.index() == 6) {
-        auto r = std::make_shared<MappingValue>();
-        auto am = std::get<std::shared_ptr<MappingValue>>(a);
+        auto r = lpc::Ref<MappingValue>(new MappingValue());
+        auto am = std::get<lpc::Ref<MappingValue>>(a);
         for (const auto& kv : am->items()) {
             bool found = false;
             if (b.index() == 6) {
-                found = std::get<std::shared_ptr<MappingValue>>(b)->find(kv.first) != nullptr;
+                found = std::get<lpc::Ref<MappingValue>>(b)->find(kv.first) != nullptr;
             } else if (b.index() == 5) {
-                for (const auto& x : std::get<std::shared_ptr<ArrayValue>>(b)->items)
+                for (const auto& x : std::get<lpc::Ref<ArrayValue>>(b)->items)
                     if (value_equal(kv.first, x)) { found = true; break; }
             }
             if (!found) r->insert(kv.first, kv.second);
@@ -194,8 +194,8 @@ Value lshValues(const Value& a, const Value& b) {
     // (vm_concatMapping) — LPC relies on the aliasing everywhere
     // (register_daemon_data / itemd / partywar `m << ([...])`).
     if (a.index() == 6 && b.index() == 6) {
-        auto left = std::get<std::shared_ptr<MappingValue>>(a);
-        auto right = std::get<std::shared_ptr<MappingValue>>(b);
+        auto left = std::get<lpc::Ref<MappingValue>>(a);
+        auto right = std::get<lpc::Ref<MappingValue>>(b);
         // [lshdbg] import 合并取证: room import 的 dbase<<room_info 若左值
         // 是副本（非 dbase 引用）合并即丢失 (monster_list undefined 实锤)。
         static const std::atomic<bool>& ldFlag =
@@ -249,9 +249,9 @@ Value xorValues(const Value& a, const Value& b) {
 
 Value lpcOrValues(const Value& a, const Value& b) {
     if (a.index() == 5 && b.index() == 5) {
-        auto out = std::make_shared<ArrayValue>();
-        const auto& ai = std::get<std::shared_ptr<ArrayValue>>(a)->items;
-        const auto& bi = std::get<std::shared_ptr<ArrayValue>>(b)->items;
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
+        const auto& ai = std::get<lpc::Ref<ArrayValue>>(a)->items;
+        const auto& bi = std::get<lpc::Ref<ArrayValue>>(b)->items;
         out->items.reserve(ai.size() + bi.size());
         for (const auto& x : ai) out->items.push_back(x);
         for (const auto& x : bi) {
@@ -325,8 +325,8 @@ int compareValuesOriginal(const Value& a, const Value& b) {
         return c < 0 ? -1 : (c > 0 ? 1 : 0);
     }
     case 5: {
-        const std::string& x = std::get<std::shared_ptr<BufferValue>>(a)->data;
-        const std::string& y = std::get<std::shared_ptr<BufferValue>>(b)->data;
+        const std::string& x = std::get<lpc::Ref<BufferValue>>(a)->data;
+        const std::string& y = std::get<lpc::Ref<BufferValue>>(b)->data;
         size_t n = x.size() < y.size() ? x.size() : y.size();
         if (n) {
             int c = std::memcmp(x.data(), y.data(), n);
@@ -375,7 +375,7 @@ Value castValue(Value v, int targetType) {
         }
         if (v.index() == 10) {
             // (int)buffer: every byte big-endian (v22 = byte | (v22 << 8)).
-            const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+            const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
             uint64_t be = 0;
             for (unsigned char c : s) be = (be << 8) | c;
             return make_int(static_cast<int64_t>(be));
@@ -391,7 +391,7 @@ Value castValue(Value v, int targetType) {
         if (v.index() == 4) return v;
         if (v.index() == 10) {
             // (string)buffer: raw bytes, stripping a leading UTF-8 BOM.
-            std::string s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+            std::string s = std::get<lpc::Ref<BufferValue>>(v)->data;
             if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF &&
                 static_cast<unsigned char>(s[1]) == 0xBB &&
                 static_cast<unsigned char>(s[2]) == 0xBF)
@@ -430,7 +430,7 @@ Value castValue(Value v, int targetType) {
 
 Value queryMemberValue(const Value& container, const Value& key) {
     if (container.index() == 6) {
-        auto mp = std::get<std::shared_ptr<MappingValue>>(container);
+        auto mp = std::get<lpc::Ref<MappingValue>>(container);
         // A NULL (or implausible) mapping payload reads as a miss instead of
         // crashing (tmp_dbase[path] before materialisation).
         if (!mp || reinterpret_cast<uintptr_t>(mp.get()) < 0x10000)
@@ -447,7 +447,7 @@ Value queryMemberValue(const Value& container, const Value& key) {
         return Value{};   // miss -> original type 0 "undefined"
     }
     if (container.index() == 5) {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(container);
+        auto arr = std::get<lpc::Ref<ArrayValue>>(container);
         if (!arr || reinterpret_cast<uintptr_t>(arr.get()) < 0x10000)
             return Value{};
         int64_t i = toInt(key);
@@ -466,7 +466,7 @@ Value queryMemberValue(const Value& container, const Value& key) {
     if (container.index() == 10) {
         // buffer indexing yields the BYTE as an int (vm_queryMember type-5
         // branch) — admincommandd::get_args relies on it.
-        const std::string& s = std::get<std::shared_ptr<BufferValue>>(container)->data;
+        const std::string& s = std::get<lpc::Ref<BufferValue>>(container)->data;
         int64_t i = toInt(key);
         if (i >= 0 && i < static_cast<int64_t>(s.size()))
             return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
@@ -502,11 +502,11 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
     // String ranges are BYTE based, exactly like the original
     // (vm_queryRange 0x808fd04 does byte pointer arithmetic over pString->len).
     if (container.index() == 5)
-        len = std::get<std::shared_ptr<ArrayValue>>(container)->items.size();
+        len = std::get<lpc::Ref<ArrayValue>>(container)->items.size();
     else if (container.index() == 4)
         len = std::get<SharedString>(container).size();
     else if (container.index() == 10)
-        len = std::get<std::shared_ptr<BufferValue>>(container)->data.size();
+        len = std::get<lpc::Ref<BufferValue>>(container)->data.size();
     if (flag & 1) { if (b <= 0) b = 1; b = static_cast<int64_t>(len) - b; }
     if (flag & 2) { if (a <= 0) a = 1; a = static_cast<int64_t>(len) - a; }
     if (a < 0) a = 0;
@@ -525,12 +525,12 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
         return make_string(out);
     }
     if (container.index() == 10) {
-        const std::string& s = std::get<std::shared_ptr<BufferValue>>(container)->data;
+        const std::string& s = std::get<lpc::Ref<BufferValue>>(container)->data;
         return make_buffer(s.substr(static_cast<size_t>(a), static_cast<size_t>(b - a + 1)));
     }
     if (container.index() == 5) {
-        const auto& items = std::get<std::shared_ptr<ArrayValue>>(container)->items;
-        auto arr = std::make_shared<ArrayValue>();
+        const auto& items = std::get<lpc::Ref<ArrayValue>>(container)->items;
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         for (int64_t i = a; i <= b; ++i) arr->items.push_back(items[static_cast<size_t>(i)]);
         return arr;
     }

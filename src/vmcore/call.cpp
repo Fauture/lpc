@@ -84,12 +84,12 @@ static void pushArgs(VmPcb* pcb, const OriginalFunction* fn,
         // 调用方的槽上。
         if (v.index() == 11) {
             const auto& r =
-                std::get<std::shared_ptr<CrossVmRef>>(v);
+                std::get<lpc::Ref<CrossVmRef>>(v);
             if (r && r->slotIndex >= 0) {
                 StackItem ref;
-                ref.isRef = true;
-                ref.slotIndex = r->slotIndex;
-                pushItem(pcb, ref);
+                ref.ref = std::make_unique<StackRef>();
+                ref.ref->slotIndex = r->slotIndex;
+                pushItem(pcb, std::move(ref));
                 continue;
             }
         }
@@ -184,7 +184,10 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
         pcb->catches.clear();
         return Interp::RET_CHAIN_END;
     }
-    const VmFrame f = pcb->frames.back();   // copy: popped below
+    // [perf] 值拷贝整帧 (loops map + retHooks vector 即使为空也要走堆
+    // 结构拷贝) 实测 ~1µs/次 —— 操作窗口 op73 占 60%。move 出来: 容器
+    // 成员指针交换, 标量照旧; pop_back 析构的是搬空的壳。
+    VmFrame f = std::move(pcb->frames.back());
     if (op == 72) {
         if (!pcb->stack.empty()) pcb->returnValue = Interp::popValue(pcb);
         else pcb->returnValue = Value{};   // 栈空: void
@@ -292,7 +295,7 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
     const std::vector<uint8_t>* retMeta = f.retMeta;
     const size_t retIp = f.retIp;
     std::vector<std::function<void(Value&)>> hooks =
-        std::move(pcb->frames.back().retHooks);
+        std::move(f.retHooks);   // f 已是 move 出来的帧, 直接取
     pcb->frames.pop_back();
     // 原版 0x4000 语义 (vm_destructObject 0x80b1894): 帧弹出使 execRef 回落,
     // 该对象若挂有待真释放 (pendingFree) 且帧栈已无它的帧 → 立即真释放。
@@ -408,8 +411,8 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
             if (r8Log.fetch_add(1) < 300) {
                 size_t asz = 0;
                 if (pcb->returnValue.index() == 5 &&
-                    std::get<std::shared_ptr<ArrayValue>>(pcb->returnValue))
-                    asz = std::get<std::shared_ptr<ArrayValue>>(
+                    std::get<lpc::Ref<ArrayValue>>(pcb->returnValue))
+                    asz = std::get<lpc::Ref<ArrayValue>>(
                               pcb->returnValue)
                               ->items.size();
                 std::string extra;
@@ -553,7 +556,7 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
                      const std::vector<Value>& args) {
     VmObject* obj = nullptr;
     if (target.index() == 7) {
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(target);
+        auto ov = std::get<lpc::Ref<ObjectValue>>(target);
         if (ov) {
             obj = ov->vmObj;
             if (!obj && !ov->programName.empty())
@@ -639,7 +642,7 @@ struct BroadcastState {
     std::vector<VmObject*> targets;
     std::string funName;
     std::vector<Value> args;
-    std::shared_ptr<ArrayValue> results;
+    lpc::Ref<ArrayValue> results;
     size_t idx = 0;
     VmObject* caller = nullptr;
 };
@@ -699,12 +702,12 @@ void vmCallOtherArrayPush(VmPcb* pcb, const std::vector<Value>& targets,
     auto st = std::make_shared<BroadcastState>();
     st->funName = funName;
     st->args = args;
-    st->results = std::make_shared<ArrayValue>();
+    st->results = lpc::Ref<ArrayValue>(new ArrayValue());
     st->caller = pcb->frames.empty() ? nullptr : pcb->frames.back().obj;
     for (const auto& t : targets) {
         VmObject* obj = nullptr;
         if (t.index() == 7) {
-            auto ov = std::get<std::shared_ptr<ObjectValue>>(t);
+            auto ov = std::get<lpc::Ref<ObjectValue>>(t);
             if (ov) {
                 obj = ov->vmObj;
                 if (!obj && !ov->programName.empty())

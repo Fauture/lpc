@@ -46,73 +46,73 @@
 // This build has no such plugin, so ENABLING correctly fails (0), but
 // DISABLING must still answer 1 and send_to_apex must answer -1.  The old
 // catch-all stub below answered 0 for both, which is not what the driver did.
-if (name == "enable_apex") {
+if (eid == CID("enable_apex")) {
     int64_t on = args.empty() ? 1 : as_int(args[0]);
     return make_int(on ? 0 : 1);
 }
-if (name == "send_to_apex") return make_int(-1);
+if (eid == CID("send_to_apex")) return make_int(-1);
 
 // ---- debugger / tracing / profiling knobs (all no-ops in this build) ----
-if (name == "set_trace_level" || name == "xdebug" ||
-    name == "set_primitive" || name == "trace_modules" ||
-    name == "debug_enter" || name == "debug_command" ||
-    name == "debug_trap" || name == "debug_disassemble" ||
-    name == "debug_quick_show_values" ||
-    name == "debug_delete_breakpoint" || name == "debug_get_breakpoint" ||
-    name == "pp_get_profiling_time" || name == "reset_eval_cost" ||
-    name == "set_force_relinquish" || name == "reset_function_mark" ||
-    name == "reset_thread_seq_no" || name == "set_thread_attr" ||
-    name == "set_thread_deletion" || name == "resume_thread" ||
-    name == "set_io_translator" || name == "enable_client_record" ||
-    name == "enable_client_snapshot" || name == "set_mobile_client" ||
-    name == "debug_client" || name == "add_resource_string" ||
-    name == "load_resource_strings" || name == "reset_message_stat" ||
-    name == "garbage_collect" || name == "mem_l2_stat" ||
-    name == "mem_mark" || name == "mem_unmark" || name == "mem_dump" ||
-    name == "mem_reset_alloc_stat" || name == "mem_list" ||
-    name == "mem_stat" || name == "mem_show_marked" ||
-    name == "verigen_remove_font" || name == "verigen_mem_stat" ||
-    name == "verigen_get_distortion_index" ||
-    name == "verigen_set_no_distortion_char" ||
-    name == "dbfs_compact" || name == "dbfs_openfs" ||
-    name == "save_map_info" || name == "create_fs" ||
-    name == "pack_dir" || name == "fgetfpinfo")
+if (eid == CID("set_trace_level") || eid == CID("xdebug") ||
+    eid == CID("set_primitive") || eid == CID("trace_modules") ||
+    eid == CID("debug_enter") || eid == CID("debug_command") ||
+    eid == CID("debug_trap") || eid == CID("debug_disassemble") ||
+    eid == CID("debug_quick_show_values") ||
+    eid == CID("debug_delete_breakpoint") || eid == CID("debug_get_breakpoint") ||
+    eid == CID("pp_get_profiling_time") || eid == CID("reset_eval_cost") ||
+    eid == CID("set_force_relinquish") || eid == CID("reset_function_mark") ||
+    eid == CID("reset_thread_seq_no") || eid == CID("set_thread_attr") ||
+    eid == CID("set_thread_deletion") || eid == CID("resume_thread") ||
+    eid == CID("set_io_translator") || eid == CID("enable_client_record") ||
+    eid == CID("enable_client_snapshot") || eid == CID("set_mobile_client") ||
+    eid == CID("debug_client") || eid == CID("add_resource_string") ||
+    eid == CID("load_resource_strings") || eid == CID("reset_message_stat") ||
+    eid == CID("garbage_collect") || eid == CID("mem_l2_stat") ||
+    eid == CID("mem_mark") || eid == CID("mem_unmark") || eid == CID("mem_dump") ||
+    eid == CID("mem_reset_alloc_stat") || eid == CID("mem_list") ||
+    eid == CID("mem_stat") || eid == CID("mem_show_marked") ||
+    eid == CID("verigen_remove_font") || eid == CID("verigen_mem_stat") ||
+    eid == CID("verigen_get_distortion_index") ||
+    eid == CID("verigen_set_no_distortion_char") ||
+    eid == CID("dbfs_compact") || eid == CID("dbfs_openfs") ||
+    eid == CID("save_map_info") || eid == CID("create_fs") ||
+    eid == CID("pack_dir") || eid == CID("fgetfpinfo"))
     return make_int(0);
-if (name == "rpc_debug_on" || name == "rpc_debug_off" ||
-    name == "rpc_stop_server" || name == "rpc_pass_auth" ||
-    name == "rpc_close_client" || name == "rpc_relay_to" ||
-    name == "rpc_call" || name == "rpc_is_child" ||
-    name == "rpc_this_client" || name == "rpc_is_client_on" ||
-    name == "rpc_set_port")
+if (eid == CID("rpc_debug_on") || eid == CID("rpc_debug_off") ||
+    eid == CID("rpc_stop_server") || eid == CID("rpc_pass_auth") ||
+    eid == CID("rpc_close_client") || eid == CID("rpc_relay_to") ||
+    eid == CID("rpc_call") || eid == CID("rpc_is_child") ||
+    eid == CID("rpc_this_client") || eid == CID("rpc_is_client_on") ||
+    eid == CID("rpc_set_port"))
     return make_int(0);
-if (name == "rpc_info") return make_mapping();
-if (name == "check_var_closed_loop") return make_int(0);
-if (name == "ps") return make_int(0);
-if (name == "system") {
+if (eid == CID("rpc_info")) return make_mapping();
+if (eid == CID("check_var_closed_loop")) return make_int(0);
+if (eid == CID("ps")) return make_int(0);
+if (eid == CID("system")) {
     // Original refuses unless booted with --enable-system-command; we never
     // enable it, so mirror the refusal (but without vm_error'ing the caller).
     std::cerr << "[efun] system() refused (disabled for security)\n";
     return make_int(-1);
 }
-if (name == "get_output" || name == "set_output" || name == "set_stdout")
+if (eid == CID("get_output") || eid == CID("set_output") || eid == CID("set_stdout"))
     return make_int(1);
-if (name == "set_echo_input") return make_int(1);
-if (name == "debug_off") {
+if (eid == CID("set_echo_input")) return make_int(1);
+if (eid == CID("debug_off")) {
     // vm_f_debug_off: return previous debugOn, then set it to -1.
     static int debugOn = 1;
     int old = debugOn;
     debugOn = -1;
     return make_int(old);
 }
-if (name == "enable_jit") {
+if (eid == CID("enable_jit")) {
     static int jit = 0;
     int old = jit;
     jit = (!args.empty() && is_truthy(args[0])) ? 1 : 0;
     return make_int(old);
 }
-if (name == "enable_message_stat") return make_int(0);
-if (name == "get_internal_encoding") return make_string("GBK");
-if (name == "set_internal_encoding") {
+if (eid == CID("enable_message_stat")) return make_int(0);
+if (eid == CID("get_internal_encoding")) return make_string("GBK");
+if (eid == CID("set_internal_encoding")) {
     static std::string enc = "GBK";
     std::string old = enc;
     if (!args.empty()) {
@@ -121,74 +121,74 @@ if (name == "set_internal_encoding") {
     }
     return make_string(old);
 }
-if (name == "mysql_debug_on" || name == "mysql_debug_off") {
+if (eid == CID("mysql_debug_on") || eid == CID("mysql_debug_off")) {
     static int dbg = 0;
     int old = dbg;
-    dbg = (name == "mysql_debug_on") ? 1 : 0;
+    dbg = (eid == CID("mysql_debug_on")) ? 1 : 0;
     return make_int(old);
 }
-if (name == "mysql_get_version_info") {
-    auto m = std::make_shared<MappingValue>();
+if (eid == CID("mysql_get_version_info")) {
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     m->insert(make_string("MYSQL_SERVER_VERSION"), make_string("5.0.22"));
     m->insert(make_string("MYSQL_VERSION_ID"), make_int(50022));
     return m;
 }
-if (name == "get_system_id") {
+if (eid == CID("get_system_id")) {
     // vm_f_get_system_id folds the current task id; one task id here.
     int32_t t = 1;
     int32_t v = (t ^ ((t ^ ((t ^ (t << 8)) << 8)) << 8)) - 2004318072;
     return make_int(static_cast<int64_t>(static_cast<int32_t>(v ^ 0x12345678)));
 }
-if (name == "get_prompt") return make_string(promptText());
-if (name == "set_prompt") {
+if (eid == CID("get_prompt")) return make_string(promptText());
+if (eid == CID("set_prompt")) {
     if (!args.empty()) promptText() = as_string(args[0]);
     return make_string(promptText());
 }
-if (name == "set_broadcast") return args.empty() ? make_int(0) : args[0];
-if (name == "get_pconfig") {
+if (eid == CID("set_broadcast")) return args.empty() ? make_int(0) : args[0];
+if (eid == CID("get_pconfig")) {
     int64_t id = args.empty() ? 0 : as_int(args[0]);
     auto& pc = pconfigTable();
     auto it = pc.find(id);
     return make_int(it == pc.end() ? 0 : it->second);
 }
-if (name == "change_pconfig") {
+if (eid == CID("change_pconfig")) {
     int64_t id = args.empty() ? 0 : as_int(args[0]);
     int64_t v = args.size() > 1 ? as_int(args[1]) : 0;
     pconfigTable()[id] = v;
     return make_int(0);
 }
-if (name == "switch_root_dir") return make_int(0);
-if (name == "get_var") {
+if (eid == CID("switch_root_dir")) return make_int(0);
+if (eid == CID("get_var")) {
     if (args.empty()) return Value(UndefinedTag{});
     auto& gv = globalVarTable();
     auto it = gv.find(as_string(args[0]));
     if (it == gv.end()) return Value(UndefinedTag{});
     return it->second;
 }
-if (name == "set_var") {
+if (eid == CID("set_var")) {
     if (args.size() < 2) return make_int(0);
     globalVarTable()[as_string(args[0])] = args[1];
     return make_int(1);
 }
-if (name == "get_string_stat") return make_int(0);
-if (name == "get_ref_counter") return make_int(1);
-if (name == "get_pointer") return make_int(0);
-if (name == "get_pend_object_id") return make_int(-1);
-if (name == "get_pend_object_info") return make_int(0);
-if (name == "get_all_pend_objects") return make_array();
-if (name == "get_map_events") return make_array();
-if (name == "uscounter") {
+if (eid == CID("get_string_stat")) return make_int(0);
+if (eid == CID("get_ref_counter")) return make_int(1);
+if (eid == CID("get_pointer")) return make_int(0);
+if (eid == CID("get_pend_object_id")) return make_int(-1);
+if (eid == CID("get_pend_object_info")) return make_int(0);
+if (eid == CID("get_all_pend_objects")) return make_array();
+if (eid == CID("get_map_events")) return make_array();
+if (eid == CID("uscounter")) {
     // vm_getCurrentUsCounter: microseconds since the current tick started.
     using namespace std::chrono;
     static const auto base = steady_clock::now();
     int64_t us = duration_cast<microseconds>(steady_clock::now() - base).count();
     return make_int(static_cast<int32_t>(us));
 }
-if (name == "to_unsigned_str") {
+if (eid == CID("to_unsigned_str")) {
     uint32_t u = static_cast<uint32_t>(args.empty() ? 0 : as_int(args[0]));
     return make_string(std::to_string(u));
 }
-if (name == "strwidth") {
+if (eid == CID("strwidth")) {
     // vm_f_strwidth: display width under the internal encoding.  GBK lead
     // bytes (0x81..0xFE) consume the following byte and count as 2 columns.
     std::string s = args.empty() ? std::string() : as_string(args[0]);
@@ -200,7 +200,7 @@ if (name == "strwidth") {
     }
     return make_int(w);
 }
-if (name == "hash") {
+if (eid == CID("hash")) {
     // vm_f_hash: 16-bit hash of a string or buffer.  The string branch uses
     // the driver's table hash (vm_whashstr), the buffer branch vm_whashbuf
     // (base-8 polynomial).  We use the polynomial for both so a value is
@@ -209,16 +209,16 @@ if (name == "hash") {
     if (!args.empty()) {
         if (args[0].index() == 4) s = as_string(args[0]);
         else if (args[0].index() == 10)
-            s = std::get<std::shared_ptr<BufferValue>>(args[0])->data;
+            s = std::get<lpc::Ref<BufferValue>>(args[0])->data;
     }
     uint32_t h = 0;
     size_t n = s.size() < 32 ? s.size() : 32;
     for (size_t i = 0; i < n; ++i) h = static_cast<uint32_t>(static_cast<unsigned char>(s[i])) + 8u * h;
     return make_int(static_cast<int64_t>(h & 0xFFFFu));
 }
-if (name == "net8" || name == "net16" || name == "net32") {
+if (eid == CID("net8") || eid == CID("net16") || eid == CID("net32")) {
     // vm_f_net8/16/32: pack the integer arguments big-endian into a buffer.
-    int width = (name == "net8") ? 1 : (name == "net16" ? 2 : 4);
+    int width = (eid == CID("net8")) ? 1 : (eid == CID("net16") ? 2 : 4);
     std::string buf;
     buf.reserve(args.size() * width);
     for (const Value& v : args) {
@@ -228,12 +228,12 @@ if (name == "net8" || name == "net16" || name == "net32") {
     }
     return make_buffer(buf);
 }
-if (name == "empty_value") {
+if (eid == CID("empty_value")) {
     if (args.empty()) return make_int(0);
     if (args[0].index() == 5) {
-        std::get<std::shared_ptr<ArrayValue>>(args[0])->items.clear();
+        std::get<lpc::Ref<ArrayValue>>(args[0])->items.clear();
     } else if (args[0].index() == 6) {
-        auto m = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        auto m = std::get<lpc::Ref<MappingValue>>(args[0]);
         m->nodes.clear();
         m->table.assign(8, -1);
         m->tableSize = 7;
@@ -242,13 +242,13 @@ if (name == "empty_value") {
     }
     return make_int(0);
 }
-if (name == "get_first_data") {
+if (eid == CID("get_first_data")) {
     // vm_f_get_first_data: first argument that is not zero.
     for (const Value& v : args)
         if (is_truthy(v)) return v;
     return Value(UndefinedTag{});
 }
-if (name == "atomac") {
+if (eid == CID("atomac")) {
     // vm_f_atomac: build a 6-byte MAC buffer from "xx.xx.xx.xx.xx.xx" /
     // "xx-xx-..." (hex), from an int[,int], or pass a 6-byte buffer through.
     unsigned char mac[6] = {0, 0, 0, 0, 0, 0};
@@ -287,7 +287,7 @@ if (name == "atomac") {
     }
     return make_buffer(std::string(reinterpret_cast<char*>(mac), 6));
 }
-if (name == "fxn") {
+if (eid == CID("fxn")) {
     // vm_f_fxn(x, c1, c2, ...) = c1*x + c2*x^2 + ... (Horner form, float).
     if (args.size() < 2) return make_float(0.0);
     double x = (args[0].index() == 3) ? std::get<double>(args[0])
@@ -301,7 +301,7 @@ if (name == "fxn") {
     }
     return make_float(ret);
 }
-if (name == "is_pt_in_line" || name == "is_pt_in_rect") {
+if (eid == CID("is_pt_in_line") || eid == CID("is_pt_in_rect")) {
     // IsPtInLine/IsPtInRect(x, y, x1, y1, x2, y2)
     if (args.size() < 6) return make_int(0);
     int64_t x = as_int(args[0]), y = as_int(args[1]);
@@ -311,11 +311,11 @@ if (name == "is_pt_in_line" || name == "is_pt_in_rect") {
     if (x1 > x2) { lx = x2; hx = x1; }
     if (y1 > y2) { ly = y2; hy = y1; }
     bool in = (x >= lx && x <= hx && y >= ly && y <= hy);
-    if (in && name == "is_pt_in_line")
+    if (in && eid == CID("is_pt_in_line"))
         in = (y2 - y1) * (x - x1) == (y - y1) * (x2 - x1);
     return make_int(in ? 1 : 0);
 }
-if (name == "is_rect_crossed") {
+if (eid == CID("is_rect_crossed")) {
     // IsRectCrossed(x1,y1,x2,y2, x3,y3,x4,y4): axis-aligned overlap.
     if (args.size() < 8) return make_int(0);
     int64_t x1 = as_int(args[0]), y1 = as_int(args[1]);
@@ -329,7 +329,7 @@ if (name == "is_rect_crossed") {
     bool hit = !(x2 < x3 || x4 < x1 || y2 < y3 || y4 < y1);
     return make_int(hit ? 1 : 0);
 }
-if (name == "is_line_crossed") {
+if (eid == CID("is_line_crossed")) {
     // IsLineCrossed(x1,y1,x2,y2, x3,y3,x4,y4): segment intersection test,
     // ported 1:1 from the driver (bounding box + three cross products).
     if (args.size() < 8) return make_int(0);
@@ -352,10 +352,10 @@ if (name == "is_line_crossed") {
     int64_t d4 = (p7 - p1) * (p2 - p0) - (p3 - p1) * (p6 - p0);
     return make_int(sgn(d3) * sgn(d4) >= 0 ? 1 : 0);
 }
-if (name == "break_utf8") {
+if (eid == CID("break_utf8")) {
     // vm_f_break_utf8: UTF-8 text -> array of unicode code points.
     std::string s = args.empty() ? std::string() : as_string(args[0]);
-    auto a = std::make_shared<ArrayValue>();
+    auto a = lpc::Ref<ArrayValue>(new ArrayValue());
     size_t i = 0;
     while (i < s.size()) {
         unsigned char c = static_cast<unsigned char>(s[i]);
@@ -378,11 +378,11 @@ if (name == "break_utf8") {
     }
     return a;
 }
-if (name == "combine_utf8") {
+if (eid == CID("combine_utf8")) {
     // vm_f_combine_utf8: array of code points -> UTF-8 text.
     std::string out;
     if (!args.empty() && args[0].index() == 5) {
-        for (const Value& v : std::get<std::shared_ptr<ArrayValue>>(args[0])->items) {
+        for (const Value& v : std::get<lpc::Ref<ArrayValue>>(args[0])->items) {
             uint32_t cp = static_cast<uint32_t>(as_int(v));
             if (cp < 0x80) out.push_back(static_cast<char>(cp));
             else if (cp < 0x800) {
@@ -402,13 +402,13 @@ if (name == "combine_utf8") {
     }
     return make_string(out);
 }
-if (name == "csv_parse") {
+if (eid == CID("csv_parse")) {
     // vm_f_csv_parse: RFC-style CSV with '"' quoting ("" = literal quote),
     // ',' field separator, LF/CRLF record separator.  Returns an array of
     // arrays of strings.
     std::string s = args.empty() ? std::string() : as_string(args[0]);
-    auto result = std::make_shared<ArrayValue>();
-    auto row = std::make_shared<ArrayValue>();
+    auto result = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto row = lpc::Ref<ArrayValue>(new ArrayValue());
     std::string field;
     bool quoted = false, anyField = false;
     for (size_t i = 0; i < s.size(); ++i) {
@@ -428,7 +428,7 @@ if (name == "csv_parse") {
                 row->items.push_back(make_string(field));
                 result->items.push_back(row);
             }
-            row = std::make_shared<ArrayValue>();
+            row = lpc::Ref<ArrayValue>(new ArrayValue());
             field.clear(); anyField = false;
         } else if (c != '\r') {
             field.push_back(c);
@@ -440,7 +440,7 @@ if (name == "csv_parse") {
     }
     return result;
 }
-if (name == "check_event") {
+if (eid == CID("check_event")) {
     // vm_f_check_event(name|id[, mask]) -> raised bits of the event.
     if (args.empty()) return make_int(0);
     auto& reg = eventRegistry();
@@ -453,21 +453,21 @@ if (name == "check_event") {
     if (args.size() > 1) bits &= static_cast<uint32_t>(as_int(args[1]));
     return make_int(static_cast<int64_t>(bits));
 }
-if (name == "telnet_config_info") {
-    auto m = std::make_shared<MappingValue>();
+if (eid == CID("telnet_config_info")) {
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     m->insert(make_string("native_process"), make_int(0));
     m->insert(make_string("echo"), make_int(0));
     m->insert(make_string("auth"), make_int(0));
     return m;
 }
-if (name == "convert_mapping_to_string") {
+if (eid == CID("convert_mapping_to_string")) {
     // vm_f_convert_mapping_to_string(map, keys[]): "key:value;key:value;"
     // for every key in the array that exists in the mapping.
     if (args.size() < 2 || args[0].index() != 6 || args[1].index() != 5)
         return make_string("");
-    auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+    auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
     std::string out;
-    for (const Value& k : std::get<std::shared_ptr<ArrayValue>>(args[1])->items) {
+    for (const Value& k : std::get<lpc::Ref<ArrayValue>>(args[1])->items) {
         if (k.index() != 4) continue;
         const Value* got = mp->find(k);
         if (got && got->index() == 2)
@@ -475,12 +475,12 @@ if (name == "convert_mapping_to_string") {
     }
     return make_string(out);
 }
-if (name == "explode_to_mapping") {
+if (eid == CID("explode_to_mapping")) {
     // vm_f_explode_to_mapping(str, sep, kvsep): "a=1;b=2" -> ([ "a":1 ]).
     std::string s = args.empty() ? std::string() : as_string(args[0]);
     char sep = args.size() > 1 ? static_cast<char>(as_int(args[1]) & 0xFF) : ',';
     char kv = args.size() > 2 ? static_cast<char>(as_int(args[2]) & 0xFF) : '=';
-    auto m = std::make_shared<MappingValue>();
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     size_t pos = 0;
     while (pos <= s.size()) {
         size_t e = s.find(sep, pos);
@@ -497,17 +497,17 @@ if (name == "explode_to_mapping") {
     }
     return m;
 }
-if (name == "create_io_buffer") {
+if (eid == CID("create_io_buffer")) {
     // vm_f_create_io_buffer(name[, size]) -> fd.  No real io buffers are
     // wired to the socket layer here; hand out a stable fake fd so LPC code
     // that only passes it around keeps working.
     static int64_t nextFd = 1000;
     return make_int(nextFd++);
 }
-if (name == "get_io_buffer") return Value(UndefinedTag{});
-if (name == "delete_io_buffer") return make_int(0);
-if (name == "get_all_io_buffers_info") return make_array();
-if (name == "mysql_escape_string") {
+if (eid == CID("get_io_buffer")) return Value(UndefinedTag{});
+if (eid == CID("delete_io_buffer")) return make_int(0);
+if (eid == CID("get_all_io_buffers_info")) return make_array();
+if (eid == CID("mysql_escape_string")) {
     // vm_f_mysql_escape_string returns the text wrapped in single quotes
     // with the MySQL C-API escapes applied.
     std::string in = args.empty() ? std::string() : as_string(args[0]);

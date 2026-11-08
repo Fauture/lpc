@@ -31,7 +31,7 @@ bool pushFrameInPlace(VmPcb* pcb, VmObject* obj, const VmProgram* prog,
 void dispatchEfun(VmPcb* pcb, int efunIndex, int argc);
 Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                          std::vector<Value>& args);
-Value dispatchEfunClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
+Value dispatchEfunClosure(VmPcb* pcb, const lpc::Ref<ClosureValue>& cl,
                           int argc);
 
 // (call.cpp) 广播的压栈形态 (op-8 数组调用): 启动逐元素 hook 链;

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -16,6 +17,134 @@ extern std::atomic<int64_t> g_mapInsertCount;
 // resident set to the game data rather than guessing at averages.
 extern std::atomic<int64_t> g_liveMapEntries;
 extern std::atomic<int64_t> g_liveMapBuckets;
+
+// ---- [vpool] Value 对象线程本地自由链池 ------------------------------------
+// 采样实证堆分配/释放占 VM 执行 ~40% (羽化 burst 每 tick 数万次
+// ArrayValue/MappingValue/SharedString::Block 的 new+delete)。每个类型
+// 一条 thread_local 自由链, 32 个一块地向 malloc 批量取; push/pop 是两次
+// 指针读写。语义零变化: 对象照常构造/析构, 只换内存来源。跨线程把块
+// 还到别的线程的链上也没问题 (内存就是内存)。
+template <class T>
+struct VmPool {
+    static void*& list() {
+        static thread_local void* fl = nullptr;
+        return fl;
+    }
+    static T* pop() {
+        void*& fl = list();
+        if (!fl) {
+            enum { CHUNK = 32 };
+            constexpr size_t kStride =
+                (sizeof(T) + alignof(T) - 1) / alignof(T) * alignof(T);
+            char* base = static_cast<char*>(std::malloc(CHUNK * kStride));
+            if (!base) throw std::bad_alloc();
+            for (int i = 0; i < CHUNK; ++i) {
+                void* p = base + i * kStride;
+                *static_cast<void**>(p) =
+                    (i + 1 < CHUNK) ? base + (i + 1) * kStride : nullptr;
+            }
+            fl = base;
+        }
+        void* p = fl;
+        fl = *static_cast<void**>(p);
+        return static_cast<T*>(p);
+    }
+    static void push(void* p) {
+        void*& fl = list();
+        *static_cast<void**>(p) = fl;
+        fl = p;
+    }
+};
+
+// ---- [vpool] end -----------------------------------------------------------
+
+// ---- [ref] 侵入式引用计数 + 非原子智能指针 ----------------------------------
+// 对齐原版 vm 的值模型: 原版 Vm_Value 是 24B POD, 计数是普通 ++/-- (原版
+// vm_getVmMutex 单一大锁保证同刻只有一个线程碰值)。shared_ptr 的控制块
+// 分配 + seq_cst 原子增减是采样实证的每指令 ~700ns 里的最大单项 (原版
+// ~100ns)。这里换成: 计数内嵌对象 (零控制块分配) + 非原子增减。
+//
+// 线程纪律 (vmValueMutex, 对齐原版 vm_getVmMutex):
+//   * 调度线程每次派发 (runProcess) 全程持 vmValueMutex;
+//   * 外部线程 (网络/telnet/mysql) 只允许在持锁窗口内 拷贝/交接/销毁 Value
+//     (execOnMain 的入参拷贝、结果移交、Registry 外部查询);
+//   * execOnMain 型进程结束时必须先清空 pcb 携带的全部 Value 再唤醒等待者,
+//     保证调用方 return 后析构自己那份时无人并发计数。
+// 违反纪律 = 数据竞争; 编译器不拦, 靠上述两处锁纪律兜底。
+std::recursive_mutex& vmValueMutex();
+
+struct RefCountedBase {
+    int32_t refs = 1;   // 创建即持有 1 份 (adopt 语义)
+};
+
+template <class T>
+struct RefBase {
+    int32_t refs = 1;
+    void retain() noexcept { ++refs; }
+    void release() noexcept {
+        if (--refs == 0) delete static_cast<T*>(this);
+    }
+protected:
+    RefBase() = default;
+    RefBase(const RefBase&) noexcept : refs(1) {}   // 拷贝构造 = 新对象新计数
+    RefBase& operator=(const RefBase&) = delete;
+    ~RefBase() = default;
+};
+
+// 非原子侵入式指针。语义子集 = shared_ptr: 拷贝/移动/判空/->/*/get/
+// use_count。没有 weak/别名/自定义删除器 (全仓审计无使用)。
+template <class T>
+class Ref {
+public:
+    Ref() noexcept = default;
+    Ref(std::nullptr_t) noexcept {}
+    static Ref adopt(T* p) noexcept {   // 接管一个 refs==1 的新对象
+        Ref r;
+        r.p_ = p;
+        return r;
+    }
+    explicit Ref(T* p) noexcept : p_(p) {}   // adopt 形式的直接构造
+    Ref(const Ref& o) noexcept : p_(o.p_) { if (p_) p_->retain(); }
+    Ref(Ref&& o) noexcept : p_(o.p_) { o.p_ = nullptr; }
+    Ref& operator=(const Ref& o) noexcept {
+        if (p_ != o.p_) {
+            if (o.p_) o.p_->retain();
+            if (p_) p_->release();
+            p_ = o.p_;
+        }
+        return *this;
+    }
+    Ref& operator=(Ref&& o) noexcept {
+        if (p_ != o.p_) {
+            if (p_) p_->release();
+            p_ = o.p_;
+            o.p_ = nullptr;
+        }
+        return *this;
+    }
+    ~Ref() { if (p_) p_->release(); }
+
+    T* get() const noexcept { return p_; }
+    T* operator->() const noexcept { return p_; }
+    T& operator*() const noexcept { return *p_; }
+    explicit operator bool() const noexcept { return p_ != nullptr; }
+    bool operator!() const noexcept { return p_ == nullptr; }
+    int32_t use_count() const noexcept { return p_ ? p_->refs : 0; }
+    void reset() noexcept { if (p_) { p_->release(); p_ = nullptr; } }
+    template <class U> bool operator==(const Ref<U>& o) const noexcept { return p_ == o.get(); }
+    template <class U> bool operator!=(const Ref<U>& o) const noexcept { return p_ != o.get(); }
+    bool operator==(std::nullptr_t) const noexcept { return p_ == nullptr; }
+    bool operator!=(std::nullptr_t) const noexcept { return p_ != nullptr; }
+private:
+    T* p_ = nullptr;
+};
+
+template <class T, class... A>
+Ref<T> make_ref(A&&... a) {
+    return Ref<T>::adopt(new T(std::forward<A>(a)...));
+}
+
+// ---- [ref] end -------------------------------------------------------------
 
 // Recursion-depth guard for the recursive C++ value walkers (packet padding,
 // deep copy, printing, save/restore, comparisons).  A CYCLIC LPC value (an
@@ -92,9 +221,12 @@ struct Program;
 class SharedString {
 public:
     struct Block {
-        std::atomic<int32_t> refs;
+        std::atomic<int32_t> refs;   // [bisect-A] 暂恢复原子, 定位悬空块来源
         std::string s;
         explicit Block(std::string&& v) : refs(1), s(std::move(v)) {}
+        // [vpool] Block 高频分配走池 (所有 new/delete 站点自动接管)
+        static void* operator new(std::size_t) { return VmPool<Block>::pop(); }
+        static void operator delete(void* p) noexcept { VmPool<Block>::push(p); }
     };
 
     SharedString() noexcept : b_(nullptr) {}
@@ -137,7 +269,7 @@ public:
     bool sameBlock(const SharedString& o) const noexcept { return b_ == o.b_; }
     // Reference count of the underlying text block (0 when empty/null).
     size_t blockRefs() const noexcept {
-        return b_ ? b_->refs.load(std::memory_order_relaxed) : 0;
+        return b_ ? static_cast<size_t>(b_->refs.load(std::memory_order_relaxed)) : 0;
     }
     // Append more text IN PLACE to this string's block.  Caller must ensure
     // the block is safe to mutate (single logical owner): use_count == 1
@@ -236,7 +368,7 @@ struct UndefinedTag {};
 // a CrossVmRef makes every callee-side read/write forward to the caller's
 // object variable (the slot keeps the CrossVmRef, so repeated `+=` all land
 // in the caller's variable).
-struct CrossVmRef {
+struct CrossVmRef : RefBase<CrossVmRef> {
     void* vm = nullptr;        // OriginalVm* of the caller (opaque to value.h)
     int objIndex = -1;         // index into the caller's objVars (or -1)
     int slotIndex = -1;        // index into the caller's stack (local slot; or -1)
@@ -248,15 +380,18 @@ using Value = std::variant<
     int64_t,                 // integer
     double,                  // float
     SharedString,            // string (reference-counted shared text)
-    std::shared_ptr<ArrayValue>,
-    std::shared_ptr<MappingValue>,
-    std::shared_ptr<ObjectValue>,
-    std::shared_ptr<ClosureValue>,
-    std::shared_ptr<LoopCtrl>,
-    std::shared_ptr<BufferValue>,
-    std::shared_ptr<CrossVmRef>>;   // cross-VM object-variable reference
+    Ref<ArrayValue>,
+    Ref<MappingValue>,
+    Ref<ObjectValue>,
+    Ref<ClosureValue>,
+    Ref<LoopCtrl>,
+    Ref<BufferValue>,
+    Ref<CrossVmRef>>;   // cross-VM object-variable reference
 
-struct ArrayValue {
+struct ArrayValue : RefBase<ArrayValue> {
+    // [vpool] 高频分配走线程本地自由链池
+    static void* operator new(std::size_t) { return VmPool<ArrayValue>::pop(); }
+    static void operator delete(void* p) noexcept { VmPool<ArrayValue>::push(p); }
     std::vector<Value> items;
     ArrayValue();
     ~ArrayValue();
@@ -270,7 +405,10 @@ struct ArrayValue {
 //     and triggers vm_growMapping when it hits 1,
 //   - keys()/values()/foreach iterate buckets from tableSize DOWN TO 0 and
 //     each chain head-first, which is what produces the original load order.
-struct MappingValue {
+struct MappingValue : RefBase<MappingValue> {
+    // [vpool] 高频分配走线程本地自由链池
+    static void* operator new(std::size_t) { return VmPool<MappingValue>::pop(); }
+    static void operator delete(void* p) noexcept { VmPool<MappingValue>::push(p); }
     struct Node {
         Value key;
         Value value;
@@ -325,7 +463,7 @@ struct MappingValue {
                 fn(nodes[static_cast<size_t>(ni)].key, nodes[static_cast<size_t>(ni)].value);
     }
 };
-struct ObjectValue {
+struct ObjectValue : RefBase<ObjectValue> {
     std::string programName;
     // The INSTANCE the value refers to (原版: v.info = Vm_Object_T*, 对象值
     // 就是指针 — vm_callInOtherFun 0x8094cd8 零查找).  Null for values built
@@ -346,7 +484,10 @@ struct ObjectValue {
     std::shared_ptr<std::atomic<bool>> alive;
     std::unordered_map<std::string, Value> variables;
 };
-struct ClosureValue {
+struct ClosureValue : RefBase<ClosureValue> {
+    // [vpool] 高频分配走线程本地自由链池
+    static void* operator new(std::size_t) { return VmPool<ClosureValue>::pop(); }
+    static void operator delete(void* p) noexcept { VmPool<ClosureValue>::push(p); }
     std::string functionName;
     // Merged function-table index captured at closure-creation time.  A
     // closure created from create_function_value(n) must invoke THAT function
@@ -396,7 +537,7 @@ struct ClosureValue {
     std::string ownerKey;
 };
 // Loop control block created by init_for_loop (original VM value type 20).
-struct LoopCtrl {
+struct LoopCtrl : RefBase<LoopCtrl> {
     int type = 0;                     // 1 / -1 (int), 901 (array), 902 (mapping)
     int slotOfVar = -1;               // stack index of the loop variable
     // The loop variable's slot expressed as a FRAME-RELATIVE offset:
@@ -420,8 +561,8 @@ struct LoopCtrl {
     int64_t current = 0;
     int64_t to = 0;
     int done = 0;
-    std::shared_ptr<ArrayValue> arr;
-    std::shared_ptr<MappingValue> map;
+    Ref<ArrayValue> arr;
+    Ref<MappingValue> map;
     size_t iter = 0;                  // array iterator
     size_t mIdx = 0;                  // mapping iterator
     int mElementIndex = 0;
@@ -429,7 +570,10 @@ struct LoopCtrl {
 // Binary buffer (the original driver's Vm_Buffer_T).  Kept distinct from a
 // text string so send_to_client/pkt_pad_buffer serialize it as raw bytes
 // rather than as a length-prefixed string.
-struct BufferValue {
+struct BufferValue : RefBase<BufferValue> {
+    // [vpool] 高频分配走线程本地自由链池
+    static void* operator new(std::size_t) { return VmPool<BufferValue>::pop(); }
+    static void operator delete(void* p) noexcept { VmPool<BufferValue>::push(p); }
     std::string data;
 };
 
@@ -441,7 +585,7 @@ Value make_array();
 Value make_mapping();
 Value make_object(std::string programName);
 Value make_object_owned(std::string programName, const struct OriginalObject* owner);
-Value make_crossvm_ref(std::shared_ptr<CrossVmRef> r);
+Value make_crossvm_ref(Ref<CrossVmRef> r);
 Value make_closure(std::string name, std::vector<Value> args = {});
 
 std::string value_type_name(const Value& v);

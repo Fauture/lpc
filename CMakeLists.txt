@@ -79,7 +79,9 @@ if(WIN32)
     target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x2000000)
     # Release keeps /O2 but also emits a PDB, so crash dumps and ETW/xperf CPU
     # samples resolve to function names (boot profiling).  /OPT:REF,ICF restore
-    # the linker defaults that /DEBUG would otherwise turn off.
-    target_compile_options(lpcvm PRIVATE $<$<CONFIG:Release>:/Zi>)
-    target_link_options(lpcvm PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+    # the linker defaults that /DEBUG would otherwise turn off.  /GL+/LTCG:
+    # 全程序优化, 解释器类代码跨 TU 内联 (interp loop ↔ op 实现 ↔ Value
+    # 构造析构), 2026-11-07 羽化执行 300ms/轮 专项.
+    target_compile_options(lpcvm PRIVATE $<$<CONFIG:Release>:/Zi /GL>)
+    target_link_options(lpcvm PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF /LTCG>)
 endif()

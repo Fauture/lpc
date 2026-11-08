@@ -17,7 +17,7 @@
 static std::map<std::string, int> g_hist;
 static std::map<std::string, int> g_chain;   // full d0<-d1<-d2 chain
 
-static void SampleThread(HANDLE proc, HANDLE th, CONTEXT& ctx) {
+static void SampleThread(DWORD tid, HANDLE proc, HANDLE th, CONTEXT& ctx) {
     std::vector<std::string> names;
     STACKFRAME64 frame{};
 #ifdef _WIN64
@@ -31,7 +31,7 @@ static void SampleThread(HANDLE proc, HANDLE th, CONTEXT& ctx) {
     frame.AddrFrame.Offset = ctx.Ebp; frame.AddrFrame.Mode = AddrModeFlat;
     frame.AddrStack.Offset = ctx.Esp; frame.AddrStack.Mode = AddrModeFlat;
 #endif
-    for (int depth = 0; depth < 8; ++depth) {
+    for (int depth = 0; depth < 12; ++depth) {
         if (!StackWalk64(machine, proc, th, &frame, &ctx, nullptr,
                          SymFunctionTableAccess64, SymGetModuleBase64, nullptr))
             break;
@@ -49,20 +49,28 @@ static void SampleThread(HANDLE proc, HANDLE th, CONTEXT& ctx) {
             char key[512];
             snprintf(key, sizeof(key), "d%d %s", depth, name.c_str());
             g_hist[key]++;
+            if (depth == 0) {
+                char tkey[512];
+                snprintf(tkey, sizeof(tkey), "tid%lu %s",
+                         static_cast<unsigned long>(tid), name.c_str());
+                g_hist[tkey]++;
+            }
         }
     }
     if (names.size() >= 2) {
         std::string chain = names[0];
-        for (size_t i = 1; i < names.size() && i < 5; ++i)
+        for (size_t i = 1; i < names.size() && i < 8; ++i)
             chain += " <- " + names[i];
         g_chain[chain]++;
     }
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) { printf("usage: stackdump <pid> [secs]\n"); return 1; }
+    if (argc < 2) { printf("usage: stackdump <pid> [secs] [tid] [intervalMs]\n"); return 1; }
     DWORD pid = static_cast<DWORD>(atoi(argv[1]));
     int secs = argc >= 3 ? atoi(argv[2]) : 15;
+    DWORD onlyTid = argc >= 4 ? static_cast<DWORD>(atoi(argv[3])) : 0;
+    DWORD gapMs = argc >= 5 ? static_cast<DWORD>(atoi(argv[4])) : 40;
     HANDLE proc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
     if (!proc) { printf("OpenProcess(%lu) failed %lu\n", pid, GetLastError()); return 1; }
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
@@ -78,7 +86,9 @@ int main(int argc, char** argv) {
         std::vector<DWORD> tids;
         if (Thread32First(snap, &te)) {
             do {
-                if (te.th32OwnerProcessID == pid) tids.push_back(te.th32ThreadID);
+                if (te.th32OwnerProcessID == pid &&
+                    (!onlyTid || te.th32ThreadID == onlyTid))
+                    tids.push_back(te.th32ThreadID);
             } while (Thread32Next(snap, &te));
         }
         CloseHandle(snap);
@@ -88,11 +98,11 @@ int main(int argc, char** argv) {
             if (SuspendThread(th) == static_cast<DWORD>(-1)) { CloseHandle(th); continue; }
             CONTEXT ctx{};
             ctx.ContextFlags = CONTEXT_FULL;
-            if (GetThreadContext(th, &ctx)) { SampleThread(proc, th, ctx); ++samples; }
+            if (GetThreadContext(th, &ctx)) { SampleThread(tid, proc, th, ctx); ++samples; }
             ResumeThread(th);
             CloseHandle(th);
         }
-        Sleep(40);
+        Sleep(gapMs);
     }
     // dump
     printf("samples=%d\n", samples);

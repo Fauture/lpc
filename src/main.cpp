@@ -2,6 +2,8 @@
 #include <ws2tcpip.h>
 
 #include <windows.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 #include <tlhelp32.h>
 #include <winternl.h>
 
@@ -619,21 +621,64 @@ void usage() {
 
 // SEH ebp-chain walker for the crash filter above.  Kept free of C++ objects
 // with destructors so __try/__except is legal (MSVC C2712).
+// SEH 层单独一个无 C++ 对象的函数 (C2712): 只读一帧 ebp 链
+static bool safeNextFrame(uintptr_t ebp, uintptr_t* ret, uintptr_t* next) {
+    __try {
+        uintptr_t* f = reinterpret_cast<uintptr_t*>(ebp);
+        *ret = f[1];
+        *next = f[0];
+        return *ret >= 0x10000;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static void walkEbpChain(uintptr_t ebp) {
+    // PDB 符号解析 (build/Release 的 lpcvm.pdb): 直接给函数名+offset,
+    // 省去人工 map 换算 —— exe 基址/地址变动时 map 解析会静默错位。
+    static const bool symReady = [] {
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS |
+                      SYMOPT_LOAD_LINES);
+        char exePath[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        char* bs = strrchr(exePath, '\\');
+        if (bs) *bs = 0;
+        return SymInitialize(GetCurrentProcess(), exePath, TRUE) != 0;
+    }();
+    HMODULE exeMod = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(&walkEbpChain), &exeMod);
     std::cerr << "[crash] ebp-chain:" << std::hex;
     for (int i = 0; i < 16 && ebp; ++i) {
-        __try {
-            uintptr_t* f = reinterpret_cast<uintptr_t*>(ebp);
-            uintptr_t ret = f[1];
-            uintptr_t next = f[0];
-            if (ret < 0x10000) break;
-            std::cerr << "  ret=0x" << ret << "(ebp=0x" << ebp << ")";
-            ebp = next;
-            if (ebp < 0x10000) break;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        uintptr_t ret = 0;
+        uintptr_t next = 0;
+        if (!safeNextFrame(ebp, &ret, &next)) {
             std::cerr << " <bad-ebp>";
             break;
         }
+        std::cerr << "  ret=0x" << ret;
+        if (symReady) {
+            char symBuf[sizeof(SYMBOL_INFO) + 256] = {};
+            SYMBOL_INFO* sym = reinterpret_cast<SYMBOL_INFO*>(symBuf);
+            sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+            sym->MaxNameLen = 255;
+            DWORD64 disp = 0;
+            if (SymFromAddr(GetCurrentProcess(),
+                            static_cast<DWORD64>(ret), &disp, sym)) {
+                std::cerr << "(" << sym->Name << "+0x" << disp << ")";
+            } else if (exeMod) {
+                std::cerr << "(exe+0x"
+                          << (ret - reinterpret_cast<uintptr_t>(exeMod))
+                          << ")";
+            }
+        } else if (exeMod) {
+            std::cerr << "(exe+0x"
+                      << (ret - reinterpret_cast<uintptr_t>(exeMod)) << ")";
+        }
+        std::cerr << "(ebp=0x" << ebp << ")";
+        ebp = next;
+        if (ebp < 0x10000) break;
     }
     std::cerr << std::dec << "\n";
 }

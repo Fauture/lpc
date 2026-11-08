@@ -54,6 +54,17 @@ namespace lpc {
 // 1. runtime-toggleable diagnostics
 // ===========================================================================
 const std::atomic<bool>& dynProbeFlag(const char* name) {
+    // [2026-11-07] 探针体系整体退役: 一键点化/羽化排查实证每指令级的探针
+    // 原子读+分支 (OPGAP/OPNS/HOTLOOP/LOOP2) 与 SEND 逐帧 stderr 阻塞写
+    // (NtWriteFile 采样占执行 4%) 本身就是可测量的减速源 —— "撤探针后
+    // 依旧卡" 的对照全部被探针污染。所有调用点 (98 处) 保留原位但折叠为
+    // 常量 false, 编译器消除全部探针分支; 逐帧/逐指令的计时块已物理删除。
+    static std::atomic<bool> off{false};
+    (void)name;
+    return off;
+}
+#ifdef PROBE_SYSTEM_KEEP
+const std::atomic<bool>& dynProbeFlagKeep(const char* name) {
     static std::mutex regMx;
     static std::map<std::string, std::shared_ptr<std::atomic<bool>>> reg;
     static std::mutex refreshMx;
@@ -76,6 +87,7 @@ const std::atomic<bool>& dynProbeFlag(const char* name) {
     }
     return *it->second;
 }
+#endif  // PROBE_SYSTEM_KEEP
 
 LivenessCounters& liveness() {
     static LivenessCounters c;
@@ -760,7 +772,7 @@ Value findObjectInRegistry(const std::string& virtualPath,
 
 bool objectValueAlive(const Value& v) {
     if (v.index() != 7) return false;
-    auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+    auto ov = std::get<lpc::Ref<ObjectValue>>(v);
     if (!ov) return false;
     // 原版 O_DESTRUCTED 语义: 析构标记一置, is_object/find_object 视角下
     // 对象即死 (引用视角); 真正释放 (alive=false, 引用失效) 延迟到链结束
@@ -947,7 +959,7 @@ std::string objectTemplateKey(const std::string& key) {
 
 Value makeLodgerArray(const std::string& containerKey) {
     Value arr = make_array();
-    auto av = std::get<std::shared_ptr<ArrayValue>>(arr);
+    auto av = std::get<lpc::Ref<ArrayValue>>(arr);
     for (const std::string& k : vmcore::envLodgerKeysOf(containerKey))
         av->items.push_back(make_object(k));
     return arr;
@@ -964,7 +976,7 @@ vmcore::VmObject* vmOfObjValue(const Value& obj) {
                           : vmcore::Registry::instance().findByName(nm);
     }
     if (obj.index() != 7) return nullptr;
-    auto ov = std::get<std::shared_ptr<ObjectValue>>(obj);
+    auto ov = std::get<lpc::Ref<ObjectValue>>(obj);
     if (!ov) return nullptr;
     if (ov->vmObj) return ov->vmObj;
     if (!ov->programName.empty())
@@ -1019,7 +1031,7 @@ std::string objVarsToString(const Value& obj) {
 // ===========================================================================
 Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) {
     if (closure.index() != 8) return make_int(0);
-    auto cl = std::get<std::shared_ptr<ClosureValue>>(closure);
+    auto cl = std::get<lpc::Ref<ClosureValue>>(closure);
     if (!cl) return make_int(0);
     std::vector<Value> all = cl->boundArgs;
     all.insert(all.end(), args.begin(), args.end());
@@ -1039,7 +1051,7 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
 // every call).
 Value callClosureForEfun(const Value& closure, const std::vector<Value>& args) {
     if (closure.index() != 8) return Value{};
-    auto cl = std::get<std::shared_ptr<ClosureValue>>(closure);
+    auto cl = std::get<lpc::Ref<ClosureValue>>(closure);
     if (!cl) return Value{};
     vmcore::VmPcb* pcb = vmcore::currentPcb();
     return vmcore::vmInvokeClosure(pcb, cl, args);

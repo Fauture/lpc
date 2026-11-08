@@ -442,13 +442,13 @@ struct Interp {
     int64_t calls = 0;
 
     static Value selfVal() {
-        auto a = std::make_shared<ArrayValue>();
+        auto a = lpc::Ref<ArrayValue>(new ArrayValue());
         a->items.push_back(make_string("\x01MINILPC_SELF"));
         return a;
     }
     static bool isSelf(const Value& v) {
         if (v.index() != 5) return false;
-        auto a = std::get<std::shared_ptr<ArrayValue>>(v);
+        auto a = std::get<lpc::Ref<ArrayValue>>(v);
         return a && !a->items.empty() && a->items[0].index() == 4 &&
                std::get<SharedString>(a->items[0]).str() == "\x01MINILPC_SELF";
     }
@@ -559,8 +559,8 @@ struct Interp {
         }
         if (fn == "sizeof") {
             if (args.empty()) return make_int(0);
-            if (args[0].index() == 5) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(args[0])->items.size()));
-            if (args[0].index() == 6) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(args[0])->size()));
+            if (args[0].index() == 5) return make_int(static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(args[0])->items.size()));
+            if (args[0].index() == 6) return make_int(static_cast<int64_t>(std::get<lpc::Ref<MappingValue>>(args[0])->size()));
             return make_int(0);
         }
         if (fn == "toupper" || fn == "tolower") {
@@ -571,17 +571,17 @@ struct Interp {
         }
         if (fn == "values") {
             if (args.empty() || args[0].index() != 6) return make_array();
-            auto out = std::make_shared<ArrayValue>();
-            for (auto& kv : std::get<std::shared_ptr<MappingValue>>(args[0])->items()) out->items.push_back(kv.second);
+            auto out = lpc::Ref<ArrayValue>(new ArrayValue());
+            for (auto& kv : std::get<lpc::Ref<MappingValue>>(args[0])->items()) out->items.push_back(kv.second);
             return out;
         }
         if (fn == "keys") {
             if (args.empty() || args[0].index() != 6) return make_array();
-            auto out = std::make_shared<ArrayValue>();
-            for (auto& kv : std::get<std::shared_ptr<MappingValue>>(args[0])->items()) out->items.push_back(kv.first);
+            auto out = lpc::Ref<ArrayValue>(new ArrayValue());
+            for (auto& kv : std::get<lpc::Ref<MappingValue>>(args[0])->items()) out->items.push_back(kv.first);
             return out;
         }
-        if (fn == "allocate_mapping") return std::make_shared<MappingValue>();
+        if (fn == "allocate_mapping") return lpc::Ref<MappingValue>(new MappingValue());
         if (fn == "count_total") {
             // count_total(array) = SUM of the (numeric) elements - the game's
             // own usage proves it: zhenfa sums skill levels
@@ -590,15 +590,15 @@ struct Interp {
             // family_guard counts entries (count_total(values(map))).
             int64_t sum = 0;
             if (!args.empty() && args[0].index() == 5)
-                for (auto& it : std::get<std::shared_ptr<ArrayValue>>(args[0])->items) sum += toInt(it);
+                for (auto& it : std::get<lpc::Ref<ArrayValue>>(args[0])->items) sum += toInt(it);
             return make_int(sum);
         }
         if (fn == "sort") {
             if (args.empty() || args[0].index() != 5) return make_array();
-            auto items = std::get<std::shared_ptr<ArrayValue>>(args[0])->items;
+            auto items = std::get<lpc::Ref<ArrayValue>>(args[0])->items;
             std::vector<std::pair<Value, Value>> keyed(items.size());
             if (args.size() >= 2 && args[1].index() == 8) {
-                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+                auto cl = std::get<lpc::Ref<ClosureValue>>(args[1]);
                 for (size_t i = 0; i < items.size(); ++i) {
                     std::vector<Value> call;
                     call.push_back(items[i]);
@@ -611,7 +611,7 @@ struct Interp {
                                                             const std::pair<Value, Value>& b) {
                 return cmpValues(a.first, b.first) < 0;
             });
-            auto out = std::make_shared<ArrayValue>();
+            auto out = lpc::Ref<ArrayValue>(new ArrayValue());
             for (auto& kv : keyed) out->items.push_back(std::move(kv.second));
             return out;
         }
@@ -623,7 +623,7 @@ struct Interp {
     }
 
     // (: name, bound... :) - builtin or user function with bound leading args
-    Value callClosure(const std::shared_ptr<ClosureValue>& cl, std::vector<Value> args) {
+    Value callClosure(const lpc::Ref<ClosureValue>& cl, std::vector<Value> args) {
         std::vector<Value> all = cl->boundArgs;
         all.insert(all.end(), args.begin(), args.end());
         return callNamed(cl->functionName, all, locals[0]);
@@ -669,7 +669,7 @@ struct Interp {
             case Stmt::LOOPIN: {
                 Value seq = eval(s->expr, scope);
                 if (seq.index() == 5) {
-                    auto items = std::get<std::shared_ptr<ArrayValue>>(seq)->items;  // copy: body may mutate
+                    auto items = std::get<lpc::Ref<ArrayValue>>(seq)->items;  // copy: body may mutate
                     for (auto& it : items) {
                         scope[s->name] = it;
                         for (auto& st : s->stmts) {
@@ -683,9 +683,9 @@ struct Interp {
                     //     loop (mks in m)  result += mks[0] + mks[1];
                     // with int keys and int values, so the only consistent
                     // original-VM semantics is a two-element array per step.
-                    auto kvs = std::get<std::shared_ptr<MappingValue>>(seq)->items();  // copy
+                    auto kvs = std::get<lpc::Ref<MappingValue>>(seq)->items();  // copy
                     for (auto& kv : kvs) {
-                        auto pair = std::make_shared<ArrayValue>();
+                        auto pair = lpc::Ref<ArrayValue>(new ArrayValue());
                         pair->items.push_back(kv.first);
                         pair->items.push_back(kv.second);
                         scope[s->name] = pair;
@@ -720,11 +720,11 @@ struct Interp {
 
     static void mapSet(const Value& mv, const Value& key, const Value& val) {
         if (mv.index() != 6) return;
-        std::get<std::shared_ptr<MappingValue>>(mv)->insert(key, val);
+        std::get<lpc::Ref<MappingValue>>(mv)->insert(key, val);
     }
     static const Value* mapGet(const Value& mv, const Value& key) {
         if (mv.index() != 6) return nullptr;
-        return std::get<std::shared_ptr<MappingValue>>(mv)->find(key);
+        return std::get<lpc::Ref<MappingValue>>(mv)->find(key);
     }
 
     Value applyAssign(const NodeP& np, std::map<std::string, Value>& scope) {
@@ -738,8 +738,8 @@ struct Interp {
                 // array += array concatenates (the generator template does
                 //   a += ({ (y - y + i + 37) & mask });
                 if (lv->index() == 5 && r.index() == 5) {
-                    auto dst = std::get<std::shared_ptr<ArrayValue>>(*lv);
-                    auto src = std::get<std::shared_ptr<ArrayValue>>(r);
+                    auto dst = std::get<lpc::Ref<ArrayValue>>(*lv);
+                    auto src = std::get<lpc::Ref<ArrayValue>>(r);
                     if (dst && src)
                         for (auto& it : src->items) dst->items.push_back(it);
                     nv = *lv;
@@ -773,7 +773,7 @@ struct Interp {
                 return val;
             }
             if (base.index() == 5) {
-                auto& items = std::get<std::shared_ptr<ArrayValue>>(base)->items;
+                auto& items = std::get<lpc::Ref<ArrayValue>>(base)->items;
                 int64_t i = toInt(key);
                 if (i >= 0 && static_cast<size_t>(i) < items.size()) items[static_cast<size_t>(i)] = val;
                 return val;
@@ -821,19 +821,19 @@ struct Interp {
             case Node::UN:
                 return make_int(-toInt(eval(n->kids[0], scope)));
             case Node::ARR: {
-                auto a = std::make_shared<ArrayValue>();
+                auto a = lpc::Ref<ArrayValue>(new ArrayValue());
                 for (auto& k : n->kids) a->items.push_back(eval(k, scope));
                 return a;
             }
             case Node::MAPLIT: {
-                auto m = std::make_shared<MappingValue>();
+                auto m = lpc::Ref<MappingValue>(new MappingValue());
                 Value mv = m;
                 for (size_t i = 0; i + 1 < n->kids.size(); i += 2)
                     mapSet(mv, eval(n->kids[i], scope), eval(n->kids[i + 1], scope));
                 return mv;
             }
             case Node::CLO: {
-                auto cl = std::make_shared<ClosureValue>();
+                auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
                 cl->functionName = n->str;
                 for (auto& k : n->kids) cl->boundArgs.push_back(eval(k, scope));
                 return cl;
@@ -857,7 +857,7 @@ struct Interp {
                 Value base = eval(n->kids[0], scope);
                 Value key = eval(n->kids[1], scope);
                 if (base.index() == 5) {
-                    auto& items = std::get<std::shared_ptr<ArrayValue>>(base)->items;
+                    auto& items = std::get<lpc::Ref<ArrayValue>>(base)->items;
                     int64_t i = toInt(key);
                     if (i < 0 || static_cast<size_t>(i) >= items.size()) return make_int(0);
                     return items[static_cast<size_t>(i)];

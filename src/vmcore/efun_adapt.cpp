@@ -73,7 +73,7 @@ static std::string frameFnName(VmPcb* pcb) {
 // object | string argument → canonical registry key ("" when unresolvable).
 static VmObject* objOfValue(const Value& v) {
     if (v.index() == 7) {
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+        auto ov = std::get<lpc::Ref<ObjectValue>>(v);
         if (ov) {
             if (ov->vmObj) return ov->vmObj;
             if (!ov->programName.empty())
@@ -87,7 +87,7 @@ static VmObject* objOfValue(const Value& v) {
 }
 static std::string keyOfArg(const Value& v) {
     if (v.index() == 7) {
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(v);
+        auto ov = std::get<lpc::Ref<ObjectValue>>(v);
         if (!ov) return std::string();
         if (ov->vmObj) return ov->vmObj->key();
         if (!ov->programName.empty() && ov->programName != "<this>" &&
@@ -119,7 +119,7 @@ static void parkAndSuspend(VmPcb* pcb, const ResumeCond& cond,
 // the function is re-addressed through the OWNER's CURRENT merged table on
 // every call (never the cached pointer); an efun closure goes to the efun.
 // ---------------------------------------------------------------------------
-Value vmInvokeClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
+Value vmInvokeClosure(VmPcb* pcb, const lpc::Ref<ClosureValue>& cl,
                       const std::vector<Value>& extra) {
     if (!cl) return Value{};   // null closure: void
     std::vector<Value> all = cl->boundArgs;
@@ -173,7 +173,7 @@ Value vmInvokeClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
 // 调用栈上，这是与 vmApplySync 的本质区别，见 2026-10-31 三连死复盘）。
 // 返回 false = 无法压帧（efun closure / 函数未找到），调用方走同步兜底。
 // ---------------------------------------------------------------------------
-bool vmInvokeClosurePush(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
+bool vmInvokeClosurePush(VmPcb* pcb, const lpc::Ref<ClosureValue>& cl,
                          const std::vector<Value>& extra,
                          std::function<void(Value&)> retHook) {
     if (!cl || !pcb) return false;
@@ -229,7 +229,7 @@ static void efunPutSubData(VmPcb* pcb, std::vector<StackItem>& raw) {
     Value cur = Interp::derefItem(pcb, ref);
     std::string data;
     if (cur.index() == 4) data = std::get<SharedString>(cur).str();
-    else if (cur.index() == 10) data = std::get<std::shared_ptr<BufferValue>>(cur)->data;
+    else if (cur.index() == 10) data = std::get<lpc::Ref<BufferValue>>(cur)->data;
     else return;
     std::string put;
     if (val.index() == 2) {
@@ -238,7 +238,7 @@ static void efunPutSubData(VmPcb* pcb, std::vector<StackItem>& raw) {
     } else if (val.index() == 4) {
         put = std::get<SharedString>(val).str();
     } else if (val.index() == 10) {
-        put = std::get<std::shared_ptr<BufferValue>>(val)->data;
+        put = std::get<lpc::Ref<BufferValue>>(val)->data;
     } else {
         return;
     }
@@ -272,16 +272,16 @@ static Value efunSort(VmPcb* pcb, std::vector<Value>& args) {
         else if (order < -2) order = -1;
     }
     const bool desc = order < 0;
-    auto src = std::get<std::shared_ptr<ArrayValue>>(args[static_cast<size_t>(sArr)]);
+    auto src = std::get<lpc::Ref<ArrayValue>>(args[static_cast<size_t>(sArr)]);
     std::vector<Value> items = src->items;
     if (sCmp >= 0) {
-        auto cl = std::get<std::shared_ptr<ClosureValue>>(
+        auto cl = std::get<lpc::Ref<ClosureValue>>(
             args[static_cast<size_t>(sCmp)]);
         // 原版 vm_f_sort_mapping 范本：先逐元素压帧调 closure 收 key（钩子
         // 链推进），全部收齐后 vm_sortArray 排序收尾。park 安全同 mapping_array。
         struct SortCtx {
             VmPcb* pcb;
-            std::shared_ptr<ClosureValue> cl;
+            lpc::Ref<ClosureValue> cl;
             std::vector<Value> items;
             std::vector<Value> keys;
             bool desc;
@@ -311,7 +311,7 @@ static Value efunSort(VmPcb* pcb, std::vector<Value>& args) {
                                 return compareValuesOriginal(a.first, b.first) < 0;
                             });
                     }
-                    auto out = std::make_shared<ArrayValue>();
+                    auto out = lpc::Ref<ArrayValue>(new ArrayValue());
                     out->items.reserve(keyed.size());
                     for (auto& kv : keyed) out->items.push_back(std::move(kv.second));
                     st->result = Value{out};
@@ -355,7 +355,7 @@ static Value efunSort(VmPcb* pcb, std::vector<Value>& args) {
                                  return compareValuesOriginal(a, b) < 0;
                              });
     }
-    auto out = std::make_shared<ArrayValue>();
+    auto out = lpc::Ref<ArrayValue>(new ArrayValue());
     out->items = std::move(items);
     return out;
 }
@@ -621,7 +621,7 @@ static void fireMapHooks(VmPcb* pcb, const std::string& efun,
     // pushValue(returnValue) 双重压栈（同 mapping_array [op8ret] 实锤）。
     // park 安全。
     using HookCall =
-        std::pair<std::shared_ptr<ClosureValue>, std::vector<Value>>;
+        std::pair<lpc::Ref<ClosureValue>, std::vector<Value>>;
     struct HookCtx {
         VmPcb* pcb;
         std::shared_ptr<std::vector<HookCall>> calls;
@@ -637,7 +637,7 @@ static void fireMapHooks(VmPcb* pcb, const std::string& efun,
         if (efun != "remove_from_map" && nx >= 0 &&
             lpc::MapModule::pointInPoly(nx, ny, h.poly)) {
             if (h.closure.index() == 8)
-                st->calls->push_back({std::get<std::shared_ptr<ClosureValue>>(
+                st->calls->push_back({std::get<lpc::Ref<ClosureValue>>(
                                           h.closure),
                                       {make_int(id), make_int(nx), make_int(ny),
                                        make_int(1)}});
@@ -645,7 +645,7 @@ static void fireMapHooks(VmPcb* pcb, const std::string& efun,
         if (efun != "put_in_map" && ox >= 0 && (ox != nx || oy != ny) &&
             lpc::MapModule::pointInPoly(ox, oy, h.poly)) {
             if (h.closure.index() == 8)
-                st->calls->push_back({std::get<std::shared_ptr<ClosureValue>>(
+                st->calls->push_back({std::get<lpc::Ref<ClosureValue>>(
                                           h.closure),
                                       {make_int(id), make_int(ox), make_int(oy),
                                        make_int(0)}});
@@ -860,7 +860,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // self-dispatch loop - 128 consecutive self-sends -> the original's
         // "Too depth (128) function call!" instead of an infinite spin.
         if (v.index() == 8) {
-            auto clv = std::get<std::shared_ptr<ClosureValue>>(v);
+            auto clv = std::get<lpc::Ref<ClosureValue>>(v);
             const std::string topName = frameFnName(pcb);
             thread_local std::string t_lastSelfName;
             thread_local int t_selfSends = 0;
@@ -1082,7 +1082,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         std::string key = args.empty() ? fkey : keyOfArg(args[0]);
         if (key.empty() || key == "<this>" || key == ".")
             vmError("Not found the object for lodger_object.\n");
-        auto out = std::make_shared<ArrayValue>();
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         for (const std::string& k : envLodgerKeysOf(key))
             out->items.push_back(make_object(k));
         return out;
@@ -1117,7 +1117,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             wantProg = progOf(k);
             withoutRaw = args.size() > 1 && !isZero(args[1]);
         }
-        auto out = std::make_shared<ArrayValue>();
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         for (VmObject* o : Registry::instance().allObjects()) {
             if (!o || o->reallyGone()) continue;
             const std::string& k = o->key();
@@ -1133,7 +1133,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     if (h == 0x678B5DD66DD6F908ull) {
         // vm_f_neighbour_object (0x80f69b4): objects sharing my container.
         const std::string key = args.empty() ? fkey : keyOfArg(args[0]);
-        auto out = std::make_shared<ArrayValue>();
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         const std::string env = envLookupKey(key);
         if (!env.empty()) {
             for (VmObject* o : Registry::instance().allObjects()) {
@@ -1161,7 +1161,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                 return make_int(0);
             return make_string(prog->src().strings[static_cast<size_t>(idx)]);
         }
-        auto a = std::make_shared<ArrayValue>();
+        auto a = lpc::Ref<ArrayValue>(new ArrayValue());
         for (const std::string& s : prog->src().strings)
             a->items.push_back(make_string(s));
         return a;
@@ -1188,7 +1188,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (!target || fnName.empty()) return make_int(0);
         const OriginalFunction* fn = target->prog()->findFn(fnName);
         if (!fn) return make_int(0);
-        auto cl = std::make_shared<ClosureValue>();
+        auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
         cl->functionName = fnName;
         cl->func = fn;
         cl->funcIndex = fn->index;
@@ -1207,7 +1207,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (!master) return make_int(0);
         const OriginalFunction* fn = master->findFn(fnName);
         if (!fn) return make_int(0);
-        auto cl = std::make_shared<ClosureValue>();
+        auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
         cl->functionName = fnName;
         cl->func = fn;
         cl->funcIndex = fn->index;
@@ -1220,15 +1220,15 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     if (h == 0xE962EDC63ED4F9Bull) {
         // vm_f_get_function_info (0x80d6570)
         if (args.empty() || args[0].index() != 8) return make_int(0);
-        auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
+        auto cl = std::get<lpc::Ref<ClosureValue>>(args[0]);
         if (!cl) return make_int(0);
-        auto m = std::make_shared<MappingValue>();
+        auto m = lpc::Ref<MappingValue>(new MappingValue());
         if (!cl->func) {
             m->insert(make_string("type"), make_string("external"));
             return m;
         }
-        m->insert(make_string("args"), std::make_shared<ArrayValue>());
-        m->insert(make_string("vars"), std::make_shared<ArrayValue>());
+        m->insert(make_string("args"), lpc::Ref<ArrayValue>(new ArrayValue()));
+        m->insert(make_string("vars"), lpc::Ref<ArrayValue>(new ArrayValue()));
         if (!cl->ownerKey.empty())
             m->insert(make_string("owner"), make_object(cl->ownerKey));
         else
@@ -1252,7 +1252,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         size_t codeBytes = 0;
         for (const OriginalFunction& f : o.functions)
             codeBytes += f.code.size() * 8;
-        auto m = std::make_shared<MappingValue>();
+        auto m = lpc::Ref<MappingValue>(new MappingValue());
         m->insert(make_string("structure_size"),
                   make_int(static_cast<int64_t>(sizeof(OriginalObject))));
         m->insert(make_string("hash_table_size"), make_int(0));
@@ -1268,9 +1268,9 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         m->insert(make_string("program_size"),
                   make_int(static_cast<int64_t>(strBytes + codeBytes +
                                                 o.globalVarCount * 8)));
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         for (const OriginalFunction& f : o.functions) {
-            auto e = std::make_shared<ArrayValue>();
+            auto e = lpc::Ref<ArrayValue>(new ArrayValue());
             e->items.push_back(make_string(f.name));
             e->items.push_back(make_int(static_cast<int64_t>(f.code.size())));
             arr->items.push_back(e);
@@ -1283,8 +1283,8 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // handler once made every values(map) call return UNDEFINED and
         // whole trade flows silently did nothing.
         if (args.empty() || args[0].index() != 6) return make_array();
-        auto out = std::make_shared<ArrayValue>();
-        for (auto& kv : std::get<std::shared_ptr<MappingValue>>(args[0])->items())
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
+        for (auto& kv : std::get<lpc::Ref<MappingValue>>(args[0])->items())
             out->items.push_back(name == "values" ? kv.second : kv.first);
         return out;
     }
@@ -1296,7 +1296,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     if (name == "get_thread_priority") return make_int(0);
     if (h == 0x93974224DCC554B0ull) {
         // vm_f_get_thread_info: the CURRENT process's identity.
-        auto m = std::make_shared<MappingValue>();
+        auto m = lpc::Ref<MappingValue>(new MappingValue());
         m->insert(make_string("tid"), make_int(pcb ? pcb->tid : lpcThreadId()));
         m->insert(make_string("euid"), make_int(0));
         m->insert(make_string("attr"), make_int(0));
@@ -1402,7 +1402,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // vm_f_call_other (0x80f5aa0): call_other(ob, fun, a1..aN).
         if (args[0].index() == 5) {
             return vmCallOtherArray(
-                std::get<std::shared_ptr<ArrayValue>>(args[0])->items,
+                std::get<lpc::Ref<ArrayValue>>(args[0])->items,
                 args[1].index() == 4 ? std::get<SharedString>(args[1]).str()
                                     : std::string(),
                 std::vector<Value>(args.begin() + 2, args.end()));
@@ -1426,13 +1426,13 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             args[1].index() == 4 ? std::get<SharedString>(args[1]) : "";
         std::vector<Value> callArgs(args.begin() + 2, args.end());
         if (!callArgs.empty() && callArgs.back().index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(callArgs.back());
+            auto arr = std::get<lpc::Ref<ArrayValue>>(callArgs.back());
             callArgs.pop_back();
             for (const auto& e : arr->items) callArgs.push_back(e);
         }
         if (obv.index() == 5) {
             return vmCallOtherArray(
-                std::get<std::shared_ptr<ArrayValue>>(obv)->items, funName,
+                std::get<lpc::Ref<ArrayValue>>(obv)->items, funName,
                 callArgs);
         }
         return vmCallOther(obv, funName, callArgs);
@@ -1441,15 +1441,15 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // vm_f_mapping_array: same size, same order; the callable resolves
         // through its owner's CURRENT table (or the efun for an efun closure
         // — re-entering this dispatcher with the same name would recurse).
-        auto srcArr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-        auto outArr = std::make_shared<ArrayValue>();
+        auto srcArr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+        auto outArr = lpc::Ref<ArrayValue>(new ArrayValue());
         outArr->items.assign(srcArr->items.size(), Value{});
         if (srcArr->items.empty()) return outArr;
         if (args[1].index() != 8) {
             outArr->items = srcArr->items;
             return outArr;
         }
-        auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+        auto cl = std::get<lpc::Ref<ClosureValue>>(args[1]);
         // 原版 vm_f_mapping_array1/2 范本：逐元素 vm_callFunPtr 压帧调用
         // closure，vm_hookCallbackWhenReturnAt(下一元素) 链式推进；全部完成
         // 后 returnFromEfun。这里同构：压帧 + 帧上 retHook 链推进，结果经
@@ -1457,8 +1457,8 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // 同步兜底仅限 efun closure（纯 C++，不 park）。
         struct MapArrCtx {
             VmPcb* pcb;
-            std::shared_ptr<ClosureValue> cl;
-            std::shared_ptr<ArrayValue> src, out;
+            lpc::Ref<ClosureValue> cl;
+            lpc::Ref<ArrayValue> src, out;
             size_t nonzero = 0;   // [mapdbg] 收尾统计
             bool completed = false;   // 链在本次 C++ 调用内同步走完(无新帧)
         };
@@ -1560,7 +1560,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             for (size_t i = bindFrom; i + 1 < args.size(); ++i)
                 bind.push_back(args[i]);
             for (const auto& e :
-                 std::get<std::shared_ptr<ArrayValue>>(args.back())->items)
+                 std::get<lpc::Ref<ArrayValue>>(args.back())->items)
                 bind.push_back(e);
         } else {
             for (size_t i = bindFrom; i < args.size(); ++i)
@@ -1568,8 +1568,8 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         if (args.empty()) return Value{};
         const Value& fn0 = args[0];
-        auto makeBound = [&](const std::shared_ptr<ClosureValue>& src) {
-            auto cl = std::make_shared<ClosureValue>();
+        auto makeBound = [&](const lpc::Ref<ClosureValue>& src) {
+            auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
             cl->functionName = src->functionName;
             cl->funcIndex = src->funcIndex;
             cl->func = src->func;
@@ -1581,7 +1581,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             return cl;
         };
         if (fn0.index() == 8)
-            return makeBound(std::get<std::shared_ptr<ClosureValue>>(fn0));
+            return makeBound(std::get<lpc::Ref<ClosureValue>>(fn0));
         if (fn0.index() == 4) {
             const std::string fname = std::get<SharedString>(fn0);
             // Current frame's table first, then the master's (global), then
@@ -1589,7 +1589,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             if (mutableFrameObj) {
                 if (const OriginalFunction* fn =
                         mutableFrameObj->prog()->findFn(fname)) {
-                    auto cl = std::make_shared<ClosureValue>();
+                    auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
                     cl->functionName = fname;
                     cl->funcIndex = fn->index;
                     cl->func = fn;
@@ -1603,7 +1603,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                  Interp::masterProgram() != mutableFrameObj->prog())) {
                 if (const OriginalFunction* mfn =
                         Interp::masterProgram()->findFn(fname)) {
-                    auto cl = std::make_shared<ClosureValue>();
+                    auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
                     cl->functionName = fname;
                     cl->funcIndex = mfn->index;
                     cl->func = mfn;
@@ -1616,7 +1616,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             const auto& efn = efunNameTable();
             for (size_t i = 0; i < efn.size(); ++i)
                 if (efn[i] == fname) {
-                    auto cl = std::make_shared<ClosureValue>();
+                    auto cl = lpc::Ref<ClosureValue>(new ClosureValue());
                     cl->functionName = fname;
                     cl->efunClosure = true;
                     cl->funcIndex = static_cast<int>(i);
@@ -1645,7 +1645,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         VmObject* owner = nullptr;
         if (args.size() >= 2) {
             if (args[1].index() == 8) {
-                auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+                auto cl = std::get<lpc::Ref<ClosureValue>>(args[1]);
                 funName = cl->functionName;
                 threadArgs = cl->boundArgs;
                 owner = objOfValue(make_object(cl->ownerKey));
@@ -1681,7 +1681,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                 owner = mutableFrameObj;
             }
         } else if (args.size() == 1 && args[0].index() == 8) {
-            auto cl = std::get<std::shared_ptr<ClosureValue>>(args[0]);
+            auto cl = std::get<lpc::Ref<ClosureValue>>(args[0]);
             funName = cl->functionName;
             threadArgs = cl->boundArgs;
             owner = objOfValue(make_object(cl->ownerKey));
@@ -1728,9 +1728,9 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         const Value& fn = args[2];
         std::string fnName;
         std::vector<Value> bound;
-        std::shared_ptr<ClosureValue> cl;
+        lpc::Ref<ClosureValue> cl;
         if (fn.index() == 8) {
-            cl = std::get<std::shared_ptr<ClosureValue>>(fn);
+            cl = std::get<lpc::Ref<ClosureValue>>(fn);
             fnName = cl->functionName;
             bound = cl->boundArgs;
         } else if (fn.index() == 4) {
@@ -1753,9 +1753,9 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // fire as an efun process (spawnDelayedEfun).  Without this the fire
         // resolved "call_other" in the owner's program table, findFn failed
         // and the scheduler chain-aborted every fire of such timers.
-        std::shared_ptr<ClosureValue> timerCl;
+        lpc::Ref<ClosureValue> timerCl;
         if (cl && cl->efunClosure) {
-            timerCl = std::make_shared<ClosureValue>(*cl);
+            timerCl = lpc::Ref<ClosureValue>(new ClosureValue(*cl));
             timerCl->boundArgs = bound;
         }
         // The callback runs in the context of the object that owns the
@@ -1799,7 +1799,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         if (!e) return make_int(0);
         const double acc = timerRemainingSecs(e);
-        auto tmap = std::make_shared<MappingValue>();
+        auto tmap = lpc::Ref<MappingValue>(new MappingValue());
         tmap->insert(make_string("callback"),
                      make_string("(: " + e->callback + " :)"));
         tmap->insert(make_string("timeout"), make_float(acc));
@@ -1913,7 +1913,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         std::string progImage;
         if (args.size() >= 3 && (args[2].index() == 10 || args[2].index() == 4)) {
             if (args[2].index() == 10) {
-                auto bv = std::get<std::shared_ptr<BufferValue>>(args[2]);
+                auto bv = std::get<lpc::Ref<BufferValue>>(args[2]);
                 if (bv) progImage = bv->data;
             } else {
                 progImage = std::get<SharedString>(args[2]).str();
@@ -1953,71 +1953,31 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
 }
 
 void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
+    // 上一次停泊的 out-ref 暂存在此作废: hook 已执行完, 引用槽不再被用。
+    // (放在入口而不是 parkAndSuspend —— efun 是先 push 后 park 的, 那里
+    // 清会把本次刚 push 的清掉。)
+    pcb->parkedItems.clear();
     const auto& names = efunNameTable();
-    const std::string name =
+    static const std::string kEmptyEfun;
+    const std::string& name =
         (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
-            ? names[static_cast<size_t>(efunIndex)] : std::string();
+            ? names[static_cast<size_t>(efunIndex)] : kEmptyEfun;
     // Pop args; KEEP the raw items for ref-taking efuns, deref for the rest
     // (an lvalue &buf argument must reach the efun as the live container).
+    // [注意] 不能用 thread_local 复用: dispatchEfun 会递归 (efun -> closure
+    // -> vmApplySync -> dispatchEfun), 内层 clear 会毁掉外层的 raw
+    // (2026-11-07 clean 版 boot 即崩 0xC0000005 的根因)。
     std::vector<StackItem> raw;
     for (int i = 0; i < argc && !pcb->stack.empty(); ++i)
         raw.push_back(Interp::popItem(pcb));
 
-    // [etime] efun 耗时审计 (touch _probe_on/LPCVM_ETIME 热布防): 每次
-    // dispatchEfun 计时, 按名聚合 调用数/累计µs/最大µs; 每 20000 次调用
-    // dump top10。"整体比原版慢一个量级" — 区分 耗在 efun C++ 实现内 vs
-    // interp 指令循环。
-    struct EtGuard {
-        const std::atomic<bool>& on;
-        std::chrono::steady_clock::time_point t0;
-        std::string name;
-        bool active;
-        ~EtGuard() {
-            if (!active || !on.load(std::memory_order_relaxed)) return;
-            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                std::chrono::steady_clock::now() - t0)
-                                .count();
-            struct Stat { uint64_t calls = 0, totalUs = 0, maxUs = 0; };
-            static std::mutex mx;
-            static std::map<std::string, Stat> stats;
-            static std::atomic<uint64_t> totalCount{0};
-            std::lock_guard<std::mutex> lk(mx);
-            auto& s = stats[name];
-            s.calls++; s.totalUs += static_cast<uint64_t>(us);
-            if (static_cast<uint64_t>(us) > s.maxUs) s.maxUs = static_cast<uint64_t>(us);
-            if (totalCount.fetch_add(1) % 20000 == 0) {
-                std::vector<std::pair<std::string, Stat>> v(stats.begin(),
-                                                            stats.end());
-                std::sort(v.begin(), v.end(), [](auto& a, auto& b) {
-                    return a.second.totalUs > b.second.totalUs;
-                });
-                std::cerr << "[etime] dump totalCall="
-                          << totalCount.load() << "\n";
-                for (size_t i = 0;
-                     i < v.size() && i < 10; ++i)
-                    std::cerr << "[etime] " << v[i].first
-                              << " calls=" << v[i].second.calls
-                              << " totalMs="
-                              << v[i].second.totalUs / 1000
-                              << " avgUs="
-                              << (v[i].second.calls
-                                      ? v[i].second.totalUs /
-                                            v[i].second.calls
-                                      : 0)
-                              << " maxUs=" << v[i].second.maxUs << "\n";
-                std::cerr.flush();
-            }
-        }
-    } etGuard{dynProbeFlag("LPCVM_ETIME"),
-              std::chrono::steady_clock::now(), name,
-              true};
 
     // ---- RAW-REF intercepts (the reference must SURVIVE the call) --------
     if (name == "sscanf" && raw.size() >= 2) {
         // sscanf(input, fmt, &a, &b, ...): parse, write each conversion back
         // through its reference, push the match count.
         auto strOf = [&](const StackItem& r) -> std::string {
-            Value v = r.isRef ? Interp::derefItem(pcb, r) : r.value;
+            Value v = r.isRef() ? Interp::derefItem(pcb, r) : r.value;
             if (v.index() == 4) return std::get<SharedString>(v);
             return to_string(v, false);
         };
@@ -2036,7 +1996,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         // written through the ref + the byte count; no data yet -> park on
         // the socket (kind 5), the hook receives on wake.
         auto valOf = [&](const StackItem& s) {
-            return s.isRef ? Interp::derefItem(pcb, s) : s.value;
+            return s.isRef() ? Interp::derefItem(pcb, s) : s.value;
         };
         const int fd = static_cast<int>(toInt(valOf(raw[0])));
         int len = static_cast<int>(toInt(valOf(raw[2])));
@@ -2058,8 +2018,10 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         cond.kind = 5;
         cond.fd = fd;
         cond.wantRead = true;
-        StackItem bufRef = raw[1];
-        pcb->resumeHook = [pcb, fd, len, bufRef]() mutable {
+        pcb->parkedItems.push_back(std::move(raw[1]));
+        const size_t bufRefIdx = pcb->parkedItems.size() - 1;
+        pcb->resumeHook = [pcb, fd, len, bufRefIdx]() mutable {
+            StackItem& bufRef = pcb->parkedItems[bufRefIdx];
             bool rok = false;
             const std::string d = xdbcRecvAsync(fd, len, rok);
             if (rok && !d.empty())
@@ -2079,16 +2041,16 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         if (raw.size() > 4) vmError("Too many arguments to select.");
         if (raw.size() < 4) vmError("Miss arguments, expected 4 arguments.");
         auto valOf = [&](const StackItem& s) {
-            return s.isRef ? Interp::derefItem(pcb, s) : s.value;
+            return s.isRef() ? Interp::derefItem(pcb, s) : s.value;
         };
         std::vector<int> masks[3];
         bool isArr[3] = {false, false, false};
         for (int k = 0; k < 3; ++k) {
             const Value v = valOf(raw[static_cast<size_t>(k)]);
-            if (raw[static_cast<size_t>(k)].isRef && v.index() == 5) {
+            if (raw[static_cast<size_t>(k)].isRef() && v.index() == 5) {
                 isArr[k] = true;
                 for (const auto& e :
-                     std::get<std::shared_ptr<ArrayValue>>(v)->items) {
+                     std::get<lpc::Ref<ArrayValue>>(v)->items) {
                     const int sfd = static_cast<int>(toInt(e));
                     if (!xdbcSocketExists(sfd))
                         vmError("Non-existed socket " + std::to_string(sfd) + ".");
@@ -2105,9 +2067,12 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         else if (tv.index() == 3) tsecs = std::get<double>(tv);
         else vmError("Bad type of argument 4, expected a float or integer.");
         if (tsecs < 0.0) tsecs = 0.0;
-        StackItem refs[3] = {raw[0], raw[1], raw[2]};
+        StackItem refsArr[3] = {std::move(raw[0]), std::move(raw[1]), std::move(raw[2])};
+        for (auto& ri : refsArr) pcb->parkedItems.push_back(std::move(ri));
+        const size_t refsBase = pcb->parkedItems.size() - 3;
         // One vm_doSelect pass: filter each mask, write back when n > 0.
-        auto doSelect = [masks, isArr, refs, pcb]() -> int64_t {
+        auto doSelect = [masks, isArr, refsBase, pcb]() -> int64_t {
+            StackItem* const refs = &pcb->parkedItems[refsBase];
             std::vector<int> all;
             for (int k = 0; k < 3; ++k)
                 for (int sfd : masks[k])
@@ -2137,7 +2102,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
             if (n > 0) {
                 for (int k = 0; k < 3; ++k) {
                     if (!isArr[k]) continue;
-                    auto arr = std::make_shared<ArrayValue>();
+                    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
                     for (int sfd : out[k]) arr->items.push_back(make_int(sfd));
                     Interp::storeItem(pcb, refs[k], Value(arr));
                 }
@@ -2170,7 +2135,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         // (send_to_queue wakes it); the hook writes the message through the
         // reference; resume value 0.  -101 when the queue is unknown.
         const bool qTrace = vmcore::traceOn();
-        const Value qv = raw[0].isRef ? Interp::derefItem(pcb, raw[0])
+        const Value qv = raw[0].isRef() ? Interp::derefItem(pcb, raw[0])
                                       : raw[0].value;
         const int64_t qid = lpc::queueResolveId(qv);
         if (qid < 0) {
@@ -2194,9 +2159,11 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         ResumeCond cond;
         cond.kind = 2;
         cond.qkey = "q:" + std::to_string(qid);
-        StackItem msgRef = raw[1];
+        pcb->parkedItems.push_back(std::move(raw[1]));
+        const size_t msgRefIdx = pcb->parkedItems.size() - 1;
         const bool wakeTrace = qTrace;
-        pcb->resumeHook = [pcb, qid, msgRef, wakeTrace]() mutable {
+        pcb->resumeHook = [pcb, qid, msgRefIdx, wakeTrace]() mutable {
+            StackItem& msgRef = pcb->parkedItems[msgRefIdx];
             Value m;
             bool rok = false;
             if (pcb->hasQueueDelivery) {
@@ -2214,7 +2181,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
                           << " pend=" << lpc::queuePendingItems(qid)
                           << " tid=" << pcb->tid;
                 if (rok && m.index() == 6) {
-                    auto mp = std::get<std::shared_ptr<MappingValue>>(m);
+                    auto mp = std::get<lpc::Ref<MappingValue>>(m);
                     std::cerr << " mkeys=" << mp->size() << ":";
                     int shown = 0;
                     for (const auto& nd : mp->nodes) {
@@ -2250,27 +2217,27 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         std::vector<Value> eargs;
         eargs.reserve(raw.size());
         for (auto& it : raw)
-            eargs.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+            eargs.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
         Value r = lpc::mapModule().newViewPoint(eargs);
         if (r.index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(r);
+            auto mp = std::get<lpc::Ref<MappingValue>>(r);
             auto get = [&](const char* k) {
                 Value out;
                 auto v = mp->find(make_string(k));
                 if (v) out = *v;
                 return out;
             };
-            if (raw[5].isRef) Interp::storeItem(pcb, raw[5], get("app"));
-            if (raw[6].isRef) Interp::storeItem(pcb, raw[6], get("dis"));
+            if (raw[5].isRef()) Interp::storeItem(pcb, raw[5], get("app"));
+            if (raw[6].isRef()) Interp::storeItem(pcb, raw[6], get("dis"));
             // non-zero when anything changed
             auto nonEmpty = [&](const Value& v) {
                 return v.index() == 5 &&
-                       !std::get<std::shared_ptr<ArrayValue>>(v)->items.empty();
+                       !std::get<lpc::Ref<ArrayValue>>(v)->items.empty();
             };
             pushValue(pcb, make_int((nonEmpty(get("app")) || nonEmpty(get("dis"))) ? 1 : 0));
         } else {
-            if (raw[5].isRef) Interp::storeItem(pcb, raw[5], make_array());
-            if (raw[6].isRef) Interp::storeItem(pcb, raw[6], make_array());
+            if (raw[5].isRef()) Interp::storeItem(pcb, raw[5], make_array());
+            if (raw[6].isRef()) Interp::storeItem(pcb, raw[6], make_array());
             pushValue(pcb, make_int(0));
         }
         return;
@@ -2289,7 +2256,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         std::vector<Value> eargs;
         eargs.reserve(raw.size());
         for (auto& it : raw)
-            eargs.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+            eargs.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
         int x0 = static_cast<int>(toInt(eargs[1]));
         int y0 = static_cast<int>(toInt(eargs[2]));
         int range = eargs.size() >= 4 ? static_cast<int>(toInt(eargs[3])) : 8;
@@ -2316,8 +2283,8 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
             }
         }
         if (fx >= 0) {
-            if (raw[1].isRef) Interp::storeItem(pcb, raw[1], make_int(fx));
-            if (raw[2].isRef) Interp::storeItem(pcb, raw[2], make_int(fy));
+            if (raw[1].isRef()) Interp::storeItem(pcb, raw[1], make_int(fx));
+            if (raw[2].isRef()) Interp::storeItem(pcb, raw[2], make_int(fy));
             pushValue(pcb, make_int(1));
         } else {
             pushValue(pcb, make_int(0));
@@ -2332,14 +2299,14 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         std::vector<Value> eargs;
         eargs.reserve(raw.size());
         for (auto& it : raw)
-            eargs.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+            eargs.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
         const Value r = dispatchEfunByName(pcb, name, eargs);
         if (pcb->efunTakeover) {
             pcb->efunTakeover = false;
             return;   // construction frame takeover: the retHook chain pushes
                       // the object value when the chain completes
         }
-        if (raw[1].isRef && r.index() == 2)
+        if (raw[1].isRef() && r.index() == 2)
             Interp::storeItem(pcb, raw[1], r);
         pushValue(pcb, r);
         return;
@@ -2348,7 +2315,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     std::vector<Value> args;
     args.reserve(raw.size());
     for (auto& it : raw)
-        args.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+        args.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
     Value r = dispatchEfunByName(pcb, name, args);
     if (pcb->efunTakeover) {
         pcb->efunTakeover = false;
@@ -2358,7 +2325,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     pushValue(pcb, std::move(r));
 }
 
-Value dispatchEfunClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
+Value dispatchEfunClosure(VmPcb* pcb, const lpc::Ref<ClosureValue>& cl,
                           int argc) {
     // Efun closure: boundArgs first, then the call args (popped with ref
     // semantics preserved for closures like (: call_other, path, fn :) that
@@ -2375,13 +2342,13 @@ Value dispatchEfunClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
         cl->functionName == "call_other" || cl->functionName == "call_other_arg";
     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) {
         StackItem it = Interp::popItem(pcb);
-        if (forwarding && it.isRef && it.slotIndex >= 0) {
-            auto r = std::make_shared<CrossVmRef>();
+        if (forwarding && it.isRef() && it.ref->slotIndex >= 0) {
+            auto r = lpc::make_ref<CrossVmRef>();
             r->vm = pcb;
-            r->slotIndex = it.slotIndex;
+            r->slotIndex = it.ref->slotIndex;
             args.push_back(make_crossvm_ref(std::move(r)));
         } else {
-            args.push_back(it.isRef ? Interp::derefItem(pcb, it) : it.value);
+            args.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
         }
     }
     Value r = dispatchEfunByName(pcb, cl->functionName, args);

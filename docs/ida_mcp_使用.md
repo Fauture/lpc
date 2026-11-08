@@ -35,4 +35,11 @@ python -X utf8 _idamcp.py call find '@_mcp_args.json' # 任意工具，参数放
 
 * 核对完把地址、关键伪代码结论写进对应文档（如 `_ida_missing/<efun>.txt` 或 HANDOVER），
   并在代码注释里引用地址，方便下一个人复核。
+* IDA 原始反编译采集（勿重复采集，直接引用）：
+  * `docs/ida_ops/opNN_<名称>_<处理函数>.c` — 全部 85 个操作码处理函数的 Hex-Rays 原始伪代码。
+  * `docs/ida_ops/vm_mainLoop.c`、`vm_scheduleProcessInternal.c`、`vm_doActions.c`、
+    `vm_regularProcessor.c`、`vm_run.c`、`vm_startProcess/resumeProcess/pendCurrentProcess/
+    bringProcessToNext.c`、`vm_callIn*.c`、`vm_returnFromFun.c`、`vm_initForLoop.c`、
+    `vm_cmpAndJmpInLoop.c` 等 — 核心处理链原始伪代码。
+  * 辅助归纳（可读版，如需速查）：`docs/原版VM核心处理.md`、`docs/操作码语义参考.md`。
 * 没查到/查不动时：写清"未核对 + 待核对项"，不要用近似实现顶上去。

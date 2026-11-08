@@ -67,6 +67,12 @@ struct GameClient {
     uint32_t tickServer = 0;   // last tick we sent in an echo reply
     uint32_t tickLastRecvLastEcho = 0;  // client tick of the last echo (bad-echo check)
     time_t timeLastReportHeartBeat = 0; // 180s heartbeat-report throttle
+    // 发送聚合缓冲（原版驱动一个命令突发跑完才一次性 write，抓包实证：
+    // 一键点化/羽化原版=2 个大包 11000+8000，逐帧 send 成十几个 1000-3000
+    // 小包 → 客户端逐包重建 UI 卡 0.x 秒）。gameServiceSend 填充，调度器
+    // 空闲时 gameServiceFlushPendingOutputs 一次刷出；gameMutex 保护。
+    std::string outBuf;
+    uint64_t outLastMs = 0;    // outBuf 末帧入缓冲时刻(msSinceStart)，0=空
     // vm_checkClientAccelerate (0x804ef50) accounting.  The original driver
     // runs this on every echo AND on every move packet: it counts the packet,
     // syncs the client tick against the driver tick, flags an abnormal rate
@@ -120,6 +126,10 @@ std::vector<int> gameGetAllClientNo();
 // The caller has already built the complete frame.  Returns false when the
 // client slot is unknown.
 bool gameServiceSend(int clientNo, const std::string& data);
+
+// 刷出聚合发送缓冲：force=true 全部刷（调度器空闲/突发结束时调用）；
+// false 只刷 ≥16KB 或首帧年龄 ≥50ms 的（安全阀）。
+void gameServiceFlushPendingOutputs(bool force);
 
 // ---- combat anti-cheat answer ("c_end_animate", 0x4104) -------------------
 //

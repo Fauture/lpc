@@ -84,7 +84,7 @@ void Interpreter::runGlobal() {
 Value Interpreter::callBuiltin(const std::string& name, const std::vector<Value>& args) {
     if (name == "create_thread") {
         if (args.size() >= 2 && args[1].index() == 8) {
-            auto cl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+            auto cl = std::get<lpc::Ref<ClosureValue>>(args[1]);
             threads_.emplace_back(cl->functionName, cl->boundArgs);
             return make_int(static_cast<int64_t>(threads_.size()));
         }
@@ -213,7 +213,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
     case Stmt::Kind::Loop: {
         Value container = eval(stmt->cond, env);
         if (container.index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(container);
+            auto arr = std::get<lpc::Ref<ArrayValue>>(container);
             for (auto& item : arr->items) {
                 if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = item;
@@ -222,7 +222,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
                 if (f == Flow::Break) break;
             }
         } else if (container.index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(container);
+            auto mp = std::get<lpc::Ref<MappingValue>>(container);
             for (auto& kv : mp->items()) {
                 if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = kv.first;
@@ -283,12 +283,12 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
     case Expr::Kind::Ident:
         return evalIdent(expr->text, env);
     case Expr::Kind::Array: {
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         for (auto& e : expr->args) arr->items.push_back(eval(e, env));
         return arr;
     }
     case Expr::Kind::Mapping: {
-        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(expr->mapEntries.size()));
+        auto mp = lpc::Ref<MappingValue>(new MappingValue(static_cast<uint32_t>(expr->mapEntries.size())));
         for (auto& kv : expr->mapEntries) mp->insert(eval(kv.first, env), eval(kv.second, env));
         return mp;
     }
@@ -346,7 +346,7 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
     case Expr::Kind::Member: {
         Value obj = eval(expr->lhs, env);
         if (obj.index() == 7) {
-            auto& vars = std::get<std::shared_ptr<ObjectValue>>(obj)->variables;
+            auto& vars = std::get<lpc::Ref<ObjectValue>>(obj)->variables;
             auto it = vars.find(expr->text);
             if (it != vars.end()) return it->second;
             return make_int(0);
@@ -387,7 +387,7 @@ Value Interpreter::evalIdent(const std::string& name, Environment& env) {
         return thisObject_;
     }
     if (name == "args") {
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         arr->items = currentArgs_;
         return arr;
     }
@@ -417,9 +417,9 @@ Value Interpreter::evalBinary(const std::string& op, const Value& a, const Value
     if (op == "+") {
         if (a.index() == 5 && b.index() == 5) {
             // LPC array concatenation: a + b
-            auto arr = std::make_shared<ArrayValue>();
-            arr->items = std::get<std::shared_ptr<ArrayValue>>(a)->items;
-            const auto& bv = std::get<std::shared_ptr<ArrayValue>>(b)->items;
+            auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+            arr->items = std::get<lpc::Ref<ArrayValue>>(a)->items;
+            const auto& bv = std::get<lpc::Ref<ArrayValue>>(b)->items;
             arr->items.insert(arr->items.end(), bv.begin(), bv.end());
             return arr;
         }
@@ -482,19 +482,19 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     };
     if (rhs->kind == Expr::Kind::Range) {
         int64_t len = 0;
-        if (c.index() == 5) len = static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(c)->items.size());
+        if (c.index() == 5) len = static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(c)->items.size());
         else if (c.index() == 4) len = static_cast<int64_t>(std::get<SharedString>(c).size());
         int64_t start = resolveIndex(rhs->lhs, len);
         int64_t end = resolveIndex(rhs->rhs, len);
         if (c.index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
+            auto arr = std::get<lpc::Ref<ArrayValue>>(c);
             int64_t len = static_cast<int64_t>(arr->items.size());
             if (start < 0) start += len;
             if (end < 0) end += len;
             if (rhs->text == "..<") end = len - end;
             if (start < 0) start = 0;
             if (end >= len) end = len - 1;
-            auto out = std::make_shared<ArrayValue>();
+            auto out = lpc::Ref<ArrayValue>(new ArrayValue());
             if (start <= end) {
                 for (int64_t i = start; i <= end; ++i) out->items.push_back(arr->items[static_cast<size_t>(i)]);
             }
@@ -514,7 +514,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
         return Value{};   // bad range -> undefined (type 0)
     }
     if (c.index() == 5) {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
+        auto arr = std::get<lpc::Ref<ArrayValue>>(c);
         int64_t len = static_cast<int64_t>(arr->items.size());
         int64_t i = resolveIndex(rhs, len);
         if (i < 0) i += len;
@@ -523,7 +523,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     }
     if (c.index() == 6) {
         Value idx = eval(rhs, env);
-        auto mp = std::get<std::shared_ptr<MappingValue>>(c);
+        auto mp = std::get<lpc::Ref<MappingValue>>(c);
         const Value* hit = mp->find(idx);
         if (hit) return *hit;
         return Value{};   // miss -> undefined (type 0)
@@ -543,14 +543,14 @@ void Interpreter::assignIndex(ExprPtr lhs, ExprPtr rhs, const Value& v, Environm
     Value c = eval(lhs, env);
     Value idx = eval(rhs, env);
     if (c.index() == 5) {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
+        auto arr = std::get<lpc::Ref<ArrayValue>>(c);
         int64_t i = as_int(idx);
         if (i < 0) i += static_cast<int64_t>(arr->items.size());
         if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) arr->items[static_cast<size_t>(i)] = v;
         return;
     }
     if (c.index() == 6) {
-        auto mp = std::get<std::shared_ptr<MappingValue>>(c);
+        auto mp = std::get<lpc::Ref<MappingValue>>(c);
         mp->insert(idx, v);
         return;
     }
@@ -568,7 +568,7 @@ Value Interpreter::evalCall(ExprPtr target, const std::vector<ExprPtr>& args, En
     }
     Value callee = eval(target, env);
     if (callee.index() == 8) {
-        auto cl = std::get<std::shared_ptr<ClosureValue>>(callee);
+        auto cl = std::get<lpc::Ref<ClosureValue>>(callee);
         std::vector<Value> all = cl->boundArgs;
         all.insert(all.end(), argValues.begin(), argValues.end());
         return callFunction(cl->functionName, all);
@@ -585,10 +585,10 @@ Value Interpreter::evalCallOther(ExprPtr target, const std::string& fn, const st
     std::vector<Value> argValues;
     for (auto& a : args) argValues.push_back(eval(a, env));
     if (obj.index() == 7) {
-        auto o = std::get<std::shared_ptr<ObjectValue>>(obj);
+        auto o = std::get<lpc::Ref<ObjectValue>>(obj);
         auto it = o->variables.find(fn);
         if (it != o->variables.end() && it->second.index() == 8) {
-            auto cl = std::get<std::shared_ptr<ClosureValue>>(it->second);
+            auto cl = std::get<lpc::Ref<ClosureValue>>(it->second);
             return callFunction(cl->functionName, argValues);
         }
         // If the object is one of our in-memory objects we might still have the function in the current program.
@@ -611,7 +611,7 @@ Value Interpreter::evalLambda(const Expr& e, Environment& env) {
 }
 
 Value Interpreter::makeDefaultObject(const std::string& path) {
-    auto o = std::make_shared<ObjectValue>();
+    auto o = lpc::make_ref<ObjectValue>();
     o->programName = path;
     return o;
 }

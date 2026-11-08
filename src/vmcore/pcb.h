@@ -35,13 +35,14 @@ namespace lpc {
 namespace vmcore {
 
 // ---------------------------------------------------------------------------
-// Stack item — the value/ref dual the bytecode stack is made of.
+// Stack item — 对齐原版值栈布局：原版 vm_stack 元素是 24B POD
+// (type/attrib/union)，引用(vptr)只是其中一种值类型。纯值槽(>95% 的压栈)
+// 只携带 Value；引用信息仅引用槽分配(堆上 StackRef)。
 // (Same layout the verified implementation used; the stack machine's
 // lvalue/reference semantics depend on it: push_obj_vptr/push_global_vptr/
 // push_stack_vptr create refs, assignments write through them.)
 // ---------------------------------------------------------------------------
-struct StackItem {
-    bool isRef = false;                       // reference (vptr) item
+struct StackRef {
     int slotIndex = -1;                       // ref to a stack slot
     int globalIndex = -1;                     // ref to a shared global
     int objIndex = -1;                        // ref to an object instance variable
@@ -49,10 +50,15 @@ struct StackItem {
                                               // vptr 是对象值数组的地址 — 跨帧
                                               // 传 by-ref 时必须锚定所属对象,
                                               // 而不是读"当前帧"的变量表)
-    std::shared_ptr<ArrayValue> arr;          // member ref container
-    std::shared_ptr<MappingValue> map;
+    lpc::Ref<ArrayValue> arr;          // member ref container
+    lpc::Ref<MappingValue> map;
     Value key;
-    Value value;
+};
+
+struct StackItem {
+    Value value;                              // 纯值槽的唯一有效成员
+    std::unique_ptr<StackRef> ref;            // 引用槽才分配 (vptr 槽)
+    bool isRef() const { return ref != nullptr; }
 };
 
 // ---------------------------------------------------------------------------
@@ -153,7 +159,7 @@ struct VmFrame {
     int passedArgs = -1;
     // Loop control blocks (init_forLoop value type 20): kept per-frame so
     // pops below the local region cannot corrupt an enclosing loop's state.
-    std::map<int, std::shared_ptr<LoopCtrl>> loops;
+    std::map<int, lpc::Ref<LoopCtrl>> loops;
     // vm_hookCallbackWhenReturn (0x8094e70): hooks run when this frame
     // returns, in registration order, with the return value (call_other
     // broadcast collects its results here; every cross-call post-processing
@@ -169,9 +175,16 @@ struct VmFrame {
 // ---------------------------------------------------------------------------
 struct VmPcb : std::enable_shared_from_this<VmPcb> {
     // ---- execution state (唯一执行状态) ----
+    // [perf] 预留容量: 4096 槽 × 48B ≈ 192KB。羽化链栈深 ~150 槽, 但
+    // push_back 倍增扩容会周期性搬移整个数组 (几百 µs 抖动), 预留后
+    // 稳态零 realloc。
     std::vector<StackItem> stack;
     std::vector<VmFrame> frames;
     std::vector<CatchRecord> catches;
+    VmPcb() {
+        stack.reserve(4096);
+        frames.reserve(256);
+    }
     int catchDepth = 0;
     const std::vector<OriginalInsn>* code = nullptr;
     const std::vector<uint8_t>* meta = nullptr;
@@ -194,6 +207,9 @@ struct VmPcb : std::enable_shared_from_this<VmPcb> {
     // 回到解释器之前运行 — recv/select/receive_from_queue 在这里把数据
     // 写穿引用并设定 resumeValue。park 时由阻塞 efun 设置, 运行后清除。
     std::function<void()> resumeHook;
+    // 停泊期间的引用槽暂存 (move-only lambda 不能进 std::function):
+    // efun 把 out-ref 槽 move 进来, resumeHook 按索引写回; 新停泊时清空。
+    std::vector<StackItem> parkedItems;
 
     // ---- process identity ----
     int64_t tid = -1;                // tid pool (0..127, 单调兜底 ≥128)
@@ -220,17 +236,29 @@ struct VmPcb : std::enable_shared_from_this<VmPcb> {
     // stalld's while(1)+sleep(180) daemon loop).  It must run on ITS OWN
     // process, never inline on the spawner (the boot master chained into
     // stalld's infinite loop and never reached 8160).
-    std::shared_ptr<struct ClosureValue> threadClosure;
+    lpc::Ref<struct ClosureValue> threadClosure;
 
     // ---- wake bookkeeping ----
     bool inReady = false;            // sits in the ready queue (no double-enqueue)
     bool eventWoken = false;         // event fired before its timeout timer
     bool timedEvent = false;         // kind-3 wait with a timeout
+    int64_t parkAtMs = 0;            // park 时刻(msSinceStart)，PARKDBG 测停泊时长
     std::shared_ptr<std::atomic<bool>> parkTimerCancelled;
     std::shared_ptr<void> timerEntry;   // set_timer cancellation token
 
     // ---- external-thread call (execOnMain) ----
     std::shared_ptr<std::promise<Value>> resultPromise;
+
+    // [ref] 唤醒外部等待者前清空 pcb 携带的全部 lpc Value: Ref/SharedString
+    // 计数非原子, 纪律 = 调度线程在 notify 之前把本 pcb 对所有 Value 块的
+    // 引用全部释放, 此后调用方线程析构自己的入参拷贝时无人并发计数。
+    void stripValues() {
+        stack.clear();
+        frames.clear();      // 帧内的 loops map 随帧析构一并释放
+        catches.clear();
+        threadClosure.reset();
+        constructStack.clear();
+    }
 
     // ---- connection accounting (driver bookkeeping, not VM semantics) ----
     int64_t clientNo = -1;

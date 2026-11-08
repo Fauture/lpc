@@ -17,12 +17,14 @@
 #include <ws2tcpip.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -139,6 +141,47 @@ static bool clientFlowGated(int cno) {
     auto it = gameClients().find(cno);
     return it != gameClients().end() && flowGated(it->second.attrib);
 }
+
+// ---- 发送聚合（对照原版驱动的输出缓冲语义） ---------------------------------
+// 抓包实证：一键点化/羽化原版把整条命令突发的帧攒到突发结束一次 write
+// （两个大包 11000+8000）；我们逐帧 send 在 TCP_NODELAY 下变成十几个
+// 1000-3000 的小包，客户端逐包重建 UI 造成 0.x 秒卡顿。
+// 语义：gameServiceSend 只把帧追加进该客户端的 outBuf（任何线程）；
+// 调度器空闲（ready 队列空、即将等待）时 gameServiceFlushPendingOutputs(true)
+// 一次性刷出 = 原版"命令突发结束才 write"。TimeSlice 让出/恢复不拆突发：
+// 缓冲挂在 GameClient 上而不是线程/命令栈上。安全阀：缓冲 ≥16KB 或
+// 首帧年龄 ≥50ms 时由 gameServiceSend 顺手刷出，防止调度器长期繁忙时
+// 无限积压。绝不能持有 gameMutex 调阻塞 send（会拖死 recv/scheduler
+// 的查找路径）——先在锁内 swap 出来，锁外写。
+static void sendBufToSocket(int clientNo, int fd, const std::string& buf) {
+    if (fd < 0) {
+        liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
+        std::cerr << "[send-fail] cno=" << clientNo << " bad-fd(flush) t="
+                  << lpc::msSinceStart() << "ms\n";
+        return;
+    }
+    int sent = 0;
+    while (sent < static_cast<int>(buf.size())) {
+        int n = send(static_cast<SOCKET>(fd), buf.data() + sent,
+                     static_cast<int>(buf.size()) - sent, 0);
+        if (n <= 0) {
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+                Sleep(1);
+                continue;
+            }
+            liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
+            std::cerr << "[send-fail] cno=" << clientNo << " fd=" << fd << " n=" << n
+                      << " err=" << err << " len=" << buf.size()
+                      << " t=" << lpc::msSinceStart() << "ms (flush)\n";
+            return;
+        }
+        sent += n;
+    }
+}
+
+
+
 
 // 无符号读取（保留：帧结构/长度/校验等场景仍需要）
 uint16_t rd16be(const uint8_t* p) {
@@ -1351,7 +1394,7 @@ void handleMsgCfgMyInfo(GameClient& cl, const uint8_t* body, size_t len) {
     int id = r.u16();
     int distId = r.u16();
     int count = r.u16();
-    auto m = std::make_shared<MappingValue>();
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     for (int i = 0; i < count; ++i) {
         std::string k = r.str();
         std::string v = r.str();
@@ -1406,7 +1449,7 @@ void handleMsgCfgGameServerList(GameClient& cl, const uint8_t* body, size_t len)
     for (int i = 0; i < total; ++i) enables.push_back(r.u16());
     // Flat array: [name, ip, port, id, enable] * total (vm_apply pushes a
     // single flat array; msg_cfg_game_server_list reads list[i], list[i+1]...).
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int i = 0; i < total; ++i) {
         arr->items.push_back(make_string(names[i]));
         arr->items.push_back(make_string(ips[i]));
@@ -1426,7 +1469,7 @@ void handleMsgCfgDbaList(GameClient& cl, const uint8_t* body, size_t len, const 
     VtReader r(body, len);
     int count = r.u16();
     if (count < 0 || count > 100) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int i = 0; i < count; ++i) {
         arr->items.push_back(make_string(r.str()));   // ip
         arr->items.push_back(make_int(r.u16()));      // port
@@ -1441,7 +1484,7 @@ void handleMsgCfgCtaList(GameClient& cl, const uint8_t* body, size_t len) {
     VtReader r(body, len);
     int count = r.u16();
     if (count < 0 || count > 100) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int i = 0; i < count; ++i) {
         arr->items.push_back(make_string(r.str()));   // name
         arr->items.push_back(make_string(r.str()));   // ip
@@ -1588,7 +1631,7 @@ void handle_vm_cmdAccelerateMoveTo(GameClient& cl, const uint8_t* body, size_t l
     uint16_t n = rd16be(body + 8);
     if (n == 0 || n > 16) return;
     if (len < 10u + 4u * n + 2u) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     const uint8_t* p = body + 10;
     for (uint16_t i = 0; i < n; ++i)
     {
@@ -1802,7 +1845,7 @@ void handle_vm_cmdBuyCustomizePack(GameClient& cl, const uint8_t* body, size_t l
     off += n1;
     if (off >= len) return;
     uint8_t count = body[off++];
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint8_t i = 0; i < count; i++) {
         if (off >= len) return;
         uint8_t sl = body[off++];
@@ -2110,7 +2153,7 @@ void handle_vm_cmdCCSwitchCard(GameClient& cl, const uint8_t* body, size_t len) 
     if (len < 2) return;
     uint16_t cnt = rd16be(body);
     if (cnt > 63 || (size_t)2 + (size_t)cnt * 2 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < cnt; ++i)
         arr->items.push_back(make_int(rd16be(body + 2 + i * 2)));
     applyLpc("cmd_cc_switch_card", {make_int(cl.clientNo), arr});
@@ -2508,8 +2551,8 @@ void handle_vm_cmdChatEx(GameClient& cl, const uint8_t* body, size_t len)
         return;
     }
     std::string msg((const char*)body + off, msgLen); off += msgLen;
-    auto arr = std::make_shared<ArrayValue>();
-    auto arrType = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto arrType = lpc::Ref<ArrayValue>(new ArrayValue());
     if (len - off == 1) {
         std::cerr << "[chat] cmd_chat_ex TRAILING-1 cno=" << cl.clientNo << " len=" << len
                   << " off=" << off << " msg=\"" << msg.substr(0, 60) << "\"\n";
@@ -2596,6 +2639,9 @@ namespace {
 std::mutex& combatQMu() { static std::mutex m; return m; }
 std::map<int, uint32_t>& combatQ() { static std::map<int, uint32_t> m; return m; }
 }  // namespace
+
+
+
 
 // The three public entry points are defined at the end of the file, outside the
 // file-local anonymous namespace that wraps the protocol helpers above (a
@@ -3435,7 +3481,7 @@ void handle_vm_cmdAnswerSurvey(GameClient& cl, const uint8_t* body, size_t len)
     std::string menu_item((const char*)body + off, n1); off += n1;
     if (len - off < 1) return;
     uint8_t count = body[off++];
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint8_t i = 0; i < count; ++i)
     {
         if (len - off < 1) return;
@@ -4552,7 +4598,7 @@ void handle_vm_cmdLookPlayer(GameClient& cl, const uint8_t* body, size_t len)
 void handle_vm_cmdLotterySelect(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 7) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int i = 0; i < 7; ++i)
         arr->items.push_back(make_int(body[i]));
     applyLpc("cmd_lottery_select", {make_int(cl.clientNo), arr});
@@ -4592,8 +4638,8 @@ void handle_vm_cmdMakePill(GameClient& cl, const uint8_t* body, size_t len)
 {
     if (len < 28) return;
     int pos1 = rd16be(body);
-    auto arr1 = std::make_shared<ArrayValue>();
-    auto arr2 = std::make_shared<ArrayValue>();
+    auto arr1 = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto arr2 = lpc::Ref<ArrayValue>(new ArrayValue());
     size_t off = 2;
     for (int i = 0; i < 6; ++i)
     {
@@ -4621,7 +4667,7 @@ void handle_vm_cmdManageHouse(GameClient& cl, const uint8_t* body, size_t len)
     int oper = body[5];
     uint8_t cnt = body[6];
     if ((size_t)7 + (size_t)cnt * 4 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     size_t off = 7;
     for (int i = 0; i < cnt; ++i)
     {
@@ -4822,7 +4868,7 @@ void handle_vm_cmdMulGoodsBuy(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
     if (count == 0 || count > 100 || off + (size_t)count * 6 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i)
     {
         arr->items.push_back(make_int(rd16be(body, off))); off += 2;
@@ -4854,7 +4900,7 @@ void handle_vm_cmdMultiMoveTo(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
     if (count == 0 || count > 13 || off + (size_t)count * 4 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i)
     {
         arr->items.push_back(make_int(rd16be(body, off))); off += 2;
@@ -5580,8 +5626,8 @@ void handle_vm_cmdFriendTellEx(GameClient& cl, const uint8_t* body, size_t len)
     std::string msg((const char*)body + off, msgLen); off += msgLen;
     if (off + 2 > len) return;
     uint16_t itemCount = rd16be(body, off); off += 2;
-    auto pArray = std::make_shared<ArrayValue>();
-    auto pArrayType = std::make_shared<ArrayValue>();
+    auto pArray = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto pArrayType = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < itemCount; i++) {
         if (off + 1 > len) return;
         uint8_t slen = body[off++];
@@ -5905,8 +5951,8 @@ void handle_vm_cmdGroupChannel(GameClient& cl, const uint8_t* body, size_t len)
     off += msgLen;
     if (len - off < 2) return;
     uint16_t itemCount = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
-    auto arrType = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto arrType = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < itemCount; i++)
     {
         if (off >= len) return;
@@ -6789,7 +6835,7 @@ void handle_vm_cmdSetDecoration(GameClient& cl, const uint8_t* body, size_t len)
     uint16_t count = rd16be(body, 1);
     if (count > 0x3F) return;
     size_t off = 3;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off >= len) return;
         uint8_t n = body[off++];
@@ -7011,7 +7057,7 @@ void handle_vm_cmdSetWeddingList(GameClient& cl, const uint8_t* body, size_t len
     uint16_t count = rd16be(body, 0);
     if (count > 0x3F) return;
     size_t off = 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i)
     {
         if (off >= len) return;
@@ -7295,7 +7341,7 @@ void handle_vm_cmdPurchaseMultiMatch(GameClient& cl, const uint8_t* body, size_t
     if (len < 1) return;
     size_t off = 0;
     uint8_t count = body[off++];
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint8_t i = 0; i < count; i++) {
         if (off >= len) return;
         uint8_t slen = body[off++];
@@ -7379,7 +7425,7 @@ void handle_vm_cmdQueryUpgradeCash(GameClient& cl, const uint8_t* body, size_t l
 {
     if (len < 6) return;
     size_t off = 6;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int i = 0; i < 4; i++) {
         if (off + 4 > len) return;
         arr->items.push_back(make_int(rd32sbe(body, off)));
@@ -7393,7 +7439,7 @@ void handle_vm_cmdQueryUpgradeCashEx(GameClient& cl, const uint8_t* body, size_t
 {
     int32_t npcId = 0;
     int16_t type = 0;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     if (len >= 4)
     {
         npcId = rd32sbe(body, 0);
@@ -7421,7 +7467,7 @@ void handle_vm_cmdQueryUpgradeRate(GameClient& cl, const uint8_t* body, size_t l
 {
     int32_t npcId = 0;
     int16_t type = 0;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     if (len >= 4)
     {
         npcId = rd32sbe(body, 0);
@@ -7443,7 +7489,7 @@ void handle_vm_cmdQueryUpgradeCoin(GameClient& cl, const uint8_t* body, size_t l
 {
     int32_t npcId = 0;
     int16_t type = 0;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     if (len >= 4)
     {
         npcId = rd32sbe(body, 0);
@@ -7929,7 +7975,7 @@ void handle_vm_cmdRequestBuildDeck(GameClient& cl, const uint8_t* body, size_t l
     uint16_t count = rd16be(body, off + 2);
     off += 4;
     if (count > 63) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i)
     {
         if (off + 1 > len) return;
@@ -8467,7 +8513,7 @@ void handle_vm_cmdWishing(GameClient& cl, const uint8_t* body, size_t len)
     uint16_t count = rd16be(body, 2);
     if (count > 63) return;
     size_t off = 4;
-    auto m = std::make_shared<MappingValue>();
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     for (uint16_t i = 0; i < count; i++) {
         if (off >= len) return;
         uint8_t tl = body[off++];
@@ -8528,7 +8574,7 @@ void handle_vm_cmdWorkshopBuyOrder(GameClient& cl, const uint8_t* body, size_t l
     if (off + 1 > len) return;
     uint8_t cnt = body[off++];
     if (off + (size_t)cnt * 4 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint8_t i = 0; i < cnt; ++i) {
         arr->items.push_back(make_int(rd32sbe(body, off)));
         off += 4;
@@ -8545,7 +8591,7 @@ void handle_vm_cmdWorkshopQueryOrderCash(GameClient& cl, const uint8_t* body, si
     if (off + 1 > len) return;
     uint8_t cnt = body[off++];
     if (off + (size_t)cnt * 4 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint8_t i = 0; i < cnt; ++i) {
         arr->items.push_back(make_int(rd32sbe(body, off)));
         off += 4;
@@ -8562,7 +8608,7 @@ void handle_vm_cmdWorkshopQueryOrderRate(GameClient& cl, const uint8_t* body, si
     if (off + 1 > len) return;
     uint8_t cnt = body[off++];
     if (off + (size_t)cnt * 4 > len) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint8_t i = 0; i < cnt; ++i) {
         arr->items.push_back(make_int(rd32sbe(body, off)));
         off += 4;
@@ -9146,8 +9192,8 @@ void handle_vm_cmdTellEx(GameClient& cl, const uint8_t* body, size_t len)
     off += msgLen;
     if (off + 2 > len) return;
     uint16_t itemCount = rd16be(body, off); off += 2;
-    auto arrStr = std::make_shared<ArrayValue>();
-    auto arrInt = std::make_shared<ArrayValue>();
+    auto arrStr = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto arrInt = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < itemCount; i++)
     {
         if (off + 1 > len) return;
@@ -9460,7 +9506,7 @@ void handle_vm_cmdUpgrade(GameClient& cl, const uint8_t* body, size_t len)
     if (len < 22) return;
     int npcId = rd32sbe(body, 0);
     int type = rd16be(body, 4);
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int i = 0; i < 4; i++)
         arr->items.push_back(make_int(rd32sbe(body, 6 + i * 4)));
     applyLpc("cmd_upgrade", {make_int(cl.clientNo), make_int(npcId), make_int(type), arr});
@@ -9472,8 +9518,8 @@ void handle_vm_cmdUpgradeByAmount(GameClient& cl, const uint8_t* body, size_t le
     int npcId = rd32sbe(body, 0);
     int type = rd16be(body, 4);
     int cnt = body[6];
-    auto pArray = std::make_shared<ArrayValue>();
-    auto nArray = std::make_shared<ArrayValue>();
+    auto pArray = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto nArray = lpc::Ref<ArrayValue>(new ArrayValue());
     size_t off = 7;
     for (int i = 0; i < cnt; i++)
     {
@@ -9491,7 +9537,7 @@ void handle_vm_cmdUpgradeEx(GameClient& cl, const uint8_t* body, size_t len)
     int npcId = rd32sbe(body, 0);
     int type = rd16be(body, 4);
     int cnt = body[6];
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     size_t off = 7;
     for (int i = 0; i < cnt; i++)
     {
@@ -10025,7 +10071,7 @@ void handle_vm_msgGsFriendList(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off);
     off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off >= len) return;
         uint8_t flen = body[off++];
@@ -10168,7 +10214,7 @@ void handle_vm_cmdLeagueOper(GameClient& cl, const uint8_t* body, size_t len)
     const uint8_t* command = body + off; off += cmdLen;
     // array of strings: u16 BE count, then count x (u16 BE len + bytes)
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         uint16_t elLen = rd16be(body, off); off += 2;
         if (off + elLen > len) return;
@@ -10187,7 +10233,7 @@ void handle_vm_msgLeagueOper(GameClient& cl, const uint8_t* body, size_t len)
     const uint8_t* command = body + off; off += cmdLen;
     // array of strings: u16 BE count, then count x (u16 BE len + bytes)
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         uint16_t elLen = rd16be(body, off); off += 2;
         if (off + elLen > len) return;
@@ -10206,7 +10252,7 @@ void handle_vm_cmdBottleOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10226,7 +10272,7 @@ void handle_vm_msgBottleOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10246,7 +10292,7 @@ void handle_vm_cmdXGameOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10266,7 +10312,7 @@ void handle_vm_msgXGameOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10334,7 +10380,7 @@ void handle_vm_cmdPartywarOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10354,7 +10400,7 @@ void handle_vm_msgPartywarOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10374,7 +10420,7 @@ void handle_vm_cmdArenaOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10394,7 +10440,7 @@ void handle_vm_msgArenaOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10414,7 +10460,7 @@ void handle_vm_cmdDraftOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10434,7 +10480,7 @@ void handle_vm_msgDraftOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10454,7 +10500,7 @@ void handle_vm_cmdSDDHOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10474,7 +10520,7 @@ void handle_vm_msgSDDHOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10494,7 +10540,7 @@ void handle_vm_cmdCelebrityOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10514,7 +10560,7 @@ void handle_vm_msgCelebrityOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10534,7 +10580,7 @@ void handle_vm_cmdSamsungOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10554,7 +10600,7 @@ void handle_vm_msgSamsungOper(GameClient& cl, const uint8_t* body, size_t len)
   const uint8_t* cmd = body + off; off += cmdLen;
   if (off + 2 > len) return;
   uint16_t cnt = rd16be(body, off); off += 2;
-  auto arr = std::make_shared<ArrayValue>();
+  auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
   for (uint16_t i = 0; i < cnt; ++i) {
     if (off + 2 > len) return;
     uint16_t slen = rd16be(body, off); off += 2;
@@ -10574,7 +10620,7 @@ void handle_vm_msgEveryonePkOper(GameClient& cl, const uint8_t* body, size_t len
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10593,7 +10639,7 @@ void handle_vm_msgTreasureTradingOper(GameClient& cl, const uint8_t* body, size_
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10648,7 +10694,7 @@ void handle_vm_cmdChannelOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10667,7 +10713,7 @@ void handle_vm_msgChannelOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10686,7 +10732,7 @@ void handle_vm_cmdCsaCommonOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10705,7 +10751,7 @@ void handle_vm_msgCsaCommonOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10724,7 +10770,7 @@ void handle_vm_cmdCitywarOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10743,7 +10789,7 @@ void handle_vm_msgCitywarOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10762,7 +10808,7 @@ void handle_vm_cmdActivityOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -10781,7 +10827,7 @@ void handle_vm_msgActivityOper(GameClient& cl, const uint8_t* body, size_t len)
     auto command = make_string(body + off, cmdLen); off += cmdLen;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i) {
         if (off + 2 > len) return;
         uint16_t slen = rd16be(body, off); off += 2;
@@ -11290,7 +11336,7 @@ void handle_vm_msgCfgAaaList(GameClient& cl, const uint8_t* body, size_t len)
     size_t off = 0;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto m = std::make_shared<MappingValue>();
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     for (uint16_t i = 0; i < count; i++) {
         if (off + 1 > len) return;
         uint8_t nameLen = rd8s(body, off); off += 1;
@@ -11306,7 +11352,7 @@ void handle_vm_msgCfgAaaList(GameClient& cl, const uint8_t* body, size_t len)
         uint8_t attribLen = rd8s(body, off); off += 1;
         if (off + attribLen > len) return;
         const uint8_t* attrib = body + off; off += attribLen;
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         arr->items.push_back(make_string(ip, ipLen));
         arr->items.push_back(make_int(port));
         arr->items.push_back(make_string(attrib, attribLen));
@@ -11336,7 +11382,7 @@ void handle_vm_msgCfgDdbList(GameClient& cl, const uint8_t* body, size_t len)
     size_t off = 4; // u32 header, unused by parser
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; i++) {
         if (off + 1 > len) return;
         uint8_t sLen = rd8s(body, off); off += 1;
@@ -11354,7 +11400,7 @@ void handle_vm_msgCfgDistList(GameClient& cl, const uint8_t* body, size_t len)
     int32_t distNo = rd32sbe(body, off); off += 4;
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off); off += 2;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; i++) {
         if (off + 1 > len) return;
         uint8_t sLen = rd8s(body, off); off += 1;
@@ -12018,7 +12064,7 @@ void handle_vm_cmdMaOper(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off);
     if (count > 0x3F) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i)
     {
         if (off + 2 > len) return;
@@ -12064,7 +12110,7 @@ void handle_vm_cmdMaSet(GameClient& cl, const uint8_t* body, size_t len)
     if (off + 2 > len) return;
     uint16_t count = rd16be(body, off);
     if (count > 0x3F) return;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (uint16_t i = 0; i < count; ++i)
     {
         if (off + 2 > len) return;
@@ -13723,6 +13769,32 @@ void feedClient(GameClient& cl, const char* data, size_t n) {
 
 } // namespace
 
+// 刷出所有到期/强制的聚合缓冲。force=true 由调度器空闲时调用（突发结束）；
+// false 时只刷年龄/大小到期的（常规巡检用，当前仅调度器空闲点使用 force）。
+void gameServiceFlushPendingOutputs(bool force) {
+    const int64_t now = lpc::msSinceStart();
+    std::vector<std::pair<int, std::string>> out;   // (fd, buf)
+    std::vector<int> outCnos;
+    {
+        std::lock_guard<std::mutex> lk(gameMutex());
+        for (auto& kv : gameClients()) {
+            GameClient& c = kv.second;
+            if (c.outBuf.empty()) continue;
+            const bool big = c.outBuf.size() >= 16 * 1024;
+            // 静默 ≥30ms 才视为命令突发结束（件间停泊空隙 15-20ms 不拆）。
+            const bool quiet = now - static_cast<int64_t>(c.outLastMs) >= 30;
+            if (!force && !big && !quiet) continue;
+            out.emplace_back(c.fd, std::move(c.outBuf));
+            outCnos.push_back(kv.first);
+            c.outBuf.clear();
+            c.outLastMs = 0;
+        }
+    }
+    for (size_t i = 0; i < out.size(); ++i)
+        sendBufToSocket(outCnos[i], out[i].first, out[i].second);
+}
+
+
 // The per-connection handler lives in this translation unit only.
 static void processGameConnection(unsigned int fd);
 
@@ -14071,11 +14143,30 @@ void gameServiceFeed(int clientNo, const char* data, size_t len) {
 }
 
 void gameServiceDisconnect(int clientNo) {
-    std::lock_guard<std::mutex> lk(gameMutex());
-    auto it = gameClients().find(clientNo);
-    if (it == gameClients().end()) return;
-    if (it->second.fd >= 0) closesocket(static_cast<SOCKET>(it->second.fd));
-    gameClients().erase(it);
+    std::string pending;
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> lk(gameMutex());
+        auto it = gameClients().find(clientNo);
+        if (it == gameClients().end()) return;
+        fd = it->second.fd;
+        pending.swap(it->second.outBuf);
+        gameClients().erase(it);
+    }
+    // 聚合缓冲里可能还有没刷出的帧：断开前尽力补一次写（与原版驱动
+    // "缓冲不丢帧"一致），然后才关 socket。
+    if (fd >= 0) {
+        if (!pending.empty()) {
+            int sent = 0;
+            while (sent < static_cast<int>(pending.size())) {
+                int n = send(static_cast<SOCKET>(fd), pending.data() + sent,
+                             static_cast<int>(pending.size()) - sent, 0);
+                if (n <= 0) break;
+                sent += n;
+            }
+        }
+        closesocket(static_cast<SOCKET>(fd));
+    }
 }
 
 void gameServiceSetAttrib(int clientNo, uint32_t attribOrMask, int maxBodySize, int peekMsgNum) {
@@ -14116,6 +14207,8 @@ bool gameServiceSend(int clientNo, const std::string& data) {
         }
     }
     int fd = -1;
+    bool buffered = false;
+    std::string buf;
     {
         std::lock_guard<std::mutex> lk(gameMutex());
         auto it = gameClients().find(clientNo);
@@ -14130,34 +14223,24 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n";
             return false;
         }
-        fd = it->second.fd;
-    }
-    if (fd < 0) {
-        liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
-        std::cerr << "[send-fail] cno=" << clientNo << " bad-fd t="
-                  << lpc::msSinceStart() << "ms\n";
-        if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " bad-fd\n";
-        return false;
-    }
-    int sent = 0;
-    while (sent < static_cast<int>(data.size())) {
-        int n = send(static_cast<SOCKET>(fd), data.data() + sent,
-                     static_cast<int>(data.size()) - sent, 0);
-        if (n <= 0) {
-            int err = WSAGetLastError();
-            if (err == WSAEWOULDBLOCK || err == WSAEINTR) {   // non-blocking socket
-                Sleep(1);
-                continue;
-            }
-            liveness().sendFail.fetch_add(1, std::memory_order_relaxed);
-            std::cerr << "[send-fail] cno=" << clientNo << " fd=" << fd << " n=" << n
-                      << " err=" << err << " len=" << data.size()
-                      << " t=" << lpc::msSinceStart() << "ms\n";
-            if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " fail n=" << n << " err=" << err << "\n";
-            return false;
+        // 聚合发送：帧一律进 outBuf（任何线程）。调度器空闲且缓冲静默
+        // （≥30ms 无新帧）时统一刷出 = 原版"命令突发结束才一次 write"。
+        // 抓包实证：一键点化/羽化每件物品间有 15-20ms 停泊空隙，曾因
+        // "首帧年龄 ≥50ms 立即刷"被拆成 4500B×6；原版是 1-2 个大包。
+        // 安全阀只剩 ≥16KB（防止调度器长期繁忙时无限积压）。
+        GameClient& c = it->second;
+        c.outBuf += data;
+        c.outLastMs = static_cast<uint64_t>(lpc::msSinceStart());
+        const bool big = c.outBuf.size() >= 16 * 1024;
+        if (big) {
+            buf.swap(c.outBuf);
+            c.outLastMs = 0;
+            fd = c.fd;
+        } else {
+            buffered = true;
         }
-        sent += n;
     }
+    if (!buffered) sendBufToSocket(clientNo, fd, buf);
     // LPCVM_CLIENTDBG: the only exit at which a CLIENT-bound frame becomes
     // visible.  Without it there is no record of what the server told a stuck
     // client - which is exactly the gap that made a "正在连接中"/通讯故障 repro
@@ -14202,7 +14285,10 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             std::cerr.flush();
         }
     }
-    if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " fd=" << fd << " sent=" << sent << "\n";
+    if (LPCVM_GETENV("LPCVM_TRACE"))
+        std::cerr << "[send] cno=" << clientNo << " fd=" << fd
+                  << (buffered ? " buffered=" : " sent=")
+                  << (buffered ? data.size() : buf.size()) << "\n";
     return true;
 }
 
@@ -14359,7 +14445,7 @@ Value gameGetClientInfo(int clientNo) {
     // vm_f_get_client_info (0x804d478): mapping with id/client_no/alive/peek/
     // time_stamp/.../local_address/local_port/remote_address/remote_port/
     // remain_send_bytes; empty mapping when the client slot does not exist.
-    auto mp = std::make_shared<MappingValue>();
+    auto mp = lpc::Ref<MappingValue>(new MappingValue());
     GameClient cl;
     bool found = false;
     {

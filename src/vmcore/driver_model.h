@@ -44,7 +44,7 @@ struct TimerEntry {
     // Non-null when the callback is an EFUN closure ((: call_other, ob,
     // "fn" :)): the fire runs the efun on a dedicated process instead of
     // resolving `callback` in the owner's program table.
-    std::shared_ptr<ClosureValue> efunCb;
+    lpc::Ref<ClosureValue> efunCb;
     std::shared_ptr<std::atomic<bool>> cancelled;
 };
 std::shared_ptr<TimerEntry> timerFindByName(const std::string& name);
@@ -57,8 +57,8 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e);
 int64_t timerSchedule(const std::string& name, const std::string& callback,
                       VmObject* owner, int64_t timeoutSecs,
                       std::vector<Value> boundArgs,
-                      const std::shared_ptr<ClosureValue>& efunCb =
-                          std::shared_ptr<ClosureValue>());
+                      const lpc::Ref<ClosureValue>& efunCb =
+                          lpc::Ref<ClosureValue>());
 // get_timer's "timeout": the accumulated-ticks walk of the ordered list,
 // in seconds (the matched timer's absolute trigger offset from now).
 double timerRemainingSecs(const std::shared_ptr<TimerEntry>& e);
@@ -73,7 +73,7 @@ Value vmLoadObjectValue(const std::string& vpath,
 Value vmCloneObjectValue(const std::string& vpath,
                          const std::vector<Value>& createArgs);
 // vm_callFunPtr: invoke a closure through its OWNER's current table.
-Value vmInvokeClosure(VmPcb* pcb, const std::shared_ptr<ClosureValue>& cl,
+Value vmInvokeClosure(VmPcb* pcb, const lpc::Ref<ClosureValue>& cl,
                       const std::vector<Value>& extra);
 
 // ---- minilpc (the anti-cheat challenge source evaluator; original_vm.cpp)

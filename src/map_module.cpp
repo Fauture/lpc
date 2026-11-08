@@ -31,7 +31,7 @@ int64_t valToInt(const Value& v) {
 
 std::string valToStr(const Value& v) {
     if (v.index() == 4) return std::get<SharedString>(v);
-    if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+    if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
     return "";
 }
 } // namespace
@@ -88,7 +88,7 @@ Value MapModule::allocateId(const Value& objVal) {
     if (idPool_.empty() || poolSize_ <= 0) return make_int(0);
     std::string key;
     if (objVal.index() == 7) {
-        key = std::get<std::shared_ptr<ObjectValue>>(objVal)->programName;
+        key = std::get<lpc::Ref<ObjectValue>>(objVal)->programName;
     }
     if (key.empty()) return make_int(0);
     // scan the bitmap for a free slot
@@ -179,7 +179,7 @@ Value MapModule::getObjectById(const Value& idVal) {
         }
     }
     if (key == "<this>" || key == ".") return make_int(0);
-    auto ov = std::make_shared<ObjectValue>();
+    auto ov = lpc::make_ref<ObjectValue>();
     ov->programName = key;
     // Bind the LIVE object: is_object() (op-36) tests ov->alive, and method
     // calls need vmObj — a bare-name reference answers is_object()==0, which
@@ -304,7 +304,7 @@ Value MapModule::getMapInfo(const Value& mapIndexVal) {
     std::lock_guard<std::mutex> lk(g_mapMutex);
     MapInfo* m = getMapInfoByValue(mapIndexVal);
     if (!m) return make_int(0);
-    auto mp = std::make_shared<MappingValue>();
+    auto mp = lpc::Ref<MappingValue>(new MappingValue());
     mp->insert(make_string("map_name"), make_string(m->name));
     mp->insert(make_string("map_id"), make_int(m->mapId));
     mp->insert(make_string("map_index"), make_int(static_cast<int>(findMapIndexByPtr(m))));
@@ -321,11 +321,11 @@ int MapModule::findMapIndexByPtr(const MapInfo* m) const {
 
 Value MapModule::getAllMap() {
     std::lock_guard<std::mutex> lk(g_mapMutex);
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (size_t i = 1; i < allMap_.size(); ++i) {
         if (!allMap_[i]) continue;
         MapInfo* m = allMap_[i];
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         mp->insert(make_string("map_name"), make_string(m->name));
         mp->insert(make_string("map_id"), make_int(m->mapId));
         mp->insert(make_string("map_index"), make_int(static_cast<int>(i)));
@@ -512,7 +512,7 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
         }
         return make_array();
     }
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     if (args.size() >= 3) {
         // per-cell: array of ids
         int x = static_cast<int>(valToInt(args[1]));
@@ -526,7 +526,7 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
         for (int bx = 0; bx < m->xblocks; ++bx) {
             for (int by = 0; by < m->yblocks; ++by) {
                 for (MapObj* ob = m->cells[bx * m->yblocks + by]; ob; ob = ob->next) {
-                    auto e = std::make_shared<ArrayValue>();
+                    auto e = lpc::Ref<ArrayValue>(new ArrayValue());
                     e->items.push_back(make_int(ob->id));
                     e->items.push_back(make_int(ob->x));
                     e->items.push_back(make_int(ob->y));
@@ -540,7 +540,7 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
             if (n5++ < 60) {
                 std::string ids;
                 for (size_t k = 0; k < arr->items.size() && k < 6; ++k) {
-                    auto& e = std::get<std::shared_ptr<ArrayValue>>(arr->items[k])->items;
+                    auto& e = std::get<lpc::Ref<ArrayValue>>(arr->items[k])->items;
                     ids += " " + std::to_string(std::get<int64_t>(e[0]));
                 }
                 std::cerr << "[gfm] map=" << m->name << " objs=" << arr->items.size()
@@ -585,13 +585,13 @@ Value MapModule::newViewPoint(const std::vector<Value>& args) {
         for (int64_t i : v) if (i == id) return true;
         return false;
     };
-    auto app = std::make_shared<ArrayValue>();
-    auto dis = std::make_shared<ArrayValue>();
+    auto app = lpc::Ref<ArrayValue>(new ArrayValue());
+    auto dis = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int64_t id : newW)
         if (!has(oldW, id)) app->items.push_back(make_int(id));
     for (int64_t id : oldW)
         if (!has(newW, id)) dis->items.push_back(make_int(id));
-    auto mp = std::make_shared<MappingValue>();
+    auto mp = lpc::Ref<MappingValue>(new MappingValue());
     mp->insert(make_string("app"), Value{app});
     mp->insert(make_string("dis"), Value{dis});
     return Value{mp};
@@ -638,7 +638,7 @@ Value MapModule::getSightByKey(const std::string& objKey) {
                 int xb2 = (x >> 3) + 4; if (xb2 >= m->xblocks) xb2 = m->xblocks - 1;
                 int yb1 = (y >> 3) - 3; if (yb1 < 0) yb1 = 0;
                 int yb2 = (y >> 3) + 3; if (yb2 >= m->yblocks) yb2 = m->yblocks - 1;
-                auto arr = std::make_shared<ArrayValue>();
+                auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
                 for (int bx = xb1; bx <= xb2; ++bx)
                     for (int by = yb1; by <= yb2; ++by)
                         for (MapObj* o2 = m->cells[bx * m->yblocks + by]; o2;
@@ -664,7 +664,7 @@ Value MapModule::getInSight(const std::vector<Value>& args) {
     int xb2 = (x >> 3) + 4; if (xb2 >= m->xblocks) xb2 = m->xblocks - 1;
     int yb1 = (y >> 3) - 3; if (yb1 < 0) yb1 = 0;
     int yb2 = (y >> 3) + 3; if (yb2 >= m->yblocks) yb2 = m->yblocks - 1;
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int bx = xb1; bx <= xb2; ++bx) {
         for (int by = yb1; by <= yb2; ++by) {
             for (MapObj* ob = m->cells[bx * m->yblocks + by]; ob; ob = ob->next)
@@ -679,7 +679,7 @@ Value MapModule::getIdInMap(const std::vector<Value>& args) {
     if (args.empty()) return make_array();
     int64_t id = valToInt(args[0]);
     std::lock_guard<std::mutex> lk(g_mapMutex);
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     if (args.size() >= 2) {
         MapInfo* m = getMapInfoByValue(args[1]);
         if (!m) return make_array();
@@ -704,7 +704,7 @@ Value MapModule::getIdInMap(const std::vector<Value>& args) {
 
 Value MapModule::getAllObjects() {
     std::lock_guard<std::mutex> lk(g_mapMutex);
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     for (int64_t off = 0; off < poolSize_; ++off) {
         int64_t bi = off >> 6;
         int b = static_cast<int>(off & 63);
@@ -751,7 +751,7 @@ Value MapModule::readMapInfo(const std::vector<Value>& args) {
     w = ((w & 0xFF) << 24) | ((w & 0xFF00) << 8) | ((w >> 8) & 0xFF00) | ((w >> 24) & 0xFF);
     h = ((h & 0xFF) << 24) | ((h & 0xFF00) << 8) | ((h >> 8) & 0xFF00) | ((h >> 24) & 0xFF);
     if (w <= 0 || h <= 0 || w > 16384 || h > 16384) return make_int(0);
-    auto mp = std::make_shared<MappingValue>();
+    auto mp = lpc::Ref<MappingValue>(new MappingValue());
     mp->insert(make_string("width"), make_int(w));
     mp->insert(make_string("height"), make_int(h));
     std::string obs = buf.substr(12);
@@ -809,7 +809,7 @@ Value MapModule::checkSteps(const std::vector<Value>& args) {
     int x = static_cast<int>(valToInt(args[1]));
     int y = static_cast<int>(valToInt(args[2]));
     if (args[3].index() != 5) return make_int(1);   // no path data: allow
-    const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[3])->items;
+    const auto& items = std::get<lpc::Ref<ArrayValue>>(args[3])->items;
     int moveType = (args.size() >= 6) ? static_cast<int>(valToInt(args[5])) : 0;
     bool fly = (moveType == 1);
     size_t n = items.size() / 2;
@@ -850,11 +850,11 @@ bool MapModule::pointInPoly(int x, int y, const std::vector<int>& poly) {
 // original clamps the polygon coordinates to the map size, computes the
 // bounding block range and walks every cell in it.
 Value MapModule::getInPolygens(const std::vector<Value>& args) {
-    auto out = std::make_shared<ArrayValue>();
+    auto out = lpc::Ref<ArrayValue>(new ArrayValue());
     if (args.size() < 2 || args[1].index() != 5) return out;
     MapInfo* m = findMapIndex(static_cast<int>(valToInt(args[0])));
     if (!m) return out;
-    const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[1])->items;
+    const auto& items = std::get<lpc::Ref<ArrayValue>>(args[1])->items;
     std::vector<int> poly;
     poly.reserve(items.size());
     for (const auto& v : items) poly.push_back(static_cast<int>(valToInt(v)));

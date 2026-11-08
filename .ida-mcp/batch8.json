@@ -1,0 +1,4089 @@
+{
+  "result": [
+    {
+      "target": "0x8075ac4",
+      "addr": "0x8075ac4",
+      "name": "vm_cmdOpenAdventrueBox",
+      "analysis": {
+        "size": "0x4c",
+        "prototype": "int __usercall@<eax>(Vm_Program_T *@<ebx>, int clientNo, _WORD *, int)",
+        "decompile": "int __usercall vm_cmdOpenAdventrueBox@<eax>(Vm_Program_T *a1@<ebx>, int clientNo, _WORD *a3, int a4)\n{\n  unsigned __int16 v6; // ax\n\n  if ( a4 <= 1 ) /*0x8075ad0*/\n    return 0; /*0x8075ad0*/\n  v6 = __ROR2__(*a3, 8); /*0x8075adf*/\n  if ( a4 - 2 < 0 ) /*0x8075ae2*/\n    return 0; /*0x8075b0c*/\n  vm_apply(a1, 0, 0, 0, 0, \"cmd_open_adventrue_box\", 2, 88, clientNo, 88, v6); /*0x8075afe*/\n  return 1; /*0x8075b08*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8075ac5",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7bdd",
+            "length": 22,
+            "string": "cmd_open_adventrue_box"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8075ac7",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8075acd",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8075ad8",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8075adc",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8075ae4",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8075ae8",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8075aed",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8075aef",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8075af1",
+            "value": "0x82a7bdd",
+            "decimal": 137001949
+          },
+          {
+            "addr": "0x8075af6",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8075af8",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8075afa",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8075afc",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8075b03",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 14,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8075ac4",
+            "end": "0x8075ad2",
+            "size": 14,
+            "type": 0,
+            "successors": [
+              "0x8075ad2",
+              "0x8075b0c"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x8075ad2",
+            "end": "0x8075ae4",
+            "size": 18,
+            "type": 0,
+            "successors": [
+              "0x8075ae4",
+              "0x8075b0c"
+            ],
+            "predecessors": [
+              "0x8075ac4"
+            ]
+          },
+          {
+            "start": "0x8075ae4",
+            "end": "0x8075b0a",
+            "size": 38,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8075ad2"
+            ]
+          },
+          {
+            "start": "0x8075b0c",
+            "end": "0x8075b10",
+            "size": 4,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8075ac4",
+              "0x8075ad2"
+            ]
+          }
+        ],
+        "basic_block_count": 4,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x8075fdc",
+      "addr": "0x8075fdc",
+      "name": "vm_cmdRequestNewDeck",
+      "analysis": {
+        "size": "0xa9",
+        "prototype": "int __cdecl(int clientNo, _WORD *, int)",
+        "decompile": "int __cdecl vm_cmdRequestNewDeck(int clientNo, _WORD *a2, int a3)\n{\n  unsigned __int8 *v5; // edx\n  signed int v6; // esi\n  int v7; // ebx\n  int result; // eax\n  int group; // [esp+Ch] [ebp-11Ch]\n  char name[280]; // [esp+10h] [ebp-118h] BYREF\n\n  v5 = (unsigned __int8 *)a2; /*0x8075fee*/\n  group = 0; /*0x8075ff1*/\n  if ( a3 <= 1 || (v5 = (unsigned __int8 *)(a2 + 1), group = (unsigned __int16)__ROR2__(*a2, 8), a3 - 2 <= 0) ) /*0x8076016*/\n  {\n    v7 = -1; /*0x807607c*/\n    v6 = 0; /*0x8076081*/\n  }\n  else\n  {\n    v6 = *v5; /*0x8076018*/\n    v7 = a3 - 3; /*0x807601b*/\n    v5 = (unsigned __int8 *)a2 + 3; /*0x807601c*/\n  }\n  if ( v6 > v7 ) /*0x807601f*/\n  {\n    v6 = 0; /*0x8076021*/\n    v7 = -1; /*0x8076023*/\n  }\n  memcpy(name, v5, v6); /*0x8076032*/\n  result = 0; /*0x807603a*/\n  name[v6] = 0; /*0x807603e*/\n  if ( v7 - v6 >= 0 ) /*0x8076046*/\n  {\n    vm_apply((Vm_Program_T *)v7, 0, 0, 0, 0, \"cmd_request_new_deck\", 3, 88, clientNo, 88, group, 357, name); /*0x807606a*/\n    return 1; /*0x807606f*/\n  }\n  return result; /*0x8076074*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8075fdd",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 2,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7c91",
+            "length": 20,
+            "string": "cmd_request_new_deck"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8075fe2",
+            "value": "0x11c",
+            "decimal": 284
+          },
+          {
+            "addr": "0x8075feb",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8075ff1",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8075ffd",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076000",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076007",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076023",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8076037",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x807603e",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076049",
+            "value": "0x165",
+            "decimal": 357
+          },
+          {
+            "addr": "0x8076054",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076059",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x807605b",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x807605d",
+            "value": "0x82a7c91",
+            "decimal": 137002129
+          },
+          {
+            "addr": "0x8076062",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076064",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076066",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076068",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807606f",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x807607c",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          }
+        ],
+        "constant_count": 20,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8075fdc",
+            "end": "0x8075ffd",
+            "size": 33,
+            "type": 0,
+            "successors": [
+              "0x8075ffd",
+              "0x807607c"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x8075ffd",
+            "end": "0x8076018",
+            "size": 27,
+            "type": 0,
+            "successors": [
+              "0x8076018",
+              "0x807607c"
+            ],
+            "predecessors": [
+              "0x8075fdc"
+            ]
+          },
+          {
+            "start": "0x8076018",
+            "end": "0x807601d",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x807601d"
+            ],
+            "predecessors": [
+              "0x8075ffd"
+            ]
+          },
+          {
+            "start": "0x807601d",
+            "end": "0x8076021",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8076021",
+              "0x8076028"
+            ],
+            "predecessors": [
+              "0x8076018",
+              "0x807607c"
+            ]
+          },
+          {
+            "start": "0x8076021",
+            "end": "0x8076028",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x8076028"
+            ],
+            "predecessors": [
+              "0x807601d"
+            ]
+          },
+          {
+            "start": "0x8076028",
+            "end": "0x8076048",
+            "size": 32,
+            "type": 0,
+            "successors": [
+              "0x8076048",
+              "0x8076074"
+            ],
+            "predecessors": [
+              "0x807601d",
+              "0x8076021"
+            ]
+          },
+          {
+            "start": "0x8076048",
+            "end": "0x8076074",
+            "size": 44,
+            "type": 0,
+            "successors": [
+              "0x8076074"
+            ],
+            "predecessors": [
+              "0x8076028"
+            ]
+          },
+          {
+            "start": "0x8076074",
+            "end": "0x807607c",
+            "size": 8,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076028",
+              "0x8076048"
+            ]
+          },
+          {
+            "start": "0x807607c",
+            "end": "0x8076085",
+            "size": 9,
+            "type": 0,
+            "successors": [
+              "0x807601d"
+            ],
+            "predecessors": [
+              "0x8075fdc",
+              "0x8075ffd"
+            ]
+          }
+        ],
+        "basic_block_count": 9,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x8076088",
+      "addr": "0x8076088",
+      "name": "vm_cmdRequestBuildDeck",
+      "analysis": {
+        "size": "0x17c",
+        "prototype": "int __usercall@<eax>(unsigned int@<esi>, int clientNo, _WORD *, int)",
+        "decompile": "int __usercall vm_cmdRequestBuildDeck@<eax>(unsigned int a1@<esi>, int clientNo, _WORD *a3, int a4)\n{\n  char *v6; // edi\n  Vm_Array_T *v7; // ebx\n  int result; // eax\n  signed int v9; // esi\n  int v10; // ebx\n  char *v11; // edi\n  Vm_String_T *v12; // eax\n  bool v13; // zf\n  int i; // [esp+0h] [ebp-128h]\n  int count; // [esp+4h] [ebp-124h]\n  int no; // [esp+8h] [ebp-120h]\n  Vm_Array_T *pArray; // [esp+Ch] [ebp-11Ch]\n  char card[280]; // [esp+10h] [ebp-118h] BYREF\n\n  if ( a4 <= 1 ) /*0x807609d*/\n    return 0; /*0x807609d*/\n  no = (unsigned __int16)__ROR2__(*a3, 8); /*0x80760b7*/\n  if ( a4 - 2 <= 1 ) /*0x80760bd*/\n    return 0; /*0x80760bd*/\n  v6 = (char *)(a3 + 2); /*0x80760c3*/\n  v7 = (Vm_Array_T *)(a4 - 4); /*0x80760ce*/\n  count = (unsigned __int16)__ROR2__(a3[1], 8); /*0x80760d4*/\n  if ( a4 - 4 < 0 ) /*0x80760da*/\n    return 0; /*0x80760da*/\n  result = 0; /*0x80760e0*/\n  if ( (unsigned int)count <= 0x3F ) /*0x80760e9*/\n  {\n    pArray = vm_safeAllocateEmptyArray(a1); /*0x8076102*/\n    result = 0; /*0x8076111*/\n    if ( pArray ) /*0x8076115*/\n    {\n      i = 0; /*0x807611f*/\n      if ( count ) /*0x8076129*/\n      {\n        while ( (int)v7 > 0 ) /*0x807612e*/\n        {\n          v9 = (unsigned __int8)*v6; /*0x8076130*/\n          v10 = (int)&v7[-1].pValues + 3; /*0x8076133*/\n          v11 = v6 + 1; /*0x8076134*/\n          if ( v9 > v10 ) /*0x8076137*/\n          {\n            v9 = 0; /*0x8076139*/\n            v10 = -1; /*0x807613b*/\n          }\n          memcpy(card, v11, v9); /*0x807614a*/\n          card[v9] = 0; /*0x8076155*/\n          v12 = vm_safeCopyString((const char *)v9); /*0x8076160*/\n          v6 = &v11[v9]; /*0x8076165*/\n          v7 = (Vm_Array_T *)(v10 - v9); /*0x8076167*/\n          if ( !v12 ) /*0x8076170*/\n            goto LABEL_15; /*0x8076170*/\n          pArray->pValues[i]->v.number = (int)v12; /*0x8076184*/\n          pArray->pValues[i]->type = 4; /*0x8076193*/\n          v13 = count-- == 1; /*0x8076198*/\n          ++i; /*0x807619e*/\n          if ( v13 ) /*0x80761a4*/\n            break; /*0x80761a4*/\n        }\n      }\n      if ( (int)v7 < 0 || (v7 = (Vm_Array_T *)count, count > 0) ) /*0x80761b2*/\n      {\nLABEL_15:\n        vm_unrefArray(v7); /*0x80761b4*/\n        return 0; /*0x80761cd*/\n      }\n      vm_apply((Vm_Program_T *)count, 0, 0, 0, 0, \"cmd_request_build_deck\", 3, 88, clientNo, 88, no, 936, pArray); /*0x80761f5*/\n      return 1; /*0x80761fa*/\n    }\n  }\n  return result; /*0x80760eb*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8076089",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809b0e8",
+            "name": "vm_safeAllocateEmptyArray",
+            "type": "internal"
+          },
+          {
+            "addr": "0x808ac00",
+            "name": "vm_safeCopyString",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          },
+          {
+            "addr": "0x809b350",
+            "name": "vm_unrefArray",
+            "type": "internal"
+          },
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 5,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7ca6",
+            "length": 22,
+            "string": "cmd_request_build_deck"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x807608e",
+            "value": "0x11c",
+            "decimal": 284
+          },
+          {
+            "addr": "0x8076097",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80760a3",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80760a6",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80760ad",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80760b1",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80760c3",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80760ca",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80760ce",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80760e2",
+            "value": "0x3f",
+            "decimal": 63
+          },
+          {
+            "addr": "0x80760f4",
+            "value": "0xc",
+            "decimal": 12
+          },
+          {
+            "addr": "0x807610e",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x807611f",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807613b",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8076155",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076169",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x8076193",
+            "value": "0x4",
+            "decimal": 4
+          },
+          {
+            "addr": "0x80761b4",
+            "value": "0xc",
+            "decimal": 12
+          },
+          {
+            "addr": "0x80761d4",
+            "value": "0x3a8",
+            "decimal": 936
+          },
+          {
+            "addr": "0x80761df",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80761e4",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80761e6",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x80761e8",
+            "value": "0x82a7ca6",
+            "decimal": 137002150
+          },
+          {
+            "addr": "0x80761ed",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80761ef",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80761f1",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80761f3",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80761fa",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 28,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8076088",
+            "end": "0x80760a3",
+            "size": 27,
+            "type": 0,
+            "successors": [
+              "0x80760a3",
+              "0x80761c4"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x80760a3",
+            "end": "0x80760c3",
+            "size": 32,
+            "type": 0,
+            "successors": [
+              "0x80760c3",
+              "0x80761c4"
+            ],
+            "predecessors": [
+              "0x8076088"
+            ]
+          },
+          {
+            "start": "0x80760c3",
+            "end": "0x80760e0",
+            "size": 29,
+            "type": 0,
+            "successors": [
+              "0x80760e0",
+              "0x80761c4"
+            ],
+            "predecessors": [
+              "0x80760a3"
+            ]
+          },
+          {
+            "start": "0x80760e0",
+            "end": "0x80760eb",
+            "size": 11,
+            "type": 0,
+            "successors": [
+              "0x80760eb",
+              "0x80760f4"
+            ],
+            "predecessors": [
+              "0x80760c3"
+            ]
+          },
+          {
+            "start": "0x80760eb",
+            "end": "0x80760f3",
+            "size": 8,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80760e0",
+              "0x80760f4",
+              "0x80761ce"
+            ]
+          },
+          {
+            "start": "0x80760f4",
+            "end": "0x8076117",
+            "size": 35,
+            "type": 0,
+            "successors": [
+              "0x80760eb",
+              "0x8076117"
+            ],
+            "predecessors": [
+              "0x80760e0"
+            ]
+          },
+          {
+            "start": "0x8076117",
+            "end": "0x807612b",
+            "size": 20,
+            "type": 0,
+            "successors": [
+              "0x807612b",
+              "0x80761a6"
+            ],
+            "predecessors": [
+              "0x80760f4"
+            ]
+          },
+          {
+            "start": "0x807612b",
+            "end": "0x807612c",
+            "size": 1,
+            "type": 0,
+            "successors": [
+              "0x807612c"
+            ],
+            "predecessors": [
+              "0x8076117"
+            ]
+          },
+          {
+            "start": "0x807612c",
+            "end": "0x8076130",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8076130",
+              "0x80761a6"
+            ],
+            "predecessors": [
+              "0x807612b",
+              "0x8076172"
+            ]
+          },
+          {
+            "start": "0x8076130",
+            "end": "0x8076139",
+            "size": 9,
+            "type": 0,
+            "successors": [
+              "0x8076139",
+              "0x8076140"
+            ],
+            "predecessors": [
+              "0x807612c"
+            ]
+          },
+          {
+            "start": "0x8076139",
+            "end": "0x8076140",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x8076140"
+            ],
+            "predecessors": [
+              "0x8076130"
+            ]
+          },
+          {
+            "start": "0x8076140",
+            "end": "0x8076172",
+            "size": 50,
+            "type": 0,
+            "successors": [
+              "0x8076172",
+              "0x80761b4"
+            ],
+            "predecessors": [
+              "0x8076130",
+              "0x8076139"
+            ]
+          },
+          {
+            "start": "0x8076172",
+            "end": "0x80761a6",
+            "size": 52,
+            "type": 0,
+            "successors": [
+              "0x807612c",
+              "0x80761a6"
+            ],
+            "predecessors": [
+              "0x8076140"
+            ]
+          },
+          {
+            "start": "0x80761a6",
+            "end": "0x80761aa",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x80761aa",
+              "0x80761b4"
+            ],
+            "predecessors": [
+              "0x8076117",
+              "0x807612c",
+              "0x8076172"
+            ]
+          },
+          {
+            "start": "0x80761aa",
+            "end": "0x80761b4",
+            "size": 10,
+            "type": 0,
+            "successors": [
+              "0x80761b4",
+              "0x80761ce"
+            ],
+            "predecessors": [
+              "0x80761a6"
+            ]
+          },
+          {
+            "start": "0x80761b4",
+            "end": "0x80761c4",
+            "size": 16,
+            "type": 0,
+            "successors": [
+              "0x80761c4"
+            ],
+            "predecessors": [
+              "0x8076140",
+              "0x80761a6",
+              "0x80761aa"
+            ]
+          },
+          {
+            "start": "0x80761c4",
+            "end": "0x80761ce",
+            "size": 10,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076088",
+              "0x80760a3",
+              "0x80760c3",
+              "0x80761b4"
+            ]
+          },
+          {
+            "start": "0x80761ce",
+            "end": "0x8076204",
+            "size": 54,
+            "type": 0,
+            "successors": [
+              "0x80760eb"
+            ],
+            "predecessors": [
+              "0x80761aa"
+            ]
+          }
+        ],
+        "basic_block_count": 18,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x8076204",
+      "addr": "0x8076204",
+      "name": "vm_cmdRequestDeckInfo",
+      "analysis": {
+        "size": "0x4c",
+        "prototype": "int __usercall@<eax>(Vm_Program_T *@<ebx>, int clientNo, _WORD *, int)",
+        "decompile": "int __usercall vm_cmdRequestDeckInfo@<eax>(Vm_Program_T *a1@<ebx>, int clientNo, _WORD *a3, int a4)\n{\n  unsigned __int16 v6; // ax\n\n  if ( a4 <= 1 ) /*0x8076210*/\n    return 0; /*0x8076210*/\n  v6 = __ROR2__(*a3, 8); /*0x807621f*/\n  if ( a4 - 2 < 0 ) /*0x8076222*/\n    return 0; /*0x807624c*/\n  vm_apply(a1, 0, 0, 0, 0, \"cmd_request_deck_info\", 2, 88, clientNo, 88, v6); /*0x807623e*/\n  return 1; /*0x8076248*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8076205",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7cbd",
+            "length": 21,
+            "string": "cmd_request_deck_info"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8076207",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x807620d",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076218",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x807621c",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076224",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076228",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x807622d",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x807622f",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076231",
+            "value": "0x82a7cbd",
+            "decimal": 137002173
+          },
+          {
+            "addr": "0x8076236",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076238",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807623a",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807623c",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076243",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 14,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8076204",
+            "end": "0x8076212",
+            "size": 14,
+            "type": 0,
+            "successors": [
+              "0x8076212",
+              "0x807624c"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x8076212",
+            "end": "0x8076224",
+            "size": 18,
+            "type": 0,
+            "successors": [
+              "0x8076224",
+              "0x807624c"
+            ],
+            "predecessors": [
+              "0x8076204"
+            ]
+          },
+          {
+            "start": "0x8076224",
+            "end": "0x807624a",
+            "size": 38,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076212"
+            ]
+          },
+          {
+            "start": "0x807624c",
+            "end": "0x8076250",
+            "size": 4,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076204",
+              "0x8076212"
+            ]
+          }
+        ],
+        "basic_block_count": 4,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x80762d8",
+      "addr": "0x80762d8",
+      "name": "vm_cmdRequestDeleteDeck",
+      "analysis": {
+        "size": "0x4c",
+        "prototype": "int __usercall@<eax>(Vm_Program_T *@<ebx>, int clientNo, _WORD *, int)",
+        "decompile": "int __usercall vm_cmdRequestDeleteDeck@<eax>(Vm_Program_T *a1@<ebx>, int clientNo, _WORD *a3, int a4)\n{\n  unsigned __int16 v6; // ax\n\n  if ( a4 <= 1 ) /*0x80762e4*/\n    return 0; /*0x80762e4*/\n  v6 = __ROR2__(*a3, 8); /*0x80762f3*/\n  if ( a4 - 2 < 0 ) /*0x80762f6*/\n    return 0; /*0x8076320*/\n  vm_apply(a1, 0, 0, 0, 0, \"cmd_request_delete_deck\", 2, 88, clientNo, 88, v6); /*0x8076312*/\n  return 1; /*0x807631c*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x80762d9",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7d10",
+            "length": 23,
+            "string": "cmd_request_delete_deck"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x80762db",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80762e1",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80762ec",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80762f0",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80762f8",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80762fc",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076301",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076303",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076305",
+            "value": "0x82a7d10",
+            "decimal": 137002256
+          },
+          {
+            "addr": "0x807630a",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807630c",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807630e",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076310",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076317",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 14,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x80762d8",
+            "end": "0x80762e6",
+            "size": 14,
+            "type": 0,
+            "successors": [
+              "0x80762e6",
+              "0x8076320"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x80762e6",
+            "end": "0x80762f8",
+            "size": 18,
+            "type": 0,
+            "successors": [
+              "0x80762f8",
+              "0x8076320"
+            ],
+            "predecessors": [
+              "0x80762d8"
+            ]
+          },
+          {
+            "start": "0x80762f8",
+            "end": "0x807631e",
+            "size": 38,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80762e6"
+            ]
+          },
+          {
+            "start": "0x8076320",
+            "end": "0x8076324",
+            "size": 4,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80762d8",
+              "0x80762e6"
+            ]
+          }
+        ],
+        "basic_block_count": 4,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x807642c",
+      "addr": "0x807642c",
+      "name": "vm_cmdRequestRenameDeck",
+      "analysis": {
+        "size": "0xa9",
+        "prototype": "int __cdecl(int clientNo, _WORD *, int)",
+        "decompile": "int __cdecl vm_cmdRequestRenameDeck(int clientNo, _WORD *a2, int a3)\n{\n  unsigned __int8 *v5; // edx\n  signed int v6; // esi\n  int v7; // ebx\n  int result; // eax\n  int no; // [esp+Ch] [ebp-11Ch]\n  char name[280]; // [esp+10h] [ebp-118h] BYREF\n\n  v5 = (unsigned __int8 *)a2; /*0x807643e*/\n  no = 0; /*0x8076441*/\n  if ( a3 <= 1 || (v5 = (unsigned __int8 *)(a2 + 1), no = (unsigned __int16)__ROR2__(*a2, 8), a3 - 2 <= 0) ) /*0x8076466*/\n  {\n    v7 = -1; /*0x80764cc*/\n    v6 = 0; /*0x80764d1*/\n  }\n  else\n  {\n    v6 = *v5; /*0x8076468*/\n    v7 = a3 - 3; /*0x807646b*/\n    v5 = (unsigned __int8 *)a2 + 3; /*0x807646c*/\n  }\n  if ( v6 > v7 ) /*0x807646f*/\n  {\n    v6 = 0; /*0x8076471*/\n    v7 = -1; /*0x8076473*/\n  }\n  memcpy(name, v5, v6); /*0x8076482*/\n  result = 0; /*0x807648a*/\n  name[v6] = 0; /*0x807648e*/\n  if ( v7 - v6 >= 0 ) /*0x8076496*/\n  {\n    vm_apply((Vm_Program_T *)v7, 0, 0, 0, 0, \"cmd_request_rename_deck\", 3, 88, clientNo, 88, no, 357, name); /*0x80764ba*/\n    return 1; /*0x80764bf*/\n  }\n  return result; /*0x80764c4*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x807642d",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 2,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7d5c",
+            "length": 23,
+            "string": "cmd_request_rename_deck"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8076432",
+            "value": "0x11c",
+            "decimal": 284
+          },
+          {
+            "addr": "0x807643b",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076441",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807644d",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076450",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076457",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076473",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8076487",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x807648e",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076499",
+            "value": "0x165",
+            "decimal": 357
+          },
+          {
+            "addr": "0x80764a4",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80764a9",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80764ab",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x80764ad",
+            "value": "0x82a7d5c",
+            "decimal": 137002332
+          },
+          {
+            "addr": "0x80764b2",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80764b4",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80764b6",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80764b8",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80764bf",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80764cc",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          }
+        ],
+        "constant_count": 20,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x807642c",
+            "end": "0x807644d",
+            "size": 33,
+            "type": 0,
+            "successors": [
+              "0x807644d",
+              "0x80764cc"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x807644d",
+            "end": "0x8076468",
+            "size": 27,
+            "type": 0,
+            "successors": [
+              "0x8076468",
+              "0x80764cc"
+            ],
+            "predecessors": [
+              "0x807642c"
+            ]
+          },
+          {
+            "start": "0x8076468",
+            "end": "0x807646d",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x807646d"
+            ],
+            "predecessors": [
+              "0x807644d"
+            ]
+          },
+          {
+            "start": "0x807646d",
+            "end": "0x8076471",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8076471",
+              "0x8076478"
+            ],
+            "predecessors": [
+              "0x8076468",
+              "0x80764cc"
+            ]
+          },
+          {
+            "start": "0x8076471",
+            "end": "0x8076478",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x8076478"
+            ],
+            "predecessors": [
+              "0x807646d"
+            ]
+          },
+          {
+            "start": "0x8076478",
+            "end": "0x8076498",
+            "size": 32,
+            "type": 0,
+            "successors": [
+              "0x8076498",
+              "0x80764c4"
+            ],
+            "predecessors": [
+              "0x807646d",
+              "0x8076471"
+            ]
+          },
+          {
+            "start": "0x8076498",
+            "end": "0x80764c4",
+            "size": 44,
+            "type": 0,
+            "successors": [
+              "0x80764c4"
+            ],
+            "predecessors": [
+              "0x8076478"
+            ]
+          },
+          {
+            "start": "0x80764c4",
+            "end": "0x80764cc",
+            "size": 8,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076478",
+              "0x8076498"
+            ]
+          },
+          {
+            "start": "0x80764cc",
+            "end": "0x80764d5",
+            "size": 9,
+            "type": 0,
+            "successors": [
+              "0x807646d"
+            ],
+            "predecessors": [
+              "0x807642c",
+              "0x807644d"
+            ]
+          }
+        ],
+        "basic_block_count": 9,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x8076508",
+      "addr": "0x8076508",
+      "name": "vm_cmdRequestStartMatchCardGame",
+      "analysis": {
+        "size": "0x67",
+        "prototype": "int __fastcall(unsigned __int8 *p, int mlen, int clientNo, _WORD *, int)",
+        "decompile": "int __fastcall vm_cmdRequestStartMatchCardGame(unsigned __int8 *p, int mlen, int clientNo, _WORD *a4, int a5)\n{\n  Vm_Program_T *v5; // ebx\n  unsigned __int16 v6; // ax\n\n  if ( a5 <= 1 ) /*0x8076516*/\n    return 0; /*0x8076516*/\n  v5 = (Vm_Program_T *)(unsigned __int16)__ROR2__(*a4, 8); /*0x8076529*/\n  if ( a5 - 2 <= 1 ) /*0x807652c*/\n    return 0; /*0x807652c*/\n  v6 = __ROR2__(a4[1], 8); /*0x8076538*/\n  if ( a5 - 4 < 0 ) /*0x807653b*/\n    return 0; /*0x8076568*/\n  vm_apply(v5, 0, 0, 0, 0, \"cmd_request_start_match_card_game\", 3, 88, clientNo, 88, v5, 88, v6, p); /*0x8076557*/\n  return 1; /*0x8076561*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8076509",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a8e18",
+            "length": 33,
+            "string": "cmd_request_start_match_card_game"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8076510",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076518",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x807651b",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076522",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076526",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076531",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076535",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x807653e",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076541",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076546",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076548",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x807654a",
+            "value": "0x82a8e18",
+            "decimal": 137006616
+          },
+          {
+            "addr": "0x807654f",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076551",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076553",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076555",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807655c",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 17,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8076508",
+            "end": "0x8076518",
+            "size": 16,
+            "type": 0,
+            "successors": [
+              "0x8076518",
+              "0x8076568"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x8076518",
+            "end": "0x807652e",
+            "size": 22,
+            "type": 0,
+            "successors": [
+              "0x807652e",
+              "0x8076568"
+            ],
+            "predecessors": [
+              "0x8076508"
+            ]
+          },
+          {
+            "start": "0x807652e",
+            "end": "0x807653d",
+            "size": 15,
+            "type": 0,
+            "successors": [
+              "0x807653d",
+              "0x8076568"
+            ],
+            "predecessors": [
+              "0x8076518"
+            ]
+          },
+          {
+            "start": "0x807653d",
+            "end": "0x8076566",
+            "size": 41,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807652e"
+            ]
+          },
+          {
+            "start": "0x8076568",
+            "end": "0x807656f",
+            "size": 7,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076508",
+              "0x8076518",
+              "0x807652e"
+            ]
+          }
+        ],
+        "basic_block_count": 5,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x8076774",
+      "addr": "0x8076774",
+      "name": "vm_cmdRequestBuyCardPackage",
+      "analysis": {
+        "size": "0x64",
+        "prototype": "int __usercall@<eax>(Vm_Program_T *@<ebx>, int clientNo, int, int)",
+        "decompile": "int __usercall vm_cmdRequestBuyCardPackage@<eax>(Vm_Program_T *a1@<ebx>, int clientNo, int a3, int a4)\n{\n  unsigned __int16 v6; // ax\n  int v7; // ecx\n  int v8; // ecx\n\n  if ( a4 <= 1 ) /*0x8076783*/\n    return 0; /*0x8076783*/\n  v6 = __ROR2__(*(_WORD *)a3, 8); /*0x8076796*/\n  if ( a4 - 2 <= 3 ) /*0x8076799*/\n    return 0; /*0x8076799*/\n  v7 = *(_DWORD *)(a3 + 2); /*0x807679b*/\n  LOWORD(v7) = __ROR2__(v7, 8); /*0x807679d*/\n  v8 = __ROR4__(v7, 16); /*0x80767a1*/\n  LOWORD(v8) = __ROR2__(v8, 8); /*0x80767a4*/\n  if ( a4 - 6 < 0 ) /*0x80767ab*/\n    return 0; /*0x80767d4*/\n  vm_apply(a1, 0, 0, 0, 0, \"cmd_request_buy_card_package\", 3, 88, clientNo, 88, v6, 88, v8); /*0x80767c7*/\n  return 1; /*0x80767d1*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8076775",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7dae",
+            "length": 28,
+            "string": "cmd_request_buy_card_package"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8076777",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x807677d",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076785",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076788",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x807678f",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076793",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x807679d",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80767a1",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x80767a4",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80767a8",
+            "value": "0x4",
+            "decimal": 4
+          },
+          {
+            "addr": "0x80767ae",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80767b1",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80767b6",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80767b8",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x80767ba",
+            "value": "0x82a7dae",
+            "decimal": 137002414
+          },
+          {
+            "addr": "0x80767bf",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80767c1",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80767c3",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80767c5",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80767cc",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 20,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8076774",
+            "end": "0x8076785",
+            "size": 17,
+            "type": 0,
+            "successors": [
+              "0x8076785",
+              "0x80767d4"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x8076785",
+            "end": "0x807679b",
+            "size": 22,
+            "type": 0,
+            "successors": [
+              "0x807679b",
+              "0x80767d4"
+            ],
+            "predecessors": [
+              "0x8076774"
+            ]
+          },
+          {
+            "start": "0x807679b",
+            "end": "0x80767ad",
+            "size": 18,
+            "type": 0,
+            "successors": [
+              "0x80767ad",
+              "0x80767d4"
+            ],
+            "predecessors": [
+              "0x8076785"
+            ]
+          },
+          {
+            "start": "0x80767ad",
+            "end": "0x80767d3",
+            "size": 38,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807679b"
+            ]
+          },
+          {
+            "start": "0x80767d4",
+            "end": "0x80767d8",
+            "size": 4,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076774",
+              "0x8076785",
+              "0x807679b"
+            ]
+          }
+        ],
+        "basic_block_count": 5,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x80767d8",
+      "addr": "0x80767d8",
+      "name": "vm_cmdRequestOpenCardPackage",
+      "analysis": {
+        "size": "0x4c",
+        "prototype": "int __usercall@<eax>(Vm_Program_T *@<ebx>, int clientNo, _WORD *, int)",
+        "decompile": "int __usercall vm_cmdRequestOpenCardPackage@<eax>(Vm_Program_T *a1@<ebx>, int clientNo, _WORD *a3, int a4)\n{\n  unsigned __int16 v6; // ax\n\n  if ( a4 <= 1 ) /*0x80767e4*/\n    return 0; /*0x80767e4*/\n  v6 = __ROR2__(*a3, 8); /*0x80767f3*/\n  if ( a4 - 2 < 0 ) /*0x80767f6*/\n    return 0; /*0x8076820*/\n  vm_apply(a1, 0, 0, 0, 0, \"cmd_request_open_card_package\", 2, 88, clientNo, 88, v6); /*0x8076812*/\n  return 1; /*0x807681c*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x80767d9",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7dcb",
+            "length": 29,
+            "string": "cmd_request_open_card_package"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x80767db",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80767e1",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80767ec",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80767f0",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80767f8",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80767fc",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076801",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076803",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076805",
+            "value": "0x82a7dcb",
+            "decimal": 137002443
+          },
+          {
+            "addr": "0x807680a",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807680c",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807680e",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076810",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076817",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 14,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x80767d8",
+            "end": "0x80767e6",
+            "size": 14,
+            "type": 0,
+            "successors": [
+              "0x80767e6",
+              "0x8076820"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x80767e6",
+            "end": "0x80767f8",
+            "size": 18,
+            "type": 0,
+            "successors": [
+              "0x80767f8",
+              "0x8076820"
+            ],
+            "predecessors": [
+              "0x80767d8"
+            ]
+          },
+          {
+            "start": "0x80767f8",
+            "end": "0x807681e",
+            "size": 38,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80767e6"
+            ]
+          },
+          {
+            "start": "0x8076820",
+            "end": "0x8076824",
+            "size": 4,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80767d8",
+              "0x80767e6"
+            ]
+          }
+        ],
+        "basic_block_count": 4,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x807697c",
+      "addr": "0x807697c",
+      "name": "vm_cmdSelectSpecifiedCombatDeck",
+      "analysis": {
+        "size": "0x4c",
+        "prototype": "int __usercall@<eax>(Vm_Program_T *@<ebx>, int clientNo, _WORD *, int)",
+        "decompile": "int __usercall vm_cmdSelectSpecifiedCombatDeck@<eax>(Vm_Program_T *a1@<ebx>, int clientNo, _WORD *a3, int a4)\n{\n  unsigned __int16 v6; // ax\n\n  if ( a4 <= 1 ) /*0x8076988*/\n    return 0; /*0x8076988*/\n  v6 = __ROR2__(*a3, 8); /*0x8076997*/\n  if ( a4 - 2 < 0 ) /*0x807699a*/\n    return 0; /*0x80769c4*/\n  vm_apply(a1, 0, 0, 0, 0, \"cmd_select_specified_combat_deck\", 2, 88, clientNo, 88, v6); /*0x80769b6*/\n  return 1; /*0x80769c0*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x807697d",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 1,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a8fa4",
+            "length": 32,
+            "string": "cmd_select_specified_combat_deck"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x807697f",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076985",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076990",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076994",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x807699c",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80769a0",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80769a5",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x80769a7",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80769a9",
+            "value": "0x82a8fa4",
+            "decimal": 137007012
+          },
+          {
+            "addr": "0x80769ae",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80769b0",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80769b2",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80769b4",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80769bb",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 14,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x807697c",
+            "end": "0x807698a",
+            "size": 14,
+            "type": 0,
+            "successors": [
+              "0x807698a",
+              "0x80769c4"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x807698a",
+            "end": "0x807699c",
+            "size": 18,
+            "type": 0,
+            "successors": [
+              "0x807699c",
+              "0x80769c4"
+            ],
+            "predecessors": [
+              "0x807697c"
+            ]
+          },
+          {
+            "start": "0x807699c",
+            "end": "0x80769c2",
+            "size": 38,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807698a"
+            ]
+          },
+          {
+            "start": "0x80769c4",
+            "end": "0x80769c8",
+            "size": 4,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807697c",
+              "0x807698a"
+            ]
+          }
+        ],
+        "basic_block_count": 4,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x8076b0c",
+      "addr": "0x8076b0c",
+      "name": "vm_cmdStartCardActivity",
+      "analysis": {
+        "size": "0xac",
+        "prototype": "int __cdecl(int clientNo, char *, int)",
+        "decompile": "int __cdecl vm_cmdStartCardActivity(int clientNo, char *a2, int a3)\n{\n  char *v5; // edi\n  signed int v6; // ebx\n  int v7; // esi\n  int v8; // esi\n  char *v9; // edi\n  unsigned __int16 v10; // ax\n  char name[280]; // [esp+0h] [ebp-118h] BYREF\n\n  v5 = a2; /*0x8076b1d*/\n  if ( a3 <= 0 ) /*0x8076b20*/\n  {\n    v7 = -1; /*0x8076bac*/\n    v6 = 0; /*0x8076bb1*/\n  }\n  else\n  {\n    v6 = (unsigned __int8)*a2; /*0x8076b26*/\n    v7 = a3 - 1; /*0x8076b29*/\n    v5 = a2 + 1; /*0x8076b2a*/\n  }\n  if ( v6 > v7 ) /*0x8076b2d*/\n  {\n    v6 = 0; /*0x8076b2f*/\n    v7 = -1; /*0x8076b31*/\n  }\n  v8 = v7 - v6; /*0x8076b40*/\n  memcpy(name, v5, v6); /*0x8076b42*/\n  v9 = &v5[v6]; /*0x8076b47*/\n  name[v6] = 0; /*0x8076b4f*/\n  if ( v8 <= 1 ) /*0x8076b57*/\n    return 0; /*0x8076b57*/\n  v10 = __ROR2__(*(_WORD *)v9, 8); /*0x8076b63*/\n  if ( v8 - 2 < 0 ) /*0x8076b66*/\n    return 0; /*0x8076ba5*/\n  vm_apply((Vm_Program_T *)v6, 0, 0, 0, 0, \"cmd_start_card_activity\", 3, 88, clientNo, 357, name, 88, v10); /*0x8076b8b*/\n  return 1; /*0x8076b90*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x8076b0d",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 2,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7e68",
+            "length": 23,
+            "string": "cmd_start_card_activity"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x8076b12",
+            "value": "0x10c",
+            "decimal": 268
+          },
+          {
+            "addr": "0x8076b31",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8076b49",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x8076b4c",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076b4f",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076b5c",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8076b60",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8076b69",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076b72",
+            "value": "0x165",
+            "decimal": 357
+          },
+          {
+            "addr": "0x8076b7a",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8076b7c",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x8076b7e",
+            "value": "0x82a7e68",
+            "decimal": 137002600
+          },
+          {
+            "addr": "0x8076b83",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076b85",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076b87",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076b89",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8076b95",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8076bac",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          }
+        ],
+        "constant_count": 18,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x8076b0c",
+            "end": "0x8076b26",
+            "size": 26,
+            "type": 0,
+            "successors": [
+              "0x8076b26",
+              "0x8076bac"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x8076b26",
+            "end": "0x8076b2b",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x8076b2b"
+            ],
+            "predecessors": [
+              "0x8076b0c"
+            ]
+          },
+          {
+            "start": "0x8076b2b",
+            "end": "0x8076b2f",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8076b2f",
+              "0x8076b36"
+            ],
+            "predecessors": [
+              "0x8076b26",
+              "0x8076bac"
+            ]
+          },
+          {
+            "start": "0x8076b2f",
+            "end": "0x8076b36",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x8076b36"
+            ],
+            "predecessors": [
+              "0x8076b2b"
+            ]
+          },
+          {
+            "start": "0x8076b36",
+            "end": "0x8076b59",
+            "size": 35,
+            "type": 0,
+            "successors": [
+              "0x8076b59",
+              "0x8076ba0"
+            ],
+            "predecessors": [
+              "0x8076b2b",
+              "0x8076b2f"
+            ]
+          },
+          {
+            "start": "0x8076b59",
+            "end": "0x8076b68",
+            "size": 15,
+            "type": 0,
+            "successors": [
+              "0x8076b68",
+              "0x8076ba0"
+            ],
+            "predecessors": [
+              "0x8076b36"
+            ]
+          },
+          {
+            "start": "0x8076b68",
+            "end": "0x8076b9d",
+            "size": 53,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076b59"
+            ]
+          },
+          {
+            "start": "0x8076ba0",
+            "end": "0x8076baa",
+            "size": 10,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x8076b36",
+              "0x8076b59"
+            ]
+          },
+          {
+            "start": "0x8076bac",
+            "end": "0x8076bb8",
+            "size": 12,
+            "type": 0,
+            "successors": [
+              "0x8076b2b"
+            ],
+            "predecessors": [
+              "0x8076b0c"
+            ]
+          }
+        ],
+        "basic_block_count": 9,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x80771c8",
+      "addr": "0x80771c8",
+      "name": "vm_cmdSetXinfaSkillStatus",
+      "analysis": {
+        "size": "0xd4",
+        "prototype": "int __cdecl(int clientNo, _WORD *, int)",
+        "decompile": "int __cdecl vm_cmdSetXinfaSkillStatus(int clientNo, _WORD *a2, int a3)\n{\n  unsigned __int8 *v5; // edi\n  signed int v6; // ebx\n  int v7; // esi\n  int v8; // esi\n  unsigned __int8 *v9; // edi\n  int petPos; // [esp+Ch] [ebp-11Ch]\n  char name[280]; // [esp+10h] [ebp-118h] BYREF\n\n  v5 = (unsigned __int8 *)a2; /*0x80771da*/\n  petPos = 0; /*0x80771dd*/\n  if ( a3 <= 1 || (v5 = (unsigned __int8 *)(a2 + 1), petPos = (unsigned __int16)__ROR2__(*a2, 8), a3 - 2 <= 0) ) /*0x8077206*/\n  {\n    v7 = -1; /*0x8077290*/\n    v6 = 0; /*0x8077295*/\n  }\n  else\n  {\n    v6 = *v5; /*0x807720c*/\n    v7 = a3 - 3; /*0x807720f*/\n    v5 = (unsigned __int8 *)a2 + 3; /*0x8077210*/\n  }\n  if ( v6 > v7 ) /*0x8077213*/\n  {\n    v6 = 0; /*0x8077215*/\n    v7 = -1; /*0x8077217*/\n  }\n  v8 = v7 - v6; /*0x8077226*/\n  memcpy(name, v5, v6); /*0x8077228*/\n  v9 = &v5[v6]; /*0x807722d*/\n  name[v6] = 0; /*0x8077234*/\n  if ( v8 <= 0 || v8 - 1 < 0 ) /*0x8077242*/\n    return 0; /*0x8077289*/\n  vm_apply( /*0x8077272*/\n    (Vm_Program_T *)v6,\n    0,\n    0,\n    0,\n    0,\n    \"cmd_set_xinfa_skill_status\",\n    4,\n    88,\n    clientNo,\n    88,\n    petPos,\n    357,\n    name,\n    88,\n    *v9);\n  return 1; /*0x8077277*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x80771c9",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 2,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7f52",
+            "length": 26,
+            "string": "cmd_set_xinfa_skill_status"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x80771ce",
+            "value": "0x11c",
+            "decimal": 284
+          },
+          {
+            "addr": "0x80771d7",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80771dd",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80771ed",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80771f0",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80771f7",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8077217",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x807722f",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x8077234",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8077244",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8077248",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8077251",
+            "value": "0x165",
+            "decimal": 357
+          },
+          {
+            "addr": "0x807725c",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8077261",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x8077263",
+            "value": "0x4",
+            "decimal": 4
+          },
+          {
+            "addr": "0x8077265",
+            "value": "0x82a7f52",
+            "decimal": 137002834
+          },
+          {
+            "addr": "0x807726a",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807726c",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807726e",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8077270",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807727c",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x8077290",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          }
+        ],
+        "constant_count": 22,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x80771c8",
+            "end": "0x80771ed",
+            "size": 37,
+            "type": 0,
+            "successors": [
+              "0x80771ed",
+              "0x8077290"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x80771ed",
+            "end": "0x807720c",
+            "size": 31,
+            "type": 0,
+            "successors": [
+              "0x807720c",
+              "0x8077290"
+            ],
+            "predecessors": [
+              "0x80771c8"
+            ]
+          },
+          {
+            "start": "0x807720c",
+            "end": "0x8077211",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x8077211"
+            ],
+            "predecessors": [
+              "0x80771ed"
+            ]
+          },
+          {
+            "start": "0x8077211",
+            "end": "0x8077215",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8077215",
+              "0x807721c"
+            ],
+            "predecessors": [
+              "0x807720c",
+              "0x8077290"
+            ]
+          },
+          {
+            "start": "0x8077215",
+            "end": "0x807721c",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x807721c"
+            ],
+            "predecessors": [
+              "0x8077211"
+            ]
+          },
+          {
+            "start": "0x807721c",
+            "end": "0x807723e",
+            "size": 34,
+            "type": 0,
+            "successors": [
+              "0x807723e",
+              "0x8077284"
+            ],
+            "predecessors": [
+              "0x8077211",
+              "0x8077215"
+            ]
+          },
+          {
+            "start": "0x807723e",
+            "end": "0x8077244",
+            "size": 6,
+            "type": 0,
+            "successors": [
+              "0x8077244",
+              "0x8077284"
+            ],
+            "predecessors": [
+              "0x807721c"
+            ]
+          },
+          {
+            "start": "0x8077244",
+            "end": "0x8077284",
+            "size": 64,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807723e"
+            ]
+          },
+          {
+            "start": "0x8077284",
+            "end": "0x807728e",
+            "size": 10,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807721c",
+              "0x807723e"
+            ]
+          },
+          {
+            "start": "0x8077290",
+            "end": "0x807729c",
+            "size": 12,
+            "type": 0,
+            "successors": [
+              "0x8077211"
+            ],
+            "predecessors": [
+              "0x80771c8",
+              "0x80771ed"
+            ]
+          }
+        ],
+        "basic_block_count": 10,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x807729c",
+      "addr": "0x807729c",
+      "name": "vm_cmdActivityOper",
+      "analysis": {
+        "size": "0x210",
+        "prototype": "int __cdecl(int clientNo, char *, int)",
+        "decompile": "int __cdecl vm_cmdActivityOper(int clientNo, char *a2, int a3)\n{\n  char *v5; // edi\n  signed int v6; // ebx\n  int v7; // esi\n  int v8; // esi\n  char *v9; // edi\n  char *v10; // edi\n  signed int v11; // esi\n  int result; // eax\n  int v13; // esi\n  unsigned __int16 v14; // ax\n  Vm_String_T *v15; // eax\n  bool v16; // zf\n  size_t n; // [esp+0h] [ebp-10128h]\n  int i; // [esp+4h] [ebp-10124h]\n  int count; // [esp+8h] [ebp-10120h]\n  Vm_Array_T *pArray; // [esp+Ch] [ebp-1011Ch]\n  char msg[65536]; // [esp+10h] [ebp-10118h] BYREF\n  char command[280]; // [esp+10010h] [ebp-118h] BYREF\n\n  v5 = a2; /*0x80772ad*/\n  if ( a3 <= 0 ) /*0x80772b0*/\n  {\n    v7 = -1; /*0x807743c*/\n    v6 = 0; /*0x8077441*/\n  }\n  else\n  {\n    v6 = (unsigned __int8)*a2; /*0x80772b6*/\n    v7 = a3 - 1; /*0x80772b9*/\n    v5 = a2 + 1; /*0x80772ba*/\n  }\n  if ( v6 > v7 ) /*0x80772bd*/\n  {\n    v6 = 0; /*0x80772bf*/\n    v7 = -1; /*0x80772c1*/\n  }\n  v8 = v7 - v6; /*0x80772d0*/\n  memcpy(command, v5, v6); /*0x80772d2*/\n  v9 = &v5[v6]; /*0x80772d7*/\n  command[v6] = 0; /*0x80772df*/\n  if ( v8 <= 1 ) /*0x80772e7*/\n    return 0; /*0x80772e7*/\n  v10 = v9 + 2; /*0x80772ed*/\n  v11 = v8 - 2; /*0x80772f8*/\n  count = (unsigned __int16)__ROR2__(*((_WORD *)v10 - 1), 8); /*0x80772fe*/\n  if ( v11 < 0 ) /*0x8077304*/\n    return 0; /*0x8077304*/\n  result = 0; /*0x807730a*/\n  if ( (unsigned int)count <= 0x3F ) /*0x8077313*/\n  {\n    pArray = vm_safeAllocateEmptyArray(v11); /*0x807732e*/\n    result = 0; /*0x807733d*/\n    if ( pArray ) /*0x8077341*/\n    {\n      i = 0; /*0x807734b*/\n      if ( count ) /*0x8077355*/\n      {\n        do /*0x807735c*/\n        {\n          if ( v11 <= 0 ) /*0x807735e*/\n            break; /*0x807735e*/\n          if ( v11 > 1 /*0x807738a*/\n            && (v10 += 2, v13 = v11 - 2, v14 = __ROR2__(*((_WORD *)v10 - 1), 8), v6 = v14, n = 0xFFFF, v14 <= v13) )\n          {\n            if ( v14 == 0xFFFF ) /*0x8077467*/\n              goto LABEL_16; /*0x8077467*/\n          }\n          else\n          {\n            v6 = 0; /*0x8077390*/\n            v13 = -1; /*0x8077392*/\n          }\n          n = v6; /*0x8077397*/\nLABEL_16:\n          memcpy(msg, v10, n); /*0x807739d*/\n          msg[n] = 0; /*0x80773bd*/\n          v15 = vm_safeCopyString((const char *)v13); /*0x80773c8*/\n          v10 += v6; /*0x80773cd*/\n          v11 = v13 - v6; /*0x80773cf*/\n          if ( !v15 ) /*0x80773d8*/\n            goto LABEL_20; /*0x80773d8*/\n          pArray->pValues[i]->v.number = (int)v15; /*0x80773ec*/\n          pArray->pValues[i]->type = 4; /*0x80773fb*/\n          v16 = count-- == 1; /*0x8077400*/\n          ++i; /*0x8077406*/\n        }\n        while ( !v16 ); /*0x807735c*/\n      }\n      if ( v11 < 0 || count > 0 ) /*0x807741e*/\n      {\nLABEL_20:\n        vm_unrefArray((Vm_Array_T *)v6); /*0x8077420*/\n        return 0; /*0x8077439*/\n      }\n      vm_apply((Vm_Program_T *)v6, 0, 0, 0, 0, \"cmd_activity_oper\", 3, 88, clientNo, 357, command, 936, pArray); /*0x807749d*/\n      return 1; /*0x80774a2*/\n    }\n  }\n  return result; /*0x8077315*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x807729d",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809b0e8",
+            "name": "vm_safeAllocateEmptyArray",
+            "type": "internal"
+          },
+          {
+            "addr": "0x808ac00",
+            "name": "vm_safeCopyString",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          },
+          {
+            "addr": "0x809b350",
+            "name": "vm_unrefArray",
+            "type": "internal"
+          },
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 5,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7f6d",
+            "length": 17,
+            "string": "cmd_activity_oper"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x80772a2",
+            "value": "0x1011c",
+            "decimal": 65820
+          },
+          {
+            "addr": "0x80772c1",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x80772d9",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x80772dc",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80772df",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80772ed",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x80772f4",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x80772f8",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x807730c",
+            "value": "0x3f",
+            "decimal": 63
+          },
+          {
+            "addr": "0x8077320",
+            "value": "0xc",
+            "decimal": 12
+          },
+          {
+            "addr": "0x807733a",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x807734b",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8077364",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x807736d",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8077370",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8077377",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8077380",
+            "value": "0xffff",
+            "decimal": 65535
+          },
+          {
+            "addr": "0x8077392",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x80773bd",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80773d1",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x80773fb",
+            "value": "0x4",
+            "decimal": 4
+          },
+          {
+            "addr": "0x8077420",
+            "value": "0xc",
+            "decimal": 12
+          },
+          {
+            "addr": "0x807743c",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8077448",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8077451",
+            "value": "0xffff",
+            "decimal": 65535
+          },
+          {
+            "addr": "0x8077461",
+            "value": "0xffff",
+            "decimal": 65535
+          },
+          {
+            "addr": "0x8077478",
+            "value": "0x3a8",
+            "decimal": 936
+          },
+          {
+            "addr": "0x8077484",
+            "value": "0x165",
+            "decimal": 357
+          },
+          {
+            "addr": "0x807748c",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x807748e",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x8077490",
+            "value": "0x82a7f6d",
+            "decimal": 137002861
+          },
+          {
+            "addr": "0x8077495",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8077497",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8077499",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x807749b",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80774a2",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 36,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x807729c",
+            "end": "0x80772b6",
+            "size": 26,
+            "type": 0,
+            "successors": [
+              "0x80772b6",
+              "0x807743c"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x80772b6",
+            "end": "0x80772bb",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x80772bb"
+            ],
+            "predecessors": [
+              "0x807729c"
+            ]
+          },
+          {
+            "start": "0x80772bb",
+            "end": "0x80772bf",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x80772bf",
+              "0x80772c6"
+            ],
+            "predecessors": [
+              "0x80772b6",
+              "0x807743c"
+            ]
+          },
+          {
+            "start": "0x80772bf",
+            "end": "0x80772c6",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x80772c6"
+            ],
+            "predecessors": [
+              "0x80772bb"
+            ]
+          },
+          {
+            "start": "0x80772c6",
+            "end": "0x80772ed",
+            "size": 39,
+            "type": 0,
+            "successors": [
+              "0x80772ed",
+              "0x8077430"
+            ],
+            "predecessors": [
+              "0x80772bb",
+              "0x80772bf"
+            ]
+          },
+          {
+            "start": "0x80772ed",
+            "end": "0x807730a",
+            "size": 29,
+            "type": 0,
+            "successors": [
+              "0x807730a",
+              "0x8077430"
+            ],
+            "predecessors": [
+              "0x80772c6"
+            ]
+          },
+          {
+            "start": "0x807730a",
+            "end": "0x8077315",
+            "size": 11,
+            "type": 0,
+            "successors": [
+              "0x8077315",
+              "0x8077320"
+            ],
+            "predecessors": [
+              "0x80772ed"
+            ]
+          },
+          {
+            "start": "0x8077315",
+            "end": "0x807731d",
+            "size": 8,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807730a",
+              "0x8077320",
+              "0x8077472"
+            ]
+          },
+          {
+            "start": "0x8077320",
+            "end": "0x8077343",
+            "size": 35,
+            "type": 0,
+            "successors": [
+              "0x8077315",
+              "0x8077343"
+            ],
+            "predecessors": [
+              "0x807730a"
+            ]
+          },
+          {
+            "start": "0x8077343",
+            "end": "0x807735b",
+            "size": 24,
+            "type": 0,
+            "successors": [
+              "0x807735b",
+              "0x8077412"
+            ],
+            "predecessors": [
+              "0x8077320"
+            ]
+          },
+          {
+            "start": "0x807735b",
+            "end": "0x807735c",
+            "size": 1,
+            "type": 0,
+            "successors": [
+              "0x807735c"
+            ],
+            "predecessors": [
+              "0x8077343"
+            ]
+          },
+          {
+            "start": "0x807735c",
+            "end": "0x8077364",
+            "size": 8,
+            "type": 0,
+            "successors": [
+              "0x8077364",
+              "0x8077412"
+            ],
+            "predecessors": [
+              "0x807735b",
+              "0x80773da"
+            ]
+          },
+          {
+            "start": "0x8077364",
+            "end": "0x807736d",
+            "size": 9,
+            "type": 0,
+            "successors": [
+              "0x807736d",
+              "0x8077448"
+            ],
+            "predecessors": [
+              "0x807735c"
+            ]
+          },
+          {
+            "start": "0x807736d",
+            "end": "0x8077390",
+            "size": 35,
+            "type": 0,
+            "successors": [
+              "0x8077390",
+              "0x8077461"
+            ],
+            "predecessors": [
+              "0x8077364"
+            ]
+          },
+          {
+            "start": "0x8077390",
+            "end": "0x8077397",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x8077397"
+            ],
+            "predecessors": [
+              "0x807736d",
+              "0x8077448"
+            ]
+          },
+          {
+            "start": "0x8077397",
+            "end": "0x807739d",
+            "size": 6,
+            "type": 0,
+            "successors": [
+              "0x807739d"
+            ],
+            "predecessors": [
+              "0x8077390",
+              "0x807746d"
+            ]
+          },
+          {
+            "start": "0x807739d",
+            "end": "0x80773da",
+            "size": 61,
+            "type": 0,
+            "successors": [
+              "0x80773da",
+              "0x8077420"
+            ],
+            "predecessors": [
+              "0x8077397",
+              "0x8077461"
+            ]
+          },
+          {
+            "start": "0x80773da",
+            "end": "0x8077412",
+            "size": 56,
+            "type": 0,
+            "successors": [
+              "0x807735c",
+              "0x8077412"
+            ],
+            "predecessors": [
+              "0x807739d"
+            ]
+          },
+          {
+            "start": "0x8077412",
+            "end": "0x8077416",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8077416",
+              "0x8077420"
+            ],
+            "predecessors": [
+              "0x8077343",
+              "0x807735c",
+              "0x80773da"
+            ]
+          },
+          {
+            "start": "0x8077416",
+            "end": "0x8077420",
+            "size": 10,
+            "type": 0,
+            "successors": [
+              "0x8077420",
+              "0x8077472"
+            ],
+            "predecessors": [
+              "0x8077412"
+            ]
+          },
+          {
+            "start": "0x8077420",
+            "end": "0x8077430",
+            "size": 16,
+            "type": 0,
+            "successors": [
+              "0x8077430"
+            ],
+            "predecessors": [
+              "0x807739d",
+              "0x8077412",
+              "0x8077416"
+            ]
+          },
+          {
+            "start": "0x8077430",
+            "end": "0x807743a",
+            "size": 10,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80772c6",
+              "0x80772ed",
+              "0x8077420"
+            ]
+          },
+          {
+            "start": "0x807743c",
+            "end": "0x8077448",
+            "size": 12,
+            "type": 0,
+            "successors": [
+              "0x80772bb"
+            ],
+            "predecessors": [
+              "0x807729c"
+            ]
+          },
+          {
+            "start": "0x8077448",
+            "end": "0x8077461",
+            "size": 25,
+            "type": 0,
+            "successors": [
+              "0x8077390",
+              "0x8077461"
+            ],
+            "predecessors": [
+              "0x8077364"
+            ]
+          },
+          {
+            "start": "0x8077461",
+            "end": "0x807746d",
+            "size": 12,
+            "type": 0,
+            "successors": [
+              "0x807739d",
+              "0x807746d"
+            ],
+            "predecessors": [
+              "0x807736d",
+              "0x8077448"
+            ]
+          },
+          {
+            "start": "0x807746d",
+            "end": "0x8077472",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x8077397"
+            ],
+            "predecessors": [
+              "0x8077461"
+            ]
+          },
+          {
+            "start": "0x8077472",
+            "end": "0x80774ac",
+            "size": 58,
+            "type": 0,
+            "successors": [
+              "0x8077315"
+            ],
+            "predecessors": [
+              "0x8077416"
+            ]
+          }
+        ],
+        "basic_block_count": 27,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    },
+    {
+      "target": "0x80774ac",
+      "addr": "0x80774ac",
+      "name": "vm_msgActivityOper",
+      "analysis": {
+        "size": "0x210",
+        "prototype": "int __cdecl(int clientNo, char *, int)",
+        "decompile": "int __cdecl vm_msgActivityOper(int clientNo, char *a2, int a3)\n{\n  char *v5; // edi\n  signed int v6; // ebx\n  int v7; // esi\n  int v8; // esi\n  char *v9; // edi\n  char *v10; // edi\n  signed int v11; // esi\n  int result; // eax\n  int v13; // esi\n  unsigned __int16 v14; // ax\n  Vm_String_T *v15; // eax\n  bool v16; // zf\n  size_t n; // [esp+0h] [ebp-10128h]\n  int i; // [esp+4h] [ebp-10124h]\n  int count; // [esp+8h] [ebp-10120h]\n  Vm_Array_T *pArray; // [esp+Ch] [ebp-1011Ch]\n  char msg[65536]; // [esp+10h] [ebp-10118h] BYREF\n  char command[280]; // [esp+10010h] [ebp-118h] BYREF\n\n  v5 = a2; /*0x80774bd*/\n  if ( a3 <= 0 ) /*0x80774c0*/\n  {\n    v7 = -1; /*0x807764c*/\n    v6 = 0; /*0x8077651*/\n  }\n  else\n  {\n    v6 = (unsigned __int8)*a2; /*0x80774c6*/\n    v7 = a3 - 1; /*0x80774c9*/\n    v5 = a2 + 1; /*0x80774ca*/\n  }\n  if ( v6 > v7 ) /*0x80774cd*/\n  {\n    v6 = 0; /*0x80774cf*/\n    v7 = -1; /*0x80774d1*/\n  }\n  v8 = v7 - v6; /*0x80774e0*/\n  memcpy(command, v5, v6); /*0x80774e2*/\n  v9 = &v5[v6]; /*0x80774e7*/\n  command[v6] = 0; /*0x80774ef*/\n  if ( v8 <= 1 ) /*0x80774f7*/\n    return 0; /*0x80774f7*/\n  v10 = v9 + 2; /*0x80774fd*/\n  v11 = v8 - 2; /*0x8077508*/\n  count = (unsigned __int16)__ROR2__(*((_WORD *)v10 - 1), 8); /*0x807750e*/\n  if ( v11 < 0 ) /*0x8077514*/\n    return 0; /*0x8077514*/\n  result = 0; /*0x807751a*/\n  if ( (unsigned int)count <= 0x3F ) /*0x8077523*/\n  {\n    pArray = vm_safeAllocateEmptyArray(v11); /*0x807753e*/\n    result = 0; /*0x807754d*/\n    if ( pArray ) /*0x8077551*/\n    {\n      i = 0; /*0x807755b*/\n      if ( count ) /*0x8077565*/\n      {\n        do /*0x807756c*/\n        {\n          if ( v11 <= 0 ) /*0x807756e*/\n            break; /*0x807756e*/\n          if ( v11 > 1 /*0x807759a*/\n            && (v10 += 2, v13 = v11 - 2, v14 = __ROR2__(*((_WORD *)v10 - 1), 8), v6 = v14, n = 0xFFFF, v14 <= v13) )\n          {\n            if ( v14 == 0xFFFF ) /*0x8077677*/\n              goto LABEL_16; /*0x8077677*/\n          }\n          else\n          {\n            v6 = 0; /*0x80775a0*/\n            v13 = -1; /*0x80775a2*/\n          }\n          n = v6; /*0x80775a7*/\nLABEL_16:\n          memcpy(msg, v10, n); /*0x80775ad*/\n          msg[n] = 0; /*0x80775cd*/\n          v15 = vm_safeCopyString((const char *)v13); /*0x80775d8*/\n          v10 += v6; /*0x80775dd*/\n          v11 = v13 - v6; /*0x80775df*/\n          if ( !v15 ) /*0x80775e8*/\n            goto LABEL_20; /*0x80775e8*/\n          pArray->pValues[i]->v.number = (int)v15; /*0x80775fc*/\n          pArray->pValues[i]->type = 4; /*0x807760b*/\n          v16 = count-- == 1; /*0x8077610*/\n          ++i; /*0x8077616*/\n        }\n        while ( !v16 ); /*0x807756c*/\n      }\n      if ( v11 < 0 || (v6 = count, count > 0) ) /*0x807762e*/\n      {\nLABEL_20:\n        vm_unrefArray((Vm_Array_T *)v6); /*0x8077630*/\n        return 0; /*0x8077649*/\n      }\n      vm_apply((Vm_Program_T *)count, 0, 0, 0, 0, \"msg_activity_oper\", 3, 88, clientNo, 357, command, 936, pArray); /*0x80776ad*/\n      return 1; /*0x80776b2*/\n    }\n  }\n  return result; /*0x8077525*/\n}",
+        "decompile_error": null,
+        "disasm": null,
+        "xrefs": {
+          "to": [
+            {
+              "addr": "0x83c8e60",
+              "type": "data"
+            }
+          ],
+          "from": [
+            {
+              "addr": "0x80774ad",
+              "type": "code"
+            }
+          ],
+          "to_truncated": false,
+          "from_truncated": false,
+          "to_count": 1,
+          "from_count": 1
+        },
+        "callers": [],
+        "caller_count": 0,
+        "callers_truncated": false,
+        "callees": [
+          {
+            "addr": "0x809b0e8",
+            "name": "vm_safeAllocateEmptyArray",
+            "type": "internal"
+          },
+          {
+            "addr": "0x808ac00",
+            "name": "vm_safeCopyString",
+            "type": "internal"
+          },
+          {
+            "addr": "0x804b7e4",
+            "name": ".memcpy",
+            "type": "internal"
+          },
+          {
+            "addr": "0x809b350",
+            "name": "vm_unrefArray",
+            "type": "internal"
+          },
+          {
+            "addr": "0x809a328",
+            "name": "vm_apply",
+            "type": "internal"
+          }
+        ],
+        "callee_count": 5,
+        "callees_truncated": false,
+        "strings": [
+          {
+            "addr": "0x82a7f7f",
+            "length": 17,
+            "string": "msg_activity_oper"
+          }
+        ],
+        "string_ref_count": 1,
+        "strings_truncated": false,
+        "constants": [
+          {
+            "addr": "0x80774b2",
+            "value": "0x1011c",
+            "decimal": 65820
+          },
+          {
+            "addr": "0x80774d1",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x80774e9",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x80774ec",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x80774ef",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80774fd",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8077504",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8077508",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x807751c",
+            "value": "0x3f",
+            "decimal": 63
+          },
+          {
+            "addr": "0x8077530",
+            "value": "0xc",
+            "decimal": 12
+          },
+          {
+            "addr": "0x807754a",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x807755b",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x8077574",
+            "value": "0x1",
+            "decimal": 1
+          },
+          {
+            "addr": "0x807757d",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8077580",
+            "value": "0x2",
+            "decimal": 2
+          },
+          {
+            "addr": "0x8077587",
+            "value": "0x8",
+            "decimal": 8
+          },
+          {
+            "addr": "0x8077590",
+            "value": "0xffff",
+            "decimal": 65535
+          },
+          {
+            "addr": "0x80775a2",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x80775cd",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80775e1",
+            "value": "0x10",
+            "decimal": 16
+          },
+          {
+            "addr": "0x807760b",
+            "value": "0x4",
+            "decimal": 4
+          },
+          {
+            "addr": "0x8077630",
+            "value": "0xc",
+            "decimal": 12
+          },
+          {
+            "addr": "0x807764c",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8077658",
+            "value": "0xffffffffffffffff",
+            "decimal": 18446744073709551615
+          },
+          {
+            "addr": "0x8077661",
+            "value": "0xffff",
+            "decimal": 65535
+          },
+          {
+            "addr": "0x8077671",
+            "value": "0xffff",
+            "decimal": 65535
+          },
+          {
+            "addr": "0x8077688",
+            "value": "0x3a8",
+            "decimal": 936
+          },
+          {
+            "addr": "0x8077694",
+            "value": "0x165",
+            "decimal": 357
+          },
+          {
+            "addr": "0x807769c",
+            "value": "0x58",
+            "decimal": 88
+          },
+          {
+            "addr": "0x807769e",
+            "value": "0x3",
+            "decimal": 3
+          },
+          {
+            "addr": "0x80776a0",
+            "value": "0x82a7f7f",
+            "decimal": 137002879
+          },
+          {
+            "addr": "0x80776a5",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80776a7",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80776a9",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80776ab",
+            "value": "0x0",
+            "decimal": 0
+          },
+          {
+            "addr": "0x80776b2",
+            "value": "0x1",
+            "decimal": 1
+          }
+        ],
+        "constant_count": 36,
+        "constants_truncated": false,
+        "basic_blocks": [
+          {
+            "start": "0x80774ac",
+            "end": "0x80774c6",
+            "size": 26,
+            "type": 0,
+            "successors": [
+              "0x80774c6",
+              "0x807764c"
+            ],
+            "predecessors": []
+          },
+          {
+            "start": "0x80774c6",
+            "end": "0x80774cb",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x80774cb"
+            ],
+            "predecessors": [
+              "0x80774ac"
+            ]
+          },
+          {
+            "start": "0x80774cb",
+            "end": "0x80774cf",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x80774cf",
+              "0x80774d6"
+            ],
+            "predecessors": [
+              "0x80774c6",
+              "0x807764c"
+            ]
+          },
+          {
+            "start": "0x80774cf",
+            "end": "0x80774d6",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x80774d6"
+            ],
+            "predecessors": [
+              "0x80774cb"
+            ]
+          },
+          {
+            "start": "0x80774d6",
+            "end": "0x80774fd",
+            "size": 39,
+            "type": 0,
+            "successors": [
+              "0x80774fd",
+              "0x8077640"
+            ],
+            "predecessors": [
+              "0x80774cb",
+              "0x80774cf"
+            ]
+          },
+          {
+            "start": "0x80774fd",
+            "end": "0x807751a",
+            "size": 29,
+            "type": 0,
+            "successors": [
+              "0x807751a",
+              "0x8077640"
+            ],
+            "predecessors": [
+              "0x80774d6"
+            ]
+          },
+          {
+            "start": "0x807751a",
+            "end": "0x8077525",
+            "size": 11,
+            "type": 0,
+            "successors": [
+              "0x8077525",
+              "0x8077530"
+            ],
+            "predecessors": [
+              "0x80774fd"
+            ]
+          },
+          {
+            "start": "0x8077525",
+            "end": "0x807752d",
+            "size": 8,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x807751a",
+              "0x8077530",
+              "0x8077682"
+            ]
+          },
+          {
+            "start": "0x8077530",
+            "end": "0x8077553",
+            "size": 35,
+            "type": 0,
+            "successors": [
+              "0x8077525",
+              "0x8077553"
+            ],
+            "predecessors": [
+              "0x807751a"
+            ]
+          },
+          {
+            "start": "0x8077553",
+            "end": "0x807756b",
+            "size": 24,
+            "type": 0,
+            "successors": [
+              "0x807756b",
+              "0x8077622"
+            ],
+            "predecessors": [
+              "0x8077530"
+            ]
+          },
+          {
+            "start": "0x807756b",
+            "end": "0x807756c",
+            "size": 1,
+            "type": 0,
+            "successors": [
+              "0x807756c"
+            ],
+            "predecessors": [
+              "0x8077553"
+            ]
+          },
+          {
+            "start": "0x807756c",
+            "end": "0x8077574",
+            "size": 8,
+            "type": 0,
+            "successors": [
+              "0x8077574",
+              "0x8077622"
+            ],
+            "predecessors": [
+              "0x807756b",
+              "0x80775ea"
+            ]
+          },
+          {
+            "start": "0x8077574",
+            "end": "0x807757d",
+            "size": 9,
+            "type": 0,
+            "successors": [
+              "0x807757d",
+              "0x8077658"
+            ],
+            "predecessors": [
+              "0x807756c"
+            ]
+          },
+          {
+            "start": "0x807757d",
+            "end": "0x80775a0",
+            "size": 35,
+            "type": 0,
+            "successors": [
+              "0x80775a0",
+              "0x8077671"
+            ],
+            "predecessors": [
+              "0x8077574"
+            ]
+          },
+          {
+            "start": "0x80775a0",
+            "end": "0x80775a7",
+            "size": 7,
+            "type": 0,
+            "successors": [
+              "0x80775a7"
+            ],
+            "predecessors": [
+              "0x807757d",
+              "0x8077658"
+            ]
+          },
+          {
+            "start": "0x80775a7",
+            "end": "0x80775ad",
+            "size": 6,
+            "type": 0,
+            "successors": [
+              "0x80775ad"
+            ],
+            "predecessors": [
+              "0x80775a0",
+              "0x807767d"
+            ]
+          },
+          {
+            "start": "0x80775ad",
+            "end": "0x80775ea",
+            "size": 61,
+            "type": 0,
+            "successors": [
+              "0x80775ea",
+              "0x8077630"
+            ],
+            "predecessors": [
+              "0x80775a7",
+              "0x8077671"
+            ]
+          },
+          {
+            "start": "0x80775ea",
+            "end": "0x8077622",
+            "size": 56,
+            "type": 0,
+            "successors": [
+              "0x807756c",
+              "0x8077622"
+            ],
+            "predecessors": [
+              "0x80775ad"
+            ]
+          },
+          {
+            "start": "0x8077622",
+            "end": "0x8077626",
+            "size": 4,
+            "type": 0,
+            "successors": [
+              "0x8077626",
+              "0x8077630"
+            ],
+            "predecessors": [
+              "0x8077553",
+              "0x807756c",
+              "0x80775ea"
+            ]
+          },
+          {
+            "start": "0x8077626",
+            "end": "0x8077630",
+            "size": 10,
+            "type": 0,
+            "successors": [
+              "0x8077630",
+              "0x8077682"
+            ],
+            "predecessors": [
+              "0x8077622"
+            ]
+          },
+          {
+            "start": "0x8077630",
+            "end": "0x8077640",
+            "size": 16,
+            "type": 0,
+            "successors": [
+              "0x8077640"
+            ],
+            "predecessors": [
+              "0x80775ad",
+              "0x8077622",
+              "0x8077626"
+            ]
+          },
+          {
+            "start": "0x8077640",
+            "end": "0x807764a",
+            "size": 10,
+            "type": 2,
+            "successors": [],
+            "predecessors": [
+              "0x80774d6",
+              "0x80774fd",
+              "0x8077630"
+            ]
+          },
+          {
+            "start": "0x807764c",
+            "end": "0x8077658",
+            "size": 12,
+            "type": 0,
+            "successors": [
+              "0x80774cb"
+            ],
+            "predecessors": [
+              "0x80774ac"
+            ]
+          },
+          {
+            "start": "0x8077658",
+            "end": "0x8077671",
+            "size": 25,
+            "type": 0,
+            "successors": [
+              "0x80775a0",
+              "0x8077671"
+            ],
+            "predecessors": [
+              "0x8077574"
+            ]
+          },
+          {
+            "start": "0x8077671",
+            "end": "0x807767d",
+            "size": 12,
+            "type": 0,
+            "successors": [
+              "0x80775ad",
+              "0x807767d"
+            ],
+            "predecessors": [
+              "0x807757d",
+              "0x8077658"
+            ]
+          },
+          {
+            "start": "0x807767d",
+            "end": "0x8077682",
+            "size": 5,
+            "type": 0,
+            "successors": [
+              "0x80775a7"
+            ],
+            "predecessors": [
+              "0x8077671"
+            ]
+          },
+          {
+            "start": "0x8077682",
+            "end": "0x80776bc",
+            "size": 58,
+            "type": 0,
+            "successors": [
+              "0x8077525"
+            ],
+            "predecessors": [
+              "0x8077626"
+            ]
+          }
+        ],
+        "basic_block_count": 27,
+        "basic_blocks_truncated": false
+      },
+      "error": null
+    }
+  ]
+}

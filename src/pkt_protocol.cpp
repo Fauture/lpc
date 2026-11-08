@@ -127,7 +127,7 @@ bool decodeField(const PktField& f, const uint8_t* body, size_t len, size_t& off
     auto need = [&](size_t n) -> bool { return off + n <= len; };
     if (f.isArray) {
         // array of the element type: u16 count then elements
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         if (!need(2)) return false;
         uint16_t cnt = rd16be(body + off);
         off += 2;
@@ -165,7 +165,7 @@ bool decodeField(const PktField& f, const uint8_t* body, size_t len, size_t& off
     // encapsulated named type (encap:mapping) - decode as a mapping of fields
     auto dit = pktState().defs.find(f.type);
     if (dit != pktState().defs.end()) {
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         for (const auto& sf : dit->second) {
             Value v;
             if (!decodeField(sf, body, len, off, v)) return false;
@@ -207,7 +207,7 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
         size_t cnt = 0;
         std::vector<Value> items;
         if (val.index() == 5) {
-            items = std::get<std::shared_ptr<ArrayValue>>(val)->items;
+            items = std::get<lpc::Ref<ArrayValue>>(val)->items;
             cnt = items.size();
         }
         wr16be(out, static_cast<uint16_t>(cnt));
@@ -231,7 +231,7 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
         std::string s;
         if (val.index() == 4) s = std::get<SharedString>(val);
         else if (val.index() == 10)
-            s = std::get<std::shared_ptr<BufferValue>>(val)->data;   // raw buffer bytes
+            s = std::get<lpc::Ref<BufferValue>>(val)->data;   // raw buffer bytes
         // Original vm_pktPadDefValue: for string/buffer fields a NON-string/
         // non-buffer value (e.g. int) is treated as EMPTY - it writes a
         // zero-length prefix and no payload (LABEL_21/LABEL_67 paths).  dba's
@@ -253,11 +253,11 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
             for (const auto& sf : dit->second) {
                 Value v;
                 if (val.index() == 6) {
-                    auto mp = std::get<std::shared_ptr<MappingValue>>(val);
+                    auto mp = std::get<lpc::Ref<MappingValue>>(val);
                     const Value* fv = mp->find(make_string(sf.name));
                     if (fv) v = *fv;
                 } else if (val.index() == 5) {
-                    auto arr = std::get<std::shared_ptr<ArrayValue>>(val);
+                    auto arr = std::get<lpc::Ref<ArrayValue>>(val);
                     size_t fi = 0;
                     for (size_t k = 0; k < dit->second.size(); ++k) if (&dit->second[k] == &sf) { fi = k; break; }
                     if (fi < arr->items.size()) v = arr->items[fi];
@@ -297,7 +297,7 @@ std::string pktPadInterface(uint16_t msgNo, const Value& args) {
     if (pi.encapType == 1) {
         // args is an array of field values in order
         std::vector<Value> items;
-        if (args.index() == 5) items = std::get<std::shared_ptr<ArrayValue>>(args)->items;
+        if (args.index() == 5) items = std::get<lpc::Ref<ArrayValue>>(args)->items;
         for (size_t i = 0; i < pi.fields.size() && i < items.size(); ++i)
             encodeField(pi.fields[i], items[i], out);
     } else {
@@ -305,7 +305,7 @@ std::string pktPadInterface(uint16_t msgNo, const Value& args) {
         for (const auto& f : pi.fields) {
             Value v;
             if (args.index() == 6) {
-                auto mp = std::get<std::shared_ptr<MappingValue>>(args);
+                auto mp = std::get<lpc::Ref<MappingValue>>(args);
                 const Value* fv = mp->find(make_string(f.name));
                 if (fv) v = *fv;
             }
@@ -460,12 +460,12 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     }
     Value collection;
     if (pi.encapType == 0) {
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         for (size_t i = 0; i < pi.fields.size() && i < fieldVals.size(); ++i)
             mp->insert(make_string(pi.fields[i].name), fieldVals[i]);
         collection = mp;
     } else {
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         arr->items = std::move(fieldVals);
         collection = arr;
     }
@@ -501,7 +501,7 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     // ordering is enforced where the packets are read (game_service's per
     // connection gates), not here.
     if (func.index() == 8) {
-        auto cl = std::get<std::shared_ptr<ClosureValue>>(func);
+        auto cl = std::get<lpc::Ref<ClosureValue>>(func);
         // LPCVM_PKTSTEP: step-by-step trace of the dispatch.  [pkt-filed] proves
         // we ENTERED pktAnalyse and [filed-disp] is only printed AFTER it
         // returns - so when a request is received and never answered, with no

@@ -30,6 +30,7 @@
 
 #include "call.h"
 #include "driver_model.h"
+#include "game_service.h"   // gameServiceFlushPendingOutputs (发送聚合刷出)
 #include "interp.h"
 #include "object.h"
 #include "vmcore.h"
@@ -129,6 +130,22 @@ struct Scheduler::Impl {
 
     void wakeLocked(const std::shared_ptr<VmPcb>& p, bool front) {
         if (p->inReady || p->state == VmPcb::State::Done) return;
+        // LPCVM_PARKDBG(热布防): 只记录停泊 >8ms 的唤醒——一键点化/羽化
+        // 每件物品之间有 ~21ms/64ms 的静默空档且 CPU 空闲,需要看清链在
+        // 等什么(kind/事件/时长)。探针关时仅 1 次原子读。
+        {
+            static const std::atomic<bool>& pk = dynProbeFlag("LPCVM_PARKDBG");
+            if (pk.load(std::memory_order_relaxed) && p->parkAtMs) {
+                const int64_t dur = nowMs() - p->parkAtMs;
+                if (dur > 8)
+                    std::cerr << "[park-slow] t=" << nowMs() << "ms tid=" << p->tid
+                              << " dur=" << dur << "ms kind=" << p->cond.kind
+                              << " ev=" << p->cond.ename
+                              << " entry=" << p->entry
+                              << " frames=[" << p->frameChainText(4) << "]\n";
+            }
+        }
+        p->parkAtMs = 0;
         // 原版语义（vm_removeTimer）：事件唤醒时必须作废该 pcb 挂着的
         // "超时唤醒"定时器。kind=3/5/6 的 park 双注册 eventWaiters+timers——
         // raise 唤醒后超时条目仍留在 timers 里，未来到点时把**已重新
@@ -141,6 +158,12 @@ struct Scheduler::Impl {
         p->state = VmPcb::State::Ready;
         if (front) ready.push_front(p);
         else ready.push_back(p);
+        // 新 pcb 入队必须唤醒空闲中的调度线程: 空闲路径是 cv.wait_for
+        // (此前为不可中断的 sleep_for(20ms)),不 notify 的话每次停泊->
+        // 唤醒都要白等一个完整量子 —— 一键点化/羽化每件物品停泊 3 次,
+        // 实测 6 件从点击到结果 435ms(62ms/件); 原版主循环 select(timeout=0)
+        // 立即调度,没有这笔开销。
+        cv.notify_all();
     }
 };
 
@@ -170,6 +193,13 @@ static std::shared_ptr<VmPcb> makePcb(Scheduler::Impl& im, VmObject* obj,
     p->entry = entry;
     p->args = std::move(args);
     p->tid = im.tidPool.alloc();   // -1 = pool empty; the run loop queues it
+    // [runTicks] 原版驱动对所有进程跑 runTicks 时间片 (select(timeout=0) 主循
+    // 环每量子回泵 socket) —— 用户连点/停止自动羽化的命令能在量子边界被
+    // 处理, 不必等当前命令整条跑完 (一键羽化连续 400ms 不让出时, 连点
+    // 明显卡顿、停止自动要多点一次)。2 万条 ≈ 20-30ms 量子, 与原版体感
+    // 对齐; nested 执行不抛 TimeSliceSignal (interp 内已有保护)。
+    p->yieldEvery = 20000;
+    p->yieldCountdown = p->yieldEvery;
     // Continuation chains (create_thread / timers / dispatched closures
     // spawned BY a running command) join that command's connection so the
     // per-connection gate counts them (vmchainTagLive semantics).
@@ -192,7 +222,7 @@ VmPcb* Scheduler::spawn(VmObject* obj, const std::string& entry,
 }
 
 VmPcb* Scheduler::spawnEfunThread(VmObject* owner,
-                                  const std::shared_ptr<struct ClosureValue>& cl) {
+                                  const lpc::Ref<struct ClosureValue>& cl) {
     auto p = makePcb(*impl_, owner, "<efun-thread>", {});
     p->threadClosure = cl;
     if (g_ctraceOn) {
@@ -244,7 +274,7 @@ VmPcb* Scheduler::spawnDelayed(VmObject* obj, const std::string& entry,
 }
 
 VmPcb* Scheduler::spawnDelayedEfun(VmObject* obj,
-                                   const std::shared_ptr<struct ClosureValue>& cl,
+                                   const lpc::Ref<struct ClosureValue>& cl,
                                    int64_t atMs,
                                    std::shared_ptr<std::atomic<bool>> cancelled) {
     if (!cl) return nullptr;
@@ -476,8 +506,23 @@ void Scheduler::parkCurrent(const ResumeCond& cond) {
                   << " frames=[" << p->frameChainText(6) << "]\n";
         std::cerr.flush();
     }
+    {
+        // LPCVM_PARKDBG(热布防): park 侧全量打点(含 <8ms)——kind/事件/
+        // 唤醒倒计时/帧链,与 wakeLocked 的 [park-slow] 配对看停泊全貌。
+        static const std::atomic<bool>& pk = dynProbeFlag("LPCVM_PARKDBG");
+        if (pk.load(std::memory_order_relaxed))
+            std::cerr << "[park] t=" << impl_->nowMs() << "ms tid=" << p->tid
+                      << " kind=" << cond.kind << " ev=" << cond.ename
+                      << " q=" << cond.qkey << " fd=" << cond.fd
+                      << " wakeIn=" << (cond.wakeAtMs > 0
+                                            ? cond.wakeAtMs - impl_->nowMs()
+                                            : -1)
+                      << "ms entry=" << p->entry
+                      << " frames=[" << p->frameChainText(4) << "]\n";
+    }
     std::lock_guard<std::mutex> lk(impl_->mtx);
     p->cond = cond;
+    p->parkAtMs = impl_->nowMs();   // PARKDBG: 停泊时长测量
     // Fresh park: clear stale bookkeeping; purge previous wait entries.
     p->eventWoken = false;
     p->timedEvent = false;
@@ -746,7 +791,8 @@ static void finishConstruct(Scheduler::Impl& im,
     p->state = VmPcb::State::Done;
     p->cond.kind = 0;
     if (p->resultPromise) {
-        p->resultPromise->set_value(make_int(0));
+        p->stripValues();   // [ref] notify 前清 Value
+            p->resultPromise->set_value(make_int(0));
         p->resultPromise.reset();
     }
 }
@@ -768,7 +814,7 @@ static void loopWatchDump(const char* tag, const VmPcb* p) {
             const void* ptr = nullptr;
             if (slot >= 0 && static_cast<size_t>(slot) < p->stack.size() &&
                 p->stack[static_cast<size_t>(slot)].value.index() == 9) {
-                const auto& sp = std::get<std::shared_ptr<LoopCtrl>>(
+                const auto& sp = std::get<lpc::Ref<LoopCtrl>>(
                     p->stack[static_cast<size_t>(slot)].value);
                 ptr = sp.get();
             }
@@ -879,7 +925,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                 p->state = VmPcb::State::Done;
                 p->cond.kind = 0;
                 if (p->resultPromise) {
-                    p->resultPromise->set_value(result);
+                    p->stripValues();   // [ref] notify 前清 Value, 调用方析构入参时无人并发计数
+                    p->resultPromise->set_value(std::move(result));
                     p->resultPromise.reset();
                 }
                 return;
@@ -920,7 +967,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                 p->state = VmPcb::State::Done;
                 p->cond.kind = 0;
                 if (p->resultPromise) {
-                    p->resultPromise->set_value(make_int(0));
+                    p->stripValues();   // [ref] notify 前清 Value
+            p->resultPromise->set_value(make_int(0));
                     p->resultPromise.reset();
                 }
                 return;
@@ -935,7 +983,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                 std::cerr.flush();
                 p->state = VmPcb::State::Done;
                 if (p->resultPromise) {
-                    p->resultPromise->set_value(make_int(0));
+                    p->stripValues();   // [ref] notify 前清 Value
+            p->resultPromise->set_value(make_int(0));
                     p->resultPromise.reset();
                 }
                 return;
@@ -993,7 +1042,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
         p->state = VmPcb::State::Done;
         p->cond.kind = 0;
         if (p->resultPromise) {
-            p->resultPromise->set_value(result);
+            p->stripValues();   // [ref] notify 前清 Value
+            p->resultPromise->set_value(std::move(result));
             p->resultPromise.reset();
         }
     } catch (const SuspendSignal&) {
@@ -1033,6 +1083,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
         }
         p->state = VmPcb::State::Done;
         if (p->resultPromise) {
+            p->stripValues();   // [ref] notify 前清 Value
             p->resultPromise->set_value(make_int(0));
             p->resultPromise.reset();
         }
@@ -1052,6 +1103,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
         }
         p->state = VmPcb::State::Done;
         if (p->resultPromise) {
+            p->stripValues();   // [ref] notify 前清 Value
             p->resultPromise->set_value(make_int(0));
             p->resultPromise.reset();
         }
@@ -1344,6 +1396,12 @@ void Scheduler::run() {
             continue;
         }
         // Idle: wait until the next timer or a wake source.
+        // 发送聚合刷出：ready 队列空 = 本轮命令突发结束（对齐原版驱动
+        // "一个命令突发跑完才一次 write"——抓包实证：一键点化/羽化原版
+        // 是 2 个大包 11000+8000，逐帧 send 成十几个小包会让客户端逐包
+        // 重建 UI 卡 0.x 秒）。在即将等待前把所有客户端聚合缓冲各用一次
+        // write 刷出；TimeSlice 让出/恢复不会拆散突发（缓冲挂客户端）。
+        lpc::gameServiceFlushPendingOutputs(true);
         {
             std::unique_lock<std::mutex> lk(impl_->mtx);
             if (!impl_->ready.empty()) continue;
@@ -1357,8 +1415,22 @@ void Scheduler::run() {
             // has no other wake source (no cv notify), so a cv.wait_for up
             // to the next timer would freeze accepts until that timer fires.
             if (hasSocks) {
-                lk.unlock();
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                // 不可中断的 sleep_for 会让新入队的 pcb 白等一个完整量子
+                // (wakeLocked 入队时 notify_all)：改为 cv.wait_for,有货立即
+                // 醒来调度,无货最多 20ms 后照旧轮询 socket。原版 vm_mainLoop
+                // 空闲时 select(timeout=0) 快速轮转,ready 一有货立即执行。
+                // call_out/定时器停泊同样不能整量子白等:原版 timeout=0 下
+                // 定时器到期即触发;这里按最近到期时刻精确等待(≤20ms 封顶,
+                // 保住 socket 轮询节奏),否则一键点化/羽化每件物品的
+                // call_out 链每跳都吃满 20ms(实测 6 件 435ms)。
+                int64_t waitMs = 20;
+                if (next >= 0) {
+                    const int64_t now2 = impl_->nowMs();
+                    if (next <= now2) waitMs = 0;
+                    else waitMs = std::min<int64_t>(20, next - now2);
+                }
+                if (waitMs > 0)
+                    impl_->cv.wait_for(lk, std::chrono::milliseconds(waitMs));
             } else if (next < 0) {
                 impl_->cv.wait(lk);
             } else {

@@ -692,7 +692,7 @@ int64_t as_int(const Value& v) {
 }
 
 std::string as_string(const Value& v) {
-    if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+    if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
     return to_string(v, false);
 }
 
@@ -796,7 +796,7 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
             } else if (v.index() == 1) {
                 out += "(void)";
             } else if (v.index() == 10) {
-                const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+                const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
                 for (unsigned char c : s) {
                     char b[8];
                     snprintf(b, sizeof(b), "%02X ", c);
@@ -1667,7 +1667,7 @@ Value regexpMatch(const std::string& str, const std::string& pattern) {
     if (endPos < 0) return make_array();
     // The game's callers expect group 0 to cover [0, end) and a size of 2
     // when there is a single (whole-match) group.
-    auto arr = std::make_shared<ArrayValue>();
+    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
     arr->items.push_back(make_int(0));
     arr->items.push_back(make_int(endPos));
     return arr;
@@ -1694,7 +1694,7 @@ void dumpKeyTypes(const Value& v, const char* tag) {
         std::cerr << "[keyt] " << tag << " not-a-mapping(t" << v.index() << ")\n";
         return;
     }
-    auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+    auto mp = std::get<lpc::Ref<MappingValue>>(v);
     std::cerr << "[keyt] " << tag << " entries=" << mp->items().size() << "\n";
     for (auto& kv : mp->items()) {
         std::cerr << "[keyt]   key=" << to_string(kv.first, false).substr(0, 20)
@@ -1712,7 +1712,7 @@ void dumpDbaseKeys(const Value& v, const char* tag) {
     static int budget = 60;
     if (budget <= 0 || v.index() != 6) return;
     --budget;
-    auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+    auto mp = std::get<lpc::Ref<MappingValue>>(v);
     std::cerr << "[keyt] " << tag << " topEntries=" << mp->items().size() << "\n";
     int shown = 0;
     for (auto& kv : mp->items()) {
@@ -1740,14 +1740,14 @@ Value simpleDbSelect(const std::string& table) {
 
 Value get_index(const Value& c, const Value& idx) {
     if (c.index() == 5) {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(c);
+        auto arr = std::get<lpc::Ref<ArrayValue>>(c);
         int64_t i = as_int(idx);
         if (i < 0) i += static_cast<int64_t>(arr->items.size());
         if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) return arr->items[static_cast<size_t>(i)];
         return Value{};   // OOB -> original type 0 "undefined"
     }
     if (c.index() == 6) {
-        auto mp = std::get<std::shared_ptr<MappingValue>>(c);
+        auto mp = std::get<lpc::Ref<MappingValue>>(c);
         const Value* hit = mp->find(idx);
         if (hit) return *hit;
         return Value{};   // miss -> original type 0 "undefined"
@@ -2028,12 +2028,12 @@ void padVariableValue(const Value& v, std::string& out) {
         break;
     }
     case 5: {
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+        auto arr = std::get<lpc::Ref<ArrayValue>>(v);
         for (const auto& e : arr->items) padVariableValue(e, out);
         break;
     }
     case 10: {
-        out.append(std::get<std::shared_ptr<BufferValue>>(v)->data);  // raw bytes
+        out.append(std::get<lpc::Ref<BufferValue>>(v)->data);  // raw bytes
         break;
     }
     default:
@@ -2048,20 +2048,20 @@ static Value dupValue(const Value& v) {
     if (!dg.ok) return v;   // cyclic: keep the reference instead of recursing
     switch (v.index()) {
     case 5: { // array -> deep copy
-        auto src = std::get<std::shared_ptr<ArrayValue>>(v);
-        auto r = std::make_shared<ArrayValue>();
+        auto src = std::get<lpc::Ref<ArrayValue>>(v);
+        auto r = lpc::Ref<ArrayValue>(new ArrayValue());
         r->items.reserve(src->items.size());
         for (const auto& e : src->items) r->items.push_back(dupValue(e));
         return r;
     }
     case 6: { // mapping -> deep copy
-        auto src = std::get<std::shared_ptr<MappingValue>>(v);
-        auto r = std::make_shared<MappingValue>();
+        auto src = std::get<lpc::Ref<MappingValue>>(v);
+        auto r = lpc::Ref<MappingValue>(new MappingValue());
         for (const auto& kv : src->items()) r->insert(dupValue(kv.first), dupValue(kv.second));
         return r;
     }
     case 10: { // buffer -> deep copy
-        return make_buffer(std::get<std::shared_ptr<BufferValue>>(v)->data);
+        return make_buffer(std::get<lpc::Ref<BufferValue>>(v)->data);
     }
     default:
         return v;   // int/float/string/object/closure/nil/undefined
@@ -2188,686 +2188,30 @@ StubCallCtx& stubCallCtx() {
     return ctx;
 }
 
+// [eid] efun 分发整数化: 旧链 379 个 if 逐个 strcmp (采样实证 call_builtin
+// 路径占 VM 执行 ~40%)。入口把名字一次 FNV-1a 折叠成 uint64, 每个分支变
+// 单次整数比较; CID 是 constexpr 编译期常量, 零运行时成本。
+static inline uint64_t fnv1aStr(const std::string& s) {
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+    return h;
+}
+constexpr uint64_t fnv1aLit(const char* s) {
+    uint64_t h = 1469598103934665603ull;
+    while (*s) { h ^= static_cast<unsigned char>(*s); h *= 1099511628211ull; ++s; }
+    return h;
+}
+// [eid] CID 必须在调用点落地为编译期常量: 直接 (fnv1aLit(lit)) 是运行时
+// 调用, 每次分支比较都重算 379 个字符串 hash (采样实证占执行 18.5%,
+// _allmul 即其 64 位乘法) —— 比 strcmp 还慢的负优化。static constexpr
+// local 由编译器放进 .rdata, 调用点只是一条取常量指令。
+#define CID(lit) ([]() -> uint64_t { static constexpr uint64_t v = fnv1aLit(lit); return v; }())
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
+    const uint64_t eid = fnv1aStr(name);
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
 
-#include "efun_batch1.inc"
-#include "efun_batch2.inc"
-
-    // ------------------------------------------------------------------
-    // Stub-efun tracker.  The name list is GENERATED (tools/gen_stubset.py)
-    // from the full efun table minus every efun that has a real dispatch
-    // branch in builtins.cpp / original_vm.cpp, so it cannot silently miss
-    // unimplemented efuns the way a hand-maintained list did.  Any efun the
-    // running game invokes that lands here logs obj::fn + rate-limited count.
-    // Implement one efun for real -> remove it from the generated list.
-    // ------------------------------------------------------------------
-    {
-        static std::mutex m;
-        static std::unordered_map<std::string, int> counts;
-        static const std::unordered_set<std::string> stubSet = {
-#include "stub_efuns.inc"
-        };
-        // Print the COMPLETE unimplemented list once per process, so efuns the
-        // game never happens to trigger are visible too (and can be fixed).
-        static const bool listed = [] {
-            std::string all;
-            for (const auto& s : stubSet) {
-                if (!all.empty()) all += ' ';
-                all += s;
-            }
-            std::cerr << "[efun-stub-list] " << stubSet.size()
-                      << " unimplemented efuns: " << all << "\n";
-            std::cerr.flush();
-            return true;
-        }();
-        (void)listed;
-        if (stubSet.find(name) != stubSet.end()) {
-            std::lock_guard<std::mutex> lk(m);
-            int c = ++counts[name];
-            // Every trigger is printed (no rate limiting): the log then shows
-            // exactly which unimplemented efun the game needed, where, and how
-            // often.  Implement one -> remove it from the generated list.
-            std::string ad;
-            if (!args.empty()) {
-                if (args[0].index() == 4) {
-                    std::string s = std::get<SharedString>(args[0]);
-                    if (s.size() > 48) s = s.substr(0, 48) + "...";
-                    ad = "a0='" + s + "'";
-                } else if (args[0].index() == 2) {
-                    ad = "a0=" + std::to_string(std::get<int64_t>(args[0]));
-                } else {
-                    ad = "a0=t" + std::to_string(args[0].index());
-                }
-            }
-            std::cerr << "[efun-stub] " << name << " @" << stubCallCtx().obj
-                      << "::" << stubCallCtx().fn << " args=" << args.size()
-                      << " " << ad << " calls=" << c << " (unimplemented efun)\n";
-            std::cerr.flush();
-            // The generated list covers ONLY efuns with no dispatch branch
-            // below, so return immediately (avoid double-logging at the
-            // catch-all).  Unknown efuns silently return 0.
-            return make_int(0);
-        }
-    }
-
-    if (name == "dup") {
-        // vm_f_dup (0x80d588c): deep copy of a value.  Used by filed's
-        // process_request to snapshot the request mapping before mutate/send.
-        return args.empty() ? make_int(0) : dupValue(args[0]);
-    }
-    if (name == "create_check_sum") {
-        // vm_f_create_check_sum was patched in the original to a fixed value of
-        // 1 (the content checksum check is bypassed), so return 1 unconditionally.
-        return make_int(1);
-    }
-    if (name == "int32") {
-        // vm_f_int32 (0x80d7b5c): cast to int32 (vm_getArgument with type 2).
-        return args.empty() ? make_int(0) : make_int(as_int(args[0]));
-    }
-    // ------------------------------------------------------------------
-    // Standard attribute-value efuns (basic_objectd import / NPC & item
-    // attribute rolls).  IDA semantics (vm_f_std_life 0x807d508 etc.):
-    //   - at most 1 argument, else vm_error("Too many argument...");
-    //   - an int argument is widened to real THROUGH float32, a real used
-    //     directly (anything else errors "Expected real as argument...");
-    //   - the arithmetic is x87 long-double, the result rounded through
-    //     float32, then truncated to int and returned (argument slot
-    //     written in place, which is how the VM returns an efun result).
-    //   std_life(l)   = (int) (100 + 85b + 1.39 b^2),  b = max(l-1, 0)
-    //   std_mana(l)   = (int) (80  + 56b + 0.93 b^2)
-    //   std_attack(l) = 4 * (int)(100 + 85b + 1.39 b^2) / 10
-    //   std_defense(l)= (int)(100 + 85b + 1.39 b^2) / 15
-    //   std_speed(l)  = (int) (50 + 6b)            (std_dodge identical)
-    //   std_tao(l)    = max(1, (int) (0.29 * l^3))   (l NOT decremented)
-    if (name == "std_life" || name == "std_mana" || name == "std_attack" ||
-        name == "std_defense" || name == "std_speed" || name == "std_dodge" ||
-        name == "std_tao") {
-        if (args.size() > 1) {
-            // Original raises a VM error; fall back to 0 so the caller can
-            // continue instead of aborting the boot.
-            return make_int(0);
-        }
-        double raw;
-        if (args.empty()) raw = 0.0;
-        else if (args[0].index() == 2) raw = static_cast<double>(static_cast<float>(as_int(args[0])));
-        else if (args[0].index() == 3) raw = std::get<double>(args[0]);
-        else return make_int(0);
-        long double r = static_cast<long double>(raw);
-        int64_t result = 0;
-        if (name == "std_tao") {
-            if (r < 0.0L) r = 0.0L;
-            long double f = static_cast<long double>(static_cast<float>(r * r * r * 0.29L));
-            int64_t v = static_cast<int64_t>(f);
-            result = (v <= 0) ? 1 : v;
-        } else {
-            long double b = r - 1.0L;
-            if (b < 0.0L) b = 0.0L;
-            float f;
-            if (name == "std_life") f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
-            else if (name == "std_mana") f = static_cast<float>(80.0L + 56.0L * b + 0.93L * b * b);
-            else if (name == "std_attack") f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
-            else if (name == "std_defense") f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
-            else /* speed / dodge */ f = static_cast<float>(50.0L + 6.0L * b);
-            int64_t iv = static_cast<int64_t>(f);
-            if (name == "std_attack") result = 4 * iv / 10;
-            else if (name == "std_defense") result = iv / 15;
-            else result = iv;
-        }
-        return make_int(result);
-    }
-
-    if (name == "write" || name == "printf" || name == "dump_file") {
-        if (!args.empty()) {
-            std::vector<Value> rest(args.begin() + 1, args.end());
-            std::string out = formatLpc(as_string(args[0]), rest);
-            if (LPCVM_GETENV("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
-                std::cerr << "[printf-badline] out=[" << out.substr(0, 80) << "]\n";
-            if (LPCVM_GETENV("LPCVM_TAIL") && out.find("to be scanned, interval") != std::string::npos) {
-                std::cerr << "[banner-src] obj=" << stubCallCtx().obj << " fn=" << stubCallCtx().fn
-                          << " tel=" << threadTelnetClient() << "\n";
-                std::cerr.flush();
-            }
-            // The original driver writes the formatted string exactly as-is
-            // (no auto newline; the LPC format strings carry their own \n).
-            int cno = threadTelnetClient();
-            if (cno >= 0 && findTelnetClient(cno)) {
-                telnetSend(cno, telnetLineEnd(out));
-                return make_int(1);
-            }
-            fputs(out.c_str(), stdout);
-            fflush(stdout);
-            if (LPCVM_GETENV("LPCVM_MEM2") && out.compare(0, 6, "Load: ") == 0) {
-                static long lArr = -1, lMap = -1;
-                long aL, mL, aC, mC;
-                lpc::liveHeapSnapshot(aL, mL, aC, mC);
-                if (lArr >= 0)
-                    std::cerr << "[heap] obj=" << out.substr(6, out.size() - 12)
-                              << " arrLive=" << aL << " mapLive=" << mL
-                              << " (+" << (aL - lArr) << " arr, +" << (mL - lMap) << " map) cum="
-                              << aC << "/" << mC << "\n";
-                lArr = aL; lMap = mL;
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "sprintf") {
-        if (args.empty()) return make_string("");
-        std::vector<Value> rest(args.begin() + 1, args.end());
-        std::string out = formatLpc(as_string(args[0]), rest);
-        if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && out.size() >= 4 &&
-            out.compare(out.size() - 2, 2, "_0") == 0) {
-            std::cerr << "[sprintf0] fmt=[";
-            const std::string& fss = as_string(args[0]);
-            for (size_t z = 0; z < fss.size(); ++z)
-                std::cerr << std::hex << (static_cast<unsigned char>(fss[z])) << " ";
-            std::cerr << std::dec << "] nargs=" << rest.size();
-            for (size_t ai = 0; ai < rest.size() && ai < 4; ++ai) {
-                const Value& a = rest[ai];
-                std::cerr << " a" << ai << "=t" << a.index() << ":";
-                if (a.index() == 4) {
-                    const std::string& st = std::get<SharedString>(a).str();
-                    for (size_t z = 0; z < st.size() && z < 24; ++z)
-                        std::cerr << std::hex << (static_cast<unsigned char>(st[z])) << " ";
-                    std::cerr << std::dec << "(len=" << st.size() << ")";
-                } else if (a.index() == 2) {
-                    std::cerr << std::get<int64_t>(a);
-                } else if (a.index() == 1) {
-                    std::cerr << "void";
-                } else if (a.index() == 0) {
-                    std::cerr << "undef";
-                } else {
-                    std::cerr << "?";
-                }
-                std::cerr << " |";
-            }
-            std::cerr << "\n";
-            std::cerr.flush();
-        }
-        return make_string(out);
-    }
-    if (name == "replace_string") {
-        // replace_string(str, from, to) - replace ALL occurrences.
-        if (args.size() >= 3) {
-            std::string s = as_string(args[0]);
-            std::string from = as_string(args[1]);
-            std::string to = as_string(args[2]);
-            if (from.empty()) return make_string(s);
-            std::string out;
-            size_t pos = 0;
-            for (;;) {
-                size_t p = s.find(from, pos);
-                if (p == std::string::npos) {
-                    out += s.substr(pos);
-                    break;
-                }
-                out += s.substr(pos, p - pos);
-                out += to;
-                pos = p + from.size();
-            }
-            return make_string(out);
-        }
-        return make_string("");
-    }
-    if (name == "tolower" || name == "toupper") {
-        // vm_f_tolower / vm_f_toupper: case-fold an ASCII string.
-        if (args.empty()) return make_string("");
-        std::string s = as_string(args[0]);
-        for (auto& c : s) {
-            unsigned char uc = static_cast<unsigned char>(c);
-            c = static_cast<char>(name == "tolower" ? tolower(uc) : toupper(uc));
-        }
-        return make_string(s);
-    }
-    if (name == "atoi") {
-        if (args.empty()) return make_int(0);
-        const Value& v = args[0];
-        if (v.index() == 2) return v;
-        if (v.index() == 4) {
-            // vm_f_atoi (IDA 0x80d46d8):
-            //     for (i = s; vm_isspace(*i); ++i);
-            //     if (*i == '0' && (i[1] == 'x' || i[1] == 'X'))
-            //         v = vm_strtol(..., i + 2, 0, 16, 0);   // hexadecimal
-            //     else
-            //         v = vm_strtol(..., i, 0, 10, 0);       // decimal
-            // Parsing hex as decimal made EVERY "0x...." macro expand to 0.
-            // That is what broke room permissions: form2's
-            // convert_string_to_bit_macro() does atoi(expand_macro("ROOM_..."))
-            // on values like "0x00000004" (ROOM_P_AUTO_TOUCH), so room_limit
-            // came out 0, room.c::set_permission() left permission == 0 and
-            // permission.c::refresh_permission() sent 0x1A03 with 0 - the client
-            // then refuses ALT+Z with "本地图无法使用自动遇敌".
-            const std::string s = std::get<SharedString>(v).str();
-            size_t i = 0;
-            while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' ||
-                                    s[i] == '\n' || s[i] == '\v' || s[i] == '\f'))
-                ++i;
-            const bool hex = (i + 1 < s.size() && s[i] == '0' &&
-                              (s[i + 1] == 'x' || s[i + 1] == 'X'));
-            const char* beg = s.c_str() + (hex ? i + 2 : i);
-            char* end = nullptr;
-            const long long r = std::strtoll(beg, &end, hex ? 16 : 10);
-            if (end == beg) return make_int(0);
-            return make_int(static_cast<int64_t>(r));
-        }
-        return make_int(0);
-    }
-    if (name == "atof") {
-        if (args.empty()) return make_float(0);
-        const Value& v = args[0];
-        if (v.index() == 3) return v;
-        if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
-        if (v.index() == 4) {
-            try { return make_float(std::stod(sqlTrim(std::get<SharedString>(v)))); }
-            catch (...) { return make_float(0); }
-        }
-        return make_float(0);
-    }
-    if (name == "sizeof" || name == "size") {
-        if (args.empty()) return make_int(0);
-        const Value& v = args[0];
-        if (v.index() == 5) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<ArrayValue>>(v)->items.size()));
-        if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<MappingValue>>(v)->size()));
-        if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<SharedString>(v).size()));
-        // vm_f_sizeof (0x80dbcec) case 5 (buffer): byte length
-        // (*(pValue+12) = Vm_Buffer_T length).
-        if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<std::shared_ptr<BufferValue>>(v)->data.size()));
-        return make_int(0);
-    }
-    if (name == "strlen" && LPCVM_GETENV("LPCVM_NAMERULE")) {
-        const std::string av = args.empty() ? std::string() : as_string(args[0]);
-        std::cerr << "[namerule] strlen(" << av << ") -> " << av.size() << " bytes"
-                  << " ischinese_first=" << (av.empty() ? 0 : (static_cast<unsigned char>(av[0]) >= 0x80 ? 1 : 0))
-                  << "\n";
-        std::cerr.flush();
-    }
-    if (name == "strlen") return args.empty() ? make_int(0) : make_int(static_cast<int64_t>(as_string(args[0]).size()));
-    // vm_f_is_undefined (0x80d80ec): returns (type == 0).  In the original the
-    // "undefined" value IS type 0 (missing keys, uninitialized vars); void
-    // function results are type 1 (is_void).  Probed live:
-    //   is_undefined(m["nope"])=1, is_undefined(uninit mixed)=1,
-    //   is_void(m["nope"])=0, is_void(void fn())=1.
-    if (name == "is_undefined") return make_int(!args.empty() && args[0].index() == 0 ? 1 : 0);
-    if (name == "is_mapping") {
-        // [ismp] runtime-armed (type nul > _probe_on\LPCVM_ISFN): what did
-        // query_task_log/query_task_tip actually get back from all_templates?
-        static const std::atomic<bool>& ismpFlag = lpc::dynProbeFlag("LPCVM_ISFN");
-        if (ismpFlag.load(std::memory_order_relaxed)) {
-            static int ismpBudget = 600;
-            const std::string& cf = stubCallCtx().fn;
-            if (ismpBudget > 0 && (cf.find("query_task") != std::string::npos ||
-                                   cf == "daemon")) {
-                --ismpBudget;
-                std::string dump = args.empty() ? std::string("<noargs>") : to_string(args[0], false);
-                if (dump.size() > 130) dump = dump.substr(0, 130) + "...";
-                std::cerr << "[ismp] caller=" << stubCallCtx().obj << "::" << cf
-                          << " argType=" << (args.empty() ? -1 : args[0].index())
-                          << " val=" << dump
-                          << " -> " << (!args.empty() && args[0].index() == 6 ? 1 : 0) << "\n";
-                std::cerr.flush();
-            }
-        }
-        return make_int(!args.empty() && args[0].index() == 6 ? 1 : 0);
-    }
-    if (name == "is_array") return make_int(!args.empty() && args[0].index() == 5 ? 1 : 0);
-    if (name == "is_function") {
-        // [isfn]: runtime-armable (type nul > _probe_on\LPCVM_ISFN) dump of
-        // every is_function() argument.  Round 1 showed taskd::query_task_log
-        // returns "" without ever entering the template's task_log() closure,
-        // i.e. `is_function(funcs["log"])` is false - this says whether the
-        // value read back out of all_templates is still a closure (type 8) and
-        // who is asking.
-        static const std::atomic<bool>& isfnFlag = lpc::dynProbeFlag("LPCVM_ISFN");
-        if (isfnFlag.load(std::memory_order_relaxed)) {
-            static int isfnBudget = 600;
-            if (isfnBudget > 0 && !args.empty()) {
-                --isfnBudget;
-                std::string dump = to_string(args[0], false);
-                if (dump.size() > 110) dump = dump.substr(0, 110) + "...";
-                std::cerr << "[isfn] caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn
-                          << " argc=" << args.size()
-                          << " argType=" << args[0].index()
-                          << " val=" << dump << "\n";
-                std::cerr.flush();
-            }
-        }
-        return make_int(!args.empty() && args[0].index() == 8 ? 1 : 0);
-    }
-    if (name == "is_string") return make_int(!args.empty() && args[0].index() == 4 ? 1 : 0);
-    if (name == "is_int") return make_int(!args.empty() && args[0].index() == 2 ? 1 : 0);
-    if (name == "is_float") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
-    // Character-class predicates (vm_f_isalpha/isdigit/isxdigit etc.): the
-    // argument is an int holding a byte value (e.g. version[i]); LOBYTE is
-    // tested.  vm_isxdigit: '0'-'9' | 'A'-'F' | 'a'-'f'.
-    if (name == "isalpha" || name == "isdigit" || name == "isxdigit" ||
-        name == "islower" || name == "isupper") {
-        int c = args.empty() ? 0 : static_cast<int>(as_int(args[0]) & 0xFF);
-        bool r = false;
-        if (name == "isalpha") r = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-        else if (name == "isdigit") r = (c >= '0' && c <= '9');
-        else if (name == "isxdigit") r = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-        else if (name == "islower") r = (c >= 'a' && c <= 'z');
-        else r = (c >= 'A' && c <= 'Z');
-        return make_int(r ? 1 : 0);
-    }
-    if (name == "stricmp") {
-        // vm_f_stricmp (0x80d7ee0): case-insensitive string compare, returns
-        // -1/0/1 like strcasecmp.  check_account_info relies on
-        //   stricmp(account_info["password"], new_md5password) != 0
-        // to reject a wrong password; returning 0 unconditionally (the old
-        // fallthrough) made EVERY password accepted.
-        if (args.size() >= 2) {
-            const std::string& a = as_string(args[0]);
-            const std::string& b = as_string(args[1]);
-            int r = _stricmp(a.c_str(), b.c_str());
-            return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
-        }
-        return make_int(0);
-    }
-    if (name == "clone_object") {
-        // vm_f_clone_object (0x80f8eac): clone_object(path, createArgs...) clones
-        // a loaded template object into a fresh instance, passing the remaining
-        // arguments to its create(), and returns it; 0 on failure.  The target
-        // may be a path string OR a loaded object value (create_basic_object
-        // clones the /gs/clone/npc/basic.c template object it already loaded:
-        // clone_object(basic_ob)); as_string() on an object value yields
-        // "<object>" garbage, so extract the program path for object args.
-        if (args.empty()) return make_int(0);
-        std::string path;
-        if (args[0].index() == 7) {
-            auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
-            path = ov->programName;
-            // clone:<rel>#<seq> / pak:<rel>: normalize to the program path.
-            // A CLONE target keeps its "#<seq>" instance identity: cloning the
-            // basic object (e.g. clone_object(find_basic_object_by_import_name(
-            // "tianyongcheng/shouhutianshen.c")) from place_char) must clone
-            // THAT instance (whose dbase has name/file_id/my_import_name), not
-            // the bare basic.c template - otherwise the new NPC has no name
-            // and guardd can't find �ػ�����@��ܭ��.
-            // vm_f_clone_object clones the template OBJECT, so the argument's
-            // identity must survive verbatim: a "clone:<rel>#<seq>" value names an
-            // EXISTING instance and IS a registry key.  Stripping the "clone:"
-            // prefix produced "gs/clone/npc/basic.o#2647", which matches no key, so
-            // cloneObjectInRegistry fell back to a suffix scan and used an ARBITRARY
-            // instance of the same program as the template.  place_char clones exactly
-            // such an instance (clone_object(find_basic_object_by_import_name(
-            // "fangzhangdao/chuanfu"))); with a wrong template object_template() and
-            // basic_object() read the wrong dbase, call_init_script found no
-            // init_script and the NPC opened with no menu (Fangzhang-Island boatman).
-            if (path.compare(0, 6, "clone:") == 0) {
-                // exact registry key - keep as is
-            } else if (path.compare(0, 4, "pak:") == 0) {
-                path = path.substr(4);
-                if (!path.empty() && path.front() != '/') path = "/" + path;
-            } else if (!path.empty() && path.front() != '/') {
-                path = "/" + path;
-            }
-        } else {
-            path = as_string(args[0]);
-        }
-        if (path.empty()) return make_int(0);
-        std::vector<Value> createArgs;
-        for (size_t i = 1; i < args.size(); ++i) createArgs.push_back(args[i]);
-        // NOTE: do NOT call masterSearchRoot() here - it takes the registry
-        // lock and the caller (a connectiond daemon VM) may already be inside
-        // a cross-object call that holds it, deadlocking on another thread.
-        // The clone registry lookup uses suffix matching on the object path
-        // and does not need the search root.
-        return lpc::cloneObjectInRegistry(path, "", createArgs);
-    }
-    // is_object(ob): true only for an object that is still alive.  A really freed
-    // object behaves as the int 0 (see objectValueFreed / original_vm.h) - the
-    // original invalidates references on a real destruct, which is what lets
-    // is_in_combat() (is_object(temp("combat")) && !cob->...("finished")) go false
-    // after monsterd::touch_off_combat destructs a combat object it could not
-    // populate with a monster team (the idle_template / "no encounter" path).
-    if (name == "is_object") {
-        // [isodbg] punishd.do_init 重试 5000+ 次但 query_combat_trigger 返回
-        // type=7 —— 实锤 punishd 实际传入 is_object 的值是什么。
-        // 注意: 必须 dynProbeFlag + _probe_on 标记文件热布防; LPCVM_GETENV
-        // 在服务进程里读不到 _run_keep2.py 之外的变量, 探针永远静默。
-        static const std::atomic<bool>& isoDbg = dynProbeFlag("LPCVM_ISODBG");
-        if (isoDbg.load(std::memory_order_relaxed) && !args.empty()) {
-            const auto& c = stubCallCtx();
-            static std::atomic<int> isoLog{0};
-            if (isoLog.fetch_add(1) < 60) {
-                const Value& a = args[0];
-                std::string desc;
-                if (a.index() == 7) {
-                    auto ov = std::get<std::shared_ptr<ObjectValue>>(a);
-                    desc = std::string("prog=") +
-                           (ov ? ov->programName : "<null>") +
-                           " owner=" + (ov && ov->owner ? "set" : "null") +
-                           " alive=" +
-                           (ov && ov->alive
-                                ? (ov->alive->load(std::memory_order_relaxed)
-                                       ? "true"
-                                       : "false")
-                                : std::string("nullptr->true"));
-                } else {
-                    desc = to_string(a, false).substr(0, 60);
-                }
-                std::cerr << "[isodbg] idx=" << a.index() << " " << desc
-                          << " caller=" << c.obj << "::" << c.fn << "\n";
-                std::cerr.flush();
-            }
-        }
-        return make_int((!args.empty() && args[0].index() == 7 && lpc::objectValueAlive(args[0])) ? 1 : 0);
-    }
-    if (name == "to_int" || name == "to_number") return args.empty() ? make_int(0) : make_int(as_int(args[0]));
-    if (name == "to_string") return args.empty() ? make_string("") : make_string(as_string(args[0]));
-    if (name == "to_float") return args.empty() ? make_float(0.0) : make_float(as_int(args[0]));
-    if (name == "abs") return args.empty() ? make_int(0) : make_int(std::llabs(as_int(args[0])));
-    if (name == "min") return args.empty() ? make_int(0) : make_int(as_int(*std::min_element(args.begin(), args.end(), [](const Value& a, const Value& b) { return as_int(a) < as_int(b); })));
-    if (name == "max") return args.empty() ? make_int(0) : make_int(as_int(*std::max_element(args.begin(), args.end(), [](const Value& a, const Value& b) { return as_int(a) < as_int(b); })));
-    if (name == "keys") {
-        if (args.empty() || args[0].index() != 6) return make_array();
-        auto arr = std::make_shared<ArrayValue>();
-        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-        for (auto& kv : mp->items()) arr->items.push_back(kv.first);
-        return arr;
-    }
-    if (name == "values") {
-        if (args.empty() || args[0].index() != 6) return make_array();
-        auto arr = std::make_shared<ArrayValue>();
-        for (auto& kv : std::get<6>(args[0])->items()) arr->items.push_back(kv.second);
-        return arr;
-    }
-    if (name == "map_delete") {
-        if (args.size() >= 2 && args[0].index() == 6) {
-            auto mp = std::get<6>(args[0]);
-            static const bool mdProbe = LPCVM_GETENV("LPCVM_ISMAP") != nullptr;
-            if (mdProbe && args[1].index() == 2) {
-                std::cerr << "[mapdel] map=" << mp.get()
-                          << " intkey=" << std::get<int64_t>(args[1])
-                          << " size=" << mp->size()
-                          << " caller=" << stubCallCtx().obj << "::"
-                          << stubCallCtx().fn << "\n";
-                std::cerr.flush();
-            }
-            mp->erase(args[1]);
-        }
-        return make_int(1);
-    }
-    if (name == "member_array") {
-        if (args.size() >= 2 && args[1].index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[1]);
-            for (size_t i = 0; i < arr->items.size(); ++i) if (value_equal(arr->items[i], args[0])) return make_int(static_cast<int64_t>(i));
-        }
-        return make_int(-1);
-    }
-    if (name == "explode") {
-        // vm_f_explode (0x80d5c68): explode(str) splits on "\n" by default;
-        // explode(str, sep) splits on the given separator.  Empty separator
-        // splits into individual characters.
-        auto arr = std::make_shared<ArrayValue>();
-        if (args.empty()) return arr;
-        std::string s = as_string(args[0]);
-        std::string sep = args.size() >= 2 ? as_string(args[1]) : "\n";
-        // [fix] 原版 vm_f_explode (0x80d5c68 IDA 实证): if (len) {...分割...}
-        // else vm_pushArray(空数组) —— 空串输入恒返回空数组 ({})。此前返回
-        // ({""}) 一元素, itemd::load_attrib_list 的 arr[14]=explode(trim(col),
-        // "|") 拿到 ({"}) → sizeof!=0 → 关联字段成空串 → reset_equipment_
-        // attrib 把粉属性 set 到 "prop3/" 废槽 → 炼化粉装永远没有粉属性。
-        if (s.empty()) return arr;
-        // 热路径铁律: getenv 缓存为 static const bool, 严禁每次调用查询。
-        static const bool s_explodeTrace =
-            LPCVM_GETENV("LPCVM_TRACE") != nullptr &&
-            LPCVM_GETENV("LPCVM_TRACE_EXPLODE") != nullptr;
-        if (s_explodeTrace)
-            std::cerr << "[explode] len=" << s.size() << " sep=" << (args.size() >= 2 ? "explicit" : "newline")
-                      << " first8=[" << s.substr(0, 8) << "]\n";
-        if (sep.empty()) {
-            for (char c : s) arr->items.push_back(make_string(std::string(1, c)));
-            return arr;
-        }
-        size_t start = 0;
-        while (true) {
-            size_t p = s.find(sep, start);
-            if (p == std::string::npos) {
-                arr->items.push_back(make_string(s.substr(start)));
-                break;
-            }
-            arr->items.push_back(make_string(s.substr(start, p - start)));
-            start = p + sep.size();
-        }
-        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE")) {
-            std::string dbg;
-            for (size_t i = 0; i < arr->items.size() && i < 4; ++i) {
-                if (!dbg.empty()) dbg += "|";
-                const std::string& e = std::get<SharedString>(arr->items[i]);
-                dbg += "[" + e.substr(0, 12) + "]";
-            }
-            std::string hex0;
-            if (!arr->items.empty()) {
-                const std::string& e0 = std::get<SharedString>(arr->items[0]);
-                char b[8];
-                for (size_t k = 0; k < e0.size() && k < 8; ++k) { snprintf(b, sizeof(b), "%02X ", (unsigned char)e0[k]); hex0 += b; }
-            }
-            std::cerr << "[explode] n=" << arr->items.size() << " first=[" << dbg << "] elem0hex=" << hex0 << "\n";
-        }
-        return arr;
-    }
-    if (name == "implode") {
-        if (args.size() < 2 || args[0].index() != 5) return make_string("");
-        auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-        std::string sep = as_string(args[1]), out;
-        for (size_t i = 0; i < arr->items.size(); ++i) {
-            if (i) out += sep;
-            out += as_string(arr->items[i]);
-        }
-        return make_string(out);
-    }
-    if (name == "allocate") {
-        auto arr = std::make_shared<ArrayValue>();
-        if (!args.empty()) {
-            int64_t n = as_int(args[0]);
-            for (int64_t i = 0; i < n; ++i) arr->items.push_back(make_int(0));
-        }
-        return arr;
-    }
-    if (name == "express_set" || name == "express_add" || name == "express_delete") {
-        // vm_f_express_set (0x80d61bc) / express_add / express_delete: operate
-        // on a MAPPING value: express_set(mapping, path, value) inserts
-        // mapping[path] = value (path may be "a/b/c" for nested sections,
-        // vm_setPathInMapping); express_add adds numerically; express_delete
-        // removes the key.  Paths containing '/' are WALKED as nested
-        // mappings, symmetric with express_query's vm_queryPathInMapping walk -
-        // writing "dynamic_key/login" as a single flat key made dbase set_temp
-        // invisible to query_temp("dynamic_key/login") and login's dynamic
-        // encryption key read back empty (aaa password check used the
-        // "abcdef" fallback key and decrypted garbage).
-        // express_delete may be called with just (path, mapping); set/add
-        // carry a value as the third argument.
-        if (args.size() >= 2 && (name != "express_delete" || args.size() >= 2)) {
-            // mapping may be args[0] or args[1] (push order differs per efun);
-            // key is the other non-mapping leading arg, value is args[2].
-            size_t mpIdx = args[0].index() == 6 ? 0 : (args[1].index() == 6 ? 1 : size_t(-1));
-            if (mpIdx != size_t(-1)) {
-                auto mp = std::get<std::shared_ptr<MappingValue>>(args[mpIdx]);
-                size_t keyIdx = mpIdx == 0 ? 1 : 0;
-                std::string path = as_string(args[keyIdx]);
-                // Normalise the path exactly like the original helpers:
-                // vm_setPathInMapping / vm_addPathInMapping /
-                // vm_deletePathInMapping skip leading and CONSECUTIVE '/'
-                // separators, and express_query (vm_queryPathInMapping) treats
-                // "a/" as "a" (trailing slashes are stripped).  Keep set/add/
-                // delete symmetric with query so a value written through
-                // express_set("dynamic_key/login", ...) is readable by
-                // express_query("dynamic_key/login").
-                while (!path.empty() && path.back() == '/') path.pop_back();
-                if (path.empty()) return make_int(0);   // root: nothing to set
-                std::shared_ptr<MappingValue> cur = mp;
-                for (;;) {
-                    while (!path.empty() && path.front() == '/') path.erase(path.begin());
-                    size_t q = path.find('/');
-                    bool last = (q == std::string::npos);
-                    std::string seg = last ? path : path.substr(0, q);
-                    if (seg.empty() && !last) {
-                        // consecutive slashes ("a//b"): skip the empty segment
-                        path = path.substr(q);
-                        continue;
-                    }
-                    Value k = make_string(seg);
-                    if (last) {
-                        if (name == "express_set") {
-                            cur->insert(k, args[2]);
-                            // vm_f_express_set returns the VALUE it stored: dbase.c's
-                            // set_temp()/set() are `return express_set(path, dbase, val)`
-                            // and the game relies on the LPC `m[k] = v` expression value
-                            // (e.g. start_gs.c: set_dynamic_key returns
-                            // ob->set_temp("dynamic_key/"+idx, gen_dynamic_key()) so the
-                            // generated key reaches the client in 0x5109; returning 1
-                            // sent `key = 1` and broke the mall coin-password
-                            // encryption).  cheater_detect's
-                            // `cob->set_temp("failed_count", n) >= 2` needs the new count.
-                            return args[2];
-                        } else if (name == "express_add") {
-                            // Original vm_addPathInMapping (0x80b7204) does NOT
-                            // hardcode numeric addition: it pushes the existing
-                            // slot value and the new value and calls the generic
-                            // vm_addValue (the LPC `+` operator) — int+int adds,
-                            // ARRAY+ARRAY CONCATENATES, string+string concats.
-                            // xlibd's safe_add() relies on this: the second
-                            // drama->add("events_table/sf_try_finished/*/决战",
-                            // ({"derive_scene25"})) must APPEND to the existing
-                            // ({"derive_scene24"}) list.  Numeric-only addition
-                            // turned array+array into as_int(0)+as_int(0)==0 and
-                            // silently zeroed the star-lord script's 决战/比试
-                            // sf_try_finished handlers, so the settlement derive
-                            // (derive_scene24/25/27) never ran and scenario26
-                            // (五色灵石 bonus) never fired.
-                            Value* hit = cur->find(k);
-                            Value nv = !hit ? args[2]
-                                            : lpc::vmcore::addValues(*hit, args[2]);
-                            cur->insert(k, nv);
-                            return nv;   // add()/add_temp() return the new value
-                        } else { // express_delete
-                            cur->erase(k);
-                        }
-                        break;
-                    }
-                    Value* hit = cur->find(k);
-                    if (!hit || hit->index() != 6) {
-                        // express_set creates missing intermediate mappings
-                        // (vm_setPathInMapping 0x80b7000 allocates them);
-                        // express_add / express_delete (vm_addPathInMapping
-                        // 0x80b7204 / vm_deletePathInMapping 0x80b7398) fail
-                        // when the mid path is absent or not a mapping.
-                        if (name != "express_set") return make_int(0);
-                        auto sub = std::make_shared<MappingValue>();
-                        Value& nv = cur->insert(k, sub);
-                        hit = &nv;
-                    }
-                    cur = std::get<std::shared_ptr<MappingValue>>(*hit);
-                    path = path.substr(q);
-                }
-                return make_int(1);
-            }
-        }
-        return make_int(0);
-    }
-    if (name == "express_query") {
+    // ---- HOT-PATH FAST LANES -------------------------------------------------
+    if (eid == CID("express_query")) {
         // vm_f_express_query (0x80d6124) -> vm_queryPathInMapping (0x80b6f10):
         //   - an EMPTY path returns the mapping itself,
         //   - a path with no '/' is a single-level key lookup,
@@ -2879,14 +2223,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 2) {
             const Value* mpv = nullptr;
             const Value* keyv = nullptr;
+
             if (args[0].index() == 6) { mpv = &args[0]; keyv = &args[1]; }
             else if (args[1].index() == 6) { mpv = &args[1]; keyv = &args[0]; }
             if (mpv && keyv && keyv->index() == 4) {
-                auto mp = std::get<std::shared_ptr<MappingValue>>(*mpv);
+                auto mp = std::get<lpc::Ref<MappingValue>>(*mpv);
                 std::string path = std::get<SharedString>(*keyv);
                 while (!path.empty() && path.back() == '/') path.pop_back();  // "a/" == "a"
                 if (path.empty()) return *mpv;   // "" / "/" -> the mapping itself
-                std::shared_ptr<MappingValue> cur = mp;
+                lpc::Ref<MappingValue> cur = mp;
                 const Value* v = nullptr;
                 for (;;) {
                     size_t q = path.find('/');
@@ -2895,7 +2240,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     v = cur->find(k);
                     if (q == std::string::npos) break;   // last segment
                     if (!v || v->index() != 6) return Value{};   // mid-path non-mapping
-                    cur = std::get<std::shared_ptr<MappingValue>>(*v);
+                    cur = std::get<lpc::Ref<MappingValue>>(*v);
                     path = path.substr(q);
                     while (!path.empty() && path.front() == '/') path.erase(path.begin());
                     if (path.empty()) break;   // trailing slashes -> last segment done
@@ -2905,1695 +2250,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return Value{};   // miss -> original type 0 "undefined"
     }
-    if (name == "query_temp" || name == "query") return make_int(0);
-    if (name == "set_name" || name == "set_temp" || name == "set") return make_int(1);
-    if (name == "destruct_object" || name == "to_be_disconnect") {
-        // destruct_object(ob) really destroys: the game's logout chain ends in
-        // user::time_expired -> trap_into(SF_DISCONNECTED_TIME_EXPIRED) ->
-        // destruct_object(me).  It used to be a no-op, so the character stayed
-        // alive and the account stayed "online", and the next login reconnected
-        // the stale character instead of showing the character list.
-        if (name == "destruct_object" && !args.empty()) {
-            std::string k;
-            if (args[0].index() == 7) {
-                auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
-                if (ov) {
-                    k = ov->programName;
-                    // this_object() yields the placeholder "<this>" (on a
-                    // detached VM even thisObjectName_ is "<this>"): resolve
-                    // through the owner object pointer.  threadd::daemon
-                    // destroys the logged-out character with
-                    // destruct_object(this_object()); without this the
-                    // character was never destroyed, the account stayed online,
-                    // and the next login reconnected the stale character
-                    // instead of showing the character list.
-                    if ((k.empty() || k == "<this>") && ov->owner)
-                        k = lpc::regKeyOfObjectPtr(ov->owner);
-                    if (k.empty() || k == "<this>") k = stubCallCtx().key;
-                }
-            } else if (args[0].index() == 4) {
-                k = std::get<SharedString>(args[0]).str();
-                if (k.empty() || k == "<this>") k = stubCallCtx().key;
-            }
-            static const bool lifeProbe = (LPCVM_GETENV("LPCVM_LIFE") != nullptr);
-            bool ok = false;
-            if (!k.empty()) ok = lpc::destructObjectByKey(k);
-            if (lifeProbe)
-                std::cerr << "[life] destruct_object(" << k << ") -> " << (ok ? 1 : 0)
-                          << " by=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
-        }
-        return make_int(1);
-    }
-    if (name == "close_client") {
-        // vm_f_close_client (0x804e5d8): close_client(client_no) closes the
-        // client's socket and drops it from the game-service registry.  The
-        // account/agent teardown (comm_connection_disconnect -> ... ->
-        // close_client) relies on this to actually sever the TCP connection.
-        if (!args.empty()) {
-            int clientNo = static_cast<int>(as_int(args[0]));
-            if (LPCVM_GETENV("LPCVM_TAIL"))
-                std::cerr << "[close_client] cno=" << clientNo << "\n";
-            gameServiceDisconnect(clientNo);
-        }
-        return make_int(1);
-    }
-    if (name == "is_clone") {
-        // vm_f_is_clone: true when the object was created by clone_object
-        // (clone registry keys carry a "#<seq>" suffix).  With no argument it
-        // refers to the current object; call_builtin cannot see the current
-        // object, so a no-arg is_clone returns 0 (matches non-clone).
-        if (args.empty() || args[0].index() != 7) return make_int(0);
-        auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
-        return make_int(ov->programName.find('#') != std::string::npos ? 1 : 0);
-    }
-    if (name == "register_daemon_data" || name == "unregister_daemon_data") {
-        // The driver keeps a per-daemon data table (path -> key -> value) that
-        // survives object reloads; the LPC uses it as the canonical place to stash
-        // daemon state and read it back:
-        //   configd.c:298        register_daemon_data("/daemons/configd.c","config",config)
-        //   configd.c:792        m = get_daemon_data("/daemons/configd.c")   (restore)
-        //   scheduled.c:379      register_daemon_data("/daemons/scheduled.c",event,event)
-        //   douchong_dahui.c:918 register_daemon_data(".../douchong_dahui.c",
-        //                                              "all_challenge_npc", all_challenge_npc)
-        //   douchong_dahui.c:1125 m["all_challenge_npc"] -> restore, then unregister
-        // This used to be a no-op stub, so every restore read back NOTHING: the
-        // challenge table (and the event scheduler's own state) was lost, which is
-        // why douchong_dahui's 1000 "challenge" rows were written on some boots and
-        // never written on others.  Implemented faithfully as an in-memory,
-        // per-boot registry keyed by (daemon path, key).
-        if (args.size() < 2) return make_int(0);
-        std::string dpath = as_string(args[0]);
-        std::string dkey = as_string(args[1]);
-        std::lock_guard<std::mutex> lk(daemonDataMutex());
-        auto& tbl = daemonDataTable();
-        if (name == "unregister_daemon_data") {
-            auto it = tbl.find(dpath);
-            if (it != tbl.end()) {
-                it->second.erase(dkey);
-                if (it->second.empty()) tbl.erase(it);
-            }
-            return make_int(1);
-        }
-        if (args.size() < 3) return make_int(0);
-        tbl[dpath][dkey] = args[2];
-        return make_int(1);
-    }
-    if (name == "get_daemon_data") {
-        // get_daemon_data(path) -> mapping of every key registered for that daemon;
-        // get_daemon_data(path, key) -> that single value.  Callers test the result
-        // with is_mapping(), so an unknown path must yield something that is not a
-        // mapping (undefined), not an empty one - configd/ctacommandd rely on that
-        // to decide whether a stored config exists.
-        if (args.empty()) return Value{};
-        std::string dpath = as_string(args[0]);
-        std::lock_guard<std::mutex> lk(daemonDataMutex());
-        auto& tbl = daemonDataTable();
-        auto it = tbl.find(dpath);
-        if (args.size() >= 2) {
-            if (it == tbl.end()) return Value{};
-            auto kit = it->second.find(as_string(args[1]));
-            return kit == it->second.end() ? Value{} : kit->second;
-        }
-        if (it == tbl.end() || it->second.empty()) return Value{};
-        Value m = make_mapping();
-        auto mp = std::get<std::shared_ptr<MappingValue>>(m);
-        for (const auto& kv : it->second) mp->insert(make_string(kv.first), kv.second);
-        return m;
-    }
-    if (name == "dispatch_service" || name == "send_to_cta") return make_int(1);
-    if (name == "find_function") {
-        // Return a function value for a builtin efun (the game uses this to
-        // build the mysql_connect closure in find_mysql_func).
-        if (args.empty()) return make_int(0);
-        std::string fnName = as_string(args[0]);
-        const auto& names = efunNameTable();
-        for (size_t i = 0; i < names.size(); ++i) {
-            if (names[i] == fnName) return make_closure(fnName, {});
-        }
-        return make_int(0);
-    }
-    if (name == "allocate_array") {
-        // vm_f_allocate_array (0x80d58b4 IDA 实证):
-        //   argNum > 2            -> vm_error("Too many parameters to allocate_array.\n")
-        //   size < 0              -> vm_error("Size(%d) of array cann't be negative.\n")
-        //   allocate_array(n)     -> n 个 undefined 槽
-        //   allocate_array(n, v)  -> 每个槽都填 v (原版循环 vm_pushValue +
-        //                            dup2 逐槽写入, NOT undefined!)
-        // 两参填值语义是 mudlib 广泛依赖的: upgrade_equipment 的
-        // allocate_array(item_num, item_name) (自动改造辅助石头表),
-        // anqi.c 的 allocate_array(32, 255) 棋盘等。此前忽略第 2 参导致
-        // 自动改造 assist 全 undefined -> rate=0 -> 改造必定失败。
-        if (args.size() > 2)
-            lpc::vmcore::vmError("Too many parameters to allocate_array.\n");
-        int64_t n = args.empty() ? 0 : as_int(args[0]);
-        if (n < 0) {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "Size(%lld) of array cann't be negative.\n",
-                          static_cast<long long>(n));
-            lpc::vmcore::vmError(buf);
-        }
-        auto arr = std::make_shared<ArrayValue>();
-        if (n > 0) arr->items.reserve(static_cast<size_t>(n));
-        for (int64_t i = 0; i < n; ++i)
-            arr->items.push_back(args.size() >= 2 ? args[1] : Value{});
-        return arr;
-    }
-    if (name == "defined") {
-        // The original driver is built with CONFIG defined, which selects the
-        // direct find_function path in find_mysql_func.
-        if (!args.empty() && as_string(args[0]) == "CONFIG") return make_int(1);
-        return make_int(0);
-    }
-    if (name == "expand_macro") {
-        // vm_f_expand_macro (0x80d5598) looks up the predefine table.
-        // __BIN_DIR__ (vm_getBinDir) returns the -b directory WRAPPED IN
-        // DOUBLE QUOTES; the LPC startup strips them with [1..<2].
-        if (!args.empty() && args[0].index() == 4) {
-            const std::string& key = std::get<SharedString>(args[0]);
-            {
-                // Boot-injected predefines (/D CONFIG=...) win over the .o
-                // define table, matching the original driver's runtime
-                // define merge (start_<prefix>.o resolves INI_FILE via
-                // expand_macro("CONFIG")).
-                std::lock_guard<std::mutex> lk(injectedDefinesMutex());
-                auto it = injectedDefines().find(key);
-                if (it != injectedDefines().end()) return make_string(it->second);
-            }
-            if (key == "__BIN_DIR__") {
-                if (pakMounted())
-                    return make_string("\"" + pakVirtualPrefix() + "\"");
-                return make_string("\"\"");
-            }
-            if (key == "CONFIG") return make_int(0);
-            // Command-number macros: the .o binary stores the #define table
-            // (vm_loadDefines 0x8087080); vm_lookupDefine reads it at runtime
-            // to resolve message numbers like MSG_L_AUTH -> 0x5351.  Query the
-            // master program's defines the same way.
-            std::string expansion;
-            bool found = masterDefineLookup(key, expansion);
-            if (LPCVM_GETENV("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
-                std::cerr << "[expand_macro] " << key << " found=" << found
-                          << " exp='" << (found ? expansion : "<none>") << "'\n";
-            if (found) {
-                // expansion in the .o may carry leading/trailing whitespace
-                // ("                  0x5351\n"); trim it before parsing.
-                size_t b0 = expansion.find_first_not_of(" \t\r\n");
-                size_t e0 = expansion.find_last_not_of(" \t\r\n");
-                std::string trimmed = (b0 == std::string::npos) ? "" :
-                                      expansion.substr(b0, e0 - b0 + 1);
-                // The original vm_f_expand_macro (0x80d5598) ALWAYS pushes a
-                // STRING (vm_pushString of the define expansion), even for
-                // numeric macros - the game wraps the result with
-                // is_string()/atoi()/trim()/(int) (convert_to_value checks
-                // is_string, threadd checks MAX_SERVICE_THREAD_NUM, etc.).
-                // Returning an int here broke convert_to_value with
-                // "Failed to expand macro: %O, use raw data".
-                return make_string(trimmed);
-            }
-        }
-        return make_int(0);
-    }
-    if (name == "set_case_check") {
-        // vm_f_set_case_check (0x80db520) -> vm_setCaseCheck(m, flag, obsorb):
-        // flag != 0 turns case sensitivity ON, 0 turns it OFF.  The mapping
-        // itself stays on the stack (returned) - the LPC code assigns the
-        // result: "_cmd_types = set_case_check(([...]), 0)".
-        if (args.size() >= 2 && args[0].index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-            int flag = static_cast<int>(as_int(args[1]));
-            int obsorb = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 0;
-            mp->setCaseCheck(flag != 0, obsorb);
-            return args[0];   // the (possibly re-keyed) mapping
-        }
-        return make_int(0);
-    }
-    if (name == "trim") {
-        if (args.empty()) return make_string("");
-        std::string s = as_string(args[0]);
-        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
-            std::cerr << "[trim] in=[" << s.substr(0, 16) << "] len=" << s.size() << "\n";
-        size_t b = s.find_first_not_of(" \t\r\n");
-        if (b == std::string::npos) {
-            if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
-                std::cerr << "[trim] -> empty\n";
-            return make_string("");
-        }
-        size_t e = s.find_last_not_of(" \t\r\n");
-        std::string r = s.substr(b, e - b + 1);
-        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
-            std::cerr << "[trim] -> [" << r.substr(0, 16) << "]\n";
-        return make_string(r);
-    }
-    if (name == "relinquish") return make_int(1);
-    if (name == "get_dir_ex" || name == "get_dir") {
-        // Original vm_f_get_dir2_in_st (0x80eb5d4):
-        //   - paths containing ".pak/" are packed volumes listed through the
-        //     pak catalog in CATALOG order (vm_getDirInPackedFs),
-        //   - otherwise opendir/readdir order (no sorting),
-        //   - the last path component is the wildcard pattern ('*' any run,
-        //     '?' one char, '\\' escape - vm_matchString); an empty pattern
-        //     behaves like "*",
-        //   - flag 0 -> plain names; flag 1/2 -> ({name, size, mtime}) with
-        //     size -2 for directories.
-        auto arr = std::make_shared<ArrayValue>();
-        if (args.empty()) return arr;
-        std::string pattern = as_string(args[0]);
-        int flag = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-
-        // split into dir + pattern at the last '/'
-        std::string dirPart, pat;
-        {
-            size_t slash = pattern.find_last_of('/');
-            if (slash == std::string::npos) {
-                dirPart = "";
-                pat = pattern;
-            } else {
-                dirPart = pattern.substr(0, slash + 1);
-                pat = pattern.substr(slash + 1);
-            }
-            if (pat.empty()) pat = "*";
-        }
-
-        auto pushPlain = [&](const std::string& name, int64_t size, int64_t mtime) {
-            if (flag) {
-                auto item = std::make_shared<ArrayValue>();
-                item->items.push_back(make_string(name));
-                item->items.push_back(make_int(size));
-                item->items.push_back(make_int(mtime));
-                arr->items.push_back(item);
-            } else {
-                arr->items.push_back(make_string(name));
-            }
-        };
-
-        // packed volume?
-        if (pattern.find(".pak/") != std::string::npos && pakMounted()) {
-            std::vector<const PakEntry*> entries;
-            if (!pakListDir(dirPart, entries)) return arr;
-            for (const PakEntry* e : entries) {
-                if (!matchString(e->name, pat)) continue;
-                int64_t size = e->isDir ? -2 : static_cast<int64_t>(e->origSize);
-                pushPlain(e->name, size, 0);
-            }
-            return arr;
-        }
-
-        // real filesystem: readdir order (no sorting, like the original's
-        // opendir/readdir traversal).
-        fs::path dir = resolveVfsPath(dirPart.empty() ? "/" : dirPart);
-        std::error_code ec;
-        if (!fs::exists(dir, ec)) return arr;
-        std::vector<std::string> plainNames;
-        std::vector<std::pair<int64_t, int64_t>> plainMeta;
-        for (auto& p : fs::directory_iterator(dir, ec)) {
-            std::string name = p.path().filename().string();
-            if (!matchString(name, pat)) continue;
-            std::error_code ec2;
-            int64_t size = -2, mtime = 0;
-            if (!fs::is_directory(p.path(), ec2)) {
-                size = static_cast<int64_t>(fs::file_size(p.path(), ec2));
-                auto ft = fs::last_write_time(p.path(), ec2);
-                mtime = static_cast<int64_t>(ft.time_since_epoch().count() / 10000000);
-            }
-            plainNames.push_back(name);
-            plainMeta.emplace_back(size, mtime);
-        }
-        for (size_t i = 0; i < plainNames.size(); ++i)
-            pushPlain(plainNames[i], plainMeta[i].first, plainMeta[i].second);
-        return arr;
-    }
-    if (name == "get_sub_dirs_ex") {
-        auto arr = std::make_shared<ArrayValue>();
-        if (args.empty()) return arr;
-        fs::path dir = resolveVfsPath(as_string(args[0]));
-        std::error_code ec;
-        if (!fs::exists(dir, ec)) return arr;
-        std::vector<std::string> names;
-        for (auto& p : fs::directory_iterator(dir, ec)) {
-            if (p.is_directory()) names.push_back(p.path().filename().string());
-        }
-        std::sort(names.begin(), names.end());
-        for (auto& n : names) {
-            auto item = std::make_shared<ArrayValue>();
-            item->items.push_back(make_string(n));
-            item->items.push_back(make_int(-2));
-            arr->items.push_back(item);
-        }
-        return arr;
-    }
-    if (name == "safe_load_object" || name == "load_object") {
-        // The driver-side object loader: load + initialize the object and
-        // register it so find_object / cross-object calls can reach it.
-        // The "Load: ... OK" line is printed by the LPC safe_load_object
-        // wrapper itself; do not duplicate it here.
-        if (args.empty()) return make_int(0);
-        std::string vpath = normalizeSlashes(as_string(args[0]));
-        if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[load_object] " << vpath << " nargs=" << args.size()
-                      << " a1=" << (args.size() >= 2 ? to_string(args[1], false).substr(0, 40) : "-") << "\n";
-        // The second argument (when present) is the object-creation context
-        // that load_object passes to create(): handler.c's create reads
-        // arg0["module"] (the loading module object) to register the command's
-        // main() into the module's handler table.  cmd_*.o are loaded with
-        // (["module": object(<this>)]).
-        std::vector<Value> createArgs;
-        if (args.size() >= 2) createArgs.push_back(args[1]);
-        int ok = loadObjectIntoRegistry(vpath, vfsRoot(), createArgs);
-        // LPCVM_LOADDBG (runtime-armed): what does load_object actually return?
-        // basic.c::call_init_script assigns the result and immediately calls
-        // ob->main(this_object()) - if that value is not an object the call is
-        // dropped and the whole /gs/init/** initialiser never runs (the Fangzhang
-        // Island boatman ends up with no menu at all).
-        {
-            static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
-            if (ldOn.load(std::memory_order_relaxed)) {
-                Value rv = ok ? findObjectInRegistry(vpath, vfsRoot()) : make_int(0);
-                std::cerr << "[loaddbg] " << name << " path='" << vpath << "' ok=" << ok
-                          << " retType=" << rv.index()
-                          << " ret=" << (rv.index() == 7
-                                             ? std::get<std::shared_ptr<ObjectValue>>(rv)->programName
-                                             : to_string(rv, false).substr(0, 40))
-                          << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
-                std::cerr.flush();
-            }
-        }
-        if (!ok) return make_int(0);
-        // Return the OBJECT, like the original driver does - never an int.  LPC
-        // callers assign the result and then call into it:
-        //   basic.c::call_init_script:
-        //       ob = load_object(path);  if (ob) ob->main(this_object());
-        // With an int the `ob->main(...)` was a call on a NUMBER and was dropped
-        // silently, so every /gs/init/** initialiser never ran: the Fangzhang
-        // Island boatman (init/npc/fangzhangdao-chuanfu.c -> set_dynamic_menu)
-        // opened with no menu at all, and the coachman / guild envoy kept only
-        // their built-in default menus.  The LPC safe_load_object wrapper also
-        // tests the returned object.
-        return findObjectInRegistry(vpath, vfsRoot());
-    }
-    if (name == "find_object") {
-        // original vm_f_find_object (0x80F60A4):
-        //   if (arg->type != 10) {                        // NOT an object:
-        //       if (type != 4) vm_error("Bad type of value, expected string, got %s");
-        //       ob = vm_lookupObjectByName(str);
-        //       push(ob && !destructed ? ob : 0);
-        //       return;
-        //   }
-        //   if (destructed) { pop; push 0; return; }
-        //   /* fall through: the OBJECT ITSELF is the result (identity) */
-        // i.e. find_object(<object>) is an identity function, only a STRING is
-        // looked up by name.  The engine stringified every argument, so
-        //     ob_str = object_template(this_object());
-        //     if (!ob_str || !is_object(basic_ob = find_object(ob_str))) return;
-        // in clone/npc/basic.c::create resolved the CLONE's path ("clone:...#N")
-        // as a NAME and answered 0 -> create returned before
-        //     line_args = basic_ob->query_entire_dbase();
-        //     call_init_script(line_args);
-        // -> every room-placed NPC (boatmen #5109/#4751) came up with NO menu at
-        // all, while the basic-object instances (#2528/#2647, whose template is
-        // the class and therefore resolvable by name) did register theirs.
-        if (args.empty()) return make_int(0);
-        // LPCVM_FO_LEGACY (env / _probe_on\LPCVM_FO_LEGACY): the engine's OLD
-        // behaviour - stringify even an object argument and look the name up.
-        // Kept as a runtime switch because turning the IDA-exact identity rule on
-        // is what let clone/npc/basic.c::create (and the item create chain) run
-        // past `find_object(object_template(this_object()))`; measured
-        // 2026-09-18 the shop stopped stacking ("buy 100 -> one item, amount 1",
-        // 89 of 89 observed stacks had amount 1) and the 赠品 flag disappeared,
-        // so both must be compared on a live server before narrowing anything.
-        static const std::atomic<bool>& foLegacy = lpc::dynProbeFlag("LPCVM_FO_LEGACY");
-        if (args[0].index() == 7 && !foLegacy.load(std::memory_order_relaxed)) {
-            if (!objectValueAlive(args[0])) return make_int(0);
-            return args[0];
-        }
-        std::string vpath = normalizeSlashes(as_string(args[0]));
-        {
-            static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
-            if (ldOn.load(std::memory_order_relaxed) &&
-                (vpath.find("/gs/init/") != std::string::npos ||
-                 vpath.find("leave_promptd") != std::string::npos)) {
-                Value rv = findObjectInRegistry(vpath, vfsRoot());
-                std::cerr << "[loaddbg] find_object '" << vpath << "' -> type=" << rv.index()
-                          << " ret=" << (rv.index() == 7
-                                             ? std::get<std::shared_ptr<ObjectValue>>(rv)->programName
-                                             : to_string(rv, false).substr(0, 40))
-                          << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
-                std::cerr.flush();
-                return rv;
-            }
-        }
-        return findObjectInRegistry(vpath, vfsRoot());
-    }
-    // ---- packet protocol analyser efuns (vm_pkt_analyser.c) ----
-    if (name == "pkt_init_analyser") {
-        int maxInterfaces = args.size() >= 1 ? static_cast<int>(as_int(args[0])) : 65536;
-        int maxFields = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 1024;
-        lpc::pktInitAnalyser(maxInterfaces, maxFields);
-        return make_int(1);
-    }
-    if (name == "pkt_add_def") {
-        // pkt_add_def("encap:mapping NAME = type field, ...")
-        if (!args.empty()) {
-            std::string line = as_string(args[0]);
-            // parse: encap:mapping NAME = field-desc
-            size_t sp = line.find(' ');
-            if (sp != std::string::npos) {
-                std::string name = line.substr(sp + 1);
-                size_t eq = name.find('=');
-                if (eq != std::string::npos) name = name.substr(0, eq);
-                size_t b = name.find_first_not_of(" \t");
-                size_t e = name.find_last_not_of(" \t");
-                if (b != std::string::npos && e != std::string::npos)
-                    name = name.substr(b, e - b + 1);
-                size_t ae = line.find('=');
-                std::string fields = (ae != std::string::npos) ? line.substr(ae + 1) : "";
-                lpc::pktAddDef(name, fields);
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "pkt_add_interface") {
-        // pkt_add_interface(cmdFilter, signature, function, encapType)
-        // cmdNo is resolved from the interface name's #define macro
-        // (e.g. MSG_L_AUTH -> 0x5351) via expand_macro.
-        if (args.size() >= 3) {
-            int cmdFilter = static_cast<int>(as_int(args[0]));
-            std::string sig = as_string(args[1]);
-            Value fn = args[2];
-            int encap = args.size() >= 4 ? static_cast<int>(as_int(args[3])) : 0;
-            // interface name from "void name(...)"
-            size_t lp = sig.find('(');
-            if (lp != std::string::npos) {
-                std::string head = sig.substr(0, lp);
-                size_t vp = head.rfind("void ");
-                std::string name = (vp != std::string::npos) ? head.substr(vp + 5) : head;
-                size_t b = name.find_first_not_of(" \t");
-                size_t e2 = name.find_last_not_of(" \t");
-                if (b != std::string::npos && e2 != std::string::npos)
-                    name = name.substr(b, e2 - b + 1);
-                // uppercase macro name
-                std::string macro = name;
-                std::transform(macro.begin(), macro.end(), macro.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-                int64_t cmdNo = 0;
-                Value mv = call_builtin(nullptr, "expand_macro", {make_string(macro)});
-                if (mv.index() == 2) {
-                    cmdNo = std::get<int64_t>(mv);
-                } else if (mv.index() == 4) {
-                    // expand_macro returns a STRING (original vm_f_expand_macro
-                    // always pushes a string).  Parse the numeric define
-                    // (accepts "0x2478" / "9336" / "                  0x5351").
-                    const std::string& es = std::get<SharedString>(mv);
-                    size_t b0 = es.find_first_not_of(" \t\r\n");
-                    size_t e0 = es.find_last_not_of(" \t\r\n");
-                    std::string trimS = (b0 == std::string::npos) ? "" : es.substr(b0, e0 - b0 + 1);
-                    cmdNo = std::strtoll(trimS.c_str(), nullptr, 0);
-                }
-                if (LPCVM_GETENV("LPCVM_TRACE"))
-                    std::cerr << "[pkt] add_interface " << name << " macro=" << macro
-                              << " cmdNo=" << cmdNo << " mvIndex=" << static_cast<int>(mv.index())
-                              << " filter=" << cmdFilter << " encap=" << encap << "\n";
-                if (LPCVM_GETENV("LPCVM_TAIL")) {
-                    static int pktAdds = 0;
-                    if (++pktAdds <= 400)
-                        std::cerr << "[pkt-add] " << name << " cmdNo=" << cmdNo
-                                  << " filter=" << cmdFilter << "\n";
-                }
-                if (cmdNo > 0 && cmdNo < 65536)
-                    lpc::pktAddInterface(static_cast<int>(cmdNo), sig, fn, encap,
-                                         static_cast<uint32_t>(cmdFilter));
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "pkt_add_field" || name == "pkt_remove_field" ||
-        name == "pkt_remove_interface" || name == "pkt_remove_def" ||
-        name == "pkt_destruct_analyser") {
-        return make_int(1);
-    }
-    if (name == "pkt_pad_interface") {
-        // pkt_pad_interface(msg_no, values) -> body buffer (byte string).
-        // send_message calls pkt_pad_interface(msg_no, ($<)[1..<1]) where the
-        // array is the arguments after msg_no.  vm_pktPadUserDefinedValue
-        // serializes per the interface field layout (encapType 0 = mapping,
-        // 1 = positional array).
-        if (args.size() >= 1) {
-            int64_t msgNo = as_int(args[0]);
-            Value values = (args.size() >= 2) ? args[1] : Value{};
-            if (msgNo == 0x4401 || msgNo == 0x2403)
-                std::cerr << "[pad-efun] msgNo=0x" << std::hex << msgNo << std::dec
-                          << " argc=" << args.size()
-                          << " valuesType=" << static_cast<int>(values.index()) << "\n";
-            // vm_f_pkt_pad_interface returns a BUFFER (raw wire bytes), not a
-            // string: send_message feeds it straight into send_to_client's
-            // value-type padding, and a string there gets a spurious u8 length
-            // prefix (the "1A" seen in msg_cfg_ccs_info) whereas a buffer is
-            // emitted verbatim.
-            return make_buffer(lpc::pktPadInterface(static_cast<uint16_t>(msgNo), values));
-        }
-        return make_buffer("");
-    }
-    if (name == "pkt_pad_buffer") {
-        // vm_f_pkt_pad_buffer (0x80e2428): serialize each argument per
-        // vm_pktPadVariable's value-type encoding and concatenate:
-        //   int  -> u16 big-endian
-        //   float-> 4 raw bytes
-        //   string -> u8 length + bytes (max 255); buffer -> raw bytes
-        //   array-> each element padded recursively (no implicit count)
-        //   undefined/null -> 2 zero bytes
-        std::string out;
-        for (const auto& a : args) padVariableValue(a, out);
-        return make_buffer(out);
-    }
-    if (name == "pad_buffer") {
-        // vm_f_pad_buffer (efun idx 524): same value-type padding as
-        // pkt_pad_buffer (used by cmd_cfg_get_server_list etc to build a raw
-        // wire body), returns a buffer.
-        std::string out;
-        for (const auto& a : args) padVariableValue(a, out);
-        if (LPCVM_GETENV("LPCVM_TRACE")) {
-            std::string hex;
-            static const char* hx = "0123456789ABCDEF";
-            for (unsigned char c : out) { hex += hx[c >> 4]; hex += hx[c & 15]; }
-            std::cerr << "[pad_buffer] argc=" << args.size() << " out(" << out.size()
-                      << ")=" << hex << "\n";
-        }
-        return make_buffer(out);
-    }
-    if (name == "pkt_pad_field") {
-        // pkt_pad_field(field_type, value): encode one named-type field.  Used
-        // rarely; fall back to the same value-type encoding as pkt_pad_buffer.
-        if (args.size() >= 2) {
-            std::string out;
-            std::function<void(const Value&)> pad = [&](const Value& v) {
-                if (v.index() == 2) {
-                    uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
-                    out.push_back(static_cast<char>((u >> 8) & 0xFF));
-                    out.push_back(static_cast<char>(u & 0xFF));
-                } else if (v.index() == 4) {
-                    const std::string& s = std::get<SharedString>(v);
-                    size_t n = s.size(); if (n > 255) n = 255;
-                    out.push_back(static_cast<char>(n));
-                    out.append(s.data(), n);
-                } else { out.push_back(0); out.push_back(0); }
-            };
-            pad(args[1]);
-            return make_string(out);
-        }
-        return make_string("");
-    }
-    if (name == "pkt_get_interface" || name == "pkt_get_interface_name" ||
-        name == "pkt_get_all_interfaces" || name == "pkt_get_all_fields" ||
-        name == "pkt_get_all_defs" || name == "pkt_get_def" ||
-        name == "pkt_get_field") {
-        return make_int(0);
-    }
-    if (name == "object_name") {
-        // object_name(ob) - return the object's path.  The original driver
-        // returns the mudlib virtual path with the ".c" source extension
-        // (verified against the reference data rows: task_time_ex's
-        // restore() keys branches like "/gs/daemons/arenas/free_arena.c", and
-        // guard compares like object_name(this_object()) ==
-        // "/gs/feature/common/task_time_ex.c" only hold with ".c" names).
-        // Our registry keys carry a "pak:" prefix and the ".o" file
-        // extension; roomd.c's place_char does
-        // sscanf(object_name(room_ob), "/gs/zone/%s/%*s") to resolve
-        // THIS_PLACE, so a raw registry key ("pak:gs/zone/...") breaks NPC
-        // placement.  Strip the scheme prefix, normalize to a leading slash
-        // and present the ".c" virtual path like the original.
-        // object_name(ob, flag): with a truthy second arg the original
-        // returns the CLONE's program path WITHOUT the "#<seq>" instance
-        // suffix (basic_object.c's init_basic_object derives file_id via
-        // object_name(this_object(), 1)); flag==0 keeps the instance suffix.
-        bool noInstance = args.size() >= 2 && !(args[1].index() == 2 && std::get<int64_t>(args[1]) == 0);
-        if (!args.empty() && args[0].index() == 7) {
-            auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
-            std::string p = ov->programName;
-            // [fix] 双前缀归一化: clone:pak:... 两层都要剥 (与 efun_adapt
-            // 的 object_name 同步修复), 否则 roomd 的 sscanf THIS_PLACE
-            // 解析拿到的还是带 pak: 的原始键。
-            if (p.compare(0, 6, "clone:") == 0) {
-                p = p.substr(6);
-                if (p.compare(0, 4, "pak:") == 0) p = p.substr(4);
-            } else if (p.compare(0, 4, "pak:") == 0) {
-                p = p.substr(4);
-            }
-            // [fix] #实例后缀先摘下再判 .o (1 参调用保留后缀, 结尾非 .o)
-            std::string hashPart;
-            const size_t hpos = p.find('#');
-            if (hpos != std::string::npos) {
-                hashPart = p.substr(hpos);
-                p = p.substr(0, hpos);
-            }
-            if (!noInstance) { /* 1 参: 保留实例后缀 */ } else hashPart.clear();
-            if (!p.empty() && p.front() != '/') p = "/" + p;
-            if (!p.empty() && hasSuffix(p, ".o")) p.replace(p.size() - 2, 2, ".c");
-            if (!p.empty()) return make_string(p + hashPart);
-        }
-        return make_string("");
-    }
-    if (name == "file_size") {
-        // vm_f_file_size: -1 when missing, -2 for a directory, else the byte
-        // size.  The LPC assure_file() (filed's write_data) switches on these
-        // codes: -1 -> mkdir, -2 -> exists.  Returning 0 for a missing path
-        // made assure_file skip every mkdir, so /data content files were never
-        // created and every filed read came back -1.
-        if (args.empty()) return make_int(0);
-        std::error_code ec;
-        fs::path p = resolveVfsPath(as_string(args[0]));
-        if (fs::is_directory(p, ec)) return make_int(-2);
-        if (!fs::exists(p, ec)) return make_int(-1);
-        return make_int(static_cast<int64_t>(fs::file_size(p, ec)));
-    }
-    if (name == "read_file") {
-        if (args.empty()) return make_string("");
-        std::string vpath = as_string(args[0]);
-        // [listread] every ".list" config read (task_name.list / task_alias.list
-        // / shop goods lists ...): a zero-length answer means the caller's
-        // destination mapping stays empty and the whole feature silently
-        // degrades (get_task_class -> task name -> no template -> empty quest
-        // log; no shop goods).
-        if (vpath.find(".list") != std::string::npos) {
-            static int listBudget = 400;
-            std::string rv = readVfsFile(vpath);
-            if (listBudget > 0) {
-                --listBudget;
-                std::cerr << "[listread] path=" << vpath << " bytes=" << rv.size() << "\n";
-                std::cerr.flush();
-            }
-            if (args.size() >= 2 && args[1].index() == 4 &&
-                std::get<SharedString>(args[1]).str() == "b")
-                return make_buffer(rv);
-            return make_string(rv);
-        }
-        if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[read_file] path=" << vpath << "\n";
-        std::string content = readVfsFile(vpath);
-        if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") &&
-            (vpath.find("hero.list") != std::string::npos || vpath.find("onlinemall") != std::string::npos))
-            std::cerr << "[hprobe] read_file path=" << vpath << " -> " << content.size()
-                      << " bytes head=[" << content.substr(0, 16) << "]\n";
-        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
-            std::cerr << "[read_file] -> " << content.size() << " bytes, head=["
-                      << content.substr(0, 20) << "]\n";
-        // mode "b" (buffer): the original returns a real buffer (Vm_Buffer_T)
-        // and callers gate on is_buffer() (derive_map_info / read_animate_info
-        // do read_file(path, "b") then is_buffer(buf) && read_map_info(buf)).
-        // Return a BufferValue so is_buffer() sees true; buffer contents are
-        // carried as raw bytes.
-        if (args.size() >= 2 && as_string(args[1]).find('b') != std::string::npos)
-            return make_buffer(content);
-        return make_string(content);
-    }
-    if (name == "write_file") {
-        if (args.size() >= 2) {
-            std::ofstream out(resolveVfsPath(as_string(args[0])), std::ios::app);
-            out << as_string(args[1]);
-        }
-        return make_int(1);
-    }
-    if (name == "append_file") {
-        // vm_f_append_file: append a line to a file (filed's GID.list etc.).
-        if (args.size() >= 2) {
-            std::ofstream out(resolveVfsPath(as_string(args[0])), std::ios::app);
-            out << as_string(args[1]) << "\n";
-        }
-        return make_int(1);
-    }
-    if (name == "mkdir") {
-        // vm_f_mkdir: mkdir(path) - create a directory (parents included).
-        if (!args.empty()) {
-            std::error_code ec;
-            fs::create_directories(resolveVfsPath(as_string(args[0])), ec);
-            return make_int(!ec ? 1 : 0);
-        }
-        return make_int(0);
-    }
-    if (name == "delete_file") {
-        // vm_f_delete_file: delete_file(path) -> 1 on success.
-        if (!args.empty()) {
-            std::error_code ec;
-            fs::remove(resolveVfsPath(as_string(args[0])), ec);
-            return make_int(!ec ? 1 : 0);
-        }
-        return make_int(0);
-    }
-    if (name == "file_stat") {
-        // vm_f_file_stat (0x80e0ed8): file_stat(path) -> mapping or 0.
-        // The game checks is_mapping(file_stat(f)) to test existence.
-        if (args.empty()) return make_int(0);
-        std::error_code ec;
-        fs::path p = resolveVfsPath(as_string(args[0]));
-        if (!fs::exists(p, ec)) return make_int(0);
-        auto mp = std::make_shared<MappingValue>();
-        mp->insert(make_string("size"), make_int(static_cast<int64_t>(fs::is_directory(p, ec) ? -2 : fs::file_size(p, ec))));
-        mp->insert(make_string("is_directory"), make_int(fs::is_directory(p, ec) ? 1 : 0));
-        return mp;
-    }
-    if (name == "fopen") {
-        // vm_f_fopen (0x80e2170): fopen(path, mode) -> file handle (int) or 0.
-        // The game (sorterrord) opens files for error logging.  We map the
-        // handle to a simple in-memory table.
-        if (args.size() < 2) return make_int(0);
-        std::string path = resolveVfsPath(as_string(args[0]));
-        std::string mode = as_string(args[1]);
-        static std::atomic<int64_t> fhSeq{100};
-        int64_t fh = fhSeq.fetch_add(1);
-        auto fe = std::make_shared<FileEntry>();
-        fe->path = path;
-        fe->mode = mode;
-        if (mode.find('w') != std::string::npos || mode.find('a') != std::string::npos) {
-            std::ios::openmode om = (mode.find('a') != std::string::npos) ? std::ios::app : std::ios::trunc;
-            fe->ofs = std::make_shared<std::ofstream>(path, std::ios::binary | om);
-            if (!fe->ofs->is_open()) return make_int(0);
-        } else if (mode.find('r') != std::string::npos) {
-            fe->ifs = std::make_shared<std::ifstream>(path, std::ios::binary);
-            if (!fe->ifs->is_open()) return make_int(0);
-        }
-        {
-            std::lock_guard<std::mutex> lk(fileTable().mtx);
-            fileTable().files[fh] = fe;
-        }
-        return make_int(fh);
-    }
-    if (name == "fclose") {
-        if (!args.empty()) {
-            std::lock_guard<std::mutex> lk(fileTable().mtx);
-            fileTable().files.erase(as_int(args[0]));
-        }
-        return make_int(1);
-    }
-    if (name == "fwrite" || name == "fprintf") {
-        if (args.size() >= 2) {
-            int64_t fh = as_int(args[0]);
-            std::shared_ptr<FileEntry> fe;
-            {
-                std::lock_guard<std::mutex> lk(fileTable().mtx);
-                auto it = fileTable().files.find(fh);
-                if (it != fileTable().files.end()) fe = it->second;
-            }
-            if (fe && fe->ofs) {
-                std::string data = (name == "fprintf" && args.size() >= 3)
-                    ? formatLpc(as_string(args[1]), std::vector<Value>(args.begin() + 2, args.end()))
-                    : as_string(args[1]);
-                *fe->ofs << data;
-                fe->ofs->flush();
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "fread") {
-        if (args.size() >= 2) {
-            int64_t fh = as_int(args[0]);
-            int64_t len = as_int(args[1]);
-            std::shared_ptr<FileEntry> fe;
-            {
-                std::lock_guard<std::mutex> lk(fileTable().mtx);
-                auto it = fileTable().files.find(fh);
-                if (it != fileTable().files.end()) fe = it->second;
-            }
-            if (fe && fe->ifs && len > 0) {
-                std::string buf(static_cast<size_t>(len), '\0');
-                fe->ifs->read(&buf[0], len);
-                buf.resize(static_cast<size_t>(fe->ifs->gcount()));
-                return make_string(buf);
-            }
-        }
-        return make_string("");
-    }
-    if (name == "fgets") {
-        if (!args.empty()) {
-            int64_t fh = as_int(args[0]);
-            std::shared_ptr<FileEntry> fe;
-            {
-                std::lock_guard<std::mutex> lk(fileTable().mtx);
-                auto it = fileTable().files.find(fh);
-                if (it != fileTable().files.end()) fe = it->second;
-            }
-            if (fe && fe->ifs) {
-                std::string line;
-                if (std::getline(*fe->ifs, line)) return make_string(line);
-            }
-        }
-        return make_int(0);
-    }
-    if (name == "fseek") {
-        if (args.size() >= 2) {
-            int64_t fh = as_int(args[0]);
-            std::shared_ptr<FileEntry> fe;
-            {
-                std::lock_guard<std::mutex> lk(fileTable().mtx);
-                auto it = fileTable().files.find(fh);
-                if (it != fileTable().files.end()) fe = it->second;
-            }
-            if (fe && fe->ifs) {
-                fe->ifs->clear();
-                fe->ifs->seekg(static_cast<std::streamoff>(as_int(args[1])), std::ios::beg);
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "lzss_compress") {
-        // vm_f_lzss_compress (0x80df860): buffer = BE32(origLen) + lzss data;
-        // when compression does not shrink, BE32(0) + raw bytes.
-        if (args.empty()) return make_buffer(std::string(4, '\0'));
-        std::string data = as_string(args[0]);
-        std::vector<uint8_t> src(data.begin(), data.end());
-        std::vector<uint8_t> comp = lpc::lzssCompress(src);
-        std::string out;
-        uint32_t len = static_cast<uint32_t>(src.size());
-        out += static_cast<char>((len >> 24) & 0xFF);
-        out += static_cast<char>((len >> 16) & 0xFF);
-        out += static_cast<char>((len >> 8) & 0xFF);
-        out += static_cast<char>(len & 0xFF);
-        if (comp.size() < src.size()) {
-            out.append(comp.begin(), comp.end());
-        } else {
-            // compression did not shrink: store BE32(0) + raw (the original
-            // lzss_compress stores the uncompressed data when it cannot help)
-            std::string out2;
-            out2 += static_cast<char>(0);
-            out2 += static_cast<char>(0);
-            out2 += static_cast<char>(0);
-            out2 += static_cast<char>(0);
-            out2.append(data);
-            return make_buffer(out2);
-        }
-        return make_buffer(out);
-    }
-    if (name == "lzss_decompress") {
-        // vm_f_lzss_decompress (0x80df9b4): buffer = BE32(origLen) + lzss data
-        // (origLen 0 -> raw copy).  Returns a buffer.
-        if (args.empty()) return make_buffer(std::string());
-        std::string buf = as_string(args[0]);
-        if (buf.size() < 4) return make_buffer(std::string());
-        uint32_t origLen = (static_cast<unsigned char>(buf[0]) << 24) |
-                           (static_cast<unsigned char>(buf[1]) << 16) |
-                           (static_cast<unsigned char>(buf[2]) << 8) |
-                           static_cast<unsigned char>(buf[3]);
-        std::vector<uint8_t> comp(buf.begin() + 4, buf.end());
-        if (origLen == 0) {
-            std::string raw(buf.begin() + 4, buf.end());
-            return make_buffer(raw);
-        }
-        std::vector<uint8_t> outv;
-        if (!lpc::lzssDecompress(comp, origLen, outv))
-            return make_buffer(std::string());
-        return make_buffer(std::string(outv.begin(), outv.end()));
-    }
-    if (name == "buffer_to_string") {
-        // vm_f_buffer_to_string: buffer -> string (bytes unchanged).
-        if (args.empty()) return make_string("");
-        return make_string(as_string(args[0]));
-    }
-    if (name == "string_to_buffer") {
-        // vm_f_string_to_buffer: string -> buffer (bytes unchanged).
-        if (args.empty()) return make_buffer(std::string());
-        return make_buffer(as_string(args[0]));
-    }
-    if (name == "valid_chinese" || name == "set_valid_chinese") {
-        // The game's Chinese-string validation is a no-op here (input is
-        // already the codepage the driver used).
-        if (name == "valid_chinese") return make_int(1);
-        return make_int(1);
-    }
-    if (name == "random_attrib") {
-        // vm_f_random_attrib: the game's attribute roll -
-        //   random_attrib(min, nominal, max) -> a random value in [min, max]
-        //   centred on `nominal`.
-        // Callers: god_bookd::random_attrib_value (`random_attrib(arr[0],
-        // arr[1], minimum(arr[2], 80))` for 天书 attributes, where
-        // get_attrib_range() returns the list's min/nominal/max), itemd.c:982 /
-        // :2899 (item attribute rolls), child_bookd/child_equipd, and seald.c
-        // (`random_attrib(0.4 * base, base, 2 * base)` - i.e. 0.4x..2x the base
-        // value peaking at the base value).
-        // The old implementation IGNORED the arguments and returned a raw 31-bit
-        // random number, so every rolled attribute came out as a huge nonsense
-        // number (and the nominal/max bounds were never respected).  Use a
-        // triangular distribution with the mode at `nominal`.
-        auto numOf = [](const Value& v) -> double {
-            return v.index() == 3 ? std::get<double>(v) : static_cast<double>(as_int(v));
-        };
-        double mn = args.size() > 0 ? numOf(args[0]) : 0.0;
-        double md = args.size() > 1 ? numOf(args[1]) : mn;
-        double mx = args.size() > 2 ? numOf(args[2]) : md;
-        if (mx < mn) std::swap(mn, mx);
-        if (md < mn) md = mn;
-        if (md > mx) md = mx;
-        if (mx <= mn) return make_int(static_cast<int64_t>(mn + 0.5));
-        double u = static_cast<double>(sharedRand31() % 1000003u) / 1000003.0;
-        double split = (md - mn) / (mx - mn);
-        double v = (u < split) ? mn + std::sqrt(u * (mx - mn) * (md - mn))
-                               : mx - std::sqrt((1.0 - u) * (mx - mn) * (mx - md));
-        return make_int(static_cast<int64_t>(v + 0.5));
-    }
-    if (name == "ftell") {
-        if (!args.empty()) {
-            int64_t fh = as_int(args[0]);
-            std::shared_ptr<FileEntry> fe;
-            {
-                std::lock_guard<std::mutex> lk(fileTable().mtx);
-                auto it = fileTable().files.find(fh);
-                if (it != fileTable().files.end()) fe = it->second;
-            }
-            if (fe && fe->ifs) return make_int(static_cast<int64_t>(fe->ifs->tellg()));
-        }
-        return make_int(-1);
-    }
-    if (name == "telnet_on") {
-        ensureWsa();
-        int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
-        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (s == INVALID_SOCKET) return make_int(0);
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(static_cast<u_short>(port));
-        if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-            closesocket(s);
-            return make_int(0);
-        }
-        if (listen(s, 16) == SOCKET_ERROR) {
-            closesocket(s);
-            return make_int(0);
-        }
-        std::thread(telnetServerLoop, s).detach();
-        std::cout << "Telnet service started on port " << port << "\n";
-        return make_int(1);
-    }
-    if (name == "telnet_off") return make_int(1);
-    if (name == "start_service_on") {
-        // start_service_on(port) - start the GAME client service (binary
-        // packet protocol, cmdList dispatch).  This is NOT the telnet service;
-        // telnet_on() handles the telnet port separately.
-        int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
-        int rc = lpc::startGameService(port);
-        if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[start_service_on] port=" << port << " args=" << args.size()
-                      << " rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
-        return make_int(rc);
-    }
-    if (name == "mysql_connect") {
-        // mysql_connect(host, user, password, database) -> cno (>=1) or -1.
-        // The game (dbd's assure_connection) passes host from aaa.ini, which
-        // load_db_config rewrites to "port : host" when the port is set.
-        mysqlKeepAliveStart();   // 60 s ping per connection (see above)
-        if (args.size() >= 4) {
-            std::string hostArg = as_string(args[0]);
-            std::string user = as_string(args[1]);
-            std::string pass = as_string(args[2]);
-            std::string db = as_string(args[3]);
-            std::string host;
-            int port = 3306;
-            parseMysqlHost(hostArg, host, port);
-            // dbd's assure_connection pings every 60s and may call
-            // mysql_connect again; reuse an existing connection for the same
-            // target instead of opening a new one each time.
-            std::string key = host + ":" + std::to_string(port) + ":" + user + ":" + db;
-            {
-                std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
-                for (auto& kv : mysqlHandles()) {
-                    if (kv.second.db == key && kv.second.client && kv.second.client->isConnected()) {
-                        if (LPCVM_GETENV("LPCVM_TRACE"))
-                            std::cerr << "[mysql_connect] reuse cno=" << kv.first << " for " << key << "\n";
-                        return make_int(kv.first);
-                    }
-                }
-            }
-            auto client = std::make_shared<MysqlClient>();
-            std::string err;
-            int cno = nextMysqlCno();
-            bool ok = client->connect(host, port, user, pass, db, err);
-            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
-                std::cerr << "[mysql_connect] host=" << host << ":" << port << " db=" << db
-                          << " user=" << user << " ok=" << ok
-                          << (ok ? "" : (" err=" + err)) << " cno=" << cno << "\n";
-            if (!ok) {
-                // Keep an offline handle so the game's connection flow
-                // proceeds; queries fall back to the in-memory tables.
-                std::cerr << "[mysql] connect to " << host << ":" << port << "/" << db
-                          << " failed: " << err << " (using in-memory tables)\n";
-            }
-            {
-                std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
-                MysqlHandle h;
-                h.client = ok ? client : nullptr;
-                h.db = key;
-                h.host = host;
-                h.port = port;
-                h.user = user;
-                h.pass = pass;
-                h.database = db;
-                mysqlHandles()[cno] = std::move(h);
-            }
-            return make_int(cno);
-        }
-        return make_int(-1);
-    }
-    if (name == "mysql_is_connected") {
-        if (!args.empty()) {
-            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
-            auto it = mysqlHandles().find(static_cast<int>(as_int(args[0])));
-            if (it != mysqlHandles().end() && it->second.client && it->second.client->isConnected())
-                return make_int(1);
-        }
-        return make_int(0);
-    }
-    if (name == "mysql_disconnect" || name == "mysql_close_db") {
-        if (!args.empty()) {
-            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
-            auto it = mysqlHandles().find(static_cast<int>(as_int(args[0])));
-            if (it != mysqlHandles().end()) {
-                if (it->second.client) it->second.client->close();
-                mysqlHandles().erase(it);
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "mysql_select_db" || name == "mysql_set_auto_commit") return make_int(1);
-    if (name == "mysql_query") {
-        // mysql_query(cno, sql) -> result handle (array of row mappings) for
-        // SELECT; the game's mixed_mysql_select iterates it with
-        // mysql_num_records/mysql_fetch_record/mysql_this_record.
-        if (args.size() >= 2) {
-            int cno = static_cast<int>(as_int(args[0]));
-            std::string sql = as_string(args[1]);
-            std::string table;
-            size_t p = sql.find("from ");
-            if (p != std::string::npos) {
-                std::string rest = sql.substr(p + 5);
-                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
-                size_t e = rest.find_first_of(" ;`");
-                table = rest.substr(0, e);
-            }
-            if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
-                std::cerr << "[data-herod] q cno=" << cno << " sql_head_hex:";
-                size_t hz = sql.size() < 240 ? sql.size() : 240;
-                for (size_t z = 0; z < hz; ++z)
-                    std::cerr << std::hex << (static_cast<unsigned char>(sql[z])) << " ";
-                std::cerr << std::dec << " tot=" << sql.size() << "\n";
-                std::cerr.flush();
-            }
-            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE") ||
-                (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos))
-                std::cerr << "[mysql_query] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
-            MysqlClient::Result res;
-            std::string err;
-            if (mysqlExecReal(cno, sql, res, err)) {
-                if (res.hasResultSet) {
-                    auto arr = std::make_shared<ArrayValue>();
-                    for (const auto& row : res.rows) {
-                        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(res.cols.size()));
-                        for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
-                            const auto& cell = row[i];
-                            if (cell.isNull) {
-                                mp->insert(make_string(res.cols[i]), make_string(""));
-                            } else if (cell.isNumber) {
-                                mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
-                            } else {
-                                mp->insert(make_string(res.cols[i]), make_string(cell.str));
-                            }
-                        }
-                        arr->items.push_back(mp);
-                    }
-                    {
-                        std::lock_guard<std::mutex> lk(mysqlStateMutex());
-                        mysqlCursor()[arr.get()] = -1;   // before the first record
-                        mysqlRecords()[arr.get()] = make_int(0);
-                    }
-                    if (LPCVM_GETENV("LPCVM_TRACE"))
-                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
-                                  << " ptr=" << arr.get() << " (live)\n";
-                    if (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos) {
-                        std::cerr << "[pwd-diag] account select rows=" << arr->items.size() << "\n";
-                        for (size_t ri = 0; ri < arr->items.size() && ri < 1; ++ri) {
-                            auto mp = std::get<std::shared_ptr<MappingValue>>(arr->items[ri]);
-                            std::string dbg;
-                            for (auto& kv : mp->items()) {
-                                if (!dbg.empty()) dbg += ", ";
-                                std::string ks = kv.first.index() == 4 ? std::get<SharedString>(kv.first).str() : to_string(kv.first, false);
-                                dbg += ks + "=" + to_string(kv.second, false).substr(0, 60);
-                            }
-                            std::cerr << "[pwd-diag]   row={" << dbg << "}\n";
-                        }
-                        std::cerr.flush();
-                    }
-                    return arr;
-                }
-                // Non-SELECT via mysql_query (game mostly uses mysql_execute
-                // for writes): surface affected rows as a plain int.
-                return make_int(static_cast<int64_t>(res.affectedRows));
-            }
-            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
-                std::cerr << "[mysql_query] ERR cno=" << cno << " err=" << err << " -> in-memory fallback\n";
-            // Fall back to the in-memory tables (offline or SQL error).
-            if (!table.empty()) {
-                Value r = simpleDbSelect(table);
-                if (r.index() == 5) {
-                    auto arr = std::get<std::shared_ptr<ArrayValue>>(r);
-                    {
-                        std::lock_guard<std::mutex> lk(mysqlStateMutex());
-                        mysqlCursor()[arr.get()] = -1;
-                        mysqlRecords()[arr.get()] = make_int(0);
-                    }
-                    if (LPCVM_GETENV("LPCVM_TRACE"))
-                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
-                                  << " ptr=" << arr.get() << " (memory)\n";
-                }
-                return r;
-            }
-        }
-        return make_array();
-    }
-    if (name == "mysql_num_records") {
-        if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-            if (LPCVM_GETENV("LPCVM_TRACE"))
-                std::cerr << "[mysql_num_records] ptr=" << arr.get() << " size=" << arr->items.size() << "\n";
-            return make_int(static_cast<int64_t>(arr->items.size()));
-        }
-        if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[mysql_num_records] NOT-ARRAY index=" << (args.empty() ? -1 : static_cast<int>(args[0].index())) << "\n";
-        return make_int(0);
-    }
-    if (name == "mysql_fetch_record") {
-        // Advance the result-set cursor and publish the current record.
-        // Returns 0 while a record is available, nonzero past the end.
-        if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-            int cur;
-            {
-                std::lock_guard<std::mutex> lk(mysqlStateMutex());
-                cur = ++mysqlCursor()[arr.get()];
-                if (cur < static_cast<int>(arr->items.size()))
-                    mysqlRecords()[arr.get()] = arr->items[static_cast<size_t>(cur)];
-                else
-                    mysqlRecords()[arr.get()] = make_int(0);
-            }
-            if (LPCVM_GETENV("LPCVM_TRACE"))
-                std::cerr << "[mysql_fetch_record] ptr=" << arr.get() << " cur=" << cur
-                          << " size=" << arr->items.size() << "\n";
-            return cur < static_cast<int>(arr->items.size()) ? make_int(0) : make_int(1);
-        }
-        return make_int(1);
-    }
-    if (name == "mysql_this_record") {
-        // The current record of THIS result set (published by fetch_record).
-        if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-            std::lock_guard<std::mutex> lk(mysqlStateMutex());
-            auto it = mysqlRecords().find(arr.get());
-            if (it != mysqlRecords().end()) return it->second;
-        }
-        return make_int(0);
-    }
-    if (name == "mysql_finalize") {
-        if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-            std::lock_guard<std::mutex> lk(mysqlStateMutex());
-            mysqlCursor().erase(arr.get());
-            mysqlRecords().erase(arr.get());
-        }
-        return make_int(1);
-    }
-    if (name == "mysql_field_value" || name == "mysql_field_name") {
-        if (args.size() >= 2 && args[0].index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-            const Value* hit = mp->find(args[1]);
-            if (hit) return *hit;
-        }
-        return make_int(0);
-    }
-    if (name == "mysql_get_error") {
-        // mysql_get_error(cno) -> last server error text for that connection
-        // ("" when the last statement succeeded).  The original stub returned
-        // 0, which swallowed every SQL failure into "update_account_info
-        // mysql error: 0" with no diagnostic.
-        if (!args.empty()) {
-            int cno = static_cast<int>(as_int(args[0]));
-            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
-            auto it = mysqlHandles().find(cno);
-            if (it != mysqlHandles().end() && it->second.client)
-                return make_string(it->second.client->lastError());
-        }
-        return make_string("");
-    }
-    if (name == "mysql_finalize" ||
-        name == "mysql_num_fields" || name == "mysql_int_field" ||
-        name == "mysql_get_insert_id") return make_int(0);
-    if (name == "mysql_execute") {
-        // mysql_execute(cno, sql) - run a statement (usually a write) on the
-        // live MySQL server; returns affected rows.
-        if (args.size() >= 2) {
-            int cno = static_cast<int>(as_int(args[0]));
-            std::string sql = as_string(args[1]);
-            std::string table;
-            size_t p = sql.find("from ");
-            if (p != std::string::npos) {
-                std::string rest = sql.substr(p + 5);
-                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
-                size_t e = rest.find_first_of(" ;`");
-                table = rest.substr(0, e);
-            }
-            if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
-                std::cerr << "[data-herod] cno=" << cno << " sql_head_hex:";
-                size_t hz = sql.size() < 240 ? sql.size() : 240;
-                for (size_t z = 0; z < hz; ++z)
-                    std::cerr << std::hex << (static_cast<unsigned char>(sql[z])) << " ";
-                std::cerr << std::dec << " tot=" << sql.size() << "\n";
-                std::string gk = sql.substr(0, 240);
-                for (auto& ch : gk) if (ch == '\\') ch = ' ';
-                std::cerr << "[data-herod] gbk=" << gk << "\n";
-                std::cerr.flush();
-            }
-            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
-                std::cerr << "[mysql_execute] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
-            MysqlClient::Result res;
-            std::string err;
-            static const std::atomic<bool>& sqlDbg = lpc::dynProbeFlag("LPCVM_MYSQLDBG");
-            bool dbg = sqlDbg.load(std::memory_order_relaxed) &&
-                       (sql.rfind("update account", 0) == 0 ||
-                        sql.rfind("INSERT INTO account", 0) == 0 ||
-                        sql.rfind("insert into account", 0) == 0);
-            if (dbg) {
-                std::cerr << "[mysqldbg] cno=" << cno << " sql=" << sql << "\n";
-                std::cerr.flush();
-            }
-            if (mysqlExecReal(cno, sql, res, err)) {
-                if (dbg) {
-                    std::cerr << "[mysqldbg] OK affected=" << res.affectedRows << "\n";
-                    std::cerr.flush();
-                }
-                if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
-                    std::cerr << "[mysql_execute] OK cno=" << cno << " affected=" << res.affectedRows
-                              << " resultSet=" << (res.hasResultSet ? 1 : 0) << "\n";
-                if (res.hasResultSet) {
-                    // SELECT via execute: return the rows as an array.
-                    auto arr = std::make_shared<ArrayValue>();
-                    for (const auto& row : res.rows) {
-                        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(res.cols.size()));
-                        for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
-                            const auto& cell = row[i];
-                            if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
-                            else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
-                            else mp->insert(make_string(res.cols[i]), make_string(cell.str));
-                        }
-                        arr->items.push_back(mp);
-                    }
-                    return arr;
-                }
-                return make_int(static_cast<int64_t>(res.affectedRows));
-            }
-            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
-                std::cerr << "[mysql_execute] ERR cno=" << cno << " err=" << err << "\n";
-            if (dbg) {
-                std::cerr << "[mysqldbg] ERR " << err << "\n";
-                std::cerr.flush();
-            }
-            return make_int(0);
-        }
-        return make_int(0);
-    }
-    if (name == "mysql_bind_parameters" || name == "bind_parameters") {
-        // vm_f_mysql_bind_parameters (0x81703b0) / vm_f_bind_parameters
-        // (0x80df374): replace every '?' in the statement with the next
-        // parameter, formatting per type:
-        //   undefined/null -> '' (empty quoted string)
-        //   int            -> %d  (no quotes)
-        //   float          -> %g  (no quotes)
-        //   string         -> 'escaped' (single quotes, escaping)
-        // The result is a new SQL string (not a prepared statement).
-        if (args.empty()) return make_int(0);
-        std::string sql = as_string(args[0]);
-        std::string out;
-        out.reserve(sql.size() + 32);
-        size_t param = 1;  // args[0] is the statement
-        for (size_t i = 0; i < sql.size(); ++i) {
-            char c = sql[i];
-            if (c != '?') {
-                out += c;
-                continue;
-            }
-            if (param >= args.size()) {
-                // Too few parameters: keep the placeholder (original errors).
-                out += c;
-                continue;
-            }
-            const Value& p = args[param++];
-            switch (p.index()) {
-            case 2:  // int
-                out += std::to_string(std::get<int64_t>(p));
-                break;
-            case 3: {  // float
-                char buf[64];
-                snprintf(buf, sizeof(buf), "%g", std::get<double>(p));
-                out += buf;
-                break;
-            }
-            case 4: {  // string, single-quoted with escaping
-                const std::string& s = std::get<SharedString>(p);
-                out += '\'';
-                for (char sc : s) {
-                    if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
-                        sc == '\0' || sc == '\x1a' || sc == '"') {
-                        out += '\\';
-                    }
-                    out += sc;
-                }
-                out += '\'';
-                break;
-            }
-            default:  // undefined / null / others -> empty quoted string
-                out += "''";
-                break;
-            }
-        }
-        return make_string(out);
-    }
-    if (name == "mysql_bind_parameters_arr" || name == "bind_parameters_arr") {
-        // vm_f_mysql_bind_parameters_arr (0x8170330) / vm_f_bind_parameters_arr
-        // (0x80df310): same substitution, but the parameters come as one ARRAY
-        // argument: bind_parameters_arr(statement, ({p1, p2, ...})).
-        if (args.size() < 2) return make_int(0);
-        std::string sql = as_string(args[0]);
-        std::vector<Value> params;
-        if (args[1].index() == 5)
-            params = std::get<std::shared_ptr<ArrayValue>>(args[1])->items;
-        else
-            for (size_t i = 1; i < args.size(); ++i) params.push_back(args[i]);
-        std::string out;
-        out.reserve(sql.size() + 32);
-        size_t param = 0;
-        for (size_t i = 0; i < sql.size(); ++i) {
-            char c = sql[i];
-            if (c != '?') { out += c; continue; }
-            if (param >= params.size()) { out += c; continue; }
-            const Value& p = params[param++];
-            switch (p.index()) {
-            case 2: out += std::to_string(std::get<int64_t>(p)); break;
-            case 3: { char buf[64]; snprintf(buf, sizeof(buf), "%g", std::get<double>(p)); out += buf; break; }
-            case 4: {
-                const std::string& s = std::get<SharedString>(p);
-                out += '\'';
-                for (char sc : s) {
-                    if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
-                        sc == '\0' || sc == '\x1a' || sc == '"') out += '\\';
-                    out += sc;
-                }
-                out += '\'';
-                break;
-            }
-            default: out += "''"; break;
-            }
-        }
-        return make_string(out);
-    }
-    if (name == "mysql_select") {
-        if (args.size() < 2) return make_array();
-        int cno = static_cast<int>(as_int(args[0]));
-        std::string sql = as_string(args[1]);
-        bool sqlTrace = LPCVM_GETENV("LPCVM_SQL_TRACE") || LPCVM_GETENV("LPCVM_TRACE") ||
-                        LPCVM_GETENV("LPCVM_SVC_TRACE");
-        if (sqlTrace)
-            std::cerr << "[mysql_select] cno=" << cno << " sql=" << sql << "\n";
-        std::string table;
-        size_t p = sql.find("from ");
-        if (p != std::string::npos) {
-            std::string rest = sql.substr(p + 5);
-            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
-            size_t e = rest.find_first_of(" ;`");
-            table = rest.substr(0, e);
-        }
-        MysqlClient::Result res;
-        std::string err;
-        if (mysqlExecReal(cno, sql, res, err) && res.hasResultSet) {
-            auto arr = std::make_shared<ArrayValue>();
-            for (const auto& row : res.rows) {
-                auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(res.cols.size()));
-                for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
-                    const auto& cell = row[i];
-                    if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
-                    else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
-                    else mp->insert(make_string(res.cols[i]), make_string(cell.str));
-                }
-                arr->items.push_back(mp);
-            }
-            if (sqlTrace) {
-                std::cerr << "[mysql_select] rows=" << arr->items.size();
-                if (!arr->items.empty()) {
-                    auto& mp0 = std::get<std::shared_ptr<MappingValue>>(arr->items[0]);
-                    std::string dbg;
-                    for (auto& kv : mp0->items()) {
-                        if (!dbg.empty()) dbg += ",";
-                        dbg += to_string(kv.first, false) + "=" + to_string(kv.second, false).substr(0, 30);
-                    }
-                    std::cerr << " first={" << dbg << "}";
-                }
-                std::cerr << "\n";
-            }
-            return arr;
-        }
-        if (sqlTrace)
-            std::cerr << "[mysql_select] ERR err=" << err << "\n";
-        if (table.empty()) return make_array();
-        return simpleDbSelect(table);
-    }
-    if (name == "mysql_select_single_result") {
-        if (args.size() >= 2 && args[1].index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[1]);
-            if (!arr->items.empty()) return arr->items[0];
-            return make_int(0);
-        }
-        // AAA's cmd_cfg_read_etc passes BOUND SQL TEXT (string), not a result
-        // array: run the real select and return its first row (the original
-        // vm_f_mysqlSelectSingleResult executes the query).  Returning 0 here
-        // made every read_etc answer result=0 and the whole fleet's config
-        // reads (place_one_item/get_reachable, init_config, ...) spin.
-        if (args.size() >= 2 && args[1].index() == 4) {
-            Value arr = call_builtin(nullptr, "mysql_select", args);
-            if (arr.index() == 5) {
-                auto av = std::get<std::shared_ptr<ArrayValue>>(arr);
-                if (!av->items.empty()) return av->items[0];
-            }
-        }
-        return make_int(0);
-    }
-    if (name == "read_ini") {
-        // read_ini(section, key, file) - read one value from an INI file.
-        if (args.size() >= 3) {
-            std::string section = as_string(args[0]);
-            std::string key = as_string(args[1]);
-            std::string path = resolveVfsPath(as_string(args[2]));
-            if (LPCVM_GETENV("LPCVM_TRACE"))
-                std::cerr << "[read_ini] section=" << section << " key=" << key
-                          << " file=" << as_string(args[2]) << " -> " << path << "\n";
-            std::ifstream in(path);
-            if (in) {
-                std::string cur;
-                std::string line;
-                auto trim = [](const std::string& s) {
-                    size_t b = s.find_first_not_of(" \t\r\n");
-                    if (b == std::string::npos) return std::string();
-                    size_t e = s.find_last_not_of(" \t\r\n");
-                    return s.substr(b, e - b + 1);
-                };
-                // vm_readIni compares section/key case-insensitively (toupper).
-                auto ieq = [](const std::string& a, const std::string& b) {
-                    if (a.size() != b.size()) return false;
-                    for (size_t i = 0; i < a.size(); ++i)
-                        if (toupper(static_cast<unsigned char>(a[i])) !=
-                            toupper(static_cast<unsigned char>(b[i]))) return false;
-                    return true;
-                };
-                while (std::getline(in, line)) {
-                    if (!line.empty() && line.back() == '\r') line.pop_back();
-                    size_t s = line.find_first_not_of(" \t");
-                    if (s == std::string::npos) continue;
-                    if (line[s] == '#' || line[s] == ';') continue;
-                    if (line[s] == '[') {
-                        size_t e = line.find(']', s);
-                        if (e == std::string::npos) continue;
-                        cur = trim(line.substr(s + 1, e - s - 1));
-                        continue;
-                    }
-                    if (!ieq(cur, section)) continue;
-                    size_t eq = line.find('=', s);
-                    if (eq == std::string::npos) continue;
-                    if (ieq(trim(line.substr(s, eq - s)), key))
-                        return make_string(trim(line.substr(eq + 1)));
-                }
-            } else {
-                std::cout << "read_ini: cannot open " << path << "\n";
-            }
-        }
-        return make_string("");
-    }
-    if (name == "get_raw_password") {
-        // The original driver hashes the raw password; keep the plain text so the
-        // stub sql backend can use it directly.
-        if (!args.empty()) return args[0];
-        return make_string("");
-    }
-    if (name == "read_whole_ini") {
-        // vm_f_read_whole_ini (0x80d9f5c): parses the INI CONTENT string passed
-        // as the argument (not a file path!) into { section : { key : value } }.
-        // The caller does read_whole_ini(read_etc_file("x.ini")) - i.e. the
-        // file's CONTENT is the argument.  Treating it as a path produced
-        // bogus "cannot open linux/.../0" / ".../[dist]" logs (the content's
-        // first line / section header became the "path").
-        if (args.empty()) return make_int(0);
-        std::string content = as_string(args[0]);
-        auto root = std::make_shared<MappingValue>();
-        std::shared_ptr<MappingValue> cur;
-        std::istringstream is(content);
-        std::string line;
-        auto trim = [](const std::string& s) {
-            size_t b = s.find_first_not_of(" \t\r\n");
-            if (b == std::string::npos) return std::string();
-            size_t e = s.find_last_not_of(" \t\r\n");
-            return s.substr(b, e - b + 1);
-        };
-        while (std::getline(is, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            size_t s = line.find_first_not_of(" \t");
-            if (s == std::string::npos) continue;
-            if (line[s] == '#' || line[s] == ';' || line[s] == '/') continue;
-            if (line[s] == '[') {
-                size_t e = line.find(']', s);
-                if (e == std::string::npos) continue;
-                std::string sec = trim(line.substr(s + 1, e - s - 1));
-                cur = std::make_shared<MappingValue>();
-                root->insert(make_string(sec), cur);
-                continue;
-            }
-            if (!cur) continue;
-            size_t eq = line.find('=', s);
-            if (eq == std::string::npos) continue;
-            std::string key = trim(line.substr(s, eq - s));
-            std::string val = trim(line.substr(eq + 1));
-            cur->insert(make_string(key), make_string(val));
-        }
-        return root;
-    }
-    if (name == "db_open") {
-        if (!args.empty()) simpleDbLoad(as_string(args[0]));
-        return make_int(1);
-    }
-    if (name == "db_set") {
-        if (args.size() >= 2) {
-            simpleDb()[as_string(args[0])] = as_string(args[1]);
-            simpleDbSave("lpcvm.db");
-        }
-        return make_int(1);
-    }
-    if (name == "db_get") {
-        if (args.empty()) return make_int(0);
-        auto it = simpleDb().find(as_string(args[0]));
-        if (it == simpleDb().end()) return make_int(0);
-        return make_string(it->second);
-    }
-    if (name == "db_delete") {
-        if (!args.empty()) simpleDb().erase(as_string(args[0]));
-        simpleDbSave("lpcvm.db");
-        return make_int(1);
-    }
-    if (name == "db_query") {
-        auto arr = std::make_shared<ArrayValue>();
-        for (auto& kv : simpleDb()) arr->items.push_back(make_string(kv.first + "=" + kv.second));
-        return arr;
-    }
-    // ---- telnet efuns ----
-    if (name == "input_string") {
-        // input_string() - block until the current thread's telnet client
-        // sends a line.  Returns the line (without CR/LF).  When the remote
-        // side disconnects, the original driver kills the pended process;
-        // we terminate the daemon thread the same way (TelnetClosedError).
-        int cno = threadTelnetClient();
-        if (cno < 0 || !findTelnetClient(cno)) return Value{};
-        std::string line = telnetReadLine(cno);
-        TelnetClient* cl = findTelnetClient(cno);
-        if (cl && cl->eof) {
-            closeTelnetClient(cno);
-            setThreadTelnetClient(-1);
-            throw TelnetClosedError("telnet client closed");
-        }
-        return make_string(line);
-    }
-    if (name == "close_telnet") {
-        if (!args.empty()) closeTelnetClient(static_cast<int>(as_int(args[0])));
-        return make_int(1);
-    }
-    if (name == "telnet_config") {
-        // telnet_config(fd, mapping) - set per-client options.
-        if (args.size() >= 2 && args[0].index() == 2 && args[1].index() == 6) {
-            int cno = static_cast<int>(std::get<int64_t>(args[0]));
-            auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
-            TelnetClient* cl = findTelnetClient(cno);
-            if (cl) {
-                auto getInt = [&](const char* k, int def) {
-                    const Value* hit = mp->find(make_string(k));
-                    if (hit) return static_cast<int>(as_int(*hit));
-                    return def;
-                };
-                if (!mp->empty()) {
-                    cl->nativeProcess = getInt("native_process", cl->nativeProcess ? 1 : 0) != 0;
-                    cl->echo = getInt("echo", cl->echo ? 1 : 0) != 0;
-                    cl->auth = getInt("auth", cl->auth ? 1 : 0) != 0;
-                    cl->enabled = getInt("enable", cl->enabled ? 1 : 0) != 0;
-                    const Value* idv = mp->find(make_string("id"));
-                    if (idv) cl->id = as_string(*idv);
-                }
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "get_telnet_settings") {
-        // The game reads get_telnet_settings()["type"]: "L" enables the LPC
-        // telnet_daemon login path, "G" enables game-style id logging.
-        auto mp = std::make_shared<MappingValue>();
-        mp->insert(make_string("type"), make_string("LG"));
-        mp->insert(make_string("ip"), make_string("127.0.0.1"));
-        return mp;
-    }
-    if (name == "get_telnet_info") {
-        if (!args.empty()) {
-            // get_telnet_info(fd) -> ({ native_process, echo, auth })
-            auto arr = std::make_shared<ArrayValue>();
-            int cno = static_cast<int>(as_int(args[0]));
-            TelnetClient* cl = findTelnetClient(cno);
-            arr->items.push_back(make_int(cl ? (cl->nativeProcess ? 1 : 0) : 0));
-            arr->items.push_back(make_int(cl ? (cl->echo ? 1 : 0) : 0));
-            arr->items.push_back(make_int(cl ? (cl->auth ? 1 : 0) : 0));
-            return arr;
-        }
-        return make_int(0);
-    }
-    if (name == "get_all_client_no") {
-        // vm_f_get_all_client_no (0x804d3f8): all live client numbers in the
-        // driver's unified clientInfo[] table (game + bound sockets).
-        auto arr = std::make_shared<ArrayValue>();
-        for (int cno : lpc::gameGetAllClientNo()) arr->items.push_back(make_int(cno));
-        return arr;
-    }
-    if (name == "bind_to_client") {
-        // vm_f_bind_to_client (0x804ee68): bind_to_client(fd, [type]) ->
-        // client_no.  Detaches the connected socket from the virtual socket
-        // table and registers it as a game client (attrib = type, default
-        // INTERNAL_COMM = 2), starting its receive/dispatch loop.
-        if (!args.empty() && args[0].index() == 2) {
-            int fd = static_cast<int>(std::get<int64_t>(args[0]));
-            uint32_t clientType = 2;
-            if (args.size() >= 2 && args[1].index() == 2)
-                clientType = static_cast<uint32_t>(std::get<int64_t>(args[1]));
-            uintptr_t sock = xdbcDetachSocket(fd);
-            if (!sock) return make_int(-1);
-            if (LPCVM_GETENV("LPCVM_TRACE"))
-                std::cerr << "[bind_to_client] fd=" << fd << " sock=" << sock
-                          << " type=" << clientType << "\n";
-            return make_int(gameServiceBindClient(static_cast<int>(sock), clientType));
-        }
-        return make_int(-1);
-    }
-    if (name == "send_to_client") {
+    if (eid == CID("send_to_client")) {
         // vm_f_send_to_client (0x804fdfc): two calling forms.
         //   1) send_to_client(client_no, msg_no, ...) - data = cmdNo(u16 BE) +
         //      vm_padVariable(args[2..]) (value-type padding).
@@ -4928,61 +2585,34 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "get_client_info") {
+    if (eid == CID("get_client_info")) {
         // vm_f_get_client_info (0x804d478): get_client_info(client_no) ->
         // mapping of the client slot (empty mapping if absent).
         if (args.empty() || args[0].index() != 2) return make_mapping();
         return lpc::gameGetClientInfo(static_cast<int>(std::get<int64_t>(args[0])));
     }
-    if (name == "set_client_attrib") {
-        // vm_f_set_client_attrib (0x804d0ac): set_client_attrib(client_no,
-        // ([ "type": "internal"|"client"|"from_server", "size": N, "peek": N ])).
-        // The type ORs attrib bits onto the game client (internal -> 0x302,
-        // client -> 1, from_server -> 0x404) so the (attrib & flag & 7) check
-        // in dispatch accepts INTERNAL_COMM packets from dba/gs/cta servers.
-        if (args.size() >= 2 && args[0].index() == 2) {
-            int cno = static_cast<int>(std::get<int64_t>(args[0]));
-            uint32_t attribOr = 0;
-            int maxBodySize = 0;   // 0 -> keep current
-            int peek = 0;
-            if (args[1].index() == 6) {
-                auto mp = std::get<std::shared_ptr<MappingValue>>(args[1]);
-                for (auto& kv : mp->items()) {
-                    if (kv.first.index() != 4) continue;
-                    std::string k = std::get<SharedString>(kv.first);
-                    if (k == "type" && kv.second.index() == 4) {
-                        const std::string& t = std::get<SharedString>(kv.second);
-                        if (_stricmp(t.c_str(), "internal") == 0) attribOr |= 0x302;
-                        else if (_stricmp(t.c_str(), "client") == 0) attribOr |= 1;
-                        else if (_stricmp(t.c_str(), "from_server") == 0) attribOr |= 0x404;
-                    } else if (k == "size") {
-                        maxBodySize = static_cast<int>(as_int(kv.second));
-                    } else if (k == "peek") {
-                        peek = static_cast<int>(as_int(kv.second));
-                    }
-                }
-            }
-            gameServiceSetAttrib(cno, attribOr, maxBodySize, peek);
+    if (eid == CID("pad_buffer")) {
+        // vm_f_pad_buffer (efun idx 524): same value-type padding as
+        // pkt_pad_buffer (used by cmd_cfg_get_server_list etc to build a raw
+        // wire body), returns a buffer.
+        std::string out;
+        for (const auto& a : args) padVariableValue(a, out);
+        if (LPCVM_GETENV("LPCVM_TRACE")) {
+            std::string hex;
+            static const char* hx = "0123456789ABCDEF";
+            for (unsigned char c : out) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+            std::cerr << "[pad_buffer] argc=" << args.size() << " out(" << out.size()
+                      << ")=" << hex << "\n";
         }
-        return make_int(1);
+        return make_buffer(out);
     }
-    if (name == "telnet_check_password" || name == "telnet_second_password") {
-        // The builtin telnet shell checks the configured password; accept
-        // "123456" (matching get_telnet_password's stub) so the LPC login can
-        // proceed through the aaa.ini configured value as well.
-        if (args.size() >= 2) {
-            std::string pwd = as_string(args[1]);
-            if (pwd == "123456") return make_int(1);
-        }
-        return make_int(0);
-    }
-    if (name == "make32" || name == "make32i") {
+    if (eid == CID("make32") || eid == CID("make32i")) {
         // vm_f_make32 (0x804dd70) packs EVERY argument as 4 bytes BIG-endian
         // (ROR byte swap, verified on the original: make32(0x11223344) ->
         // "11 22 33 44").  vm_f_make32i (0x804defb) stores the raw DWORD
         // (x86 little-endian, verified: make32i(0x11223344) -> "44 33 22 11").
         std::string out;
-        bool little = (name == "make32i");
+        bool little = (eid == CID("make32i"));
         for (const auto& a : args) {
             int64_t v = as_int(a);
             if (little) {
@@ -4999,292 +2629,20 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_buffer(out);
     }
-    if (name == "regexp") {
-        // regexp(str, pattern[, max]) -> array of {start,end} per group.
-        if (args.size() >= 2) {
-            std::string str = as_string(args[0]);
-            std::string pat = as_string(args[1]);
-            if (LPCVM_GETENV("LPCVM_TRACE_CASE"))
-                std::cerr << "[regexp] '" << pat << "' on '" << str << "'\n";
-            return mini_regex::regexpMatch(str, pat);
-        }
-        return make_array();
+    if (eid == CID("defined")) {
+        // The original driver is built with CONFIG defined, which selects the
+        // direct find_function path in find_mysql_func.
+        if (!args.empty() && as_string(args[0]) == "CONFIG") return make_int(1);
+        return make_int(0);
     }
-    if (name == "strsrch") {
-        // strsrch(str, sub[, reverse]) -> index or -1
-        if (args.size() >= 2) {
-            std::string str = as_string(args[0]);
-            std::string sub = as_string(args[1]);
-            size_t pos = str.find(sub);
-            if (pos == std::string::npos) return make_int(-1);
-            return make_int(static_cast<int64_t>(pos));
-        }
-        return make_int(-1);
-    }
-    if (name == "ctime") {
-        // vm_f_ctime (0x80d4f74): ctime([t[,style]])
-        //   style 0 (default) -> "Www Mmm dd hh:mm:ss yyyy\n"
-        //   style 1 -> %04d-%02d-%02d-%02d:%02d:%02d (YYYY-MM-DD-HH:MM:SS)
-        //   style 2 -> %04d-%02d-%02d (YYYY-MM-DD)
-        //   style 3 -> %04d%02d%02d%02d%02d%02d (YYYYMMDDHHMMSS)
-        std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
-        int style = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
-        std::tm tm{};
-        localtime_s(&tm, &t);
-        char buf[64];
-        switch (style) {
-            case 1: strftime(buf, sizeof(buf), "%Y-%m-%d-%H:%M:%S", &tm); break;
-            case 2: strftime(buf, sizeof(buf), "%Y-%m-%d", &tm); break;
-            case 3: strftime(buf, sizeof(buf), "%Y%m%d%H%M%S", &tm); break;
-            default: strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", &tm); break;
-        }
-        return make_string(buf);
-    }
-    if (name == "execute_data") {
-        // execute_data(cmd[, enable_log]) - the driver's telnet shell command
-        // executor: the command string is parsed as an LPC expression and
-        // evaluated in the VM's shared context (so "help", "obj->func()",
-        // "x + 1", etc. all work like the original driver's shell).
-        if (args.empty()) return make_int(0);
-        std::string cmd = as_string(args[0]);
-        if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[execute_data] '" << cmd << "'\n";
-        std::string t = cmd;
-        size_t b = t.find_first_not_of(" \t\r\n");
-        if (b == std::string::npos) return make_int(0);
-        t = t.substr(b);
-        if (t.empty()) return make_int(0);
-        try {
-            lpc::Lexer lexer(t);
-            std::vector<lpc::Token> toks = lexer.tokenize();
-            lpc::Parser parser(toks);
-            lpc::ExprPtr expr = parser.parseShellExpression();
-            lpc::Program prog;
-            lpc::Interpreter interp(prog);
-            lpc::Environment env;
-            Value result = interp.eval(expr, env);
-            if (LPCVM_GETENV("LPCVM_TRACE"))
-                std::cerr << "[execute_data] => " << to_string(result, false) << "\n";
-            // Echo non-trivial results back to the telnet client.
-            if (result.index() != 0 && result.index() != 1) {
-                telnetSend(threadTelnetClient(),
-                           telnetLineEnd(to_string(result, false) + "\r\n"));
-            }
-            return result;
-        } catch (const std::exception& e) {
-            telnetSend(threadTelnetClient(),
-                       telnetLineEnd("Error: " + std::string(e.what()) + "\r\n"));
-            if (LPCVM_GETENV("LPCVM_TRACE"))
-                std::cerr << "[execute_data] error: " << e.what() << "\n";
-            return make_int(0);
-        }
-    }
-    if (name == "log_to_das") return make_int(1);
-    // DAS verification system is NOT run in this port (the original driver
-    // executes the built-in scripts /v/auth_1980.c etc. BEFORE the main
-    // program; we skip them).  These function names are stubbed so the game
-    // LPC code sees a "verification succeeded" world: auth_driver returns 1,
-    // send_request/get_auth_addr report no server, password helpers accept the
-    // configured stub password.
-    if (name == "auth_driver") return make_int(1);
-    if (name == "send_request" || name == "get_auth_addr" || name == "check_request_password") return make_int(0);
-    if (name == "check_authenticate") return make_int(1);
-    if (name == "pwd_gen") return make_string("");
-    if (name == "driver_bd") return make_int(1);
-    if (name == "start_buildin_telnet_shell" || name == "buildin_telnet_daemon") {
-        // Driver builtin telnet shell: login with the configured password,
-        // then a command loop.  The LPC telnet_daemon path is preferred when
-        // get_telnet_settings()["type"] contains "L"; this is the fallback.
-        if (!args.empty()) {
-            int cno = static_cast<int>(as_int(args[0]));
-            setThreadTelnetClient(cno);
-            telnetSend(cno, telnetLineEnd("Input password: "));
-            std::string pwd = telnetReadLine(cno);
-            if (pwd != "123456") {
-                telnetSend(cno, telnetLineEnd("Bad password!\r\n"));
-                closeTelnetClient(cno);
-                setThreadTelnetClient(-1);
-                return make_int(0);
-            }
-            telnetSend(cno, telnetLineEnd("Welcome!\r\n"));
-            while (findTelnetClient(cno)) {
-                telnetSend(cno, telnetLineEnd("\r\nShell> "));
-                std::string line = telnetReadLine(cno);
-                if (line.empty() || line == ".") {
-                    telnetSend(cno, telnetLineEnd("logout\r\n"));
-                    closeTelnetClient(cno);
-                    break;
-                }
-                Value r = call_builtin(nullptr, "execute_data", {make_string(line), make_int(1)});
-                (void)r;
-            }
-            setThreadTelnetClient(-1);
-        }
-        return make_int(1);
-    }
-    if (name == "get_telnet_password") {
-        // Return the telnet login password configured for a server name.
-        if (!args.empty()) {
-            std::string server = as_string(args[0]);
-            auto it = simpleDb().find("telnet_" + server);
-            if (it != simpleDb().end()) return make_string(it->second);
-        }
-        return make_string("123456");
-    }
-    if (name == "set_timer") return make_int(1);
-    if (name == "sleep") {
-        // The driver's sleep() takes seconds and suspends the calling thread.
-        // During the boot/broadcast phase a daemon's create()-time retry loop
-        // uses sleep() to yield cooperatively; our multithreaded port must
-        // return promptly there so the remaining daemons still load.
-        int64_t secs = args.empty() ? 0 : as_int(args[0]);
-        if (secs > 0) {
-            if (g_bootLoading.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            } else {
-                std::chrono::seconds d(secs);
-                if (secs > 60) d = std::chrono::seconds(60);   // keep startup responsive
-                std::this_thread::sleep_for(d);
-            }
-        }
-        return make_int(1);
-    }
-    if (name == "send_to_queue") {
-        // vm_f_send_to_queue (0x80f2d94): send_to_queue(qid_or_name, value,
-        // timeout) enqueues value on the real cross-thread queue; returns 0 on
-        // success, -101 if the queue does not exist, -401 if full (no bound).
-        //
-        // LPC callers IGNORE the result (`send_to_queue(srvQ, msg); return;`),
-        // so a failure silently drops the request forever - exactly how the
-        // runtime delete (notify_save_done -> delete_content_to) disappeared
-        // and left the account in the 9026 "暂时无法登录" critical section.
-        // Always log a failure, and log every call under LPCVM_EVDBG.
-        if (args.empty()) return make_int(-101);
-        int64_t qid = queueResolveId(args[0]);
-        if (qid < 0 || LPCVM_GETENV("LPCVM_EVDBG")) {
-            std::cerr << "[q-send] qid=" << qid
-                      << " arg0t=" << static_cast<int>(args[0].index())
-                      << " arg0=" << to_string(args[0], false).substr(0, 20)
-                      << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn
-                      << (qid < 0 ? "  *** QUEUE NOT FOUND -> -101 ***" : "") << "\n";
-        }
-        if (qid < 0) return make_int(-101);
-        Value v = args.size() >= 2 ? args[1] : Value{};
-        bool ok = lpc::queueSend(qid, v);
-        if (!ok)
-            std::cerr << "[q-send] qid=" << qid << " SEND FAILED caller="
-                      << stubCallCtx().obj << "::" << stubCallCtx().fn << " -> -101\n";
-        return make_int(ok ? 0 : -101);
-    }
-    if (name == "wait_event") {
-        // vm_f_wait_event (0x80f097c): wait_event(name, mask, ref, timeout).
-        // Blocks the current process until raise_event sets one of the mask
-        // bits (returns 0 and consumes the bits), -501 on timeout, -101 if the
-        // event does not exist.  timeout: seconds, -1 = forever, 0 = poll once.
-        // (The .o VM path intercepts this in original_vm.cpp to release the
-        // VM lock while blocked; this fallback serves the source interpreter.)
-        if (args.size() < 2) return make_int(-101);
-        uint32_t mask = static_cast<uint32_t>(as_int(args[1]));
-        double secs = -1.0;
-        if (args.size() >= 4) {
-            const Value& t = args[3];
-            if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
-            else if (t.index() == 3) secs = std::get<double>(t);
-        }
-        return make_int(lpc::eventWait(args[0], mask, secs));
-    }
-    if (name == "receive_from_queue" || name == "receive_from_queue_ex") {
-        // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
-        // timeout) blocks the process until an element arrives; returns 0 with
-        // the element written through the reference, -402 on timeout, -101 if
-        // the queue does not exist.  The .o bytecode path intercepts this efun
-        // in the VM (call_in_efun) so the &msg reference can be written back;
-        // this builtin fallback (source interpreter / plain callers) returns
-        // the element itself as the value with the status in a 2-array.
-        if (args.empty()) return make_int(-101);
-        int64_t qid = queueResolveId(args[0]);
-        if (qid < 0) return make_int(-101);
-        int timeoutMs = -1;
-        if (args.size() >= 3) {
-            double secs = (args[2].index() == 3) ? std::get<double>(args[2]) : static_cast<double>(as_int(args[2]));
-            timeoutMs = secs < 0 ? -1 : static_cast<int>(secs * 1000.0);
-        }
-        bool ok = false;
-        Value v = lpc::queueReceive(qid, timeoutMs, ok);
-        if (!ok) return make_int(-402);
-        auto arr = std::make_shared<ArrayValue>();
-        arr->items.push_back(make_int(0));   // status 0 = success
-        arr->items.push_back(v);
+    if (eid == CID("get_all_client_no")) {
+        // vm_f_get_all_client_no (0x804d3f8): all live client numbers in the
+        // driver's unified clientInfo[] table (game + bound sockets).
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        for (int cno : lpc::gameGetAllClientNo()) arr->items.push_back(make_int(cno));
         return arr;
     }
-    if (name == "get_system_info") {
-        // vm_f_get_system_info (0x80d6b88): returns a mapping of driver
-        // runtime statistics.  LPC uses ["max_threads"] to size per-thread
-        // event arrays (filed/configd/rpcd create "ev_filedN" events) and
-        // ["current_path"] for the working directory.  The original driver
-        // boots with --max-process 128, so max_threads = 128 and the
-        // (max_threads+31)/32-1 loops create ev_filed0..ev_filed3.
-        auto mp = std::make_shared<MappingValue>();
-        auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
-        add("shared_strings", 0);
-        add("global_strings", 0);
-        add("scan_socket_count", 0);
-        add("total_mapping_num", 0);
-        add("total_mapping_size", 0);
-        add("total_mapping_nodes", 0);
-        add("obsoleted_mapping_nodes", 0);
-        add("total_array_num", 0);
-        add("total_array_size", 0);
-        add("total_values", 0);
-        add("max_telnet_clients", 4);
-        add("max_service_threads", 4);
-        // 1024, NOT the original's 128: the new core's tids can exceed 128
-        // while parked daemons hold the pool (filed/configd derive their
-        // ev_filed event-group COUNT from this value — with 128 they only
-        // create ev_filed0..3 and a tid >= 128 waits on a nonexistent
-        // ev_filed4+ -> every filed request fails with -101).
-        add("max_threads", 1024);         // vm_maxProcess (--max-process)
-        add("max_pend_objects", 256);
-        add("max_script_sockets", 256);
-        add("scan_socket_page", 1024);
-        add("max_scan_sockets", 256);
-        mp->insert(make_string("current_path"), make_string(vfsProfile().dataRoot));
-        return mp;
-    }
-    if (name == "get_thread_id") {
-        // vm_f_get_thread_id (0x80ed79c): get_thread_id() -> the current
-        // process's tid; get_thread_id(name/int) resolves another process
-        // (returns its tid or -1).  The original assigns a unique tid per LPC
-        // PROCESS (PCB->tid); the cooperative scheduler runs all processes on
-        // one OS thread, so prefer the current process's id (the thread_local
-        // lpcThreadId() would be identical for every process, and configd's
-        // read_etc builds its wait/raise event name from this tid - sharing an
-        // id made the master's read_etc get woken by a reply meant for another
-        // process, timing out and returning -1 instead of the config value).
-        if (args.empty()) {
-            int64_t pid = lpc::schedulerCurrentTid();
-            // LPCVM_TIDDBG (hot, default off): one line per get_thread_id()
-            // call - the tid-flip hunt for chains that split their identity
-            // across a nested process run (xlibd args_stack orphans).
-            if (LPCVM_GETENV("LPCVM_TIDDBG"))
-                std::cerr << "[tid] tid=" << pid
-                          << " obj=" << stubCallCtx().obj
-                          << " fn=" << stubCallCtx().fn << "\n";
-            // LPCVM_EVDBG: the DBA operate path (filed.c::do_operate) builds its
-            // wait/raise event name from get_thread_id(); if the tid seen here
-            // differs from the one the parked process used, the raise targets a
-            // bit nobody waits on and the operation stalls to -2 (通讯故障).
-            if (LPCVM_GETENV("LPCVM_EVDBG") &&
-                (stubCallCtx().obj.find("filed") != std::string::npos ||
-                 stubCallCtx().fn == "do_operate"))
-                std::cerr << "[ev] get_thread_id -> " << pid
-                          << " obj=" << stubCallCtx().obj
-                          << " fn=" << stubCallCtx().fn << "\n";
-            return make_int(pid >= 0 ? pid : lpc::lpcThreadId());
-        }
-        return make_int(-1);
-    }
-    if (name == "time") {
+    if (eid == CID("time")) {
         // vm_f_time (0x80dd030), verified against the IDA decompilation:
         //   argNum <= 0  -> vm_getShiftTime() (the current shifted time)
         //   time(string):
@@ -5333,26 +2691,2739 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(static_cast<int64_t>(std::time(nullptr)));
     }
-    if (name == "time_desc")
-        return make_int(static_cast<int64_t>(std::time(nullptr)));
-    if (name == "tick") {
+    if (eid == CID("tick")) {
         // tick() - milliseconds since the epoch (the driver uses
         // gettimeofday()*1000 + usec/1000).
         auto now = std::chrono::system_clock::now().time_since_epoch();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
         return make_int(static_cast<int64_t>(ms));
     }
-    if (name == "get_system_tick" || name == "get_server_tick" || name == "get_bad_tick_times") {
+    if (eid == CID("save_string") && !args.empty() && args[0].index() == 6 &&
+        LPCVM_GETENV("LPCVM_KEYT")) {
+        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        dumpDbaseKeys(args[0], "save");
+        for (const char* k : {"task", "carry", "achieve"}) {
+            const Value* sub = mp->find(make_string(k));
+            if (sub) {
+                std::string tg = std::string("save/") + k;
+                dumpKeyTypes(*sub, tg.c_str());
+            }
+        }
+    }
+    if (eid == CID("get_object_by_id")) {
+        Value r = lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
+        // LPCVM_MENUDBG: open_menu.c::main resolves the clicked NPC with this efun
+        // and returns 0 SILENTLY when the id does not resolve - one of the four
+        // no-message failure paths behind "NPC 点不开".  Log id -> key here so the
+        // id pool's contents become visible for the click that failed.
+        {
+            static const std::atomic<bool>& mdOn = dynProbeFlag("LPCVM_MENUDBG");
+            if (mdOn.load(std::memory_order_relaxed) &&
+                stubCallCtx().obj.find("open_menu") != std::string::npos) {
+                std::string k;
+                if (r.index() == 7) k = std::get<lpc::Ref<ObjectValue>>(r)->programName;
+                std::cerr << "[menudbg] get_object_by_id id="
+                          << (args.empty() ? -1 : as_int(args[0])) << " -> "
+                          << (k.empty() ? std::string("0 (NOT FOUND)") : k) << "\n";
+                std::cerr.flush();
+            }
+        }
+        if (LPCVM_GETENV("LPCVM_IDDBG")) {
+            std::string key;
+            if (r.index() == 7) key = std::get<lpc::Ref<ObjectValue>>(r)->programName;
+            std::cerr << "[iddbg] get_object_by_id id="
+                      << (args.empty() ? -1 : as_int(args[0])) << " -> key=[" << key << "] caller="
+                      << stubCallCtx().obj << "::" << stubCallCtx().fn
+                      << " callerKey=[" << stubCallCtx().key << "]\n";
+            std::cerr.flush();
+        }
+        if (LPCVM_GETENV("LPCVM_NEAR") &&
+            (stubCallCtx().obj.find("open_menu") != std::string::npos ||
+             stubCallCtx().fn == "main")) {
+                std::cerr << "[near-gob] id=" << (args.empty() ? -1 : as_int(args[0]))
+                          << " -> " << to_string(r, false).substr(0, 60) << "\n";
+        }
+        return r;
+    }
+    // ---- END HOT-PATH FAST LANES ---------------------------------------------
+
+
+#include "efun_batch1.inc"
+#include "efun_batch2.inc"
+
+    // ------------------------------------------------------------------
+    // Stub-efun tracker.  The name list is GENERATED (tools/gen_stubset.py)
+    // from the full efun table minus every efun that has a real dispatch
+    // branch in builtins.cpp / original_vm.cpp, so it cannot silently miss
+    // unimplemented efuns the way a hand-maintained list did.  Any efun the
+    // running game invokes that lands here logs obj::fn + rate-limited count.
+    // Implement one efun for real -> remove it from the generated list.
+    // ------------------------------------------------------------------
+    {
+        static std::mutex m;
+        static std::unordered_map<std::string, int> counts;
+        static const std::unordered_set<std::string> stubSet = {
+#include "stub_efuns.inc"
+        };
+        // Print the COMPLETE unimplemented list once per process, so efuns the
+        // game never happens to trigger are visible too (and can be fixed).
+        static const bool listed = [] {
+            std::string all;
+            for (const auto& s : stubSet) {
+                if (!all.empty()) all += ' ';
+                all += s;
+            }
+            std::cerr << "[efun-stub-list] " << stubSet.size()
+                      << " unimplemented efuns: " << all << "\n";
+            std::cerr.flush();
+            return true;
+        }();
+        (void)listed;
+        if (stubSet.find(name) != stubSet.end()) {
+            std::lock_guard<std::mutex> lk(m);
+            int c = ++counts[name];
+            // Every trigger is printed (no rate limiting): the log then shows
+            // exactly which unimplemented efun the game needed, where, and how
+            // often.  Implement one -> remove it from the generated list.
+            std::string ad;
+            if (!args.empty()) {
+                if (args[0].index() == 4) {
+                    std::string s = std::get<SharedString>(args[0]);
+                    if (s.size() > 48) s = s.substr(0, 48) + "...";
+                    ad = "a0='" + s + "'";
+                } else if (args[0].index() == 2) {
+                    ad = "a0=" + std::to_string(std::get<int64_t>(args[0]));
+                } else {
+                    ad = "a0=t" + std::to_string(args[0].index());
+                }
+            }
+            std::cerr << "[efun-stub] " << name << " @" << stubCallCtx().obj
+                      << "::" << stubCallCtx().fn << " args=" << args.size()
+                      << " " << ad << " calls=" << c << " (unimplemented efun)\n";
+            std::cerr.flush();
+            // The generated list covers ONLY efuns with no dispatch branch
+            // below, so return immediately (avoid double-logging at the
+            // catch-all).  Unknown efuns silently return 0.
+            return make_int(0);
+        }
+    }
+
+    if (eid == CID("dup")) {
+        // vm_f_dup (0x80d588c): deep copy of a value.  Used by filed's
+        // process_request to snapshot the request mapping before mutate/send.
+        return args.empty() ? make_int(0) : dupValue(args[0]);
+    }
+    if (eid == CID("create_check_sum")) {
+        // vm_f_create_check_sum was patched in the original to a fixed value of
+        // 1 (the content checksum check is bypassed), so return 1 unconditionally.
+        return make_int(1);
+    }
+    if (eid == CID("int32")) {
+        // vm_f_int32 (0x80d7b5c): cast to int32 (vm_getArgument with type 2).
+        return args.empty() ? make_int(0) : make_int(as_int(args[0]));
+    }
+    // ------------------------------------------------------------------
+    // Standard attribute-value efuns (basic_objectd import / NPC & item
+    // attribute rolls).  IDA semantics (vm_f_std_life 0x807d508 etc.):
+    //   - at most 1 argument, else vm_error("Too many argument...");
+    //   - an int argument is widened to real THROUGH float32, a real used
+    //     directly (anything else errors "Expected real as argument...");
+    //   - the arithmetic is x87 long-double, the result rounded through
+    //     float32, then truncated to int and returned (argument slot
+    //     written in place, which is how the VM returns an efun result).
+    //   std_life(l)   = (int) (100 + 85b + 1.39 b^2),  b = max(l-1, 0)
+    //   std_mana(l)   = (int) (80  + 56b + 0.93 b^2)
+    //   std_attack(l) = 4 * (int)(100 + 85b + 1.39 b^2) / 10
+    //   std_defense(l)= (int)(100 + 85b + 1.39 b^2) / 15
+    //   std_speed(l)  = (int) (50 + 6b)            (std_dodge identical)
+    //   std_tao(l)    = max(1, (int) (0.29 * l^3))   (l NOT decremented)
+    if (eid == CID("std_life") || eid == CID("std_mana") || eid == CID("std_attack") ||
+        eid == CID("std_defense") || eid == CID("std_speed") || eid == CID("std_dodge") ||
+        eid == CID("std_tao")) {
+        if (args.size() > 1) {
+            // Original raises a VM error; fall back to 0 so the caller can
+            // continue instead of aborting the boot.
+            return make_int(0);
+        }
+        double raw;
+        if (args.empty()) raw = 0.0;
+        else if (args[0].index() == 2) raw = static_cast<double>(static_cast<float>(as_int(args[0])));
+        else if (args[0].index() == 3) raw = std::get<double>(args[0]);
+        else return make_int(0);
+        long double r = static_cast<long double>(raw);
+        int64_t result = 0;
+        if (eid == CID("std_tao")) {
+            if (r < 0.0L) r = 0.0L;
+            long double f = static_cast<long double>(static_cast<float>(r * r * r * 0.29L));
+            int64_t v = static_cast<int64_t>(f);
+            result = (v <= 0) ? 1 : v;
+        } else {
+            long double b = r - 1.0L;
+            if (b < 0.0L) b = 0.0L;
+            float f;
+            if (eid == CID("std_life")) f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
+            else if (eid == CID("std_mana")) f = static_cast<float>(80.0L + 56.0L * b + 0.93L * b * b);
+            else if (eid == CID("std_attack")) f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
+            else if (eid == CID("std_defense")) f = static_cast<float>(100.0L + 85.0L * b + 1.39L * b * b);
+            else /* speed / dodge */ f = static_cast<float>(50.0L + 6.0L * b);
+            int64_t iv = static_cast<int64_t>(f);
+            if (eid == CID("std_attack")) result = 4 * iv / 10;
+            else if (eid == CID("std_defense")) result = iv / 15;
+            else result = iv;
+        }
+        return make_int(result);
+    }
+
+    if (eid == CID("write") || eid == CID("printf") || eid == CID("dump_file")) {
+        if (!args.empty()) {
+            std::vector<Value> rest(args.begin() + 1, args.end());
+            std::string out = formatLpc(as_string(args[0]), rest);
+            if (LPCVM_GETENV("LPCVM_TRACE") && out.find("Bad line") != std::string::npos)
+                std::cerr << "[printf-badline] out=[" << out.substr(0, 80) << "]\n";
+            if (LPCVM_GETENV("LPCVM_TAIL") && out.find("to be scanned, interval") != std::string::npos) {
+                std::cerr << "[banner-src] obj=" << stubCallCtx().obj << " fn=" << stubCallCtx().fn
+                          << " tel=" << threadTelnetClient() << "\n";
+                std::cerr.flush();
+            }
+            // The original driver writes the formatted string exactly as-is
+            // (no auto newline; the LPC format strings carry their own \n).
+            int cno = threadTelnetClient();
+            if (cno >= 0 && findTelnetClient(cno)) {
+                telnetSend(cno, telnetLineEnd(out));
+                return make_int(1);
+            }
+            fputs(out.c_str(), stdout);
+            fflush(stdout);
+            if (LPCVM_GETENV("LPCVM_MEM2") && out.compare(0, 6, "Load: ") == 0) {
+                static long lArr = -1, lMap = -1;
+                long aL, mL, aC, mC;
+                lpc::liveHeapSnapshot(aL, mL, aC, mC);
+                if (lArr >= 0)
+                    std::cerr << "[heap] obj=" << out.substr(6, out.size() - 12)
+                              << " arrLive=" << aL << " mapLive=" << mL
+                              << " (+" << (aL - lArr) << " arr, +" << (mL - lMap) << " map) cum="
+                              << aC << "/" << mC << "\n";
+                lArr = aL; lMap = mL;
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("sprintf")) {
+        if (args.empty()) return make_string("");
+        std::vector<Value> rest(args.begin() + 1, args.end());
+        std::string out = formatLpc(as_string(args[0]), rest);
+        if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && out.size() >= 4 &&
+            out.compare(out.size() - 2, 2, "_0") == 0) {
+            std::cerr << "[sprintf0] fmt=[";
+            const std::string& fss = as_string(args[0]);
+            for (size_t z = 0; z < fss.size(); ++z)
+                std::cerr << std::hex << (static_cast<unsigned char>(fss[z])) << " ";
+            std::cerr << std::dec << "] nargs=" << rest.size();
+            for (size_t ai = 0; ai < rest.size() && ai < 4; ++ai) {
+                const Value& a = rest[ai];
+                std::cerr << " a" << ai << "=t" << a.index() << ":";
+                if (a.index() == 4) {
+                    const std::string& st = std::get<SharedString>(a).str();
+                    for (size_t z = 0; z < st.size() && z < 24; ++z)
+                        std::cerr << std::hex << (static_cast<unsigned char>(st[z])) << " ";
+                    std::cerr << std::dec << "(len=" << st.size() << ")";
+                } else if (a.index() == 2) {
+                    std::cerr << std::get<int64_t>(a);
+                } else if (a.index() == 1) {
+                    std::cerr << "void";
+                } else if (a.index() == 0) {
+                    std::cerr << "undef";
+                } else {
+                    std::cerr << "?";
+                }
+                std::cerr << " |";
+            }
+            std::cerr << "\n";
+            std::cerr.flush();
+        }
+        return make_string(out);
+    }
+    if (eid == CID("replace_string")) {
+        // replace_string(str, from, to) - replace ALL occurrences.
+        if (args.size() >= 3) {
+            std::string s = as_string(args[0]);
+            std::string from = as_string(args[1]);
+            std::string to = as_string(args[2]);
+            if (from.empty()) return make_string(s);
+            std::string out;
+            size_t pos = 0;
+            for (;;) {
+                size_t p = s.find(from, pos);
+                if (p == std::string::npos) {
+                    out += s.substr(pos);
+                    break;
+                }
+                out += s.substr(pos, p - pos);
+                out += to;
+                pos = p + from.size();
+            }
+            return make_string(out);
+        }
+        return make_string("");
+    }
+    if (eid == CID("tolower") || eid == CID("toupper")) {
+        // vm_f_tolower / vm_f_toupper: case-fold an ASCII string.
+        if (args.empty()) return make_string("");
+        std::string s = as_string(args[0]);
+        for (auto& c : s) {
+            unsigned char uc = static_cast<unsigned char>(c);
+            c = static_cast<char>(eid == CID("tolower") ? tolower(uc) : toupper(uc));
+        }
+        return make_string(s);
+    }
+    if (eid == CID("atoi")) {
+        if (args.empty()) return make_int(0);
+        const Value& v = args[0];
+        if (v.index() == 2) return v;
+        if (v.index() == 4) {
+            // vm_f_atoi (IDA 0x80d46d8):
+            //     for (i = s; vm_isspace(*i); ++i);
+            //     if (*i == '0' && (i[1] == 'x' || i[1] == 'X'))
+            //         v = vm_strtol(..., i + 2, 0, 16, 0);   // hexadecimal
+            //     else
+            //         v = vm_strtol(..., i, 0, 10, 0);       // decimal
+            // Parsing hex as decimal made EVERY "0x...." macro expand to 0.
+            // That is what broke room permissions: form2's
+            // convert_string_to_bit_macro() does atoi(expand_macro("ROOM_..."))
+            // on values like "0x00000004" (ROOM_P_AUTO_TOUCH), so room_limit
+            // came out 0, room.c::set_permission() left permission == 0 and
+            // permission.c::refresh_permission() sent 0x1A03 with 0 - the client
+            // then refuses ALT+Z with "本地图无法使用自动遇敌".
+            const std::string s = std::get<SharedString>(v).str();
+            size_t i = 0;
+            while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' ||
+                                    s[i] == '\n' || s[i] == '\v' || s[i] == '\f'))
+                ++i;
+            const bool hex = (i + 1 < s.size() && s[i] == '0' &&
+                              (s[i + 1] == 'x' || s[i + 1] == 'X'));
+            const char* beg = s.c_str() + (hex ? i + 2 : i);
+            char* end = nullptr;
+            const long long r = std::strtoll(beg, &end, hex ? 16 : 10);
+            if (end == beg) return make_int(0);
+            return make_int(static_cast<int64_t>(r));
+        }
+        return make_int(0);
+    }
+    if (eid == CID("atof")) {
+        if (args.empty()) return make_float(0);
+        const Value& v = args[0];
+        if (v.index() == 3) return v;
+        if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
+        if (v.index() == 4) {
+            try { return make_float(std::stod(sqlTrim(std::get<SharedString>(v)))); }
+            catch (...) { return make_float(0); }
+        }
+        return make_float(0);
+    }
+    if (eid == CID("sizeof") || eid == CID("size")) {
+        if (args.empty()) return make_int(0);
+        const Value& v = args[0];
+        if (v.index() == 5) return make_int(static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(v)->items.size()));
+        if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<lpc::Ref<MappingValue>>(v)->size()));
+        if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<SharedString>(v).size()));
+        // vm_f_sizeof (0x80dbcec) case 5 (buffer): byte length
+        // (*(pValue+12) = Vm_Buffer_T length).
+        if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<lpc::Ref<BufferValue>>(v)->data.size()));
+        return make_int(0);
+    }
+    if (eid == CID("strlen") && LPCVM_GETENV("LPCVM_NAMERULE")) {
+        const std::string av = args.empty() ? std::string() : as_string(args[0]);
+        std::cerr << "[namerule] strlen(" << av << ") -> " << av.size() << " bytes"
+                  << " ischinese_first=" << (av.empty() ? 0 : (static_cast<unsigned char>(av[0]) >= 0x80 ? 1 : 0))
+                  << "\n";
+        std::cerr.flush();
+    }
+    if (eid == CID("strlen")) return args.empty() ? make_int(0) : make_int(static_cast<int64_t>(as_string(args[0]).size()));
+    // vm_f_is_undefined (0x80d80ec): returns (type == 0).  In the original the
+    // "undefined" value IS type 0 (missing keys, uninitialized vars); void
+    // function results are type 1 (is_void).  Probed live:
+    //   is_undefined(m["nope"])=1, is_undefined(uninit mixed)=1,
+    //   is_void(m["nope"])=0, is_void(void fn())=1.
+    if (eid == CID("is_undefined")) return make_int(!args.empty() && args[0].index() == 0 ? 1 : 0);
+    if (eid == CID("is_mapping")) {
+        // [ismp] runtime-armed (type nul > _probe_on\LPCVM_ISFN): what did
+        // query_task_log/query_task_tip actually get back from all_templates?
+        static const std::atomic<bool>& ismpFlag = lpc::dynProbeFlag("LPCVM_ISFN");
+        if (ismpFlag.load(std::memory_order_relaxed)) {
+            static int ismpBudget = 600;
+            const std::string& cf = stubCallCtx().fn;
+            if (ismpBudget > 0 && (cf.find("query_task") != std::string::npos ||
+                                   cf == "daemon")) {
+                --ismpBudget;
+                std::string dump = args.empty() ? std::string("<noargs>") : to_string(args[0], false);
+                if (dump.size() > 130) dump = dump.substr(0, 130) + "...";
+                std::cerr << "[ismp] caller=" << stubCallCtx().obj << "::" << cf
+                          << " argType=" << (args.empty() ? -1 : args[0].index())
+                          << " val=" << dump
+                          << " -> " << (!args.empty() && args[0].index() == 6 ? 1 : 0) << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(!args.empty() && args[0].index() == 6 ? 1 : 0);
+    }
+    if (eid == CID("is_array")) return make_int(!args.empty() && args[0].index() == 5 ? 1 : 0);
+    if (eid == CID("is_function")) {
+        // [isfn]: runtime-armable (type nul > _probe_on\LPCVM_ISFN) dump of
+        // every is_function() argument.  Round 1 showed taskd::query_task_log
+        // returns "" without ever entering the template's task_log() closure,
+        // i.e. `is_function(funcs["log"])` is false - this says whether the
+        // value read back out of all_templates is still a closure (type 8) and
+        // who is asking.
+        static const std::atomic<bool>& isfnFlag = lpc::dynProbeFlag("LPCVM_ISFN");
+        if (isfnFlag.load(std::memory_order_relaxed)) {
+            static int isfnBudget = 600;
+            if (isfnBudget > 0 && !args.empty()) {
+                --isfnBudget;
+                std::string dump = to_string(args[0], false);
+                if (dump.size() > 110) dump = dump.substr(0, 110) + "...";
+                std::cerr << "[isfn] caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn
+                          << " argc=" << args.size()
+                          << " argType=" << args[0].index()
+                          << " val=" << dump << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int(!args.empty() && args[0].index() == 8 ? 1 : 0);
+    }
+    if (eid == CID("is_string")) return make_int(!args.empty() && args[0].index() == 4 ? 1 : 0);
+    if (eid == CID("is_int")) return make_int(!args.empty() && args[0].index() == 2 ? 1 : 0);
+    if (eid == CID("is_float")) return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
+    // Character-class predicates (vm_f_isalpha/isdigit/isxdigit etc.): the
+    // argument is an int holding a byte value (e.g. version[i]); LOBYTE is
+    // tested.  vm_isxdigit: '0'-'9' | 'A'-'F' | 'a'-'f'.
+    if (eid == CID("isalpha") || eid == CID("isdigit") || eid == CID("isxdigit") ||
+        eid == CID("islower") || eid == CID("isupper")) {
+        int c = args.empty() ? 0 : static_cast<int>(as_int(args[0]) & 0xFF);
+        bool r = false;
+        if (eid == CID("isalpha")) r = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        else if (eid == CID("isdigit")) r = (c >= '0' && c <= '9');
+        else if (eid == CID("isxdigit")) r = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+        else if (eid == CID("islower")) r = (c >= 'a' && c <= 'z');
+        else r = (c >= 'A' && c <= 'Z');
+        return make_int(r ? 1 : 0);
+    }
+    if (eid == CID("stricmp")) {
+        // vm_f_stricmp (0x80d7ee0): case-insensitive string compare, returns
+        // -1/0/1 like strcasecmp.  check_account_info relies on
+        //   stricmp(account_info["password"], new_md5password) != 0
+        // to reject a wrong password; returning 0 unconditionally (the old
+        // fallthrough) made EVERY password accepted.
+        if (args.size() >= 2) {
+            const std::string& a = as_string(args[0]);
+            const std::string& b = as_string(args[1]);
+            int r = _stricmp(a.c_str(), b.c_str());
+            return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
+        }
+        return make_int(0);
+    }
+    if (eid == CID("clone_object")) {
+        // vm_f_clone_object (0x80f8eac): clone_object(path, createArgs...) clones
+        // a loaded template object into a fresh instance, passing the remaining
+        // arguments to its create(), and returns it; 0 on failure.  The target
+        // may be a path string OR a loaded object value (create_basic_object
+        // clones the /gs/clone/npc/basic.c template object it already loaded:
+        // clone_object(basic_ob)); as_string() on an object value yields
+        // "<object>" garbage, so extract the program path for object args.
+        if (args.empty()) return make_int(0);
+        std::string path;
+        if (args[0].index() == 7) {
+            auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+            path = ov->programName;
+            // clone:<rel>#<seq> / pak:<rel>: normalize to the program path.
+            // A CLONE target keeps its "#<seq>" instance identity: cloning the
+            // basic object (e.g. clone_object(find_basic_object_by_import_name(
+            // "tianyongcheng/shouhutianshen.c")) from place_char) must clone
+            // THAT instance (whose dbase has name/file_id/my_import_name), not
+            // the bare basic.c template - otherwise the new NPC has no name
+            // and guardd can't find �ػ�����@��ܭ��.
+            // vm_f_clone_object clones the template OBJECT, so the argument's
+            // identity must survive verbatim: a "clone:<rel>#<seq>" value names an
+            // EXISTING instance and IS a registry key.  Stripping the "clone:"
+            // prefix produced "gs/clone/npc/basic.o#2647", which matches no key, so
+            // cloneObjectInRegistry fell back to a suffix scan and used an ARBITRARY
+            // instance of the same program as the template.  place_char clones exactly
+            // such an instance (clone_object(find_basic_object_by_import_name(
+            // "fangzhangdao/chuanfu"))); with a wrong template object_template() and
+            // basic_object() read the wrong dbase, call_init_script found no
+            // init_script and the NPC opened with no menu (Fangzhang-Island boatman).
+            if (path.compare(0, 6, "clone:") == 0) {
+                // exact registry key - keep as is
+            } else if (path.compare(0, 4, "pak:") == 0) {
+                path = path.substr(4);
+                if (!path.empty() && path.front() != '/') path = "/" + path;
+            } else if (!path.empty() && path.front() != '/') {
+                path = "/" + path;
+            }
+        } else {
+            path = as_string(args[0]);
+        }
+        if (path.empty()) return make_int(0);
+        std::vector<Value> createArgs;
+        for (size_t i = 1; i < args.size(); ++i) createArgs.push_back(args[i]);
+        // NOTE: do NOT call masterSearchRoot() here - it takes the registry
+        // lock and the caller (a connectiond daemon VM) may already be inside
+        // a cross-object call that holds it, deadlocking on another thread.
+        // The clone registry lookup uses suffix matching on the object path
+        // and does not need the search root.
+        return lpc::cloneObjectInRegistry(path, "", createArgs);
+    }
+    // is_object(ob): true only for an object that is still alive.  A really freed
+    // object behaves as the int 0 (see objectValueFreed / original_vm.h) - the
+    // original invalidates references on a real destruct, which is what lets
+    // is_in_combat() (is_object(temp("combat")) && !cob->...("finished")) go false
+    // after monsterd::touch_off_combat destructs a combat object it could not
+    // populate with a monster team (the idle_template / "no encounter" path).
+    if (eid == CID("is_object")) {
+        // [isodbg] punishd.do_init 重试 5000+ 次但 query_combat_trigger 返回
+        // type=7 —— 实锤 punishd 实际传入 is_object 的值是什么。
+        // 注意: 必须 dynProbeFlag + _probe_on 标记文件热布防; LPCVM_GETENV
+        // 在服务进程里读不到 _run_keep2.py 之外的变量, 探针永远静默。
+        static const std::atomic<bool>& isoDbg = dynProbeFlag("LPCVM_ISODBG");
+        if (isoDbg.load(std::memory_order_relaxed) && !args.empty()) {
+            const auto& c = stubCallCtx();
+            static std::atomic<int> isoLog{0};
+            if (isoLog.fetch_add(1) < 60) {
+                const Value& a = args[0];
+                std::string desc;
+                if (a.index() == 7) {
+                    auto ov = std::get<lpc::Ref<ObjectValue>>(a);
+                    desc = std::string("prog=") +
+                           (ov ? ov->programName : "<null>") +
+                           " owner=" + (ov && ov->owner ? "set" : "null") +
+                           " alive=" +
+                           (ov && ov->alive
+                                ? (ov->alive->load(std::memory_order_relaxed)
+                                       ? "true"
+                                       : "false")
+                                : std::string("nullptr->true"));
+                } else {
+                    desc = to_string(a, false).substr(0, 60);
+                }
+                std::cerr << "[isodbg] idx=" << a.index() << " " << desc
+                          << " caller=" << c.obj << "::" << c.fn << "\n";
+                std::cerr.flush();
+            }
+        }
+        return make_int((!args.empty() && args[0].index() == 7 && lpc::objectValueAlive(args[0])) ? 1 : 0);
+    }
+    if (eid == CID("to_int") || eid == CID("to_number")) return args.empty() ? make_int(0) : make_int(as_int(args[0]));
+    if (eid == CID("to_string")) return args.empty() ? make_string("") : make_string(as_string(args[0]));
+    if (eid == CID("to_float")) return args.empty() ? make_float(0.0) : make_float(as_int(args[0]));
+    if (eid == CID("abs")) return args.empty() ? make_int(0) : make_int(std::llabs(as_int(args[0])));
+    if (eid == CID("min")) return args.empty() ? make_int(0) : make_int(as_int(*std::min_element(args.begin(), args.end(), [](const Value& a, const Value& b) { return as_int(a) < as_int(b); })));
+    if (eid == CID("max")) return args.empty() ? make_int(0) : make_int(as_int(*std::max_element(args.begin(), args.end(), [](const Value& a, const Value& b) { return as_int(a) < as_int(b); })));
+    if (eid == CID("keys")) {
+        if (args.empty() || args[0].index() != 6) return make_array();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        for (auto& kv : mp->items()) arr->items.push_back(kv.first);
+        return arr;
+    }
+    if (eid == CID("values")) {
+        if (args.empty() || args[0].index() != 6) return make_array();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        for (auto& kv : std::get<6>(args[0])->items()) arr->items.push_back(kv.second);
+        return arr;
+    }
+    if (eid == CID("map_delete")) {
+        if (args.size() >= 2 && args[0].index() == 6) {
+            auto mp = std::get<6>(args[0]);
+            static const bool mdProbe = LPCVM_GETENV("LPCVM_ISMAP") != nullptr;
+            if (mdProbe && args[1].index() == 2) {
+                std::cerr << "[mapdel] map=" << mp.get()
+                          << " intkey=" << std::get<int64_t>(args[1])
+                          << " size=" << mp->size()
+                          << " caller=" << stubCallCtx().obj << "::"
+                          << stubCallCtx().fn << "\n";
+                std::cerr.flush();
+            }
+            mp->erase(args[1]);
+        }
+        return make_int(1);
+    }
+    if (eid == CID("member_array")) {
+        if (args.size() >= 2 && args[1].index() == 5) {
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[1]);
+            for (size_t i = 0; i < arr->items.size(); ++i) if (value_equal(arr->items[i], args[0])) return make_int(static_cast<int64_t>(i));
+        }
+        return make_int(-1);
+    }
+    if (eid == CID("explode")) {
+        // vm_f_explode (0x80d5c68): explode(str) splits on "\n" by default;
+        // explode(str, sep) splits on the given separator.  Empty separator
+        // splits into individual characters.
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        if (args.empty()) return arr;
+        std::string s = as_string(args[0]);
+        std::string sep = args.size() >= 2 ? as_string(args[1]) : "\n";
+        // [fix] 原版 vm_f_explode (0x80d5c68 IDA 实证): if (len) {...分割...}
+        // else vm_pushArray(空数组) —— 空串输入恒返回空数组 ({})。此前返回
+        // ({""}) 一元素, itemd::load_attrib_list 的 arr[14]=explode(trim(col),
+        // "|") 拿到 ({"}) → sizeof!=0 → 关联字段成空串 → reset_equipment_
+        // attrib 把粉属性 set 到 "prop3/" 废槽 → 炼化粉装永远没有粉属性。
+        if (s.empty()) return arr;
+        // 热路径铁律: getenv 缓存为 static const bool, 严禁每次调用查询。
+        static const bool s_explodeTrace =
+            LPCVM_GETENV("LPCVM_TRACE") != nullptr &&
+            LPCVM_GETENV("LPCVM_TRACE_EXPLODE") != nullptr;
+        if (s_explodeTrace)
+            std::cerr << "[explode] len=" << s.size() << " sep=" << (args.size() >= 2 ? "explicit" : "newline")
+                      << " first8=[" << s.substr(0, 8) << "]\n";
+        if (sep.empty()) {
+            for (char c : s) arr->items.push_back(make_string(std::string(1, c)));
+            return arr;
+        }
+        size_t start = 0;
+        while (true) {
+            size_t p = s.find(sep, start);
+            if (p == std::string::npos) {
+                arr->items.push_back(make_string(s.substr(start)));
+                break;
+            }
+            arr->items.push_back(make_string(s.substr(start, p - start)));
+            start = p + sep.size();
+        }
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE")) {
+            std::string dbg;
+            for (size_t i = 0; i < arr->items.size() && i < 4; ++i) {
+                if (!dbg.empty()) dbg += "|";
+                const std::string& e = std::get<SharedString>(arr->items[i]);
+                dbg += "[" + e.substr(0, 12) + "]";
+            }
+            std::string hex0;
+            if (!arr->items.empty()) {
+                const std::string& e0 = std::get<SharedString>(arr->items[0]);
+                char b[8];
+                for (size_t k = 0; k < e0.size() && k < 8; ++k) { snprintf(b, sizeof(b), "%02X ", (unsigned char)e0[k]); hex0 += b; }
+            }
+            std::cerr << "[explode] n=" << arr->items.size() << " first=[" << dbg << "] elem0hex=" << hex0 << "\n";
+        }
+        return arr;
+    }
+    if (eid == CID("implode")) {
+        if (args.size() < 2 || args[0].index() != 5) return make_string("");
+        auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+        std::string sep = as_string(args[1]), out;
+        for (size_t i = 0; i < arr->items.size(); ++i) {
+            if (i) out += sep;
+            out += as_string(arr->items[i]);
+        }
+        return make_string(out);
+    }
+    if (eid == CID("allocate")) {
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        if (!args.empty()) {
+            int64_t n = as_int(args[0]);
+            for (int64_t i = 0; i < n; ++i) arr->items.push_back(make_int(0));
+        }
+        return arr;
+    }
+    if (eid == CID("express_set") || eid == CID("express_add") || eid == CID("express_delete")) {
+        // vm_f_express_set (0x80d61bc) / express_add / express_delete: operate
+        // on a MAPPING value: express_set(mapping, path, value) inserts
+        // mapping[path] = value (path may be "a/b/c" for nested sections,
+        // vm_setPathInMapping); express_add adds numerically; express_delete
+        // removes the key.  Paths containing '/' are WALKED as nested
+        // mappings, symmetric with express_query's vm_queryPathInMapping walk -
+        // writing "dynamic_key/login" as a single flat key made dbase set_temp
+        // invisible to query_temp("dynamic_key/login") and login's dynamic
+        // encryption key read back empty (aaa password check used the
+        // "abcdef" fallback key and decrypted garbage).
+        // express_delete may be called with just (path, mapping); set/add
+        // carry a value as the third argument.
+        if (args.size() >= 2 && (name != "express_delete" || args.size() >= 2)) {
+            // mapping may be args[0] or args[1] (push order differs per efun);
+            // key is the other non-mapping leading arg, value is args[2].
+            size_t mpIdx = args[0].index() == 6 ? 0 : (args[1].index() == 6 ? 1 : size_t(-1));
+            if (mpIdx != size_t(-1)) {
+                auto mp = std::get<lpc::Ref<MappingValue>>(args[mpIdx]);
+                size_t keyIdx = mpIdx == 0 ? 1 : 0;
+                std::string path = as_string(args[keyIdx]);
+                // Normalise the path exactly like the original helpers:
+                // vm_setPathInMapping / vm_addPathInMapping /
+                // vm_deletePathInMapping skip leading and CONSECUTIVE '/'
+                // separators, and express_query (vm_queryPathInMapping) treats
+                // "a/" as "a" (trailing slashes are stripped).  Keep set/add/
+                // delete symmetric with query so a value written through
+                // express_set("dynamic_key/login", ...) is readable by
+                // express_query("dynamic_key/login").
+                while (!path.empty() && path.back() == '/') path.pop_back();
+                if (path.empty()) return make_int(0);   // root: nothing to set
+                lpc::Ref<MappingValue> cur = mp;
+                for (;;) {
+                    while (!path.empty() && path.front() == '/') path.erase(path.begin());
+                    size_t q = path.find('/');
+                    bool last = (q == std::string::npos);
+                    std::string seg = last ? path : path.substr(0, q);
+                    if (seg.empty() && !last) {
+                        // consecutive slashes ("a//b"): skip the empty segment
+                        path = path.substr(q);
+                        continue;
+                    }
+                    Value k = make_string(seg);
+                    if (last) {
+                        if (eid == CID("express_set")) {
+                            cur->insert(k, args[2]);
+                            // vm_f_express_set returns the VALUE it stored: dbase.c's
+                            // set_temp()/set() are `return express_set(path, dbase, val)`
+                            // and the game relies on the LPC `m[k] = v` expression value
+                            // (e.g. start_gs.c: set_dynamic_key returns
+                            // ob->set_temp("dynamic_key/"+idx, gen_dynamic_key()) so the
+                            // generated key reaches the client in 0x5109; returning 1
+                            // sent `key = 1` and broke the mall coin-password
+                            // encryption).  cheater_detect's
+                            // `cob->set_temp("failed_count", n) >= 2` needs the new count.
+                            return args[2];
+                        } else if (eid == CID("express_add")) {
+                            // Original vm_addPathInMapping (0x80b7204) does NOT
+                            // hardcode numeric addition: it pushes the existing
+                            // slot value and the new value and calls the generic
+                            // vm_addValue (the LPC `+` operator) — int+int adds,
+                            // ARRAY+ARRAY CONCATENATES, string+string concats.
+                            // xlibd's safe_add() relies on this: the second
+                            // drama->add("events_table/sf_try_finished/*/决战",
+                            // ({"derive_scene25"})) must APPEND to the existing
+                            // ({"derive_scene24"}) list.  Numeric-only addition
+                            // turned array+array into as_int(0)+as_int(0)==0 and
+                            // silently zeroed the star-lord script's 决战/比试
+                            // sf_try_finished handlers, so the settlement derive
+                            // (derive_scene24/25/27) never ran and scenario26
+                            // (五色灵石 bonus) never fired.
+                            Value* hit = cur->find(k);
+                            Value nv = !hit ? args[2]
+                                            : lpc::vmcore::addValues(*hit, args[2]);
+                            cur->insert(k, nv);
+                            return nv;   // add()/add_temp() return the new value
+                        } else { // express_delete
+                            cur->erase(k);
+                        }
+                        break;
+                    }
+                    Value* hit = cur->find(k);
+                    if (!hit || hit->index() != 6) {
+                        // express_set creates missing intermediate mappings
+                        // (vm_setPathInMapping 0x80b7000 allocates them);
+                        // express_add / express_delete (vm_addPathInMapping
+                        // 0x80b7204 / vm_deletePathInMapping 0x80b7398) fail
+                        // when the mid path is absent or not a mapping.
+                        if (name != "express_set") return make_int(0);
+                        auto sub = lpc::Ref<MappingValue>(new MappingValue());
+                        Value& nv = cur->insert(k, sub);
+                        hit = &nv;
+                    }
+                    cur = std::get<lpc::Ref<MappingValue>>(*hit);
+                    path = path.substr(q);
+                }
+                return make_int(1);
+            }
+        }
+        return make_int(0);
+    }
+    if (eid == CID("query_temp") || eid == CID("query")) return make_int(0);
+    if (eid == CID("set_name") || eid == CID("set_temp") || eid == CID("set")) return make_int(1);
+    if (eid == CID("destruct_object") || eid == CID("to_be_disconnect")) {
+        // destruct_object(ob) really destroys: the game's logout chain ends in
+        // user::time_expired -> trap_into(SF_DISCONNECTED_TIME_EXPIRED) ->
+        // destruct_object(me).  It used to be a no-op, so the character stayed
+        // alive and the account stayed "online", and the next login reconnected
+        // the stale character instead of showing the character list.
+        if (eid == CID("destruct_object") && !args.empty()) {
+            std::string k;
+            if (args[0].index() == 7) {
+                auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+                if (ov) {
+                    k = ov->programName;
+                    // this_object() yields the placeholder "<this>" (on a
+                    // detached VM even thisObjectName_ is "<this>"): resolve
+                    // through the owner object pointer.  threadd::daemon
+                    // destroys the logged-out character with
+                    // destruct_object(this_object()); without this the
+                    // character was never destroyed, the account stayed online,
+                    // and the next login reconnected the stale character
+                    // instead of showing the character list.
+                    if ((k.empty() || k == "<this>") && ov->owner)
+                        k = lpc::regKeyOfObjectPtr(ov->owner);
+                    if (k.empty() || k == "<this>") k = stubCallCtx().key;
+                }
+            } else if (args[0].index() == 4) {
+                k = std::get<SharedString>(args[0]).str();
+                if (k.empty() || k == "<this>") k = stubCallCtx().key;
+            }
+            static const bool lifeProbe = (LPCVM_GETENV("LPCVM_LIFE") != nullptr);
+            bool ok = false;
+            if (!k.empty()) ok = lpc::destructObjectByKey(k);
+            if (lifeProbe)
+                std::cerr << "[life] destruct_object(" << k << ") -> " << (ok ? 1 : 0)
+                          << " by=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+        }
+        return make_int(1);
+    }
+    if (eid == CID("close_client")) {
+        // vm_f_close_client (0x804e5d8): close_client(client_no) closes the
+        // client's socket and drops it from the game-service registry.  The
+        // account/agent teardown (comm_connection_disconnect -> ... ->
+        // close_client) relies on this to actually sever the TCP connection.
+        if (!args.empty()) {
+            int clientNo = static_cast<int>(as_int(args[0]));
+            if (LPCVM_GETENV("LPCVM_TAIL"))
+                std::cerr << "[close_client] cno=" << clientNo << "\n";
+            gameServiceDisconnect(clientNo);
+        }
+        return make_int(1);
+    }
+    if (eid == CID("is_clone")) {
+        // vm_f_is_clone: true when the object was created by clone_object
+        // (clone registry keys carry a "#<seq>" suffix).  With no argument it
+        // refers to the current object; call_builtin cannot see the current
+        // object, so a no-arg is_clone returns 0 (matches non-clone).
+        if (args.empty() || args[0].index() != 7) return make_int(0);
+        auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+        return make_int(ov->programName.find('#') != std::string::npos ? 1 : 0);
+    }
+    if (eid == CID("register_daemon_data") || eid == CID("unregister_daemon_data")) {
+        // The driver keeps a per-daemon data table (path -> key -> value) that
+        // survives object reloads; the LPC uses it as the canonical place to stash
+        // daemon state and read it back:
+        //   configd.c:298        register_daemon_data("/daemons/configd.c","config",config)
+        //   configd.c:792        m = get_daemon_data("/daemons/configd.c")   (restore)
+        //   scheduled.c:379      register_daemon_data("/daemons/scheduled.c",event,event)
+        //   douchong_dahui.c:918 register_daemon_data(".../douchong_dahui.c",
+        //                                              "all_challenge_npc", all_challenge_npc)
+        //   douchong_dahui.c:1125 m["all_challenge_npc"] -> restore, then unregister
+        // This used to be a no-op stub, so every restore read back NOTHING: the
+        // challenge table (and the event scheduler's own state) was lost, which is
+        // why douchong_dahui's 1000 "challenge" rows were written on some boots and
+        // never written on others.  Implemented faithfully as an in-memory,
+        // per-boot registry keyed by (daemon path, key).
+        if (args.size() < 2) return make_int(0);
+        std::string dpath = as_string(args[0]);
+        std::string dkey = as_string(args[1]);
+        std::lock_guard<std::mutex> lk(daemonDataMutex());
+        auto& tbl = daemonDataTable();
+        if (eid == CID("unregister_daemon_data")) {
+            auto it = tbl.find(dpath);
+            if (it != tbl.end()) {
+                it->second.erase(dkey);
+                if (it->second.empty()) tbl.erase(it);
+            }
+            return make_int(1);
+        }
+        if (args.size() < 3) return make_int(0);
+        tbl[dpath][dkey] = args[2];
+        return make_int(1);
+    }
+    if (eid == CID("get_daemon_data")) {
+        // get_daemon_data(path) -> mapping of every key registered for that daemon;
+        // get_daemon_data(path, key) -> that single value.  Callers test the result
+        // with is_mapping(), so an unknown path must yield something that is not a
+        // mapping (undefined), not an empty one - configd/ctacommandd rely on that
+        // to decide whether a stored config exists.
+        if (args.empty()) return Value{};
+        std::string dpath = as_string(args[0]);
+        std::lock_guard<std::mutex> lk(daemonDataMutex());
+        auto& tbl = daemonDataTable();
+        auto it = tbl.find(dpath);
+        if (args.size() >= 2) {
+            if (it == tbl.end()) return Value{};
+            auto kit = it->second.find(as_string(args[1]));
+            return kit == it->second.end() ? Value{} : kit->second;
+        }
+        if (it == tbl.end() || it->second.empty()) return Value{};
+        Value m = make_mapping();
+        auto mp = std::get<lpc::Ref<MappingValue>>(m);
+        for (const auto& kv : it->second) mp->insert(make_string(kv.first), kv.second);
+        return m;
+    }
+    if (eid == CID("dispatch_service") || eid == CID("send_to_cta")) return make_int(1);
+    if (eid == CID("find_function")) {
+        // Return a function value for a builtin efun (the game uses this to
+        // build the mysql_connect closure in find_mysql_func).
+        if (args.empty()) return make_int(0);
+        std::string fnName = as_string(args[0]);
+        const auto& names = efunNameTable();
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (names[i] == fnName) return make_closure(fnName, {});
+        }
+        return make_int(0);
+    }
+    if (eid == CID("allocate_array")) {
+        // vm_f_allocate_array (0x80d58b4 IDA 实证):
+        //   argNum > 2            -> vm_error("Too many parameters to allocate_array.\n")
+        //   size < 0              -> vm_error("Size(%d) of array cann't be negative.\n")
+        //   allocate_array(n)     -> n 个 undefined 槽
+        //   allocate_array(n, v)  -> 每个槽都填 v (原版循环 vm_pushValue +
+        //                            dup2 逐槽写入, NOT undefined!)
+        // 两参填值语义是 mudlib 广泛依赖的: upgrade_equipment 的
+        // allocate_array(item_num, item_name) (自动改造辅助石头表),
+        // anqi.c 的 allocate_array(32, 255) 棋盘等。此前忽略第 2 参导致
+        // 自动改造 assist 全 undefined -> rate=0 -> 改造必定失败。
+        if (args.size() > 2)
+            lpc::vmcore::vmError("Too many parameters to allocate_array.\n");
+        int64_t n = args.empty() ? 0 : as_int(args[0]);
+        if (n < 0) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "Size(%lld) of array cann't be negative.\n",
+                          static_cast<long long>(n));
+            lpc::vmcore::vmError(buf);
+        }
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        if (n > 0) arr->items.reserve(static_cast<size_t>(n));
+        for (int64_t i = 0; i < n; ++i)
+            arr->items.push_back(args.size() >= 2 ? args[1] : Value{});
+        return arr;
+    }
+    if (eid == CID("expand_macro")) {
+        // vm_f_expand_macro (0x80d5598) looks up the predefine table.
+        // __BIN_DIR__ (vm_getBinDir) returns the -b directory WRAPPED IN
+        // DOUBLE QUOTES; the LPC startup strips them with [1..<2].
+        if (!args.empty() && args[0].index() == 4) {
+            const std::string& key = std::get<SharedString>(args[0]);
+            {
+                // Boot-injected predefines (/D CONFIG=...) win over the .o
+                // define table, matching the original driver's runtime
+                // define merge (start_<prefix>.o resolves INI_FILE via
+                // expand_macro("CONFIG")).
+                std::lock_guard<std::mutex> lk(injectedDefinesMutex());
+                auto it = injectedDefines().find(key);
+                if (it != injectedDefines().end()) return make_string(it->second);
+            }
+            if (key == "__BIN_DIR__") {
+                if (pakMounted())
+                    return make_string("\"" + pakVirtualPrefix() + "\"");
+                return make_string("\"\"");
+            }
+            if (key == "CONFIG") return make_int(0);
+            // Command-number macros: the .o binary stores the #define table
+            // (vm_loadDefines 0x8087080); vm_lookupDefine reads it at runtime
+            // to resolve message numbers like MSG_L_AUTH -> 0x5351.  Query the
+            // master program's defines the same way.
+            std::string expansion;
+            bool found = masterDefineLookup(key, expansion);
+            if (LPCVM_GETENV("LPCVM_TRACE") && key.rfind("MSG_", 0) == 0)
+                std::cerr << "[expand_macro] " << key << " found=" << found
+                          << " exp='" << (found ? expansion : "<none>") << "'\n";
+            if (found) {
+                // expansion in the .o may carry leading/trailing whitespace
+                // ("                  0x5351\n"); trim it before parsing.
+                size_t b0 = expansion.find_first_not_of(" \t\r\n");
+                size_t e0 = expansion.find_last_not_of(" \t\r\n");
+                std::string trimmed = (b0 == std::string::npos) ? "" :
+                                      expansion.substr(b0, e0 - b0 + 1);
+                // The original vm_f_expand_macro (0x80d5598) ALWAYS pushes a
+                // STRING (vm_pushString of the define expansion), even for
+                // numeric macros - the game wraps the result with
+                // is_string()/atoi()/trim()/(int) (convert_to_value checks
+                // is_string, threadd checks MAX_SERVICE_THREAD_NUM, etc.).
+                // Returning an int here broke convert_to_value with
+                // "Failed to expand macro: %O, use raw data".
+                return make_string(trimmed);
+            }
+        }
+        return make_int(0);
+    }
+    if (eid == CID("set_case_check")) {
+        // vm_f_set_case_check (0x80db520) -> vm_setCaseCheck(m, flag, obsorb):
+        // flag != 0 turns case sensitivity ON, 0 turns it OFF.  The mapping
+        // itself stays on the stack (returned) - the LPC code assigns the
+        // result: "_cmd_types = set_case_check(([...]), 0)".
+        if (args.size() >= 2 && args[0].index() == 6) {
+            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+            int flag = static_cast<int>(as_int(args[1]));
+            int obsorb = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 0;
+            mp->setCaseCheck(flag != 0, obsorb);
+            return args[0];   // the (possibly re-keyed) mapping
+        }
+        return make_int(0);
+    }
+    if (eid == CID("trim")) {
+        if (args.empty()) return make_string("");
+        std::string s = as_string(args[0]);
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[trim] in=[" << s.substr(0, 16) << "] len=" << s.size() << "\n";
+        size_t b = s.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) {
+            if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
+                std::cerr << "[trim] -> empty\n";
+            return make_string("");
+        }
+        size_t e = s.find_last_not_of(" \t\r\n");
+        std::string r = s.substr(b, e - b + 1);
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[trim] -> [" << r.substr(0, 16) << "]\n";
+        return make_string(r);
+    }
+    if (eid == CID("relinquish")) return make_int(1);
+    if (eid == CID("get_dir_ex") || eid == CID("get_dir")) {
+        // Original vm_f_get_dir2_in_st (0x80eb5d4):
+        //   - paths containing ".pak/" are packed volumes listed through the
+        //     pak catalog in CATALOG order (vm_getDirInPackedFs),
+        //   - otherwise opendir/readdir order (no sorting),
+        //   - the last path component is the wildcard pattern ('*' any run,
+        //     '?' one char, '\\' escape - vm_matchString); an empty pattern
+        //     behaves like "*",
+        //   - flag 0 -> plain names; flag 1/2 -> ({name, size, mtime}) with
+        //     size -2 for directories.
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        if (args.empty()) return arr;
+        std::string pattern = as_string(args[0]);
+        int flag = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+
+        // split into dir + pattern at the last '/'
+        std::string dirPart, pat;
+        {
+            size_t slash = pattern.find_last_of('/');
+            if (slash == std::string::npos) {
+                dirPart = "";
+                pat = pattern;
+            } else {
+                dirPart = pattern.substr(0, slash + 1);
+                pat = pattern.substr(slash + 1);
+            }
+            if (pat.empty()) pat = "*";
+        }
+
+        auto pushPlain = [&](const std::string& name, int64_t size, int64_t mtime) {
+            if (flag) {
+                auto item = lpc::Ref<ArrayValue>(new ArrayValue());
+                item->items.push_back(make_string(name));
+                item->items.push_back(make_int(size));
+                item->items.push_back(make_int(mtime));
+                arr->items.push_back(item);
+            } else {
+                arr->items.push_back(make_string(name));
+            }
+        };
+
+        // packed volume?
+        if (pattern.find(".pak/") != std::string::npos && pakMounted()) {
+            std::vector<const PakEntry*> entries;
+            if (!pakListDir(dirPart, entries)) return arr;
+            for (const PakEntry* e : entries) {
+                if (!matchString(e->name, pat)) continue;
+                int64_t size = e->isDir ? -2 : static_cast<int64_t>(e->origSize);
+                pushPlain(e->name, size, 0);
+            }
+            return arr;
+        }
+
+        // real filesystem: readdir order (no sorting, like the original's
+        // opendir/readdir traversal).
+        fs::path dir = resolveVfsPath(dirPart.empty() ? "/" : dirPart);
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) return arr;
+        std::vector<std::string> plainNames;
+        std::vector<std::pair<int64_t, int64_t>> plainMeta;
+        for (auto& p : fs::directory_iterator(dir, ec)) {
+            std::string name = p.path().filename().string();
+            if (!matchString(name, pat)) continue;
+            std::error_code ec2;
+            int64_t size = -2, mtime = 0;
+            if (!fs::is_directory(p.path(), ec2)) {
+                size = static_cast<int64_t>(fs::file_size(p.path(), ec2));
+                auto ft = fs::last_write_time(p.path(), ec2);
+                mtime = static_cast<int64_t>(ft.time_since_epoch().count() / 10000000);
+            }
+            plainNames.push_back(name);
+            plainMeta.emplace_back(size, mtime);
+        }
+        for (size_t i = 0; i < plainNames.size(); ++i)
+            pushPlain(plainNames[i], plainMeta[i].first, plainMeta[i].second);
+        return arr;
+    }
+    if (eid == CID("get_sub_dirs_ex")) {
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        if (args.empty()) return arr;
+        fs::path dir = resolveVfsPath(as_string(args[0]));
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) return arr;
+        std::vector<std::string> names;
+        for (auto& p : fs::directory_iterator(dir, ec)) {
+            if (p.is_directory()) names.push_back(p.path().filename().string());
+        }
+        std::sort(names.begin(), names.end());
+        for (auto& n : names) {
+            auto item = lpc::Ref<ArrayValue>(new ArrayValue());
+            item->items.push_back(make_string(n));
+            item->items.push_back(make_int(-2));
+            arr->items.push_back(item);
+        }
+        return arr;
+    }
+    if (eid == CID("safe_load_object") || eid == CID("load_object")) {
+        // The driver-side object loader: load + initialize the object and
+        // register it so find_object / cross-object calls can reach it.
+        // The "Load: ... OK" line is printed by the LPC safe_load_object
+        // wrapper itself; do not duplicate it here.
+        if (args.empty()) return make_int(0);
+        std::string vpath = normalizeSlashes(as_string(args[0]));
+        if (LPCVM_GETENV("LPCVM_TRACE"))
+            std::cerr << "[load_object] " << vpath << " nargs=" << args.size()
+                      << " a1=" << (args.size() >= 2 ? to_string(args[1], false).substr(0, 40) : "-") << "\n";
+        // The second argument (when present) is the object-creation context
+        // that load_object passes to create(): handler.c's create reads
+        // arg0["module"] (the loading module object) to register the command's
+        // main() into the module's handler table.  cmd_*.o are loaded with
+        // (["module": object(<this>)]).
+        std::vector<Value> createArgs;
+        if (args.size() >= 2) createArgs.push_back(args[1]);
+        int ok = loadObjectIntoRegistry(vpath, vfsRoot(), createArgs);
+        // LPCVM_LOADDBG (runtime-armed): what does load_object actually return?
+        // basic.c::call_init_script assigns the result and immediately calls
+        // ob->main(this_object()) - if that value is not an object the call is
+        // dropped and the whole /gs/init/** initialiser never runs (the Fangzhang
+        // Island boatman ends up with no menu at all).
+        {
+            static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
+            if (ldOn.load(std::memory_order_relaxed)) {
+                Value rv = ok ? findObjectInRegistry(vpath, vfsRoot()) : make_int(0);
+                std::cerr << "[loaddbg] " << name << " path='" << vpath << "' ok=" << ok
+                          << " retType=" << rv.index()
+                          << " ret=" << (rv.index() == 7
+                                             ? std::get<lpc::Ref<ObjectValue>>(rv)->programName
+                                             : to_string(rv, false).substr(0, 40))
+                          << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+                std::cerr.flush();
+            }
+        }
+        if (!ok) return make_int(0);
+        // Return the OBJECT, like the original driver does - never an int.  LPC
+        // callers assign the result and then call into it:
+        //   basic.c::call_init_script:
+        //       ob = load_object(path);  if (ob) ob->main(this_object());
+        // With an int the `ob->main(...)` was a call on a NUMBER and was dropped
+        // silently, so every /gs/init/** initialiser never ran: the Fangzhang
+        // Island boatman (init/npc/fangzhangdao-chuanfu.c -> set_dynamic_menu)
+        // opened with no menu at all, and the coachman / guild envoy kept only
+        // their built-in default menus.  The LPC safe_load_object wrapper also
+        // tests the returned object.
+        return findObjectInRegistry(vpath, vfsRoot());
+    }
+    if (eid == CID("find_object")) {
+        // original vm_f_find_object (0x80F60A4):
+        //   if (arg->type != 10) {                        // NOT an object:
+        //       if (type != 4) vm_error("Bad type of value, expected string, got %s");
+        //       ob = vm_lookupObjectByName(str);
+        //       push(ob && !destructed ? ob : 0);
+        //       return;
+        //   }
+        //   if (destructed) { pop; push 0; return; }
+        //   /* fall through: the OBJECT ITSELF is the result (identity) */
+        // i.e. find_object(<object>) is an identity function, only a STRING is
+        // looked up by name.  The engine stringified every argument, so
+        //     ob_str = object_template(this_object());
+        //     if (!ob_str || !is_object(basic_ob = find_object(ob_str))) return;
+        // in clone/npc/basic.c::create resolved the CLONE's path ("clone:...#N")
+        // as a NAME and answered 0 -> create returned before
+        //     line_args = basic_ob->query_entire_dbase();
+        //     call_init_script(line_args);
+        // -> every room-placed NPC (boatmen #5109/#4751) came up with NO menu at
+        // all, while the basic-object instances (#2528/#2647, whose template is
+        // the class and therefore resolvable by name) did register theirs.
+        if (args.empty()) return make_int(0);
+        // LPCVM_FO_LEGACY (env / _probe_on\LPCVM_FO_LEGACY): the engine's OLD
+        // behaviour - stringify even an object argument and look the name up.
+        // Kept as a runtime switch because turning the IDA-exact identity rule on
+        // is what let clone/npc/basic.c::create (and the item create chain) run
+        // past `find_object(object_template(this_object()))`; measured
+        // 2026-09-18 the shop stopped stacking ("buy 100 -> one item, amount 1",
+        // 89 of 89 observed stacks had amount 1) and the 赠品 flag disappeared,
+        // so both must be compared on a live server before narrowing anything.
+        static const std::atomic<bool>& foLegacy = lpc::dynProbeFlag("LPCVM_FO_LEGACY");
+        if (args[0].index() == 7 && !foLegacy.load(std::memory_order_relaxed)) {
+            if (!objectValueAlive(args[0])) return make_int(0);
+            return args[0];
+        }
+        std::string vpath = normalizeSlashes(as_string(args[0]));
+        {
+            static const std::atomic<bool>& ldOn = dynProbeFlag("LPCVM_LOADDBG");
+            if (ldOn.load(std::memory_order_relaxed) &&
+                (vpath.find("/gs/init/") != std::string::npos ||
+                 vpath.find("leave_promptd") != std::string::npos)) {
+                Value rv = findObjectInRegistry(vpath, vfsRoot());
+                std::cerr << "[loaddbg] find_object '" << vpath << "' -> type=" << rv.index()
+                          << " ret=" << (rv.index() == 7
+                                             ? std::get<lpc::Ref<ObjectValue>>(rv)->programName
+                                             : to_string(rv, false).substr(0, 40))
+                          << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
+                std::cerr.flush();
+                return rv;
+            }
+        }
+        return findObjectInRegistry(vpath, vfsRoot());
+    }
+    // ---- packet protocol analyser efuns (vm_pkt_analyser.c) ----
+    if (eid == CID("pkt_init_analyser")) {
+        int maxInterfaces = args.size() >= 1 ? static_cast<int>(as_int(args[0])) : 65536;
+        int maxFields = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 1024;
+        lpc::pktInitAnalyser(maxInterfaces, maxFields);
+        return make_int(1);
+    }
+    if (eid == CID("pkt_add_def")) {
+        // pkt_add_def("encap:mapping NAME = type field, ...")
+        if (!args.empty()) {
+            std::string line = as_string(args[0]);
+            // parse: encap:mapping NAME = field-desc
+            size_t sp = line.find(' ');
+            if (sp != std::string::npos) {
+                std::string name = line.substr(sp + 1);
+                size_t eq = name.find('=');
+                if (eq != std::string::npos) name = name.substr(0, eq);
+                size_t b = name.find_first_not_of(" \t");
+                size_t e = name.find_last_not_of(" \t");
+                if (b != std::string::npos && e != std::string::npos)
+                    name = name.substr(b, e - b + 1);
+                size_t ae = line.find('=');
+                std::string fields = (ae != std::string::npos) ? line.substr(ae + 1) : "";
+                lpc::pktAddDef(name, fields);
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("pkt_add_interface")) {
+        // pkt_add_interface(cmdFilter, signature, function, encapType)
+        // cmdNo is resolved from the interface name's #define macro
+        // (e.g. MSG_L_AUTH -> 0x5351) via expand_macro.
+        if (args.size() >= 3) {
+            int cmdFilter = static_cast<int>(as_int(args[0]));
+            std::string sig = as_string(args[1]);
+            Value fn = args[2];
+            int encap = args.size() >= 4 ? static_cast<int>(as_int(args[3])) : 0;
+            // interface name from "void name(...)"
+            size_t lp = sig.find('(');
+            if (lp != std::string::npos) {
+                std::string head = sig.substr(0, lp);
+                size_t vp = head.rfind("void ");
+                std::string name = (vp != std::string::npos) ? head.substr(vp + 5) : head;
+                size_t b = name.find_first_not_of(" \t");
+                size_t e2 = name.find_last_not_of(" \t");
+                if (b != std::string::npos && e2 != std::string::npos)
+                    name = name.substr(b, e2 - b + 1);
+                // uppercase macro name
+                std::string macro = name;
+                std::transform(macro.begin(), macro.end(), macro.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                int64_t cmdNo = 0;
+                Value mv = call_builtin(nullptr, "expand_macro", {make_string(macro)});
+                if (mv.index() == 2) {
+                    cmdNo = std::get<int64_t>(mv);
+                } else if (mv.index() == 4) {
+                    // expand_macro returns a STRING (original vm_f_expand_macro
+                    // always pushes a string).  Parse the numeric define
+                    // (accepts "0x2478" / "9336" / "                  0x5351").
+                    const std::string& es = std::get<SharedString>(mv);
+                    size_t b0 = es.find_first_not_of(" \t\r\n");
+                    size_t e0 = es.find_last_not_of(" \t\r\n");
+                    std::string trimS = (b0 == std::string::npos) ? "" : es.substr(b0, e0 - b0 + 1);
+                    cmdNo = std::strtoll(trimS.c_str(), nullptr, 0);
+                }
+                if (LPCVM_GETENV("LPCVM_TRACE"))
+                    std::cerr << "[pkt] add_interface " << name << " macro=" << macro
+                              << " cmdNo=" << cmdNo << " mvIndex=" << static_cast<int>(mv.index())
+                              << " filter=" << cmdFilter << " encap=" << encap << "\n";
+                if (LPCVM_GETENV("LPCVM_TAIL")) {
+                    static int pktAdds = 0;
+                    if (++pktAdds <= 400)
+                        std::cerr << "[pkt-add] " << name << " cmdNo=" << cmdNo
+                                  << " filter=" << cmdFilter << "\n";
+                }
+                if (cmdNo > 0 && cmdNo < 65536)
+                    lpc::pktAddInterface(static_cast<int>(cmdNo), sig, fn, encap,
+                                         static_cast<uint32_t>(cmdFilter));
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("pkt_add_field") || eid == CID("pkt_remove_field") ||
+        eid == CID("pkt_remove_interface") || eid == CID("pkt_remove_def") ||
+        eid == CID("pkt_destruct_analyser")) {
+        return make_int(1);
+    }
+    if (eid == CID("pkt_pad_interface")) {
+        // pkt_pad_interface(msg_no, values) -> body buffer (byte string).
+        // send_message calls pkt_pad_interface(msg_no, ($<)[1..<1]) where the
+        // array is the arguments after msg_no.  vm_pktPadUserDefinedValue
+        // serializes per the interface field layout (encapType 0 = mapping,
+        // 1 = positional array).
+        if (args.size() >= 1) {
+            int64_t msgNo = as_int(args[0]);
+            Value values = (args.size() >= 2) ? args[1] : Value{};
+            if (msgNo == 0x4401 || msgNo == 0x2403)
+                std::cerr << "[pad-efun] msgNo=0x" << std::hex << msgNo << std::dec
+                          << " argc=" << args.size()
+                          << " valuesType=" << static_cast<int>(values.index()) << "\n";
+            // vm_f_pkt_pad_interface returns a BUFFER (raw wire bytes), not a
+            // string: send_message feeds it straight into send_to_client's
+            // value-type padding, and a string there gets a spurious u8 length
+            // prefix (the "1A" seen in msg_cfg_ccs_info) whereas a buffer is
+            // emitted verbatim.
+            return make_buffer(lpc::pktPadInterface(static_cast<uint16_t>(msgNo), values));
+        }
+        return make_buffer("");
+    }
+    if (eid == CID("pkt_pad_buffer")) {
+        // vm_f_pkt_pad_buffer (0x80e2428): serialize each argument per
+        // vm_pktPadVariable's value-type encoding and concatenate:
+        //   int  -> u16 big-endian
+        //   float-> 4 raw bytes
+        //   string -> u8 length + bytes (max 255); buffer -> raw bytes
+        //   array-> each element padded recursively (no implicit count)
+        //   undefined/null -> 2 zero bytes
+        std::string out;
+        for (const auto& a : args) padVariableValue(a, out);
+        return make_buffer(out);
+    }
+    if (eid == CID("pkt_pad_field")) {
+        // pkt_pad_field(field_type, value): encode one named-type field.  Used
+        // rarely; fall back to the same value-type encoding as pkt_pad_buffer.
+        if (args.size() >= 2) {
+            std::string out;
+            std::function<void(const Value&)> pad = [&](const Value& v) {
+                if (v.index() == 2) {
+                    uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
+                    out.push_back(static_cast<char>((u >> 8) & 0xFF));
+                    out.push_back(static_cast<char>(u & 0xFF));
+                } else if (v.index() == 4) {
+                    const std::string& s = std::get<SharedString>(v);
+                    size_t n = s.size(); if (n > 255) n = 255;
+                    out.push_back(static_cast<char>(n));
+                    out.append(s.data(), n);
+                } else { out.push_back(0); out.push_back(0); }
+            };
+            pad(args[1]);
+            return make_string(out);
+        }
+        return make_string("");
+    }
+    if (eid == CID("pkt_get_interface") || eid == CID("pkt_get_interface_name") ||
+        eid == CID("pkt_get_all_interfaces") || eid == CID("pkt_get_all_fields") ||
+        eid == CID("pkt_get_all_defs") || eid == CID("pkt_get_def") ||
+        eid == CID("pkt_get_field")) {
+        return make_int(0);
+    }
+    if (eid == CID("object_name")) {
+        // object_name(ob) - return the object's path.  The original driver
+        // returns the mudlib virtual path with the ".c" source extension
+        // (verified against the reference data rows: task_time_ex's
+        // restore() keys branches like "/gs/daemons/arenas/free_arena.c", and
+        // guard compares like object_name(this_object()) ==
+        // "/gs/feature/common/task_time_ex.c" only hold with ".c" names).
+        // Our registry keys carry a "pak:" prefix and the ".o" file
+        // extension; roomd.c's place_char does
+        // sscanf(object_name(room_ob), "/gs/zone/%s/%*s") to resolve
+        // THIS_PLACE, so a raw registry key ("pak:gs/zone/...") breaks NPC
+        // placement.  Strip the scheme prefix, normalize to a leading slash
+        // and present the ".c" virtual path like the original.
+        // object_name(ob, flag): with a truthy second arg the original
+        // returns the CLONE's program path WITHOUT the "#<seq>" instance
+        // suffix (basic_object.c's init_basic_object derives file_id via
+        // object_name(this_object(), 1)); flag==0 keeps the instance suffix.
+        bool noInstance = args.size() >= 2 && !(args[1].index() == 2 && std::get<int64_t>(args[1]) == 0);
+        if (!args.empty() && args[0].index() == 7) {
+            auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+            std::string p = ov->programName;
+            // [fix] 双前缀归一化: clone:pak:... 两层都要剥 (与 efun_adapt
+            // 的 object_name 同步修复), 否则 roomd 的 sscanf THIS_PLACE
+            // 解析拿到的还是带 pak: 的原始键。
+            if (p.compare(0, 6, "clone:") == 0) {
+                p = p.substr(6);
+                if (p.compare(0, 4, "pak:") == 0) p = p.substr(4);
+            } else if (p.compare(0, 4, "pak:") == 0) {
+                p = p.substr(4);
+            }
+            // [fix] #实例后缀先摘下再判 .o (1 参调用保留后缀, 结尾非 .o)
+            std::string hashPart;
+            const size_t hpos = p.find('#');
+            if (hpos != std::string::npos) {
+                hashPart = p.substr(hpos);
+                p = p.substr(0, hpos);
+            }
+            if (!noInstance) { /* 1 参: 保留实例后缀 */ } else hashPart.clear();
+            if (!p.empty() && p.front() != '/') p = "/" + p;
+            if (!p.empty() && hasSuffix(p, ".o")) p.replace(p.size() - 2, 2, ".c");
+            if (!p.empty()) return make_string(p + hashPart);
+        }
+        return make_string("");
+    }
+    if (eid == CID("file_size")) {
+        // vm_f_file_size: -1 when missing, -2 for a directory, else the byte
+        // size.  The LPC assure_file() (filed's write_data) switches on these
+        // codes: -1 -> mkdir, -2 -> exists.  Returning 0 for a missing path
+        // made assure_file skip every mkdir, so /data content files were never
+        // created and every filed read came back -1.
+        if (args.empty()) return make_int(0);
+        std::error_code ec;
+        fs::path p = resolveVfsPath(as_string(args[0]));
+        if (fs::is_directory(p, ec)) return make_int(-2);
+        if (!fs::exists(p, ec)) return make_int(-1);
+        return make_int(static_cast<int64_t>(fs::file_size(p, ec)));
+    }
+    if (eid == CID("read_file")) {
+        if (args.empty()) return make_string("");
+        std::string vpath = as_string(args[0]);
+        // [listread] every ".list" config read (task_name.list / task_alias.list
+        // / shop goods lists ...): a zero-length answer means the caller's
+        // destination mapping stays empty and the whole feature silently
+        // degrades (get_task_class -> task name -> no template -> empty quest
+        // log; no shop goods).
+        if (vpath.find(".list") != std::string::npos) {
+            static int listBudget = 400;
+            std::string rv = readVfsFile(vpath);
+            if (listBudget > 0) {
+                --listBudget;
+                std::cerr << "[listread] path=" << vpath << " bytes=" << rv.size() << "\n";
+                std::cerr.flush();
+            }
+            if (args.size() >= 2 && args[1].index() == 4 &&
+                std::get<SharedString>(args[1]).str() == "b")
+                return make_buffer(rv);
+            return make_string(rv);
+        }
+        if (LPCVM_GETENV("LPCVM_TRACE"))
+            std::cerr << "[read_file] path=" << vpath << "\n";
+        std::string content = readVfsFile(vpath);
+        if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") &&
+            (vpath.find("hero.list") != std::string::npos || vpath.find("onlinemall") != std::string::npos))
+            std::cerr << "[hprobe] read_file path=" << vpath << " -> " << content.size()
+                      << " bytes head=[" << content.substr(0, 16) << "]\n";
+        if (LPCVM_GETENV("LPCVM_TRACE") && LPCVM_GETENV("LPCVM_TRACE_EXPLODE"))
+            std::cerr << "[read_file] -> " << content.size() << " bytes, head=["
+                      << content.substr(0, 20) << "]\n";
+        // mode "b" (buffer): the original returns a real buffer (Vm_Buffer_T)
+        // and callers gate on is_buffer() (derive_map_info / read_animate_info
+        // do read_file(path, "b") then is_buffer(buf) && read_map_info(buf)).
+        // Return a BufferValue so is_buffer() sees true; buffer contents are
+        // carried as raw bytes.
+        if (args.size() >= 2 && as_string(args[1]).find('b') != std::string::npos)
+            return make_buffer(content);
+        return make_string(content);
+    }
+    if (eid == CID("write_file")) {
+        if (args.size() >= 2) {
+            std::ofstream out(resolveVfsPath(as_string(args[0])), std::ios::app);
+            out << as_string(args[1]);
+        }
+        return make_int(1);
+    }
+    if (eid == CID("append_file")) {
+        // vm_f_append_file: append a line to a file (filed's GID.list etc.).
+        if (args.size() >= 2) {
+            std::ofstream out(resolveVfsPath(as_string(args[0])), std::ios::app);
+            out << as_string(args[1]) << "\n";
+        }
+        return make_int(1);
+    }
+    if (eid == CID("mkdir")) {
+        // vm_f_mkdir: mkdir(path) - create a directory (parents included).
+        if (!args.empty()) {
+            std::error_code ec;
+            fs::create_directories(resolveVfsPath(as_string(args[0])), ec);
+            return make_int(!ec ? 1 : 0);
+        }
+        return make_int(0);
+    }
+    if (eid == CID("delete_file")) {
+        // vm_f_delete_file: delete_file(path) -> 1 on success.
+        if (!args.empty()) {
+            std::error_code ec;
+            fs::remove(resolveVfsPath(as_string(args[0])), ec);
+            return make_int(!ec ? 1 : 0);
+        }
+        return make_int(0);
+    }
+    if (eid == CID("file_stat")) {
+        // vm_f_file_stat (0x80e0ed8): file_stat(path) -> mapping or 0.
+        // The game checks is_mapping(file_stat(f)) to test existence.
+        if (args.empty()) return make_int(0);
+        std::error_code ec;
+        fs::path p = resolveVfsPath(as_string(args[0]));
+        if (!fs::exists(p, ec)) return make_int(0);
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
+        mp->insert(make_string("size"), make_int(static_cast<int64_t>(fs::is_directory(p, ec) ? -2 : fs::file_size(p, ec))));
+        mp->insert(make_string("is_directory"), make_int(fs::is_directory(p, ec) ? 1 : 0));
+        return mp;
+    }
+    if (eid == CID("fopen")) {
+        // vm_f_fopen (0x80e2170): fopen(path, mode) -> file handle (int) or 0.
+        // The game (sorterrord) opens files for error logging.  We map the
+        // handle to a simple in-memory table.
+        if (args.size() < 2) return make_int(0);
+        std::string path = resolveVfsPath(as_string(args[0]));
+        std::string mode = as_string(args[1]);
+        static std::atomic<int64_t> fhSeq{100};
+        int64_t fh = fhSeq.fetch_add(1);
+        auto fe = std::make_shared<FileEntry>();
+        fe->path = path;
+        fe->mode = mode;
+        if (mode.find('w') != std::string::npos || mode.find('a') != std::string::npos) {
+            std::ios::openmode om = (mode.find('a') != std::string::npos) ? std::ios::app : std::ios::trunc;
+            fe->ofs = std::make_shared<std::ofstream>(path, std::ios::binary | om);
+            if (!fe->ofs->is_open()) return make_int(0);
+        } else if (mode.find('r') != std::string::npos) {
+            fe->ifs = std::make_shared<std::ifstream>(path, std::ios::binary);
+            if (!fe->ifs->is_open()) return make_int(0);
+        }
+        {
+            std::lock_guard<std::mutex> lk(fileTable().mtx);
+            fileTable().files[fh] = fe;
+        }
+        return make_int(fh);
+    }
+    if (eid == CID("fclose")) {
+        if (!args.empty()) {
+            std::lock_guard<std::mutex> lk(fileTable().mtx);
+            fileTable().files.erase(as_int(args[0]));
+        }
+        return make_int(1);
+    }
+    if (eid == CID("fwrite") || eid == CID("fprintf")) {
+        if (args.size() >= 2) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ofs) {
+                std::string data = (eid == CID("fprintf") && args.size() >= 3)
+                    ? formatLpc(as_string(args[1]), std::vector<Value>(args.begin() + 2, args.end()))
+                    : as_string(args[1]);
+                *fe->ofs << data;
+                fe->ofs->flush();
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("fread")) {
+        if (args.size() >= 2) {
+            int64_t fh = as_int(args[0]);
+            int64_t len = as_int(args[1]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs && len > 0) {
+                std::string buf(static_cast<size_t>(len), '\0');
+                fe->ifs->read(&buf[0], len);
+                buf.resize(static_cast<size_t>(fe->ifs->gcount()));
+                return make_string(buf);
+            }
+        }
+        return make_string("");
+    }
+    if (eid == CID("fgets")) {
+        if (!args.empty()) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs) {
+                std::string line;
+                if (std::getline(*fe->ifs, line)) return make_string(line);
+            }
+        }
+        return make_int(0);
+    }
+    if (eid == CID("fseek")) {
+        if (args.size() >= 2) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs) {
+                fe->ifs->clear();
+                fe->ifs->seekg(static_cast<std::streamoff>(as_int(args[1])), std::ios::beg);
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("lzss_compress")) {
+        // vm_f_lzss_compress (0x80df860): buffer = BE32(origLen) + lzss data;
+        // when compression does not shrink, BE32(0) + raw bytes.
+        if (args.empty()) return make_buffer(std::string(4, '\0'));
+        std::string data = as_string(args[0]);
+        std::vector<uint8_t> src(data.begin(), data.end());
+        std::vector<uint8_t> comp = lpc::lzssCompress(src);
+        std::string out;
+        uint32_t len = static_cast<uint32_t>(src.size());
+        out += static_cast<char>((len >> 24) & 0xFF);
+        out += static_cast<char>((len >> 16) & 0xFF);
+        out += static_cast<char>((len >> 8) & 0xFF);
+        out += static_cast<char>(len & 0xFF);
+        if (comp.size() < src.size()) {
+            out.append(comp.begin(), comp.end());
+        } else {
+            // compression did not shrink: store BE32(0) + raw (the original
+            // lzss_compress stores the uncompressed data when it cannot help)
+            std::string out2;
+            out2 += static_cast<char>(0);
+            out2 += static_cast<char>(0);
+            out2 += static_cast<char>(0);
+            out2 += static_cast<char>(0);
+            out2.append(data);
+            return make_buffer(out2);
+        }
+        return make_buffer(out);
+    }
+    if (eid == CID("lzss_decompress")) {
+        // vm_f_lzss_decompress (0x80df9b4): buffer = BE32(origLen) + lzss data
+        // (origLen 0 -> raw copy).  Returns a buffer.
+        if (args.empty()) return make_buffer(std::string());
+        std::string buf = as_string(args[0]);
+        if (buf.size() < 4) return make_buffer(std::string());
+        uint32_t origLen = (static_cast<unsigned char>(buf[0]) << 24) |
+                           (static_cast<unsigned char>(buf[1]) << 16) |
+                           (static_cast<unsigned char>(buf[2]) << 8) |
+                           static_cast<unsigned char>(buf[3]);
+        std::vector<uint8_t> comp(buf.begin() + 4, buf.end());
+        if (origLen == 0) {
+            std::string raw(buf.begin() + 4, buf.end());
+            return make_buffer(raw);
+        }
+        std::vector<uint8_t> outv;
+        if (!lpc::lzssDecompress(comp, origLen, outv))
+            return make_buffer(std::string());
+        return make_buffer(std::string(outv.begin(), outv.end()));
+    }
+    if (eid == CID("buffer_to_string")) {
+        // vm_f_buffer_to_string: buffer -> string (bytes unchanged).
+        if (args.empty()) return make_string("");
+        return make_string(as_string(args[0]));
+    }
+    if (eid == CID("string_to_buffer")) {
+        // vm_f_string_to_buffer: string -> buffer (bytes unchanged).
+        if (args.empty()) return make_buffer(std::string());
+        return make_buffer(as_string(args[0]));
+    }
+    if (eid == CID("valid_chinese") || eid == CID("set_valid_chinese")) {
+        // The game's Chinese-string validation is a no-op here (input is
+        // already the codepage the driver used).
+        if (eid == CID("valid_chinese")) return make_int(1);
+        return make_int(1);
+    }
+    if (eid == CID("random_attrib")) {
+        // vm_f_random_attrib: the game's attribute roll -
+        //   random_attrib(min, nominal, max) -> a random value in [min, max]
+        //   centred on `nominal`.
+        // Callers: god_bookd::random_attrib_value (`random_attrib(arr[0],
+        // arr[1], minimum(arr[2], 80))` for 天书 attributes, where
+        // get_attrib_range() returns the list's min/nominal/max), itemd.c:982 /
+        // :2899 (item attribute rolls), child_bookd/child_equipd, and seald.c
+        // (`random_attrib(0.4 * base, base, 2 * base)` - i.e. 0.4x..2x the base
+        // value peaking at the base value).
+        // The old implementation IGNORED the arguments and returned a raw 31-bit
+        // random number, so every rolled attribute came out as a huge nonsense
+        // number (and the nominal/max bounds were never respected).  Use a
+        // triangular distribution with the mode at `nominal`.
+        auto numOf = [](const Value& v) -> double {
+            return v.index() == 3 ? std::get<double>(v) : static_cast<double>(as_int(v));
+        };
+        double mn = args.size() > 0 ? numOf(args[0]) : 0.0;
+        double md = args.size() > 1 ? numOf(args[1]) : mn;
+        double mx = args.size() > 2 ? numOf(args[2]) : md;
+        if (mx < mn) std::swap(mn, mx);
+        if (md < mn) md = mn;
+        if (md > mx) md = mx;
+        if (mx <= mn) return make_int(static_cast<int64_t>(mn + 0.5));
+        double u = static_cast<double>(sharedRand31() % 1000003u) / 1000003.0;
+        double split = (md - mn) / (mx - mn);
+        double v = (u < split) ? mn + std::sqrt(u * (mx - mn) * (md - mn))
+                               : mx - std::sqrt((1.0 - u) * (mx - mn) * (mx - md));
+        return make_int(static_cast<int64_t>(v + 0.5));
+    }
+    if (eid == CID("ftell")) {
+        if (!args.empty()) {
+            int64_t fh = as_int(args[0]);
+            std::shared_ptr<FileEntry> fe;
+            {
+                std::lock_guard<std::mutex> lk(fileTable().mtx);
+                auto it = fileTable().files.find(fh);
+                if (it != fileTable().files.end()) fe = it->second;
+            }
+            if (fe && fe->ifs) return make_int(static_cast<int64_t>(fe->ifs->tellg()));
+        }
+        return make_int(-1);
+    }
+    if (eid == CID("telnet_on")) {
+        ensureWsa();
+        int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) return make_int(0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(static_cast<u_short>(port));
+        if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(s);
+            return make_int(0);
+        }
+        if (listen(s, 16) == SOCKET_ERROR) {
+            closesocket(s);
+            return make_int(0);
+        }
+        std::thread(telnetServerLoop, s).detach();
+        std::cout << "Telnet service started on port " << port << "\n";
+        return make_int(1);
+    }
+    if (eid == CID("telnet_off")) return make_int(1);
+    if (eid == CID("start_service_on")) {
+        // start_service_on(port) - start the GAME client service (binary
+        // packet protocol, cmdList dispatch).  This is NOT the telnet service;
+        // telnet_on() handles the telnet port separately.
+        int port = args.empty() ? 8001 : static_cast<int>(as_int(args[0]));
+        int rc = lpc::startGameService(port);
+        if (LPCVM_GETENV("LPCVM_TRACE"))
+            std::cerr << "[start_service_on] port=" << port << " args=" << args.size()
+                      << " rc=" << rc << " t=" << std::this_thread::get_id() << "\n";
+        return make_int(rc);
+    }
+    if (eid == CID("mysql_connect")) {
+        // mysql_connect(host, user, password, database) -> cno (>=1) or -1.
+        // The game (dbd's assure_connection) passes host from aaa.ini, which
+        // load_db_config rewrites to "port : host" when the port is set.
+        mysqlKeepAliveStart();   // 60 s ping per connection (see above)
+        if (args.size() >= 4) {
+            std::string hostArg = as_string(args[0]);
+            std::string user = as_string(args[1]);
+            std::string pass = as_string(args[2]);
+            std::string db = as_string(args[3]);
+            std::string host;
+            int port = 3306;
+            parseMysqlHost(hostArg, host, port);
+            // dbd's assure_connection pings every 60s and may call
+            // mysql_connect again; reuse an existing connection for the same
+            // target instead of opening a new one each time.
+            std::string key = host + ":" + std::to_string(port) + ":" + user + ":" + db;
+            {
+                std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+                for (auto& kv : mysqlHandles()) {
+                    if (kv.second.db == key && kv.second.client && kv.second.client->isConnected()) {
+                        if (LPCVM_GETENV("LPCVM_TRACE"))
+                            std::cerr << "[mysql_connect] reuse cno=" << kv.first << " for " << key << "\n";
+                        return make_int(kv.first);
+                    }
+                }
+            }
+            auto client = std::make_shared<MysqlClient>();
+            std::string err;
+            int cno = nextMysqlCno();
+            bool ok = client->connect(host, port, user, pass, db, err);
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
+                std::cerr << "[mysql_connect] host=" << host << ":" << port << " db=" << db
+                          << " user=" << user << " ok=" << ok
+                          << (ok ? "" : (" err=" + err)) << " cno=" << cno << "\n";
+            if (!ok) {
+                // Keep an offline handle so the game's connection flow
+                // proceeds; queries fall back to the in-memory tables.
+                std::cerr << "[mysql] connect to " << host << ":" << port << "/" << db
+                          << " failed: " << err << " (using in-memory tables)\n";
+            }
+            {
+                std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+                MysqlHandle h;
+                h.client = ok ? client : nullptr;
+                h.db = key;
+                h.host = host;
+                h.port = port;
+                h.user = user;
+                h.pass = pass;
+                h.database = db;
+                mysqlHandles()[cno] = std::move(h);
+            }
+            return make_int(cno);
+        }
+        return make_int(-1);
+    }
+    if (eid == CID("mysql_is_connected")) {
+        if (!args.empty()) {
+            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(static_cast<int>(as_int(args[0])));
+            if (it != mysqlHandles().end() && it->second.client && it->second.client->isConnected())
+                return make_int(1);
+        }
+        return make_int(0);
+    }
+    if (eid == CID("mysql_disconnect") || eid == CID("mysql_close_db")) {
+        if (!args.empty()) {
+            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(static_cast<int>(as_int(args[0])));
+            if (it != mysqlHandles().end()) {
+                if (it->second.client) it->second.client->close();
+                mysqlHandles().erase(it);
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("mysql_select_db") || eid == CID("mysql_set_auto_commit")) return make_int(1);
+    if (eid == CID("mysql_query")) {
+        // mysql_query(cno, sql) -> result handle (array of row mappings) for
+        // SELECT; the game's mixed_mysql_select iterates it with
+        // mysql_num_records/mysql_fetch_record/mysql_this_record.
+        if (args.size() >= 2) {
+            int cno = static_cast<int>(as_int(args[0]));
+            std::string sql = as_string(args[1]);
+            std::string table;
+            size_t p = sql.find("from ");
+            if (p != std::string::npos) {
+                std::string rest = sql.substr(p + 5);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
+                size_t e = rest.find_first_of(" ;`");
+                table = rest.substr(0, e);
+            }
+            if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
+                std::cerr << "[data-herod] q cno=" << cno << " sql_head_hex:";
+                size_t hz = sql.size() < 240 ? sql.size() : 240;
+                for (size_t z = 0; z < hz; ++z)
+                    std::cerr << std::hex << (static_cast<unsigned char>(sql[z])) << " ";
+                std::cerr << std::dec << " tot=" << sql.size() << "\n";
+                std::cerr.flush();
+            }
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE") ||
+                (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos))
+                std::cerr << "[mysql_query] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
+            MysqlClient::Result res;
+            std::string err;
+            if (mysqlExecReal(cno, sql, res, err)) {
+                if (res.hasResultSet) {
+                    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+                    for (const auto& row : res.rows) {
+                        auto mp = lpc::Ref<MappingValue>(new MappingValue(static_cast<uint32_t>(res.cols.size())));
+                        for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
+                            const auto& cell = row[i];
+                            if (cell.isNull) {
+                                mp->insert(make_string(res.cols[i]), make_string(""));
+                            } else if (cell.isNumber) {
+                                mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
+                            } else {
+                                mp->insert(make_string(res.cols[i]), make_string(cell.str));
+                            }
+                        }
+                        arr->items.push_back(mp);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lk(mysqlStateMutex());
+                        mysqlCursor()[arr.get()] = -1;   // before the first record
+                        mysqlRecords()[arr.get()] = make_int(0);
+                    }
+                    if (LPCVM_GETENV("LPCVM_TRACE"))
+                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
+                                  << " ptr=" << arr.get() << " (live)\n";
+                    if (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos) {
+                        std::cerr << "[pwd-diag] account select rows=" << arr->items.size() << "\n";
+                        for (size_t ri = 0; ri < arr->items.size() && ri < 1; ++ri) {
+                            auto mp = std::get<lpc::Ref<MappingValue>>(arr->items[ri]);
+                            std::string dbg;
+                            for (auto& kv : mp->items()) {
+                                if (!dbg.empty()) dbg += ", ";
+                                std::string ks = kv.first.index() == 4 ? std::get<SharedString>(kv.first).str() : to_string(kv.first, false);
+                                dbg += ks + "=" + to_string(kv.second, false).substr(0, 60);
+                            }
+                            std::cerr << "[pwd-diag]   row={" << dbg << "}\n";
+                        }
+                        std::cerr.flush();
+                    }
+                    return arr;
+                }
+                // Non-SELECT via mysql_query (game mostly uses mysql_execute
+                // for writes): surface affected rows as a plain int.
+                return make_int(static_cast<int64_t>(res.affectedRows));
+            }
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
+                std::cerr << "[mysql_query] ERR cno=" << cno << " err=" << err << " -> in-memory fallback\n";
+            // Fall back to the in-memory tables (offline or SQL error).
+            if (!table.empty()) {
+                Value r = simpleDbSelect(table);
+                if (r.index() == 5) {
+                    auto arr = std::get<lpc::Ref<ArrayValue>>(r);
+                    {
+                        std::lock_guard<std::mutex> lk(mysqlStateMutex());
+                        mysqlCursor()[arr.get()] = -1;
+                        mysqlRecords()[arr.get()] = make_int(0);
+                    }
+                    if (LPCVM_GETENV("LPCVM_TRACE"))
+                        std::cerr << "[mysql_query] " << table << " rows=" << arr->items.size()
+                                  << " ptr=" << arr.get() << " (memory)\n";
+                }
+                return r;
+            }
+        }
+        return make_array();
+    }
+    if (eid == CID("mysql_num_records")) {
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[mysql_num_records] ptr=" << arr.get() << " size=" << arr->items.size() << "\n";
+            return make_int(static_cast<int64_t>(arr->items.size()));
+        }
+        if (LPCVM_GETENV("LPCVM_TRACE"))
+            std::cerr << "[mysql_num_records] NOT-ARRAY index=" << (args.empty() ? -1 : static_cast<int>(args[0].index())) << "\n";
+        return make_int(0);
+    }
+    if (eid == CID("mysql_fetch_record")) {
+        // Advance the result-set cursor and publish the current record.
+        // Returns 0 while a record is available, nonzero past the end.
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            int cur;
+            {
+                std::lock_guard<std::mutex> lk(mysqlStateMutex());
+                cur = ++mysqlCursor()[arr.get()];
+                if (cur < static_cast<int>(arr->items.size()))
+                    mysqlRecords()[arr.get()] = arr->items[static_cast<size_t>(cur)];
+                else
+                    mysqlRecords()[arr.get()] = make_int(0);
+            }
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[mysql_fetch_record] ptr=" << arr.get() << " cur=" << cur
+                          << " size=" << arr->items.size() << "\n";
+            return cur < static_cast<int>(arr->items.size()) ? make_int(0) : make_int(1);
+        }
+        return make_int(1);
+    }
+    if (eid == CID("mysql_this_record")) {
+        // The current record of THIS result set (published by fetch_record).
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            std::lock_guard<std::mutex> lk(mysqlStateMutex());
+            auto it = mysqlRecords().find(arr.get());
+            if (it != mysqlRecords().end()) return it->second;
+        }
+        return make_int(0);
+    }
+    if (eid == CID("mysql_finalize")) {
+        if (!args.empty() && args[0].index() == 5) {
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            std::lock_guard<std::mutex> lk(mysqlStateMutex());
+            mysqlCursor().erase(arr.get());
+            mysqlRecords().erase(arr.get());
+        }
+        return make_int(1);
+    }
+    if (eid == CID("mysql_field_value") || eid == CID("mysql_field_name")) {
+        if (args.size() >= 2 && args[0].index() == 6) {
+            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+            const Value* hit = mp->find(args[1]);
+            if (hit) return *hit;
+        }
+        return make_int(0);
+    }
+    if (eid == CID("mysql_get_error")) {
+        // mysql_get_error(cno) -> last server error text for that connection
+        // ("" when the last statement succeeded).  The original stub returned
+        // 0, which swallowed every SQL failure into "update_account_info
+        // mysql error: 0" with no diagnostic.
+        if (!args.empty()) {
+            int cno = static_cast<int>(as_int(args[0]));
+            std::lock_guard<std::mutex> lk(mysqlHandlesMutex());
+            auto it = mysqlHandles().find(cno);
+            if (it != mysqlHandles().end() && it->second.client)
+                return make_string(it->second.client->lastError());
+        }
+        return make_string("");
+    }
+    if (eid == CID("mysql_finalize") ||
+        eid == CID("mysql_num_fields") || eid == CID("mysql_int_field") ||
+        eid == CID("mysql_get_insert_id")) return make_int(0);
+    if (eid == CID("mysql_execute")) {
+        // mysql_execute(cno, sql) - run a statement (usually a write) on the
+        // live MySQL server; returns affected rows.
+        if (args.size() >= 2) {
+            int cno = static_cast<int>(as_int(args[0]));
+            std::string sql = as_string(args[1]);
+            std::string table;
+            size_t p = sql.find("from ");
+            if (p != std::string::npos) {
+                std::string rest = sql.substr(p + 5);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
+                size_t e = rest.find_first_of(" ;`");
+                table = rest.substr(0, e);
+            }
+            if (LPCVM_GETENV("LPCVM_CONSTRUCT_TRACE") && sql.find("herod") != std::string::npos) {
+                std::cerr << "[data-herod] cno=" << cno << " sql_head_hex:";
+                size_t hz = sql.size() < 240 ? sql.size() : 240;
+                for (size_t z = 0; z < hz; ++z)
+                    std::cerr << std::hex << (static_cast<unsigned char>(sql[z])) << " ";
+                std::cerr << std::dec << " tot=" << sql.size() << "\n";
+                std::string gk = sql.substr(0, 240);
+                for (auto& ch : gk) if (ch == '\\') ch = ' ';
+                std::cerr << "[data-herod] gbk=" << gk << "\n";
+                std::cerr.flush();
+            }
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
+                std::cerr << "[mysql_execute] cno=" << cno << " sql=" << sql << " table=" << table << "\n";
+            MysqlClient::Result res;
+            std::string err;
+            static const std::atomic<bool>& sqlDbg = lpc::dynProbeFlag("LPCVM_MYSQLDBG");
+            bool dbg = sqlDbg.load(std::memory_order_relaxed) &&
+                       (sql.rfind("update account", 0) == 0 ||
+                        sql.rfind("INSERT INTO account", 0) == 0 ||
+                        sql.rfind("insert into account", 0) == 0);
+            if (dbg) {
+                std::cerr << "[mysqldbg] cno=" << cno << " sql=" << sql << "\n";
+                std::cerr.flush();
+            }
+            if (mysqlExecReal(cno, sql, res, err)) {
+                if (dbg) {
+                    std::cerr << "[mysqldbg] OK affected=" << res.affectedRows << "\n";
+                    std::cerr.flush();
+                }
+                if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
+                    std::cerr << "[mysql_execute] OK cno=" << cno << " affected=" << res.affectedRows
+                              << " resultSet=" << (res.hasResultSet ? 1 : 0) << "\n";
+                if (res.hasResultSet) {
+                    // SELECT via execute: return the rows as an array.
+                    auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+                    for (const auto& row : res.rows) {
+                        auto mp = lpc::Ref<MappingValue>(new MappingValue(static_cast<uint32_t>(res.cols.size())));
+                        for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
+                            const auto& cell = row[i];
+                            if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
+                            else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
+                            else mp->insert(make_string(res.cols[i]), make_string(cell.str));
+                        }
+                        arr->items.push_back(mp);
+                    }
+                    return arr;
+                }
+                return make_int(static_cast<int64_t>(res.affectedRows));
+            }
+            if (LPCVM_GETENV("LPCVM_TRACE") || LPCVM_GETENV("LPCVM_SVC_TRACE"))
+                std::cerr << "[mysql_execute] ERR cno=" << cno << " err=" << err << "\n";
+            if (dbg) {
+                std::cerr << "[mysqldbg] ERR " << err << "\n";
+                std::cerr.flush();
+            }
+            return make_int(0);
+        }
+        return make_int(0);
+    }
+    if (eid == CID("mysql_bind_parameters") || eid == CID("bind_parameters")) {
+        // vm_f_mysql_bind_parameters (0x81703b0) / vm_f_bind_parameters
+        // (0x80df374): replace every '?' in the statement with the next
+        // parameter, formatting per type:
+        //   undefined/null -> '' (empty quoted string)
+        //   int            -> %d  (no quotes)
+        //   float          -> %g  (no quotes)
+        //   string         -> 'escaped' (single quotes, escaping)
+        // The result is a new SQL string (not a prepared statement).
+        if (args.empty()) return make_int(0);
+        std::string sql = as_string(args[0]);
+        std::string out;
+        out.reserve(sql.size() + 32);
+        size_t param = 1;  // args[0] is the statement
+        for (size_t i = 0; i < sql.size(); ++i) {
+            char c = sql[i];
+            if (c != '?') {
+                out += c;
+                continue;
+            }
+            if (param >= args.size()) {
+                // Too few parameters: keep the placeholder (original errors).
+                out += c;
+                continue;
+            }
+            const Value& p = args[param++];
+            switch (p.index()) {
+            case 2:  // int
+                out += std::to_string(std::get<int64_t>(p));
+                break;
+            case 3: {  // float
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%g", std::get<double>(p));
+                out += buf;
+                break;
+            }
+            case 4: {  // string, single-quoted with escaping
+                const std::string& s = std::get<SharedString>(p);
+                out += '\'';
+                for (char sc : s) {
+                    if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
+                        sc == '\0' || sc == '\x1a' || sc == '"') {
+                        out += '\\';
+                    }
+                    out += sc;
+                }
+                out += '\'';
+                break;
+            }
+            default:  // undefined / null / others -> empty quoted string
+                out += "''";
+                break;
+            }
+        }
+        return make_string(out);
+    }
+    if (eid == CID("mysql_bind_parameters_arr") || eid == CID("bind_parameters_arr")) {
+        // vm_f_mysql_bind_parameters_arr (0x8170330) / vm_f_bind_parameters_arr
+        // (0x80df310): same substitution, but the parameters come as one ARRAY
+        // argument: bind_parameters_arr(statement, ({p1, p2, ...})).
+        if (args.size() < 2) return make_int(0);
+        std::string sql = as_string(args[0]);
+        std::vector<Value> params;
+        if (args[1].index() == 5)
+            params = std::get<lpc::Ref<ArrayValue>>(args[1])->items;
+        else
+            for (size_t i = 1; i < args.size(); ++i) params.push_back(args[i]);
+        std::string out;
+        out.reserve(sql.size() + 32);
+        size_t param = 0;
+        for (size_t i = 0; i < sql.size(); ++i) {
+            char c = sql[i];
+            if (c != '?') { out += c; continue; }
+            if (param >= params.size()) { out += c; continue; }
+            const Value& p = params[param++];
+            switch (p.index()) {
+            case 2: out += std::to_string(std::get<int64_t>(p)); break;
+            case 3: { char buf[64]; snprintf(buf, sizeof(buf), "%g", std::get<double>(p)); out += buf; break; }
+            case 4: {
+                const std::string& s = std::get<SharedString>(p);
+                out += '\'';
+                for (char sc : s) {
+                    if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
+                        sc == '\0' || sc == '\x1a' || sc == '"') out += '\\';
+                    out += sc;
+                }
+                out += '\'';
+                break;
+            }
+            default: out += "''"; break;
+            }
+        }
+        return make_string(out);
+    }
+    if (eid == CID("mysql_select")) {
+        if (args.size() < 2) return make_array();
+        int cno = static_cast<int>(as_int(args[0]));
+        std::string sql = as_string(args[1]);
+        bool sqlTrace = LPCVM_GETENV("LPCVM_SQL_TRACE") || LPCVM_GETENV("LPCVM_TRACE") ||
+                        LPCVM_GETENV("LPCVM_SVC_TRACE");
+        if (sqlTrace)
+            std::cerr << "[mysql_select] cno=" << cno << " sql=" << sql << "\n";
+        std::string table;
+        size_t p = sql.find("from ");
+        if (p != std::string::npos) {
+            std::string rest = sql.substr(p + 5);
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '`')) rest.erase(rest.begin());
+            size_t e = rest.find_first_of(" ;`");
+            table = rest.substr(0, e);
+        }
+        MysqlClient::Result res;
+        std::string err;
+        if (mysqlExecReal(cno, sql, res, err) && res.hasResultSet) {
+            auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+            for (const auto& row : res.rows) {
+                auto mp = lpc::Ref<MappingValue>(new MappingValue(static_cast<uint32_t>(res.cols.size())));
+                for (size_t i = 0; i < res.cols.size() && i < row.size(); ++i) {
+                    const auto& cell = row[i];
+                    if (cell.isNull) mp->insert(make_string(res.cols[i]), make_string(""));
+                    else if (cell.isNumber) mp->insert(make_string(res.cols[i]), make_string(std::to_string(cell.num)));
+                    else mp->insert(make_string(res.cols[i]), make_string(cell.str));
+                }
+                arr->items.push_back(mp);
+            }
+            if (sqlTrace) {
+                std::cerr << "[mysql_select] rows=" << arr->items.size();
+                if (!arr->items.empty()) {
+                    auto& mp0 = std::get<lpc::Ref<MappingValue>>(arr->items[0]);
+                    std::string dbg;
+                    for (auto& kv : mp0->items()) {
+                        if (!dbg.empty()) dbg += ",";
+                        dbg += to_string(kv.first, false) + "=" + to_string(kv.second, false).substr(0, 30);
+                    }
+                    std::cerr << " first={" << dbg << "}";
+                }
+                std::cerr << "\n";
+            }
+            return arr;
+        }
+        if (sqlTrace)
+            std::cerr << "[mysql_select] ERR err=" << err << "\n";
+        if (table.empty()) return make_array();
+        return simpleDbSelect(table);
+    }
+    if (eid == CID("mysql_select_single_result")) {
+        if (args.size() >= 2 && args[1].index() == 5) {
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[1]);
+            if (!arr->items.empty()) return arr->items[0];
+            return make_int(0);
+        }
+        // AAA's cmd_cfg_read_etc passes BOUND SQL TEXT (string), not a result
+        // array: run the real select and return its first row (the original
+        // vm_f_mysqlSelectSingleResult executes the query).  Returning 0 here
+        // made every read_etc answer result=0 and the whole fleet's config
+        // reads (place_one_item/get_reachable, init_config, ...) spin.
+        if (args.size() >= 2 && args[1].index() == 4) {
+            Value arr = call_builtin(nullptr, "mysql_select", args);
+            if (arr.index() == 5) {
+                auto av = std::get<lpc::Ref<ArrayValue>>(arr);
+                if (!av->items.empty()) return av->items[0];
+            }
+        }
+        return make_int(0);
+    }
+    if (eid == CID("read_ini")) {
+        // read_ini(section, key, file) - read one value from an INI file.
+        if (args.size() >= 3) {
+            std::string section = as_string(args[0]);
+            std::string key = as_string(args[1]);
+            std::string path = resolveVfsPath(as_string(args[2]));
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[read_ini] section=" << section << " key=" << key
+                          << " file=" << as_string(args[2]) << " -> " << path << "\n";
+            std::ifstream in(path);
+            if (in) {
+                std::string cur;
+                std::string line;
+                auto trim = [](const std::string& s) {
+                    size_t b = s.find_first_not_of(" \t\r\n");
+                    if (b == std::string::npos) return std::string();
+                    size_t e = s.find_last_not_of(" \t\r\n");
+                    return s.substr(b, e - b + 1);
+                };
+                // vm_readIni compares section/key case-insensitively (toupper).
+                auto ieq = [](const std::string& a, const std::string& b) {
+                    if (a.size() != b.size()) return false;
+                    for (size_t i = 0; i < a.size(); ++i)
+                        if (toupper(static_cast<unsigned char>(a[i])) !=
+                            toupper(static_cast<unsigned char>(b[i]))) return false;
+                    return true;
+                };
+                while (std::getline(in, line)) {
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    size_t s = line.find_first_not_of(" \t");
+                    if (s == std::string::npos) continue;
+                    if (line[s] == '#' || line[s] == ';') continue;
+                    if (line[s] == '[') {
+                        size_t e = line.find(']', s);
+                        if (e == std::string::npos) continue;
+                        cur = trim(line.substr(s + 1, e - s - 1));
+                        continue;
+                    }
+                    if (!ieq(cur, section)) continue;
+                    size_t eq = line.find('=', s);
+                    if (eq == std::string::npos) continue;
+                    if (ieq(trim(line.substr(s, eq - s)), key))
+                        return make_string(trim(line.substr(eq + 1)));
+                }
+            } else {
+                std::cout << "read_ini: cannot open " << path << "\n";
+            }
+        }
+        return make_string("");
+    }
+    if (eid == CID("get_raw_password")) {
+        // The original driver hashes the raw password; keep the plain text so the
+        // stub sql backend can use it directly.
+        if (!args.empty()) return args[0];
+        return make_string("");
+    }
+    if (eid == CID("read_whole_ini")) {
+        // vm_f_read_whole_ini (0x80d9f5c): parses the INI CONTENT string passed
+        // as the argument (not a file path!) into { section : { key : value } }.
+        // The caller does read_whole_ini(read_etc_file("x.ini")) - i.e. the
+        // file's CONTENT is the argument.  Treating it as a path produced
+        // bogus "cannot open linux/.../0" / ".../[dist]" logs (the content's
+        // first line / section header became the "path").
+        if (args.empty()) return make_int(0);
+        std::string content = as_string(args[0]);
+        auto root = lpc::Ref<MappingValue>(new MappingValue());
+        lpc::Ref<MappingValue> cur;
+        std::istringstream is(content);
+        std::string line;
+        auto trim = [](const std::string& s) {
+            size_t b = s.find_first_not_of(" \t\r\n");
+            if (b == std::string::npos) return std::string();
+            size_t e = s.find_last_not_of(" \t\r\n");
+            return s.substr(b, e - b + 1);
+        };
+        while (std::getline(is, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t s = line.find_first_not_of(" \t");
+            if (s == std::string::npos) continue;
+            if (line[s] == '#' || line[s] == ';' || line[s] == '/') continue;
+            if (line[s] == '[') {
+                size_t e = line.find(']', s);
+                if (e == std::string::npos) continue;
+                std::string sec = trim(line.substr(s + 1, e - s - 1));
+                cur = lpc::Ref<MappingValue>(new MappingValue());
+                root->insert(make_string(sec), cur);
+                continue;
+            }
+            if (!cur) continue;
+            size_t eq = line.find('=', s);
+            if (eq == std::string::npos) continue;
+            std::string key = trim(line.substr(s, eq - s));
+            std::string val = trim(line.substr(eq + 1));
+            cur->insert(make_string(key), make_string(val));
+        }
+        return root;
+    }
+    if (eid == CID("db_open")) {
+        if (!args.empty()) simpleDbLoad(as_string(args[0]));
+        return make_int(1);
+    }
+    if (eid == CID("db_set")) {
+        if (args.size() >= 2) {
+            simpleDb()[as_string(args[0])] = as_string(args[1]);
+            simpleDbSave("lpcvm.db");
+        }
+        return make_int(1);
+    }
+    if (eid == CID("db_get")) {
+        if (args.empty()) return make_int(0);
+        auto it = simpleDb().find(as_string(args[0]));
+        if (it == simpleDb().end()) return make_int(0);
+        return make_string(it->second);
+    }
+    if (eid == CID("db_delete")) {
+        if (!args.empty()) simpleDb().erase(as_string(args[0]));
+        simpleDbSave("lpcvm.db");
+        return make_int(1);
+    }
+    if (eid == CID("db_query")) {
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        for (auto& kv : simpleDb()) arr->items.push_back(make_string(kv.first + "=" + kv.second));
+        return arr;
+    }
+    // ---- telnet efuns ----
+    if (eid == CID("input_string")) {
+        // input_string() - block until the current thread's telnet client
+        // sends a line.  Returns the line (without CR/LF).  When the remote
+        // side disconnects, the original driver kills the pended process;
+        // we terminate the daemon thread the same way (TelnetClosedError).
+        int cno = threadTelnetClient();
+        if (cno < 0 || !findTelnetClient(cno)) return Value{};
+        std::string line = telnetReadLine(cno);
+        TelnetClient* cl = findTelnetClient(cno);
+        if (cl && cl->eof) {
+            closeTelnetClient(cno);
+            setThreadTelnetClient(-1);
+            throw TelnetClosedError("telnet client closed");
+        }
+        return make_string(line);
+    }
+    if (eid == CID("close_telnet")) {
+        if (!args.empty()) closeTelnetClient(static_cast<int>(as_int(args[0])));
+        return make_int(1);
+    }
+    if (eid == CID("telnet_config")) {
+        // telnet_config(fd, mapping) - set per-client options.
+        if (args.size() >= 2 && args[0].index() == 2 && args[1].index() == 6) {
+            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            auto mp = std::get<lpc::Ref<MappingValue>>(args[1]);
+            TelnetClient* cl = findTelnetClient(cno);
+            if (cl) {
+                auto getInt = [&](const char* k, int def) {
+                    const Value* hit = mp->find(make_string(k));
+                    if (hit) return static_cast<int>(as_int(*hit));
+                    return def;
+                };
+                if (!mp->empty()) {
+                    cl->nativeProcess = getInt("native_process", cl->nativeProcess ? 1 : 0) != 0;
+                    cl->echo = getInt("echo", cl->echo ? 1 : 0) != 0;
+                    cl->auth = getInt("auth", cl->auth ? 1 : 0) != 0;
+                    cl->enabled = getInt("enable", cl->enabled ? 1 : 0) != 0;
+                    const Value* idv = mp->find(make_string("id"));
+                    if (idv) cl->id = as_string(*idv);
+                }
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("get_telnet_settings")) {
+        // The game reads get_telnet_settings()["type"]: "L" enables the LPC
+        // telnet_daemon login path, "G" enables game-style id logging.
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
+        mp->insert(make_string("type"), make_string("LG"));
+        mp->insert(make_string("ip"), make_string("127.0.0.1"));
+        return mp;
+    }
+    if (eid == CID("get_telnet_info")) {
+        if (!args.empty()) {
+            // get_telnet_info(fd) -> ({ native_process, echo, auth })
+            auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+            int cno = static_cast<int>(as_int(args[0]));
+            TelnetClient* cl = findTelnetClient(cno);
+            arr->items.push_back(make_int(cl ? (cl->nativeProcess ? 1 : 0) : 0));
+            arr->items.push_back(make_int(cl ? (cl->echo ? 1 : 0) : 0));
+            arr->items.push_back(make_int(cl ? (cl->auth ? 1 : 0) : 0));
+            return arr;
+        }
+        return make_int(0);
+    }
+    if (eid == CID("bind_to_client")) {
+        // vm_f_bind_to_client (0x804ee68): bind_to_client(fd, [type]) ->
+        // client_no.  Detaches the connected socket from the virtual socket
+        // table and registers it as a game client (attrib = type, default
+        // INTERNAL_COMM = 2), starting its receive/dispatch loop.
+        if (!args.empty() && args[0].index() == 2) {
+            int fd = static_cast<int>(std::get<int64_t>(args[0]));
+            uint32_t clientType = 2;
+            if (args.size() >= 2 && args[1].index() == 2)
+                clientType = static_cast<uint32_t>(std::get<int64_t>(args[1]));
+            uintptr_t sock = xdbcDetachSocket(fd);
+            if (!sock) return make_int(-1);
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[bind_to_client] fd=" << fd << " sock=" << sock
+                          << " type=" << clientType << "\n";
+            return make_int(gameServiceBindClient(static_cast<int>(sock), clientType));
+        }
+        return make_int(-1);
+    }
+    if (eid == CID("set_client_attrib")) {
+        // vm_f_set_client_attrib (0x804d0ac): set_client_attrib(client_no,
+        // ([ "type": "internal"|"client"|"from_server", "size": N, "peek": N ])).
+        // The type ORs attrib bits onto the game client (internal -> 0x302,
+        // client -> 1, from_server -> 0x404) so the (attrib & flag & 7) check
+        // in dispatch accepts INTERNAL_COMM packets from dba/gs/cta servers.
+        if (args.size() >= 2 && args[0].index() == 2) {
+            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            uint32_t attribOr = 0;
+            int maxBodySize = 0;   // 0 -> keep current
+            int peek = 0;
+            if (args[1].index() == 6) {
+                auto mp = std::get<lpc::Ref<MappingValue>>(args[1]);
+                for (auto& kv : mp->items()) {
+                    if (kv.first.index() != 4) continue;
+                    std::string k = std::get<SharedString>(kv.first);
+                    if (k == "type" && kv.second.index() == 4) {
+                        const std::string& t = std::get<SharedString>(kv.second);
+                        if (_stricmp(t.c_str(), "internal") == 0) attribOr |= 0x302;
+                        else if (_stricmp(t.c_str(), "client") == 0) attribOr |= 1;
+                        else if (_stricmp(t.c_str(), "from_server") == 0) attribOr |= 0x404;
+                    } else if (k == "size") {
+                        maxBodySize = static_cast<int>(as_int(kv.second));
+                    } else if (k == "peek") {
+                        peek = static_cast<int>(as_int(kv.second));
+                    }
+                }
+            }
+            gameServiceSetAttrib(cno, attribOr, maxBodySize, peek);
+        }
+        return make_int(1);
+    }
+    if (eid == CID("telnet_check_password") || eid == CID("telnet_second_password")) {
+        // The builtin telnet shell checks the configured password; accept
+        // "123456" (matching get_telnet_password's stub) so the LPC login can
+        // proceed through the aaa.ini configured value as well.
+        if (args.size() >= 2) {
+            std::string pwd = as_string(args[1]);
+            if (pwd == "123456") return make_int(1);
+        }
+        return make_int(0);
+    }
+    if (eid == CID("regexp")) {
+        // regexp(str, pattern[, max]) -> array of {start,end} per group.
+        if (args.size() >= 2) {
+            std::string str = as_string(args[0]);
+            std::string pat = as_string(args[1]);
+            if (LPCVM_GETENV("LPCVM_TRACE_CASE"))
+                std::cerr << "[regexp] '" << pat << "' on '" << str << "'\n";
+            return mini_regex::regexpMatch(str, pat);
+        }
+        return make_array();
+    }
+    if (eid == CID("strsrch")) {
+        // strsrch(str, sub[, reverse]) -> index or -1
+        if (args.size() >= 2) {
+            std::string str = as_string(args[0]);
+            std::string sub = as_string(args[1]);
+            size_t pos = str.find(sub);
+            if (pos == std::string::npos) return make_int(-1);
+            return make_int(static_cast<int64_t>(pos));
+        }
+        return make_int(-1);
+    }
+    if (eid == CID("ctime")) {
+        // vm_f_ctime (0x80d4f74): ctime([t[,style]])
+        //   style 0 (default) -> "Www Mmm dd hh:mm:ss yyyy\n"
+        //   style 1 -> %04d-%02d-%02d-%02d:%02d:%02d (YYYY-MM-DD-HH:MM:SS)
+        //   style 2 -> %04d-%02d-%02d (YYYY-MM-DD)
+        //   style 3 -> %04d%02d%02d%02d%02d%02d (YYYYMMDDHHMMSS)
+        std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
+        int style = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        char buf[64];
+        switch (style) {
+            case 1: strftime(buf, sizeof(buf), "%Y-%m-%d-%H:%M:%S", &tm); break;
+            case 2: strftime(buf, sizeof(buf), "%Y-%m-%d", &tm); break;
+            case 3: strftime(buf, sizeof(buf), "%Y%m%d%H%M%S", &tm); break;
+            default: strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", &tm); break;
+        }
+        return make_string(buf);
+    }
+    if (eid == CID("execute_data")) {
+        // execute_data(cmd[, enable_log]) - the driver's telnet shell command
+        // executor: the command string is parsed as an LPC expression and
+        // evaluated in the VM's shared context (so "help", "obj->func()",
+        // "x + 1", etc. all work like the original driver's shell).
+        if (args.empty()) return make_int(0);
+        std::string cmd = as_string(args[0]);
+        if (LPCVM_GETENV("LPCVM_TRACE"))
+            std::cerr << "[execute_data] '" << cmd << "'\n";
+        std::string t = cmd;
+        size_t b = t.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return make_int(0);
+        t = t.substr(b);
+        if (t.empty()) return make_int(0);
+        try {
+            lpc::Lexer lexer(t);
+            std::vector<lpc::Token> toks = lexer.tokenize();
+            lpc::Parser parser(toks);
+            lpc::ExprPtr expr = parser.parseShellExpression();
+            lpc::Program prog;
+            lpc::Interpreter interp(prog);
+            lpc::Environment env;
+            Value result = interp.eval(expr, env);
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[execute_data] => " << to_string(result, false) << "\n";
+            // Echo non-trivial results back to the telnet client.
+            if (result.index() != 0 && result.index() != 1) {
+                telnetSend(threadTelnetClient(),
+                           telnetLineEnd(to_string(result, false) + "\r\n"));
+            }
+            return result;
+        } catch (const std::exception& e) {
+            telnetSend(threadTelnetClient(),
+                       telnetLineEnd("Error: " + std::string(e.what()) + "\r\n"));
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[execute_data] error: " << e.what() << "\n";
+            return make_int(0);
+        }
+    }
+    if (eid == CID("log_to_das")) return make_int(1);
+    // DAS verification system is NOT run in this port (the original driver
+    // executes the built-in scripts /v/auth_1980.c etc. BEFORE the main
+    // program; we skip them).  These function names are stubbed so the game
+    // LPC code sees a "verification succeeded" world: auth_driver returns 1,
+    // send_request/get_auth_addr report no server, password helpers accept the
+    // configured stub password.
+    if (eid == CID("auth_driver")) return make_int(1);
+    if (eid == CID("send_request") || eid == CID("get_auth_addr") || eid == CID("check_request_password")) return make_int(0);
+    if (eid == CID("check_authenticate")) return make_int(1);
+    if (eid == CID("pwd_gen")) return make_string("");
+    if (eid == CID("driver_bd")) return make_int(1);
+    if (eid == CID("start_buildin_telnet_shell") || eid == CID("buildin_telnet_daemon")) {
+        // Driver builtin telnet shell: login with the configured password,
+        // then a command loop.  The LPC telnet_daemon path is preferred when
+        // get_telnet_settings()["type"] contains "L"; this is the fallback.
+        if (!args.empty()) {
+            int cno = static_cast<int>(as_int(args[0]));
+            setThreadTelnetClient(cno);
+            telnetSend(cno, telnetLineEnd("Input password: "));
+            std::string pwd = telnetReadLine(cno);
+            if (pwd != "123456") {
+                telnetSend(cno, telnetLineEnd("Bad password!\r\n"));
+                closeTelnetClient(cno);
+                setThreadTelnetClient(-1);
+                return make_int(0);
+            }
+            telnetSend(cno, telnetLineEnd("Welcome!\r\n"));
+            while (findTelnetClient(cno)) {
+                telnetSend(cno, telnetLineEnd("\r\nShell> "));
+                std::string line = telnetReadLine(cno);
+                if (line.empty() || line == ".") {
+                    telnetSend(cno, telnetLineEnd("logout\r\n"));
+                    closeTelnetClient(cno);
+                    break;
+                }
+                Value r = call_builtin(nullptr, "execute_data", {make_string(line), make_int(1)});
+                (void)r;
+            }
+            setThreadTelnetClient(-1);
+        }
+        return make_int(1);
+    }
+    if (eid == CID("get_telnet_password")) {
+        // Return the telnet login password configured for a server name.
+        if (!args.empty()) {
+            std::string server = as_string(args[0]);
+            auto it = simpleDb().find("telnet_" + server);
+            if (it != simpleDb().end()) return make_string(it->second);
+        }
+        return make_string("123456");
+    }
+    if (eid == CID("set_timer")) return make_int(1);
+    if (eid == CID("sleep")) {
+        // The driver's sleep() takes seconds and suspends the calling thread.
+        // During the boot/broadcast phase a daemon's create()-time retry loop
+        // uses sleep() to yield cooperatively; our multithreaded port must
+        // return promptly there so the remaining daemons still load.
+        int64_t secs = args.empty() ? 0 : as_int(args[0]);
+        if (secs > 0) {
+            if (g_bootLoading.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            } else {
+                std::chrono::seconds d(secs);
+                if (secs > 60) d = std::chrono::seconds(60);   // keep startup responsive
+                std::this_thread::sleep_for(d);
+            }
+        }
+        return make_int(1);
+    }
+    if (eid == CID("send_to_queue")) {
+        // vm_f_send_to_queue (0x80f2d94): send_to_queue(qid_or_name, value,
+        // timeout) enqueues value on the real cross-thread queue; returns 0 on
+        // success, -101 if the queue does not exist, -401 if full (no bound).
+        //
+        // LPC callers IGNORE the result (`send_to_queue(srvQ, msg); return;`),
+        // so a failure silently drops the request forever - exactly how the
+        // runtime delete (notify_save_done -> delete_content_to) disappeared
+        // and left the account in the 9026 "暂时无法登录" critical section.
+        // Always log a failure, and log every call under LPCVM_EVDBG.
+        if (args.empty()) return make_int(-101);
+        int64_t qid = queueResolveId(args[0]);
+        if (qid < 0 || LPCVM_GETENV("LPCVM_EVDBG")) {
+            std::cerr << "[q-send] qid=" << qid
+                      << " arg0t=" << static_cast<int>(args[0].index())
+                      << " arg0=" << to_string(args[0], false).substr(0, 20)
+                      << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn
+                      << (qid < 0 ? "  *** QUEUE NOT FOUND -> -101 ***" : "") << "\n";
+        }
+        if (qid < 0) return make_int(-101);
+        Value v = args.size() >= 2 ? args[1] : Value{};
+        bool ok = lpc::queueSend(qid, v);
+        if (!ok)
+            std::cerr << "[q-send] qid=" << qid << " SEND FAILED caller="
+                      << stubCallCtx().obj << "::" << stubCallCtx().fn << " -> -101\n";
+        return make_int(ok ? 0 : -101);
+    }
+    if (eid == CID("wait_event")) {
+        // vm_f_wait_event (0x80f097c): wait_event(name, mask, ref, timeout).
+        // Blocks the current process until raise_event sets one of the mask
+        // bits (returns 0 and consumes the bits), -501 on timeout, -101 if the
+        // event does not exist.  timeout: seconds, -1 = forever, 0 = poll once.
+        // (The .o VM path intercepts this in original_vm.cpp to release the
+        // VM lock while blocked; this fallback serves the source interpreter.)
+        if (args.size() < 2) return make_int(-101);
+        uint32_t mask = static_cast<uint32_t>(as_int(args[1]));
+        double secs = -1.0;
+        if (args.size() >= 4) {
+            const Value& t = args[3];
+            if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
+            else if (t.index() == 3) secs = std::get<double>(t);
+        }
+        return make_int(lpc::eventWait(args[0], mask, secs));
+    }
+    if (eid == CID("receive_from_queue") || eid == CID("receive_from_queue_ex")) {
+        // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
+        // timeout) blocks the process until an element arrives; returns 0 with
+        // the element written through the reference, -402 on timeout, -101 if
+        // the queue does not exist.  The .o bytecode path intercepts this efun
+        // in the VM (call_in_efun) so the &msg reference can be written back;
+        // this builtin fallback (source interpreter / plain callers) returns
+        // the element itself as the value with the status in a 2-array.
+        if (args.empty()) return make_int(-101);
+        int64_t qid = queueResolveId(args[0]);
+        if (qid < 0) return make_int(-101);
+        int timeoutMs = -1;
+        if (args.size() >= 3) {
+            double secs = (args[2].index() == 3) ? std::get<double>(args[2]) : static_cast<double>(as_int(args[2]));
+            timeoutMs = secs < 0 ? -1 : static_cast<int>(secs * 1000.0);
+        }
+        bool ok = false;
+        Value v = lpc::queueReceive(qid, timeoutMs, ok);
+        if (!ok) return make_int(-402);
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
+        arr->items.push_back(make_int(0));   // status 0 = success
+        arr->items.push_back(v);
+        return arr;
+    }
+    if (eid == CID("get_system_info")) {
+        // vm_f_get_system_info (0x80d6b88): returns a mapping of driver
+        // runtime statistics.  LPC uses ["max_threads"] to size per-thread
+        // event arrays (filed/configd/rpcd create "ev_filedN" events) and
+        // ["current_path"] for the working directory.  The original driver
+        // boots with --max-process 128, so max_threads = 128 and the
+        // (max_threads+31)/32-1 loops create ev_filed0..ev_filed3.
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
+        auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
+        add("shared_strings", 0);
+        add("global_strings", 0);
+        add("scan_socket_count", 0);
+        add("total_mapping_num", 0);
+        add("total_mapping_size", 0);
+        add("total_mapping_nodes", 0);
+        add("obsoleted_mapping_nodes", 0);
+        add("total_array_num", 0);
+        add("total_array_size", 0);
+        add("total_values", 0);
+        add("max_telnet_clients", 4);
+        add("max_service_threads", 4);
+        // 1024, NOT the original's 128: the new core's tids can exceed 128
+        // while parked daemons hold the pool (filed/configd derive their
+        // ev_filed event-group COUNT from this value — with 128 they only
+        // create ev_filed0..3 and a tid >= 128 waits on a nonexistent
+        // ev_filed4+ -> every filed request fails with -101).
+        add("max_threads", 1024);         // vm_maxProcess (--max-process)
+        add("max_pend_objects", 256);
+        add("max_script_sockets", 256);
+        add("scan_socket_page", 1024);
+        add("max_scan_sockets", 256);
+        mp->insert(make_string("current_path"), make_string(vfsProfile().dataRoot));
+        return mp;
+    }
+    if (eid == CID("get_thread_id")) {
+        // vm_f_get_thread_id (0x80ed79c): get_thread_id() -> the current
+        // process's tid; get_thread_id(name/int) resolves another process
+        // (returns its tid or -1).  The original assigns a unique tid per LPC
+        // PROCESS (PCB->tid); the cooperative scheduler runs all processes on
+        // one OS thread, so prefer the current process's id (the thread_local
+        // lpcThreadId() would be identical for every process, and configd's
+        // read_etc builds its wait/raise event name from this tid - sharing an
+        // id made the master's read_etc get woken by a reply meant for another
+        // process, timing out and returning -1 instead of the config value).
+        if (args.empty()) {
+            int64_t pid = lpc::schedulerCurrentTid();
+            // LPCVM_TIDDBG (hot, default off): one line per get_thread_id()
+            // call - the tid-flip hunt for chains that split their identity
+            // across a nested process run (xlibd args_stack orphans).
+            if (LPCVM_GETENV("LPCVM_TIDDBG"))
+                std::cerr << "[tid] tid=" << pid
+                          << " obj=" << stubCallCtx().obj
+                          << " fn=" << stubCallCtx().fn << "\n";
+            // LPCVM_EVDBG: the DBA operate path (filed.c::do_operate) builds its
+            // wait/raise event name from get_thread_id(); if the tid seen here
+            // differs from the one the parked process used, the raise targets a
+            // bit nobody waits on and the operation stalls to -2 (通讯故障).
+            if (LPCVM_GETENV("LPCVM_EVDBG") &&
+                (stubCallCtx().obj.find("filed") != std::string::npos ||
+                 stubCallCtx().fn == "do_operate"))
+                std::cerr << "[ev] get_thread_id -> " << pid
+                          << " obj=" << stubCallCtx().obj
+                          << " fn=" << stubCallCtx().fn << "\n";
+            return make_int(pid >= 0 ? pid : lpc::lpcThreadId());
+        }
+        return make_int(-1);
+    }
+    if (eid == CID("time_desc"))
+        return make_int(static_cast<int64_t>(std::time(nullptr)));
+    if (eid == CID("get_system_tick") || eid == CID("get_server_tick") || eid == CID("get_bad_tick_times")) {
         auto now = std::chrono::system_clock::now().time_since_epoch();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
         return make_int(static_cast<int64_t>(ms));
     }
-    if (name == "local_time") {
+    if (eid == CID("local_time")) {
         // local_time([t]) -> ({hour,min,sec,wday,ch_wday,mday,yday,mon,year})
         std::time_t t = args.empty() ? std::time(nullptr) : static_cast<std::time_t>(as_int(args[0]));
         std::tm tm{};
         localtime_s(&tm, &t);
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         auto add = [&](const char* k, int64_t v) { mp->insert(make_string(k), make_int(v)); };
         add("hour", tm.tm_hour);
         add("min", tm.tm_min);
@@ -5365,10 +5436,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         add("year", tm.tm_year + 1900);
         return mp;
     }
-    if (name == "mktime") {
+    if (eid == CID("mktime")) {
         // mktime(mapping) - build an epoch value from a {year,mon,day,hour,min,sec} map.
         if (!args.empty() && args[0].index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
             auto get = [&](const char* k, int def) -> int {
                 const Value* hit = mp->find(make_string(k));
                 if (hit) return static_cast<int>(as_int(*hit));
@@ -5390,7 +5461,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "create_queue" || name == "create_event") {
+    if (eid == CID("create_queue") || eid == CID("create_event")) {
         // vm_f_create_queue (0x80eef1c) -> vm_createPendObject (0x80a9cc4):
         // queues and events share ONE global object-id table (vmObject[]),
         // ids start at 1 (the first free slot), which is what makes threadd's
@@ -5401,23 +5472,23 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         int64_t qid = pendSeq.fetch_add(1, std::memory_order_relaxed) + 1;
         std::string qname;
         if (!args.empty() && args[0].index() == 4) qname = std::get<SharedString>(args[0]);
-        if (name == "create_queue") lpc::queueCreate(qid, qname);
+        if (eid == CID("create_queue")) lpc::queueCreate(qid, qname);
         else if (!qname.empty()) lpc::eventCreate(qname, qid);
         if (LPCVM_GETENV("LPCVM_EVENT_TRACE") || LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[create_" << (name == "create_queue" ? "queue" : "event")
+            std::cerr << "[create_" << (eid == CID("create_queue") ? "queue" : "event")
                       << "] id=" << qid << " name='" << qname << "'\n";
         return make_int(qid);
     }
-    if (name == "delete_queue" || name == "delete_event") {
-        if (name == "delete_queue" && !args.empty()) {
+    if (eid == CID("delete_queue") || eid == CID("delete_event")) {
+        if (eid == CID("delete_queue") && !args.empty()) {
             int64_t qid = queueResolveId(args[0]);
             if (qid >= 0) lpc::queueDelete(qid);
         }
-        if (name == "delete_event" && !args.empty() && args[0].index() == 4)
+        if (eid == CID("delete_event") && !args.empty() && args[0].index() == 4)
             lpc::eventDelete(std::get<SharedString>(args[0]));
         return make_int(1);
     }
-    if (name == "raise_event") {
+    if (eid == CID("raise_event")) {
         // vm_f_raise_event (0x80f07b8): raise_event(name_or_oid, mask) ORs mask
         // into the event's bits and wakes any blocked wait_event.  0 on
         // success, -101 if the event does not exist.
@@ -5444,7 +5515,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(rc);
     }
-    if (name == "restore_value") {
+    if (eid == CID("restore_value")) {
         // vm_f_restore_value (0x80dae84) -> vm_restoreMixedString: parse one
         // value in the vm_saveValueAscii format.  On failure the original
         // raises (caught by xdbc_wait_command's try/catch); returning the
@@ -5482,7 +5553,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr.flush();
             }
             if (ok && out.index() == 6 && LPCVM_GETENV("LPCVM_KEYT")) {
-                auto mp = std::get<std::shared_ptr<MappingValue>>(out);
+                auto mp = std::get<lpc::Ref<MappingValue>>(out);
                 dumpDbaseKeys(out, "restore");
                 for (const char* k : {"task", "carry", "achieve"}) {
                     const Value* sub = mp->find(make_string(k));
@@ -5496,13 +5567,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return args.empty() ? make_int(0) : args[0];
     }
-    if (name == "save_buffer") {
+    if (eid == CID("save_buffer")) {
         // vm_f_save_buffer (0x80dafe4) -> vm_saveValueToBuffer; we keep the
         // ASCII form (identical grammar to save_string).
         if (args.empty()) return make_string("0");
         return make_string(saveValueAscii(args[0]));
     }
-    if (name == "des") {
+    if (eid == CID("des")) {
         // vm_f_des / vm_f_std_des (0x80dfabc): DES family, d3des-based.
         //   des(data, action, key)
         //     action: 0 = DES_EN0 (encrypt), 1 = DES_DE1 (decrypt)
@@ -5616,7 +5687,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_string(out);
     }
-    if (name == "md5") {
+    if (eid == CID("md5")) {
         // vm_f_md5 (0x80e0228): md5(str) -> 16-byte BUFFER.  Every use in the
         // game goes through save_string(md5(...))[1..<2] which serialises the
         // buffer as :HEX: and strips the colons.  Since our Value type has no
@@ -5635,7 +5706,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::cerr << "[pwd-diag] md5 in=\"" << data << "\" out=" << hex << "\n";
         return make_string(hex);
     }
-    if (name == "rdl") {
+    if (eid == CID("rdl")) {
         // vm_f_rdl (0x80e0314): AES-128 ECB, action 16 = encrypt / 17 = decrypt.
         if (!args.empty()) {
             std::string data = as_string(args[0]);
@@ -5645,14 +5716,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "bzip_compress" || name == "bzip_decompress") {
+    if (eid == CID("bzip_compress") || eid == CID("bzip_decompress")) {
         // The bzip layer only ever runs between our own efuns and the
         // in-process XDBC emulator (xdbc.cpp), so identity keeps the frame
         // format self-consistent without a bzip2 implementation.
         if (!args.empty() && args[0].index() == 4) return args[0];
         return make_string("");
     }
-    if (name == "atoinet") {
+    if (eid == CID("atoinet")) {
         // vm_atoinet (0x80b69a8): "a.b.c.d" -> a<<24 | b<<16 | c<<8 | d.
         if (args.empty()) return make_int(0);
         std::string s = as_string(args[0]);
@@ -5663,7 +5734,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "inettoa") {
+    if (eid == CID("inettoa")) {
         // vm_inettoa (0x80b697c): int -> "a.b.c.d".
         if (args.empty()) return make_string("0.0.0.0");
         uint32_t ip = static_cast<uint32_t>(as_int(args[0]));
@@ -5672,11 +5743,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                  (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
         return make_string(buf);
     }
-    if (name == "socket") {
+    if (eid == CID("socket")) {
         // vm_f_socket (0x80e3f4c): allocate a socket fd (1-based).
         return make_int(xdbcSocket());
     }
-    if (name == "resolve") {
+    if (eid == CID("resolve")) {
         // vm_f_resolve (0x80e3708): resolve(host) -> array of one int (atoinet
         // form) for an IPv4 literal, or the host's A records for a hostname.
         if (args.empty()) return make_array();
@@ -5685,14 +5756,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (sscanf(s.c_str(), "%d.%d.%d.%d", &a, &b, &c, &d) == 4 &&
             a >= 0 && a <= 255 && b >= 0 && b <= 255 &&
             c >= 0 && c <= 255 && d >= 0 && d <= 255) {
-            auto arr = std::make_shared<ArrayValue>();
+            auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
             uint32_t ip = (static_cast<uint32_t>(a) << 24) | (static_cast<uint32_t>(b) << 16) |
                           (static_cast<uint32_t>(c) << 8) | static_cast<uint32_t>(d);
             arr->items.push_back(make_int(static_cast<int64_t>(ip)));
             return arr;
         }
         // hostname: resolve A records
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         addrinfo hints{};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
@@ -5707,7 +5778,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return arr;
     }
-    if (name == "connect") {
+    if (eid == CID("connect")) {
         // vm_f_connect (0x80e83b4): connect(fd, host, port, timeout).
         // The original performs a NON-BLOCKING connect: when it would block
         // (EINPROGRESS) the process parks on the socket and the cooperative
@@ -5721,7 +5792,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(-1);
     }
-    if (name == "send") {
+    if (eid == CID("send")) {
         // vm_f_send (0x80e7034): send(fd, data) -> bytes sent.
         if (args.size() >= 2) {
             int fd = static_cast<int>(as_int(args[0]));
@@ -5729,11 +5800,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(-1);
     }
-    if (name == "close_socket") {
+    if (eid == CID("close_socket")) {
         if (!args.empty()) xdbcCloseSocket(static_cast<int>(as_int(args[0])));
         return make_int(0);
     }
-    if (name == "bind") {
+    if (eid == CID("bind")) {
         // vm_f_bind (0x80e47a0): bind(fd, addr, port).  We support only
         // bind(fd, 0, port) (any-address) which is what ccs_serverd's
         // listen_daemon uses: bind(ccs_sc_fd, 0, my_port).
@@ -5742,27 +5813,27 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                                      static_cast<int>(as_int(args[2]))));
         return make_int(-1);
     }
-    if (name == "listen") {
+    if (eid == CID("listen")) {
         // vm_f_listen (0x80e4ec0): listen(fd, backlog).
         if (args.size() >= 1)
             return make_int(xdbcListen(static_cast<int>(as_int(args[0])),
                                        args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 5));
         return make_int(-1);
     }
-    if (name == "accept") {
+    if (eid == CID("accept")) {
         // vm_f_accept (0x80e53c4): accept(fd) -> new fd or -1.
         if (!args.empty()) return make_int(xdbcAccept(static_cast<int>(as_int(args[0]))));
         return make_int(-1);
     }
-    if (name == "get_sock_info") {
+    if (eid == CID("get_sock_info")) {
         // vm_f_get_sock_info: mapping of socket metadata.
         if (!args.empty()) return xdbcGetSockInfo(static_cast<int>(as_int(args[0])));
         return make_mapping();
     }
-    if (name == "error") return make_int(0);
+    if (eid == CID("error")) return make_int(0);
     // ---- LPC value helpers the game uses (verified against the original
     // driver's handlers in IDA) ----
-    if (name == "random") {
+    if (eid == CID("random")) {
         // vm_f_random (0x80d9d9c): builds a 31-bit random from three rand()
         // calls, then:
         //   random(n)      -> n <= 0 ? 0 : rand31 % n
@@ -5793,35 +5864,23 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(rand31());
     }
-    if (name == "allocate_buffer") {
+    if (eid == CID("allocate_buffer")) {
         // vm_f_allocate_buffer (0x80d444c): buffer of n zero bytes.
         int64_t n = args.empty() ? 0 : as_int(args[0]);
         if (n < 0) n = 0;
         return make_buffer(std::string(static_cast<size_t>(n), '\0'));
     }
-    if (name == "is_buffer") {
+    if (eid == CID("is_buffer")) {
         // Buffers are the distinct BufferValue type (vm buffer type 5).
         return make_int((!args.empty() && args[0].index() == 10) ? 1 : 0);
     }
-    if (name == "save_string" && !args.empty() && args[0].index() == 6 &&
-        LPCVM_GETENV("LPCVM_KEYT")) {
-        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
-        dumpDbaseKeys(args[0], "save");
-        for (const char* k : {"task", "carry", "achieve"}) {
-            const Value* sub = mp->find(make_string(k));
-            if (sub) {
-                std::string tg = std::string("save/") + k;
-                dumpKeyTypes(*sub, tg.c_str());
-            }
-        }
-    }
-    if (name == "save_string") {
+    if (eid == CID("save_string")) {
         // vm_f_save_string (0x80db0d0) -> vm_saveValueToString: the ASCII
         // save form (vm_saveValueAscii).
         if (args.empty()) return make_string("0");
         return make_string(saveValueAscii(args[0]));
     }
-    if (name == "iconv") {
+    if (eid == CID("iconv")) {
         // vm_f_iconv (0x817af00): converts between encodings.  The game calls
         // iconv(str, "utf-8", "gb2312") when generating captcha pictures.  A
         // full GB2312<->UTF-8 conversion is out of scope here; pass the input
@@ -5853,7 +5912,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::vector<Value> out;
         for (const auto& a : args) {
             if (a.index() == 5) {
-                const auto& arr = std::get<std::shared_ptr<ArrayValue>>(a)->items;
+                const auto& arr = std::get<lpc::Ref<ArrayValue>>(a)->items;
                 out.insert(out.end(), arr.begin(), arr.end());
             } else {
                 out.push_back(a);
@@ -5861,7 +5920,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return out;
     };
-    if (name == "maximum") {
+    if (eid == CID("maximum")) {
         std::vector<Value> all = flattenArgs(args);
         if (all.empty()) return make_int(0);
         Value best = all[0];
@@ -5869,7 +5928,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (lpcCompare(all[i], best) > 0) best = all[i];
         return best;
     }
-    if (name == "minimum") {
+    if (eid == CID("minimum")) {
         std::vector<Value> all = flattenArgs(args);
         if (all.empty()) return make_int(0);
         Value best = all[0];
@@ -5877,21 +5936,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (lpcCompare(all[i], best) < 0) best = all[i];
         return best;
     }
-    if (name == "strcmp") {
+    if (eid == CID("strcmp")) {
         // vm_f_strcmp (0x80dc550): strcmp(a, b) -> <0 / 0 / >0.
         std::string a = args.empty() ? "" : as_string(args[0]);
         std::string b = args.size() < 2 ? "" : as_string(args[1]);
         int r = a.compare(b);
         return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
     }
-    if (name == "count_total") {
+    if (eid == CID("count_total")) {
         // vm_f_count_total: sum of a mapping's values (numeric), or of an
         // array's elements (game: count_total(mapping) sums the ints).
         if (args.empty()) return make_int(0);
         const Value& v = args[0];
         double total = 0.0;
         if (v.index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(v);
+            auto mp = std::get<lpc::Ref<MappingValue>>(v);
             // Iterate by index: nodes is a compact vector; inserting during
             // iteration would invalidate references.
             for (size_t i = 0; i < mp->nodes.size(); ++i) {
@@ -5900,7 +5959,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 else total += static_cast<double>(as_int(val));
             }
         } else if (v.index() == 5) {
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(v);
+            auto arr = std::get<lpc::Ref<ArrayValue>>(v);
             for (auto& e : arr->items) {
                 if (e.index() == 3) total += std::get<double>(e);
                 else total += static_cast<double>(as_int(e));
@@ -5912,14 +5971,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // sums day counts and cost counters, always ints).
         return make_int(static_cast<int64_t>(total));
     }
-    if (name == "map_add_values") {
+    if (eid == CID("map_add_values")) {
         // vm_f_map_add_values: mapping + array of (key,value) pairs, or
         // mapping + mapping: fold the second into the first (returns it).
         if (args.size() < 2 || args[0].index() != 6) return args.empty() ? make_mapping() : args[0];
-        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
         const Value& src = args[1];
         if (src.index() == 6) {
-            auto srcMp = std::get<std::shared_ptr<MappingValue>>(src);
+            auto srcMp = std::get<lpc::Ref<MappingValue>>(src);
             // Snapshot the source entries first: inserting into mp may rehash
             // srcMp too when srcMp == mp (or share storage).
             std::vector<std::pair<Value, Value>> entries;
@@ -5927,19 +5986,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 entries.emplace_back(srcMp->nodes[i].key, srcMp->nodes[i].value);
             for (auto& kv : entries) mp->insert(kv.first, kv.second);
         } else if (src.index() == 5) {
-            const auto& items = std::get<std::shared_ptr<ArrayValue>>(src)->items;
+            const auto& items = std::get<lpc::Ref<ArrayValue>>(src)->items;
             for (size_t i = 0; i + 1 < items.size(); i += 2)
                 mp->insert(items[i], items[i + 1]);
         }
         return args[0];
     }
-    if (name == "mapping_array") {
+    if (eid == CID("mapping_array")) {
         // vm_f_mapping_array (vm_addMappingArray 0x809effc): mapping_array(
         // array, func) applies func to each element and returns the result
         // array (the game: mapping_array(explode(...), (: trim :))).
         if (args.size() < 2 || args[0].index() != 5) return make_array();
-        auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
-        auto out = std::make_shared<ArrayValue>();
+        auto src = std::get<lpc::Ref<ArrayValue>>(args[0]);
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         // NOTE: applying the closure via applyClosureOnOwner from the builtin
         // path can crash when the closure's owner VM is mid-load; keep a safe
         // fallback that returns the input array (mapping_array is used for
@@ -5947,13 +6006,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         out->items = src->items;
         return out;
     }
-    if (name == "similar_keys") {
+    if (eid == CID("similar_keys")) {
         // vm_f_similar_keys: keys of a mapping whose string form CONTAINS the
         // given substring (case-insensitive).  Returns an array.
         if (args.empty()) return make_array();
-        auto out = std::make_shared<ArrayValue>();
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         if (args[0].index() == 6) {
-            auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
             std::string needle = args.size() >= 2 ? as_string(args[1]) : "";
             std::string nl = needle;
             std::transform(nl.begin(), nl.end(), nl.begin(), ::tolower);
@@ -5967,18 +6026,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return out;
     }
-    if (name == "is_real") {
+    if (eid == CID("is_real")) {
         return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
     }
-    if (name == "is_void") {
+    if (eid == CID("is_void")) {
         return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
     }
-    if (name == "get_bits") {
+    if (eid == CID("get_bits")) {
         // vm_f_get_bits (0x8109910): get_bits(val, bitno, nbits) -> the n-bit
         // field starting at bitno.  On a BUFFER the field is read MSB-first (the
         // protocol's network order); on an int it is the LSB-first scalar form.
         if (!args.empty() && args[0].index() == 10) {
-            auto buf = std::get<std::shared_ptr<BufferValue>>(args[0]);
+            auto buf = std::get<lpc::Ref<BufferValue>>(args[0]);
             int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
             int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
             if (!buf || bitno < 0 || nbits <= 0 ||
@@ -5999,7 +6058,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (bitno < 0 || nbits <= 0 || bitno + nbits > 32) return make_int(0);
         return make_int((v >> bitno) & ((1LL << nbits) - 1));
     }
-    if (name == "set_bits") {
+    if (eid == CID("set_bits")) {
         // vm_f_set_bits: set_bits(&buffer, bitno, nbits, value) writes the field
         // INTO the buffer (MSB-first, the client's network order) and is how
         // buildmsgd stamps every message's element count -
@@ -6007,7 +6066,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // (buildmsgd_v37.c:5817).  The scalar-int form below stays for callers
         // that use it arithmetically.
         if (!args.empty() && args[0].index() == 10) {
-            auto buf = std::get<std::shared_ptr<BufferValue>>(args[0]);
+            auto buf = std::get<lpc::Ref<BufferValue>>(args[0]);
             int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
             int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
             int64_t field = args.size() >= 4 ? as_int(args[3]) : 0;
@@ -6035,7 +6094,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         v = (v & ~(mask << bitno)) | ((field & mask) << bitno);
         return make_int(v);
     }
-    if (name == "strdiff") {
+    if (eid == CID("strdiff")) {
         // vm_f_strdiff (0x80dc5bc): strdiff(a, b) -> index of the first
         // differing character, or -1 when one is a prefix of the other.
         std::string a = args.empty() ? "" : as_string(args[0]);
@@ -6045,7 +6104,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (a[i] != b[i]) return make_int(static_cast<int64_t>(i));
         return make_int(a.size() == b.size() ? -1 : static_cast<int64_t>(n));
     }
-    if (name == "remove_escape") {
+    if (eid == CID("remove_escape")) {
         // vm_removeEscapeOfString (0x80b64ac): strip ANSI escape sequences and
         // the driver's color markers from a string.
         std::string s = args.empty() ? "" : as_string(args[0]);
@@ -6067,45 +6126,45 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_string(out);
     }
     // ---- math efuns (the game's activity/rank logic uses these) ----
-    if (name == "sin" || name == "cos" || name == "tan" || name == "asin" ||
-        name == "acos" || name == "atan" || name == "exp" || name == "log" ||
-        name == "log10" || name == "sqrt") {
+    if (eid == CID("sin") || eid == CID("cos") || eid == CID("tan") || eid == CID("asin") ||
+        eid == CID("acos") || eid == CID("atan") || eid == CID("exp") || eid == CID("log") ||
+        eid == CID("log10") || eid == CID("sqrt")) {
         double x = args.empty() ? 0.0 : (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0])));
         double r = 0.0;
-        if (name == "sin") r = std::sin(x);
-        else if (name == "cos") r = std::cos(x);
-        else if (name == "tan") r = std::tan(x);
-        else if (name == "asin") r = std::asin(x);
-        else if (name == "acos") r = std::acos(x);
-        else if (name == "atan") r = std::atan(x);
-        else if (name == "exp") r = std::exp(x);
-        else if (name == "log" || name == "log10") r = (name == "log") ? std::log(x) : std::log10(x);
-        else if (name == "sqrt") r = std::sqrt(x);
+        if (eid == CID("sin")) r = std::sin(x);
+        else if (eid == CID("cos")) r = std::cos(x);
+        else if (eid == CID("tan")) r = std::tan(x);
+        else if (eid == CID("asin")) r = std::asin(x);
+        else if (eid == CID("acos")) r = std::acos(x);
+        else if (eid == CID("atan")) r = std::atan(x);
+        else if (eid == CID("exp")) r = std::exp(x);
+        else if (eid == CID("log") || eid == CID("log10")) r = (eid == CID("log")) ? std::log(x) : std::log10(x);
+        else if (eid == CID("sqrt")) r = std::sqrt(x);
         return make_float(r);
     }
-    if (name == "pow") {
+    if (eid == CID("pow")) {
         double x = args.size() > 0 ? (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0]))) : 0.0;
         double y = args.size() > 1 ? (args[1].index() == 3 ? std::get<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 0.0;
         return make_float(std::pow(x, y));
     }
-    if (name == "ceil" || name == "floor" || name == "fabs" || name == "fmod") {
+    if (eid == CID("ceil") || eid == CID("floor") || eid == CID("fabs") || eid == CID("fmod")) {
         double x = args.empty() ? 0.0 : (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0])));
         double r = 0.0;
-        if (name == "ceil") r = std::ceil(x);
-        else if (name == "floor") r = std::floor(x);
-        else if (name == "fabs") r = std::fabs(x);
-        else if (name == "fmod") {
+        if (eid == CID("ceil")) r = std::ceil(x);
+        else if (eid == CID("floor")) r = std::floor(x);
+        else if (eid == CID("fabs")) r = std::fabs(x);
+        else if (eid == CID("fmod")) {
             double y = args.size() > 1 ? (args[1].index() == 3 ? std::get<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 1.0;
             r = std::fmod(x, y);
         }
         return make_float(r);
     }
-    if (name == "allocate_mapping") {
+    if (eid == CID("allocate_mapping")) {
         // vm_f_allocate_mapping: allocate_mapping() or allocate_mapping(n)
         // -> empty mapping.
         return make_mapping();
     }
-    if (name == "clean_array") {
+    if (eid == CID("clean_array")) {
         // The reference driver compacts the array IN PLACE and returns the
         // same array (vm_f_clean_array 0x80d4c34 -> vm_cleanArray 0x809b018).
         // random_coupond.do_init depends on that: it zeroes expired coupons
@@ -6119,7 +6178,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // in-place (reference) form is restricted to the coupon call site
         // (matches the validated regress83 build plus the coupon fix).
         if (args.empty() || args[0].index() != 5) return make_array();
-        auto src = std::get<std::shared_ptr<ArrayValue>>(args[0]);
+        auto src = std::get<lpc::Ref<ArrayValue>>(args[0]);
         int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 255;
         // Value variant index -> LPC type code: 0 nil, 1 undefined/void,
         // 2 int, 3 real, 4 string, 5 array, 6 mapping, 7 object,
@@ -6140,7 +6199,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 // the corps after _do_combat_team destructs a member that
                 // stays listed (Star-Lord-mount combat hang).  Match op8's
                 // dead test exactly.
-                auto ov = std::get<std::shared_ptr<ObjectValue>>(e);
+                auto ov = std::get<lpc::Ref<ObjectValue>>(e);
                 const lpc::vmcore::VmObject* t = ov ? ov->vmObj : nullptr;
                 if (ov && !t && !ov->programName.empty())
                     t = lpc::vmcore::Registry::instance().findByName(
@@ -6188,41 +6247,41 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         src->items.resize(w);
         return args[0];   // same (mutated) array, mirroring the reference ABI
     }
-    if (name == "get_args") {
+    if (eid == CID("get_args")) {
         // vm_f_get_args (0x80f57d0): get_args() -> array of the calling
         // function's arguments.  We have no frame introspection here; return
         // an empty array (rarely used by the game).
         return make_array();
     }
-    if (name == "is_compiling") {
+    if (eid == CID("is_compiling")) {
         // 原版 #67: 仅在"编译 LPC 源码"期间为 1。boot 加载的是预编译 .o
         // (load 模式), 原版 boot 期它就是 0 —— init 段据它选 load/compile
         // 分支, 恒 0 恰是 boot 的正确取值。别用构造状态冒充编译状态
         // (anyConstructing 会让 init 段走 compile 分支跳过整个 load)。
         return make_int(0);
     }
-    if (name == "set_nohalt") return make_int(1);
-    if (name == "set_as_daemon") {
+    if (eid == CID("set_nohalt")) return make_int(1);
+    if (eid == CID("set_as_daemon")) {
         // vm_f_set_as_daemon: marks the current process as a daemon (its
         // death does not stop the driver).  No-op in our threading model.
         return make_int(1);
     }
-    if (name == "uptime") {
+    if (eid == CID("uptime")) {
         // vm_f_uptime (0x80dd5f4): seconds since the driver started.
         static const auto t0 = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
         return make_int(static_cast<int64_t>(
             std::chrono::duration_cast<std::chrono::seconds>(now - t0).count()));
     }
-    if (name == "shutdown") {
+    if (eid == CID("shutdown")) {
         // vm_f_shutdown (0x80dd7a0): shutdown() - the original terminates the
         // driver; we just log and keep running (a clean stop would kill all
         // three services at once).
         std::cerr << "[shutdown] driver shutdown requested (ignored)\n";
         return make_int(1);
     }
-    if (name == "is_compiled_object") return make_int(1);
-    if (name == "strsrchw") {
+    if (eid == CID("is_compiled_object")) return make_int(1);
+    if (eid == CID("strsrchw")) {
         // vm_f_strsrchw (0x80dc8fc): wide-char version of strsrch; treat as
         // byte-wise strsrch (the game searches for ASCII markers).
         std::string hay = args.empty() ? "" : as_string(args[0]);
@@ -6232,7 +6291,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         size_t pos = dir == 1 ? hay.rfind(needle) : hay.find(needle);
         return make_int(pos == std::string::npos ? -1 : static_cast<int64_t>(pos));
     }
-    if (name == "atoi64") {
+    if (eid == CID("atoi64")) {
         // vm_f_atoi64 (0x80e0854): convert to a 64-bit int and push it as an
         // ARRAY of two 32-bit halves: ({ HIGH32, LOW32 }).  Accepts int/real
         // (value) or string ("0x.." hex, else decimal).  The game splits its
@@ -6250,24 +6309,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 real = static_cast<uint64_t>(std::strtoll(hex ? p + 2 : p, nullptr, hex ? 16 : 10));
             }
         }
-        auto arr = std::make_shared<ArrayValue>();
+        auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         arr->items.push_back(make_int(static_cast<int64_t>(static_cast<uint32_t>(real >> 32))));
         arr->items.push_back(make_int(static_cast<int64_t>(static_cast<uint32_t>(real & 0xFFFFFFFFu))));
         return arr;
     }
-    if (name == "itoa64") {
+    if (eid == CID("itoa64")) {
         // vm_f_itoa64 (0x80e09ac): ({ HIGH32, LOW32 }) -> decimal string of the
         // combined 64-bit value (negative when the high half is negative).
         uint64_t v = 0;
         if (!args.empty() && args[0].index() == 5) {
-            auto items = std::get<std::shared_ptr<ArrayValue>>(args[0])->items;
+            auto items = std::get<lpc::Ref<ArrayValue>>(args[0])->items;
             if (items.size() >= 1) v |= static_cast<uint64_t>(static_cast<uint32_t>(as_int(items[0]))) << 32;
             if (items.size() >= 2) v |= static_cast<uint64_t>(static_cast<uint32_t>(as_int(items[1])));
         }
         return make_string(std::to_string(static_cast<int64_t>(v)));
     }
-    if (name == "make8" || name == "make16" || name == "make32" ||
-        name == "make16i" || name == "make32i") {
+    if (eid == CID("make8") || eid == CID("make16") || eid == CID("make32") ||
+        eid == CID("make16i") || eid == CID("make32i")) {
         // vm_f_make8/16/32 (0x80d4cd4 family): pack ints into a buffer
         // (big-endian, signed variants sign-extend).  The game builds packet
         // payloads with pad_buffer() mostly, but make16/make32 appear in
@@ -6275,13 +6334,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::string out;
         for (const auto& a : args) {
             int64_t v = as_int(a);
-            if (name == "make8") {
+            if (eid == CID("make8")) {
                 out += static_cast<char>(v & 0xFF);
-            } else if (name == "make16") {
+            } else if (eid == CID("make16")) {
                 // vm_f_make16 (0x804dc37): big-endian (ROR word).
                 out += static_cast<char>((v >> 8) & 0xFF);
                 out += static_cast<char>(v & 0xFF);
-            } else if (name == "make16i") {
+            } else if (eid == CID("make16i")) {
                 // vm_f_make16i (0x804dd23): raw WORD (little-endian).
                 out += static_cast<char>(v & 0xFF);
                 out += static_cast<char>((v >> 8) & 0xFF);
@@ -6294,7 +6353,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_buffer(out);
     }
-    if (name == "make_iid") {
+    if (eid == CID("make_iid")) {
         // vm_f_make_iid (0x804dfd4, verified in IDA): returns a 10-byte
         // BUFFER whose hex form is  BE32(time)  BE16(dist_id)  BE32(seq):
         //   ++iidSeqNo; v6=time; *(u32*)buf = bswap32(v6);
@@ -6349,7 +6408,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_buffer(out);
     }
-    if (name == "isupper") {
+    if (eid == CID("isupper")) {
         if (args.empty() || args[0].index() != 4) return make_int(0);
         const std::string& s = std::get<SharedString>(args[0]);
         if (s.empty()) return make_int(0);
@@ -6358,9 +6417,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (!std::isupper(c)) { all = false; break; }
         return make_int(all ? 1 : 0);
     }
-    if (name == "is_real") return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
-    if (name == "is_void") return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
-    if (name == "random_select") {
+    if (eid == CID("is_real")) return make_int(!args.empty() && args[0].index() == 3 ? 1 : 0);
+    if (eid == CID("is_void")) return make_int(!args.empty() && args[0].index() == 1 ? 1 : 0);
+    if (eid == CID("random_select")) {
         // vm_f_random_select (0x807ceec): weighted pick that returns the INDEX
         // of the chosen element (or -1 when nothing can be chosen), NOT the
         // element itself:
@@ -6389,11 +6448,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // rate 0) for A/B.
         static const bool noRateStr = (LPCVM_GETENV("LPCVM_NO_RATESTR") != nullptr);
         auto objectDbRate = [](const Value& obj, int64_t& out) -> bool {
-            auto ov = std::get<std::shared_ptr<ObjectValue>>(obj);
+            auto ov = std::get<lpc::Ref<ObjectValue>>(obj);
             if (!ov) return false;
             auto it = ov->variables.find("dbase");
             if (it == ov->variables.end() || it->second.index() != 6) return false;
-            auto mp = std::get<std::shared_ptr<MappingValue>>(it->second);
+            auto mp = std::get<lpc::Ref<MappingValue>>(it->second);
             if (!mp) return false;
             const Value* rv = mp->find(make_string("rate"));
             if (!rv) return false;
@@ -6403,7 +6462,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         auto rateOf = [&](const Value& e, int64_t& out) -> bool {
             if (e.index() == 2) { out = std::get<int64_t>(e); return true; }
             if (e.index() == 6) {                 // mapping with "rate"
-                auto mp = std::get<std::shared_ptr<MappingValue>>(e);
+                auto mp = std::get<lpc::Ref<MappingValue>>(e);
                 if (!mp) return false;
                 const Value* rv = mp->find(make_string("rate"));
                 if (!rv) return false;
@@ -6439,7 +6498,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         };
         for (size_t a = 0; a < arrCount; ++a) {
             if (args[a].index() != 5) continue;
-            auto arr = std::get<std::shared_ptr<ArrayValue>>(args[a]);
+            auto arr = std::get<lpc::Ref<ArrayValue>>(args[a]);
             for (auto& e : arr->items) {
                 int64_t r = 0;
                 if (rateOf(e, r) && r >= 0) rates.push_back(r);
@@ -6459,7 +6518,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(-1);
     }
-    if (name == "random_from_m_to_n") {
+    if (eid == CID("random_from_m_to_n")) {
         int64_t m = args.size() > 0 ? as_int(args[0]) : 0;
         int64_t n = args.size() > 1 ? as_int(args[1]) : 0;
         if (m > n) std::swap(m, n);
@@ -6467,16 +6526,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (range <= 0) return make_int(m);
         return make_int(m + sharedRand31() % range);
     }
-    if (name == "get_pwd") {
+    if (eid == CID("get_pwd")) {
         // vm_f_get_pwd: current working directory (data root).
         return make_string(vfsProfile().dataRoot);
     }
-    if (name == "get_seed") {
+    if (eid == CID("get_seed")) {
         // vm_f_get_seed: the driver's random seed (used by loot tables).
         return make_int(sharedRand31());
     }
-    if (name == "get_bad_tick_times") return make_int(0);
-    if (name == "get_server_tick" || name == "get_system_tick") {
+    if (eid == CID("get_bad_tick_times")) return make_int(0);
+    if (eid == CID("get_server_tick") || eid == CID("get_system_tick")) {
         auto now = std::chrono::system_clock::now().time_since_epoch();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
         return make_int(static_cast<int64_t>(ms));
@@ -6490,15 +6549,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     // THREAD and every LPC process shares the single scheduler thread, so
     // mutual exclusion never actually excluded anything.
 
-    if (name == "get_timer") {
+    if (eid == CID("get_timer")) {
         // get_timer(timer_id): 1 while a timer with this id is registered
         // (our set_timer has no cancellation; report "active").
         return make_int(1);
     }
-    if (name == "delete_timer") return make_int(1);
-    if (name == "get_all_timers") return make_array();
+    if (eid == CID("delete_timer")) return make_int(1);
+    if (eid == CID("get_all_timers")) return make_array();
     // ---- more game-used efuns (mapping/string/type/introspection) ----
-    if (name == "clean_mapping_by_value") {
+    if (eid == CID("clean_mapping_by_value")) {
         // vm_f_clean_mapping_by_value (0x80d4dfc, verified in IDA): reads the
         // mapping (arg0, type 7) and an optional int type (arg1).  With ONE
         // argument the driver defaults type to 255 and vm_cleanMapping
@@ -6514,7 +6573,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // nil placeholders, so monster pet attrib was saved as name-keyed U
         // values instead of the numeric id keys REF stores (R127 pet attrib U).
         if (args.empty() || args[0].index() != 6) return make_int(1);
-        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
         std::vector<Value> dead;
         if (args.size() < 2) {
             // single-arg (type = 255): drop entries whose VALUE is nil /
@@ -6543,12 +6602,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         for (auto& k : dead) mp->erase(k);
         return make_int(1);
     }
-    if (name == "clean_mapping_by_key") {
+    if (eid == CID("clean_mapping_by_key")) {
         // vm_f_clean_mapping_by_key (0x80d4d18, verified in IDA): single-arg
         // defaults type to 255 and removes entries whose KEY is type 0
         // (undefined/nil); two-arg keeps keys of the given LPC type.
         if (args.empty() || args[0].index() != 6) return make_int(1);
-        auto mp = std::get<std::shared_ptr<MappingValue>>(args[0]);
+        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
         std::vector<Value> dead;
         if (args.size() < 2) {
             for (size_t i = 0; i < mp->nodes.size(); ++i) {
@@ -6566,7 +6625,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         for (auto& k : dead) mp->erase(k);
         return make_int(1);
     }
-    if (name == "explode_to_mapping_ex") {
+    if (eid == CID("explode_to_mapping_ex")) {
         // vm_f_explode_to_mapping_ex: explode_to_mapping_ex(str, sep, sep2) -
         // split str by sep into records and each record by sep2 into key=value.
         // filed uses it to parse DB row text ("a$b|c$d" style).
@@ -6574,7 +6633,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::string text = as_string(args[0]);
         std::string recSep = as_string(args[1]);
         std::string kvSep = as_string(args[2]);
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         size_t start = 0;
         while (start <= text.size()) {
             size_t e = text.find(recSep, start);
@@ -6594,7 +6653,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     // dispatch) because it must write through the caller's reference; the old
     // no-op stub here silently disabled anticheaterd::encrypt_script's XOR and
     // the anti-cheat script reached the client as plaintext.
-    if (name == "var_type" || name == "var_raw_type") {
+    if (eid == CID("var_type") || eid == CID("var_raw_type")) {
         // vm_f_var_type (0x80dd70c): returns the STRING type name via
         // vm_valueType ("undefined"/"void"/"integer"/"float"/"string"/
         // "buffer"/"array"/"mapping"/"function"/"object").
@@ -6624,25 +6683,25 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             "undefined", "void", "integer", "float", "string", "buffer",
             "array", "mapping", "mixed", "function", "object"};
         int raw = (v.index() < 11) ? idxToRaw[v.index()] : -1;
-        if (name == "var_raw_type")
+        if (eid == CID("var_raw_type"))
             return make_int(raw);
         return make_string((raw >= 0 && raw <= 10) ? nameByRaw[raw] : "mixed");
     }
-    if (name == "get_thread_info") {
+    if (eid == CID("get_thread_info")) {
         // vm_f_get_thread_info: get_thread_info(name_or_tid) -> 1 while the
         // thread exists.  Our create_thread detaches real threads with no
         // registry; report 1 (active) - delete_thread/suspend are no-ops.
         return make_int(1);
     }
-    if (name == "delete_thread") return make_int(1);
-    if (name == "suspend_thread") return make_int(1);
-    if (name == "get_all_threads") return make_array();
-    if (name == "set_sock_opt") {
+    if (eid == CID("delete_thread")) return make_int(1);
+    if (eid == CID("suspend_thread")) return make_int(1);
+    if (eid == CID("get_all_threads")) return make_array();
+    if (eid == CID("set_sock_opt")) {
         // vm_f_set_sock_opt: set_sock_opt(fd, level, opt, val) - configure the
         // socket.  Accepts and ignores (the game sets buffer sizes).
         return make_int(1);
     }
-    if (name == "log_file") {
+    if (eid == CID("log_file")) {
         // vm_f_log_file (0x80e157c): log_file(name, fmt, ...) appends to a
         // log file under the data root (xdbc_output etc.).
         if (args.size() >= 2) {
@@ -6656,8 +6715,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
-    if (name == "set_log_on" || name == "set_log_file") return make_int(1);
-    if (name == "ischinese") {
+    if (eid == CID("set_log_on") || eid == CID("set_log_file")) return make_int(1);
+    if (eid == CID("ischinese")) {
         // vm_f_ischinese: is the byte the start of a multi-byte (GBK) char?
         // Treat high bytes as Chinese like the original.  The argument is an
         // int holding a byte value (e.g. attrib[0] in convert_to_value), so
@@ -6675,7 +6734,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int((c >= 0x80) ? 1 : 0);
     }
-    if (name == "ucmp") {
+    if (eid == CID("ucmp")) {
         // vm_f_ucmp (0x80dc8fc): case-insensitive string compare -> <0/0/>0.
         std::string a = args.empty() ? "" : as_string(args[0]);
         std::string b = args.size() < 2 ? "" : as_string(args[1]);
@@ -6684,7 +6743,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         int r = a.compare(b);
         return make_int(r < 0 ? -1 : (r > 0 ? 1 : 0));
     }
-    if (name == "info") {
+    if (eid == CID("info")) {
         // vm_f_info: driver statistics mapping.  The game reads
         // info()["cpu_cost"]["idle_ticks"] in sysinfod.get_report_status_info:
         //   cpu_possess = 1 - (cur_idle - last_idle) / (cur_tick - last_tick)
@@ -6715,19 +6774,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         //   decide that separately.
         auto now = std::chrono::system_clock::now().time_since_epoch();
         int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
-        auto cpu = std::make_shared<MappingValue>();
+        auto cpu = lpc::Ref<MappingValue>(new MappingValue());
         cpu->insert(make_string("idle_ticks"), make_int(ms));
         cpu->insert(make_string("user_ticks"), make_int(0));
         cpu->insert(make_string("system_ticks"), make_int(0));
         cpu->insert(make_string("total_ticks"), make_int(ms));
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         mp->insert(make_string("cpu_cost"), cpu);
         mp->insert(make_string("total_values"), make_int(0));
         mp->insert(make_string("total_array_num"), make_int(0));
         mp->insert(make_string("total_mapping_num"), make_int(0));
         return mp;
     }
-    if (name == "is_blocked") {
+    if (eid == CID("is_blocked")) {
         // vm_f_is_blocked (map module): whether the map cell is blocked.
         // Returns bitsMap[x*height+y] & 0x21 (PLOT_IS_OBSTACLE=1|PLOT_IS_WATER=32),
         // or -1 when the coordinate is out of range.
@@ -6747,7 +6806,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return r;
     }
-    if (name == "allocate_id") {
+    if (eid == CID("allocate_id")) {
         // vm_f_allocate_id: allocate an id from the pool for the given object.
         // The pool stores the object's registry KEY and get_object_by_id()
         // rebuilds the object from it, so the placeholder this_object() name
@@ -6762,12 +6821,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // stubCallCtx().key holds the real instance key.
         Value idArg = args.empty() ? Value{} : args[0];
         if (idArg.index() == 7) {
-            auto ov = std::get<std::shared_ptr<ObjectValue>>(idArg);
+            auto ov = std::get<lpc::Ref<ObjectValue>>(idArg);
             const std::string& pn = ov ? ov->programName : std::string();
             if (pn.empty() || pn == "<this>" || pn == ".") {
                 const std::string& ck = stubCallCtx().key;
                 if (!ck.empty()) {
-                    auto fixed = std::make_shared<ObjectValue>();
+                    auto fixed = lpc::make_ref<ObjectValue>();
                     fixed->programName = ck;
                     fixed->owner = ov ? ov->owner : nullptr;
                     if (ov) fixed->alive = ov->alive;
@@ -6786,7 +6845,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
             if (idArg.index() == 7)
-                key = std::get<std::shared_ptr<ObjectValue>>(idArg)->programName;
+                key = std::get<lpc::Ref<ObjectValue>>(idArg)->programName;
             std::cerr << "[iddbg] allocate_id key=[" << key << "] caller="
                       << stubCallCtx().obj << "::" << stubCallCtx().fn
                       << " callerKey=[" << stubCallCtx().key << "] -> id="
@@ -6796,52 +6855,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return r;
     }
-    if (name == "free_id") {
+    if (eid == CID("free_id")) {
         return lpc::mapModule().freeId(args.empty() ? Value{} : args[0]);
     }
-    if (name == "get_object_by_id") {
-        Value r = lpc::mapModule().getObjectById(args.empty() ? Value{} : args[0]);
-        // LPCVM_MENUDBG: open_menu.c::main resolves the clicked NPC with this efun
-        // and returns 0 SILENTLY when the id does not resolve - one of the four
-        // no-message failure paths behind "NPC 点不开".  Log id -> key here so the
-        // id pool's contents become visible for the click that failed.
-        {
-            static const std::atomic<bool>& mdOn = dynProbeFlag("LPCVM_MENUDBG");
-            if (mdOn.load(std::memory_order_relaxed) &&
-                stubCallCtx().obj.find("open_menu") != std::string::npos) {
-                std::string k;
-                if (r.index() == 7) k = std::get<std::shared_ptr<ObjectValue>>(r)->programName;
-                std::cerr << "[menudbg] get_object_by_id id="
-                          << (args.empty() ? -1 : as_int(args[0])) << " -> "
-                          << (k.empty() ? std::string("0 (NOT FOUND)") : k) << "\n";
-                std::cerr.flush();
-            }
-        }
-        if (LPCVM_GETENV("LPCVM_IDDBG")) {
-            std::string key;
-            if (r.index() == 7) key = std::get<std::shared_ptr<ObjectValue>>(r)->programName;
-            std::cerr << "[iddbg] get_object_by_id id="
-                      << (args.empty() ? -1 : as_int(args[0])) << " -> key=[" << key << "] caller="
-                      << stubCallCtx().obj << "::" << stubCallCtx().fn
-                      << " callerKey=[" << stubCallCtx().key << "]\n";
-            std::cerr.flush();
-        }
-        if (LPCVM_GETENV("LPCVM_NEAR") &&
-            (stubCallCtx().obj.find("open_menu") != std::string::npos ||
-             stubCallCtx().fn == "main")) {
-                std::cerr << "[near-gob] id=" << (args.empty() ? -1 : as_int(args[0]))
-                          << " -> " << to_string(r, false).substr(0, 60) << "\n";
-        }
-        return r;
-    }
-    if (name == "init_id_pool") {
+    if (eid == CID("init_id_pool")) {
         // init_id_pool(poolSize[, startId]) - startId defaults to 10000.
         int64_t size = args.empty() ? 0 : as_int(args[0]);
         int64_t start = args.size() >= 2 ? as_int(args[1]) : 10000;
         lpc::mapModule().initIdPool(size, start);
         return make_int(1);
     }
-    if (name == "build_map") {
+    if (eid == CID("build_map")) {
         Value bmR = lpc::mapModule().buildMap(args);
         // R83: why did 云霄宫 (50000) never build? log every build_map whose
         // name mentions yunxiaogong / maze / xiyugucheng + result + failure
@@ -6869,31 +6893,31 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return bmR;
     }
-    if (name == "destruct_map") {
+    if (eid == CID("destruct_map")) {
         return lpc::mapModule().destructMap(args.empty() ? Value{} : args[0]);
     }
-    if (name == "get_map_info") {
+    if (eid == CID("get_map_info")) {
         return lpc::mapModule().getMapInfo(args.empty() ? Value{} : args[0]);
     }
-    if (name == "get_all_map") {
+    if (eid == CID("get_all_map")) {
         return lpc::mapModule().getAllMap();
     }
-    if (name == "put_in_map") {
+    if (eid == CID("put_in_map")) {
         return lpc::mapModule().putInMap(args);
     }
-    if (name == "remove_from_map") {
+    if (eid == CID("remove_from_map")) {
         return lpc::mapModule().removeFromMap(args);
     }
-    if (name == "move_in_map") {
+    if (eid == CID("move_in_map")) {
         return lpc::mapModule().moveInMap(args);
     }
-    if (name == "get_from_map") {
+    if (eid == CID("get_from_map")) {
         return lpc::mapModule().getFromMap(args);
     }
-    if (name == "get_in_sight") {
+    if (eid == CID("get_in_sight")) {
         return lpc::mapModule().getInSight(args);
     }
-    if (name == "get_sight") {
+    if (eid == CID("get_sight")) {
         // vm_f_get_sight (no args): ids visible from THIS object's position.
         // move.c::enter does  obs = get_sight() - ({id})  to drive the
         // appear notifications — a stub 0 left every sight list empty.
@@ -6901,16 +6925,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (k.empty()) k = stubCallCtx().obj;
         return lpc::mapModule().getSightByKey(k);
     }
-    if (name == "get_id_in_map") {
+    if (eid == CID("get_id_in_map")) {
         return lpc::mapModule().getIdInMap(args);
     }
-    if (name == "get_all_objects") {
+    if (eid == CID("get_all_objects")) {
         return lpc::mapModule().getAllObjects();
     }
-    if (name == "read_map_info") {
+    if (eid == CID("read_map_info")) {
         return lpc::mapModule().readMapInfo(args);
     }
-    if (name == "calc_offset") {
+    if (eid == CID("calc_offset")) {
         Value r = lpc::mapModule().calcOffset(args);
         if (LPCVM_GETENV("LPCVM_NEAR") && stubCallCtx().fn == "is_near") {
                 std::cerr << "[near-off] (" << (args.size() > 0 ? as_int(args[0]) : -1) << ","
@@ -6920,7 +6944,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return r;
     }
-    if (name == "check_steps") {
+    if (eid == CID("check_steps")) {
         // vm_f_check_steps: validate a movement path (move_v37.multi_move_to).
         // A stub returning 0 blocked every move.
         Value r = lpc::mapModule().checkSteps(args);
@@ -6928,7 +6952,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             static int csN = 0;
             if (csN++ < 80) {
                 int n = (args.size() >= 4 && args[3].index() == 5)
-                            ? static_cast<int>(std::get<std::shared_ptr<ArrayValue>>(args[3])->items.size() / 2)
+                            ? static_cast<int>(std::get<lpc::Ref<ArrayValue>>(args[3])->items.size() / 2)
                             : -1;
                 std::cerr << "[move] check_steps map=" << (args.empty() ? -1 : as_int(args[0]))
                           << " from=(" << (args.size() > 1 ? as_int(args[1]) : -1) << ","
@@ -6940,11 +6964,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return r;
     }
-    if (name == "is_pt_in_poly") {
+    if (eid == CID("is_pt_in_poly")) {
         // vm_f_is_pt_in_poly(x, y, poly): even-odd point-in-polygon test used
         // by region/trigger checks (script_*.c, warcraftd).
         if (args.size() < 3 || args[2].index() != 5) return make_int(0);
-        const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[2])->items;
+        const auto& items = std::get<lpc::Ref<ArrayValue>>(args[2])->items;
         std::vector<int> poly;
         poly.reserve(items.size());
         for (const auto& v : items) poly.push_back(static_cast<int>(as_int(v)));
@@ -6952,30 +6976,30 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                                                     static_cast<int>(as_int(args[1])), poly)
                             ? 1 : 0);
     }
-    if (name == "get_in_polygens") {
+    if (eid == CID("get_in_polygens")) {
         // vm_f_get_in_polygens (0x807b148): ids of every object inside the
         // polygon on that map.  A stub returning 0 broke area queries
         // (region triggers, quest checks).
         return lpc::mapModule().getInPolygens(args);
     }
-    if (name == "hook_map_event") {
+    if (eid == CID("hook_map_event")) {
         // vm_f_hook_map_event(mapIndex, poly, idFilter, closure) -> event id.
         if (args.size() < 4) return make_int(0);
         std::vector<int> poly;
         if (args[1].index() == 5) {
-            const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[1])->items;
+            const auto& items = std::get<lpc::Ref<ArrayValue>>(args[1])->items;
             poly.reserve(items.size());
             for (const auto& v : items) poly.push_back(static_cast<int>(as_int(v)));
         }
         return make_int(lpc::mapModule().hookAdd(static_cast<int>(as_int(args[0])), std::move(poly),
                                                  as_int(args[2]), args[3]));
     }
-    if (name == "unhook_map_event") {
+    if (eid == CID("unhook_map_event")) {
         // vm_f_unhook_map_event(mapIndex, idFilter, eventId)
         if (!args.empty()) lpc::mapModule().hookRemove(as_int(args[args.size() - 1]));
         return make_int(1);
     }
-    if (name == "mark_map_plot" || name == "unmark_map_plot" || name == "get_map_plot") {
+    if (eid == CID("mark_map_plot") || eid == CID("unmark_map_plot") || eid == CID("get_map_plot")) {
         // vm_f_mark_map_plot (0x807a8b4) / vm_f_unmark_map_plot (0x8079be8) /
         // vm_f_get_map_plot (0x807aca8): the plot layer IS the obstacle bit
         // plane (x-major, bits[x*height+y], same layout is_blocked reads).
@@ -6988,15 +7012,15 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         int64_t x = as_int(args[1]), y = as_int(args[2]);
         if (x < 0 || y < 0 || x >= m->width || y >= m->height) return make_int(0);
         size_t idx = static_cast<size_t>(x * m->height + y);
-        if (name == "get_map_plot") return make_int(m->bits[idx]);
+        if (eid == CID("get_map_plot")) return make_int(m->bits[idx]);
         int64_t flag = (args.size() >= 4) ? as_int(args[3]) : 1;
-        if (name == "mark_map_plot")
+        if (eid == CID("mark_map_plot"))
             m->bits[idx] = static_cast<uint8_t>(m->bits[idx] | (flag & 0xFF));
         else
             m->bits[idx] = static_cast<uint8_t>(m->bits[idx] & ~(flag & 0xFF));
         return make_int(1);
     }
-    if (name == "write_buffer" && args.size() >= 3) {
+    if (eid == CID("write_buffer") && args.size() >= 3) {
         // vm_f_write_buffer (0x80dd90c): write_buffer(&buf, offset, val).
         // arg0 arrives here DEREFED by dispatchEfun, so the write-back goes
         // through the CrossVmRef-free path: dispatchEfun's raw item was a
@@ -7013,7 +7037,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // the OLD position after every fast move (0x4130).
         if (args[0].index() != 10)
             throw std::runtime_error("The first argument need a buffer.");
-        auto buf = std::get<std::shared_ptr<BufferValue>>(args[0]);
+        auto buf = std::get<lpc::Ref<BufferValue>>(args[0]);
         const int64_t off = as_int(args[1]);
         const Value& v = args[2];
         std::string data;
@@ -7025,7 +7049,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             data[2] = static_cast<char>((n >> 8) & 0xFF);
             data[3] = static_cast<char>(n & 0xFF);
         } else if (v.index() == 10) {
-            data = std::get<std::shared_ptr<BufferValue>>(v)->data;
+            data = std::get<lpc::Ref<BufferValue>>(v)->data;
         } else if (v.index() == 4) {
             data = std::get<SharedString>(v).str();
         } else {
@@ -7039,24 +7063,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         buf->data.replace(static_cast<size_t>(off), data.size(), data);
         return make_int(static_cast<int64_t>(data.size()));
     }
-    if (name == "get_client_stat") {
+    if (eid == CID("get_client_stat")) {
         // vm_f_get_client_stat: stats for a client number.
-        auto mp = std::make_shared<MappingValue>();
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         mp->insert(make_string("recv_pkts"), make_int(0));
         mp->insert(make_string("send_pkts"), make_int(0));
         mp->insert(make_string("bad_pkts"), make_int(0));
         return mp;
     }
-    if (name == "get_message_stat") return make_int(0);
-    if (name == "reset_client_stat") return make_int(1);
-    if (name == "debug_on") {
+    if (eid == CID("get_message_stat")) return make_int(0);
+    if (eid == CID("reset_client_stat")) return make_int(1);
+    if (eid == CID("debug_on")) {
         // vm_f_debug_on: toggle driver debug.  Returns the previous state.
         static int g_debug = 0;
         if (!args.empty()) { int old = g_debug; g_debug = as_int(args[0]) ? 1 : 0; return make_int(old); }
         return make_int(g_debug);
     }
-    if (name == "enable_trace") return make_int(1);
-    if (name == "set_driver_caption") {
+    if (eid == CID("enable_trace")) return make_int(1);
+    if (eid == CID("set_driver_caption")) {
         // vm_f_set_driver_caption -> vm_setWindowCaption prints "Driver: %s\n"
         // (the gameshell window title / server line identity).  Not a stub:
         // gs startup logs "Driver: һ��" right before configd loads.
@@ -7064,24 +7088,24 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::cerr << "Driver: " << as_string(args[0]) << "\n";
         return make_int(1);
     }
-    if (name == "config_driver") return make_int(1);
-    if (name == "switch_include_dir") return make_int(1);
-    if (name == "compile_program") {
+    if (eid == CID("config_driver")) return make_int(1);
+    if (eid == CID("switch_include_dir")) return make_int(1);
+    if (eid == CID("compile_program")) {
         // vm_f_compile_program: compile a .c to .o.  We load .o files
         // directly; report success for existing .o files.
         return make_int(1);
     }
-    if (name == "shift_time") {
+    if (eid == CID("shift_time")) {
         // vm_f_shift_time (0x81018a0): shift_time(secs) - driver test hook.
         return make_int(1);
     }
-    if (name == "pp_start_profiling" || name == "pp_stop_profiling" ||
-        name == "pp_is_profiling" || name == "pp_get_report") {
-        if (name == "pp_is_profiling") return make_int(0);
-        if (name == "pp_get_report") return make_mapping();
+    if (eid == CID("pp_start_profiling") || eid == CID("pp_stop_profiling") ||
+        eid == CID("pp_is_profiling") || eid == CID("pp_get_report")) {
+        if (eid == CID("pp_is_profiling")) return make_int(0);
+        if (eid == CID("pp_get_report")) return make_mapping();
         return make_int(1);
     }
-    if (name == "attach_illegal_list") {
+    if (eid == CID("attach_illegal_list")) {
         // vm_f_attach_illegal_list (0x80e2a28): register a banned-word list,
         // returns a match handle (int).  The game passes an array of words.
         // The real driver compiles the word table; find_illegal_string then
@@ -7092,7 +7116,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         int64_t h = hSeq.fetch_add(1);
         std::vector<std::string> ws;
         if (!args.empty() && args[0].index() == 5) {
-            const auto& items = std::get<std::shared_ptr<ArrayValue>>(args[0])->items;
+            const auto& items = std::get<lpc::Ref<ArrayValue>>(args[0])->items;
             for (const auto& v : items) {
                 if (v.index() == 4) ws.push_back(std::get<SharedString>(v).str());
                 else ws.push_back(to_string(v, false));
@@ -7114,11 +7138,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(h);
     }
-    if (name == "detach_illegal_list") {
+    if (eid == CID("detach_illegal_list")) {
         if (!args.empty()) illegalWordsRemove(as_int(args[0]));
         return make_int(1);
     }
-    if (name == "find_illegal_string") {
+    if (eid == CID("find_illegal_string")) {
         // vm_f_find_illegal_string (0x80e2cdc): find_illegal_string(handle,
         // text) -> 1 when text contains a banned word.
         if (args.size() >= 2) {
@@ -7138,13 +7162,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "get_obj_var") {
+    if (eid == CID("get_obj_var")) {
         // vm_f_get_obj_var: get_obj_var(obj, name) -> instance variable value.
         // Now backed by the loader's PROG_VARS records (name -> slot).
         if (args.size() >= 2) return lpc::objVarGet(args[0], as_string(args[1]));
         return Value{};
     }
-    if (name == "set_obj_var") {
+    if (eid == CID("set_obj_var")) {
         // vm_f_set_obj_var (IDA 0x80f8658): set_obj_var(obj|name, varName,
         // value[, progName]) -> value.  The 4th argument is the PROGRAM name
         // that disambiguates an inherited variable (the old code read the
@@ -7160,12 +7184,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             throw std::runtime_error("No such variable " + vn + " in the object.");
         return args[2];
     }
-    if (name == "save_object") {
+    if (eid == CID("save_object")) {
         // vm_f_save_object: save_object(obj) -> "prog::var=value\n" text.
         if (!args.empty()) return make_string(lpc::objVarsToString(args[0]));
         return make_string(std::string());
     }
-    if (name == "restore_object") {
+    if (eid == CID("restore_object")) {
         // vm_f_restore_object: restore_object(obj, text[, clearUndefined]).
         // The text is the "progName::varName=value\n" form produced by
         // save_object - the login/user dbase is stored in the DB that way, so a
@@ -7197,7 +7221,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 const bool isMap = (s[i + 1] == '[');
                 i += 2;
                 if (isMap) {
-                    auto mp = std::make_shared<MappingValue>();
+                    auto mp = lpc::Ref<MappingValue>(new MappingValue());
                     while (i < s.size() && !(s[i] == ']' && i + 1 < s.size() && s[i + 1] == ')')) {
                         Value k = pv(s, i);
                         while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
@@ -7209,7 +7233,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     i += 2;
                     return mp;
                 }
-                auto arr = std::make_shared<ArrayValue>();
+                auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
                 while (i < s.size() && !(s[i] == '}' && i + 1 < s.size() && s[i + 1] == ')')) {
                     arr->items.push_back(pv(s, i));
                     while (i < s.size() && (s[i] == ',' || s[i] == ' ')) ++i;
@@ -7255,14 +7279,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(restored > 0 ? 1 : 0);
     }
-    if (name == "get_function_owner") return make_int(0);
-    if (name == "move_object") {
+    if (eid == CID("get_function_owner")) return make_int(0);
+    if (eid == CID("move_object")) {
         if (LPCVM_GETENV("LPCVM_TAIL")) {
             static int bmvN = 0;
             if (bmvN++ < 60) {
                 std::string dk;
                 if (!args.empty()) {
-                    if (args[0].index() == 7) dk = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                    if (args[0].index() == 7) dk = std::get<lpc::Ref<ObjectValue>>(args[0])->programName;
                     else if (args[0].index() == 4) dk = std::get<SharedString>(args[0]).str();
                 }
                 std::cerr << "[bmv] builtins move_object self=" << stubCallCtx().obj << " dest=" << dk << "\n";
@@ -7271,7 +7295,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(1);
     }
-    if (name == "replace_owner") {
+    if (eid == CID("replace_owner")) {
         // vm_f_replaceOwner: replace_owner(ob, closure) -> the SAME closure with
         // `ob` as its owner (0/null = no owner).  This is how every SF_*
         // interface filter is built, e.g.
@@ -7285,11 +7309,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // iface dump: `sf_enter_room=arr1[n3 t7 t7 t2]` (t2 = int) versus a plain
         // closure registration `sf_kill=arr1[n3 t7 t4 t8:sf_kill]` (t8 = closure).
         if (args.size() >= 2 && args[1].index() == 8) {
-            auto srcCl = std::get<std::shared_ptr<ClosureValue>>(args[1]);
+            auto srcCl = std::get<lpc::Ref<ClosureValue>>(args[1]);
             if (!srcCl) return args[1];
-            auto cl = std::make_shared<ClosureValue>(*srcCl);
+            auto cl = lpc::Ref<ClosureValue>(new ClosureValue(*srcCl));
             if (args[0].index() == 7) {
-                auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+                auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
                 cl->owner = ov ? ov->owner : nullptr;
                 cl->ownerKey = (ov && ov->programName != "<this>") ? ov->programName : std::string();
             } else {
@@ -7302,32 +7326,32 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // a non-closure first argument is a no-op).
         return args.size() >= 2 ? args[1] : make_int(0);
     }
-    if (name == "child_objects") {
+    if (eid == CID("child_objects")) {
         // vm_f_child_objects: array of live clones of a template object.  We
         // do not track clone instances here; return an empty array (the game
         // tolerates it - share_stored just gets no stores to clean).
         return make_array();
     }
-    if (name == "objects") {
+    if (eid == CID("objects")) {
         // vm_f_objects: array of all loaded object names.  Without registry
         // access from here, return an empty array (callers skip).
         return make_array();
     }
-    if (name == "info_object") {
-        auto mp = std::make_shared<MappingValue>();
+    if (eid == CID("info_object")) {
+        auto mp = lpc::Ref<MappingValue>(new MappingValue());
         mp->insert(make_string("size"), make_int(0));
         return mp;
     }
-    if (name == "size_object" || name == "size_value") return make_int(0);
-    if (name == "get_all_global_vars") return make_array();
-    if (name == "get_obj_function") return make_int(0);
-    if (name == "env_object") {
+    if (eid == CID("size_object") || eid == CID("size_value")) return make_int(0);
+    if (eid == CID("get_all_global_vars")) return make_array();
+    if (eid == CID("get_obj_function")) return make_int(0);
+    if (eid == CID("env_object")) {
         if (LPCVM_GETENV("LPCVM_TAIL")) {
             static int bevN = 0;
             if (bevN++ < 80) {
                 std::string qk;
                 if (!args.empty()) {
-                    if (args[0].index() == 7) qk = std::get<std::shared_ptr<ObjectValue>>(args[0])->programName;
+                    if (args[0].index() == 7) qk = std::get<lpc::Ref<ObjectValue>>(args[0])->programName;
                     else if (args[0].index() == 4) qk = std::get<SharedString>(args[0]).str();
                 }
                 std::cerr << "[bev] builtins env_object q=" << qk << " self=" << stubCallCtx().obj << "\n";
@@ -7336,7 +7360,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "lodger_object") {
+    if (eid == CID("lodger_object")) {
         // Same efun as original_vm.cpp's h == 0xAF888C6C3C418282 branch
         // (vm_f_lodger_object 0x80f41c8): the container's lodgers as an array of
         // object values, in the driver's chain order.  The no-argument form is
@@ -7349,33 +7373,33 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             key = stubCallCtx().key;
             if (key.empty()) key = stubCallCtx().obj;
         } else if (args[0].index() == 7) {
-            auto ov = std::get<std::shared_ptr<ObjectValue>>(args[0]);
+            auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
             if (ov) key = ov->programName;
         } else if (args[0].index() == 4) {
             key = std::get<SharedString>(args[0]).str();
         }
         return makeLodgerArray(key);
     }
-    if (name == "set_valid_chinese") return make_int(1);
-    if (name == "get_message_stat") return make_int(0);
-    if (name == "set_log_file") return make_int(1);
-    if (name == "get_resource_string") {
+    if (eid == CID("set_valid_chinese")) return make_int(1);
+    if (eid == CID("get_message_stat")) return make_int(0);
+    if (eid == CID("set_log_file")) return make_int(1);
+    if (eid == CID("get_resource_string")) {
         // vm_f_get_resource_string: string from the driver's resource table.
         if (args.empty()) return make_string("");
         return make_string("");
     }
-    if (name == "remove_resource_string") return make_int(1);
-    if (name == "decrypt") {
+    if (eid == CID("remove_resource_string")) return make_int(1);
+    if (eid == CID("decrypt")) {
         // vm_f_decrypt: decryption used by the game (encryptd).  Our encrypt
         // is a pass-through; decrypt likewise.
         return args.empty() ? make_string("") : args[0];
     }
-    if (name == "tixml_parse") {
+    if (eid == CID("tixml_parse")) {
         // vm_f_tixml_parse: parse XML to a mapping (config files).  The game
         // reads simple XML configs; return an empty mapping (no-op).
         return make_mapping();
     }
-    if (name == "sql_open_db") {
+    if (eid == CID("sql_open_db")) {
         // sql_open_db(path) -> db handle (>=1) or -1 on failure.  The game
         // opens ":memory:" (init_sql_module) and the FILE database
         // "/gs/log/filed_backup.sql" (autorecoverd packs to it).  The memory
@@ -7404,7 +7428,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::cerr << "[sql_open_db] '" << path << "' -> " << id << " real=" << real << "\n";
         return make_int(id);
     }
-    if (name == "sql_close_db") {
+    if (eid == CID("sql_close_db")) {
         int64_t id = args.empty() ? -1 : as_int(args[0]);
         std::lock_guard<std::mutex> lk(sqliteMutex());
         auto it = sqliteConns().find(id);
@@ -7415,7 +7439,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "sql_execute") {
+    if (eid == CID("sql_execute")) {
         // sql_execute(db, sql) - run DDL/DML on the sqlite DB.  The game's
         // sql_insert builds "insert into %s (%s) values (%s)" and calls this.
         // Returns 0 on success, non-zero sqlite error code on failure.
@@ -7478,7 +7502,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(rc);
     }
-    if (name == "sql_query") {
+    if (eid == CID("sql_query")) {
         // sql_query(db, sql) -> query handle (>=1) or -1 on error.  The game
         // (master sql_select) treats -1 as "no rows".
         if (args.size() < 2) return make_int(-1);
@@ -7563,7 +7587,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(qid);
     }
-    if (name == "sql_step") {
+    if (eid == CID("sql_step")) {
         // sql_step(qh) -> the next row as a mapping (column name -> value),
         // or 0 when the result set is exhausted.  The game's sql_select loops
         // while the result is a mapping (type 7).
@@ -7578,7 +7602,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         int rc = sqlite3_step(q->stmt);
         if (rc != SQLITE_ROW) return make_int(0);
         int n = sqlite3_column_count(q->stmt);
-        auto mp = std::make_shared<MappingValue>(static_cast<uint32_t>(n));
+        auto mp = lpc::Ref<MappingValue>(new MappingValue(static_cast<uint32_t>(n)));
         if (LPCVM_GETENV("LPCVM_TAIL") && q->sql.find("('monster')") != std::string::npos &&
             q->sql.find("sub_type") != std::string::npos) {
             static int monRows = 0;
@@ -7630,7 +7654,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return mp;
     }
-    if (name == "sql_finalize") {
+    if (eid == CID("sql_finalize")) {
         int64_t qid = args.empty() ? -1 : as_int(args[0]);
         std::lock_guard<std::mutex> lk(sqliteMutex());
         auto it = sqliteQueries().find(qid);
@@ -7640,7 +7664,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         return make_int(0);
     }
-    if (name == "sql_get_insert_id") {
+    if (eid == CID("sql_get_insert_id")) {
         int64_t id = args.empty() ? -1 : as_int(args[0]);
         std::shared_ptr<SqliteConn> c;
         {
@@ -7652,7 +7676,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         sqlite3* db = sqliteConnFor(c, GetCurrentThreadId());
         return make_int(db ? static_cast<int64_t>(sqlite3_last_insert_rowid(db)) : 0);
     }
-    if (name == "sql_get_error") {
+    if (eid == CID("sql_get_error")) {
         int64_t id = args.empty() ? -1 : as_int(args[0]);
         std::shared_ptr<SqliteConn> c;
         {
@@ -7665,10 +7689,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         const char* m = db ? sqlite3_errmsg(db) : nullptr;
         return make_string(m ? m : "");
     }
-    if (name == "sql_get_db_info" || name == "sql_get_state_info" || name == "sql_mem_stat") {
+    if (eid == CID("sql_get_db_info") || eid == CID("sql_get_state_info") || eid == CID("sql_mem_stat")) {
         return make_mapping();
     }
-    if (name == "sort") {
+    if (eid == CID("sort")) {
         // vm_f_sort (0x80dbf4c):
         //   sort(array)                    -> ascending, natural order
         //   sort(array, cmp_func)          -> order of cmp_func(element)
@@ -7699,7 +7723,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             else if (args[k].index() == 2 && sDir < 0) sDir = static_cast<int>(k);
         }
         if (sArr < 0) return make_array();
-        auto src = std::get<std::shared_ptr<ArrayValue>>(args[static_cast<size_t>(sArr)]);
+        auto src = std::get<lpc::Ref<ArrayValue>>(args[static_cast<size_t>(sArr)]);
         std::vector<Value> items = src->items;
         const bool desc = (sDir >= 0) && (as_int(args[static_cast<size_t>(sDir)]) < 0);
         if (sCmp >= 0 && args[static_cast<size_t>(sCmp)].index() == 8) {
@@ -7728,11 +7752,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             else
                 std::stable_sort(items.begin(), items.end(), less);
         }
-        auto out = std::make_shared<ArrayValue>();
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         out->items = std::move(items);
         return out;
     }
-    if (name == "set_uid" || name == "set_euid") {
+    if (eid == CID("set_uid") || eid == CID("set_euid")) {
         // vm_f_set_uid (0x80f8ae8): set_uid(obj|objName, uid) assigns the
         // object's uid field.  vm_f_set_euid (0x80f8594): set_euid(uid) sets
         // the CURRENT object's euid, gated by "no priviledge (uid = %d) to
@@ -7746,7 +7770,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // never happen).
         return make_int(1);
     }
-    if (name == "create_mailbox") {
+    if (eid == CID("create_mailbox")) {
         // vm_f_create_mailbox (0x80ef08c): create_mailbox([name, count]) ->
         // oid of a new mailbox pend-object (type 15, slot table with a
         // per-slot mask; only antibotd.o::create calls it at boot and no
@@ -7755,13 +7779,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         static std::atomic<int64_t> nextMailbox{1000000};
         return make_int(nextMailbox.fetch_add(1));
     }
-    if (name == "verigen_load_font") {
+    if (eid == CID("verigen_load_font")) {
         // vm_f_verigen_load_font (0x81767f0): load a captcha font file
         // (aaa picd.o::create calls it).  Captcha rendering is intentionally
         // not ported (user decision) - accept and succeed.
         return make_int(1);
     }
-    if (name == "verigen_render_chars") {
+    if (eid == CID("verigen_render_chars")) {
         // vm_f_verigen_render_chars (0x8176700): render chars into a 16bpp
         // picture buffer (verify_coded's generate_pic_by_str calls it with
         // (font_array, background, foreground, width, height, 0.8) and feeds
@@ -7773,7 +7797,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (h <= 0 || h > 4096) h = 30;
         return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
     }
-    if (name == "verigen_render") {
+    if (eid == CID("verigen_render")) {
         // vm_f_verigen_render: render text into a 16bpp picture buffer
         // (picd's generate_pic calls it twice: verigen_render(text, 65535,
         // 0, w, h)).  Placeholder canvas like verigen_render_chars.
@@ -7783,7 +7807,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (h <= 0 || h > 4096) h = 96;
         return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
     }
-    if (name == "verigen_merge") {
+    if (eid == CID("verigen_merge")) {
         // vm_f_verigen_merge(buf1, buf2, x, y, flag, fg, w, h): overlay two
         // pictures into a 16bpp w*h*2 canvas.  Placeholder: zeroed canvas.
         int64_t w = (args.size() >= 7) ? as_int(args[6]) : 96;
@@ -7792,16 +7816,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (h <= 0 || h > 4096) h = 96;
         return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
     }
-    if (name == "set_priority") {
+    if (eid == CID("set_priority")) {
         // vm_f_set_priority (0x80ee66c): set_priority(prio, [tid|procName])
         // changes an LPC thread's priority via vm_setThreadPriority; single
         // arg targets the current process.  The ported scheduler is
         // cooperative with no priority levels - accept and report success.
         return make_int(1);
     }
-    if (name == "verigen_take_word_glyph" || name == "verigen_render_glyph" ||
-        name == "verigen_transform_glyph" || name == "verigen_layout_word_glyphs" ||
-        name == "verigen_add_noise_to_glyph") {
+    if (eid == CID("verigen_take_word_glyph") || eid == CID("verigen_render_glyph") ||
+        eid == CID("verigen_transform_glyph") || eid == CID("verigen_layout_word_glyphs") ||
+        eid == CID("verigen_add_noise_to_glyph")) {
         // gs picd glyph pipeline (take_word_glyph -> transform/noise ->
         // layout_word_glyphs_by_row/column -> render_glyph), a handful of
         // calls at boot and never erroring on 0 today.  Same placeholder

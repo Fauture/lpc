@@ -21,9 +21,9 @@
 //   * peek_io_buffer(): no io buffers are wired up -> 0.
 // =====================================================================
 
-if (name == "padd" || name == "psub") {
+if (eid == CID("padd") || eid == CID("psub")) {
     if (args.size() < 2) return make_int(0);
-    bool add = (name == "padd");
+    bool add = (eid == CID("padd"));
     int bits = 8;
     if (args.size() > 3) bits = static_cast<int>(as_int(args[3]));
     if (bits != 8 && bits != 16 && bits != 32) bits = 8;
@@ -38,7 +38,7 @@ if (name == "padd" || name == "psub") {
     } else {
         auto bytesOf = [](const Value& v) -> std::string {
             if (v.index() == 4) return as_string(v);
-            if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+            if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
             return std::string();
         };
         a = bytesOf(args[0]);
@@ -88,7 +88,7 @@ if (name == "padd" || name == "psub") {
     }
     return (args[0].index() == 4) ? make_string(out) : make_buffer(out);
 }
-if (name == "psum") {
+if (eid == CID("psum")) {
     if (args.empty()) return make_int(0);
     int bits = 8;
     if (args.size() > 1) bits = static_cast<int>(as_int(args[1]));
@@ -102,7 +102,7 @@ if (name == "psum") {
     } else if (args[0].index() == 4) {
         s = as_string(args[0]);
     } else if (args[0].index() == 10) {
-        s = std::get<std::shared_ptr<BufferValue>>(args[0])->data;
+        s = std::get<lpc::Ref<BufferValue>>(args[0])->data;
     } else {
         return make_int(0);
     }
@@ -119,7 +119,7 @@ if (name == "psum") {
     }
     return make_int(sum);
 }
-if (name == "pcmp") {
+if (eid == CID("pcmp")) {
     if (args.size() < 2) return make_int(0);
     int bits = 8;
     if (args.size() > 2) bits = static_cast<int>(as_int(args[2]));
@@ -135,7 +135,7 @@ if (name == "pcmp") {
     } else {
         auto bytesOf = [](const Value& v) -> std::string {
             if (v.index() == 4) return as_string(v);
-            if (v.index() == 10) return std::get<std::shared_ptr<BufferValue>>(v)->data;
+            if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
             return std::string();
         };
         a = bytesOf(args[0]);
@@ -150,7 +150,7 @@ if (name == "pcmp") {
                           ? static_cast<char>(0xFF) : static_cast<char>(0x00));
     return make_buffer(out);
 }
-if (name == "sig") {
+if (eid == CID("sig")) {
     // vm_f_sig: sign of the argument (-1 / 0 / 1).
     if (args.empty()) return make_int(0);
     if (args[0].index() == 3) {
@@ -160,7 +160,7 @@ if (name == "sig") {
     int64_t n = as_int(args[0]);
     return make_int(n < 0 ? -1 : (n > 0 ? 1 : 0));
 }
-if (name == "rmdir") {
+if (eid == CID("rmdir")) {
     // vm_f_rmdir: 1 on success, 0 on failure.
     if (args.empty()) return make_int(0);
     std::error_code ec;
@@ -168,7 +168,7 @@ if (name == "rmdir") {
     bool ok = fs::is_directory(p, ec) && fs::remove(p, ec) && !ec;
     return make_int(ok ? 1 : 0);
 }
-if (name == "rename_file") {
+if (eid == CID("rename_file")) {
     // vm_f_rename_file: 1 on success, 0 on failure.
     if (args.size() < 2) return make_int(0);
     std::error_code ec;
@@ -178,21 +178,21 @@ if (name == "rename_file") {
     fs::rename(from, to, ec);
     return make_int(ec ? 0 : 1);
 }
-if (name == "set_internal_comm") {
+if (eid == CID("set_internal_comm")) {
     // vm_f_set_internal_comm: mark the client as an internal comm peer.
     if (args.empty()) return make_int(0);
     int cno = static_cast<int>(as_int(args[0]));
     gameServiceSetAttrib(cno, 0x302u, 0, -1);
     return make_int(1);
 }
-if (name == "mysql_get_connection_info" || name == "mysql_get_view_info") {
+if (eid == CID("mysql_get_connection_info") || eid == CID("mysql_get_view_info")) {
     if (args.empty()) return make_array();
     return make_int(0);
 }
-if (name == "peek_io_buffer") return make_int(0);
-if (name == "var_info") {
+if (eid == CID("peek_io_buffer")) return make_int(0);
+if (eid == CID("var_info")) {
     // vm_f_var_info (0x80f97f0): {type, type_desc, address} of a value.
-    auto m = std::make_shared<MappingValue>();
+    auto m = lpc::Ref<MappingValue>(new MappingValue());
     int ti = args.empty() ? 0 : args[0].index();
     m->insert(make_string("type"), make_int(ti));
     m->insert(make_string("type_desc"), make_string(args.empty() ? std::string("0") : value_type_name(args[0])));

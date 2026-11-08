@@ -111,7 +111,7 @@ public:
     // create_thread with an efun closure: a process whose first run applies
     // the closure's efun (see VmPcb::threadClosure).
     VmPcb* spawnEfunThread(VmObject* owner,
-                           const std::shared_ptr<struct ClosureValue>& cl);
+                           const lpc::Ref<struct ClosureValue>& cl);
     VmPcb* spawnTelnet(VmObject* obj, const std::string& entry,
                        std::vector<Value> args, int telnetCno);
     // Delayed one-shot process (set_timer's fire).  `cancelled` is the
@@ -127,7 +127,7 @@ public:
     // findFn failed and the scheduler chain-aborted the callback (5493
     // aborted NPC timer fires; every RPC reply wait never woke).
     VmPcb* spawnDelayedEfun(VmObject* obj,
-                            const std::shared_ptr<struct ClosureValue>& cl,
+                            const lpc::Ref<struct ClosureValue>& cl,
                             int64_t atMs,
                             std::shared_ptr<std::atomic<bool>> cancelled = nullptr);
     // Construction process (load_object / clone_object / master boot): the

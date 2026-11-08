@@ -17,6 +17,14 @@ std::atomic<int64_t> g_liveMapBuckets{0};
 const char* g_lpcRing[kLpcRingSize] = {};
 std::atomic<unsigned> g_lpcRingPos{0};
 
+// [ref] 全局 VM 值互斥 (对齐原版 vm_getVmMutex): Ref/SharedString 计数非原子,
+// 一切跨线程 Value 拷贝/释放必须在本锁内或调度线程上。递归: 调度线程派发
+// 期间嵌套调用 (execOnMain 直接执行) 无需重入处理。
+std::recursive_mutex& vmValueMutex() {
+    static std::recursive_mutex m;
+    return m;
+}
+
 // Out-of-line definition of SharedString's empty-text anchor (str() of a
 // null-block / empty SharedString returns this).
 const std::string SharedString::kEmpty;
@@ -259,7 +267,7 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         // needs is_object(find_object_by_iid(item_info["boot"]))), item-use
         // messages degraded to "你使用了0", mall pets came out level 0 and the
         // 特级八卦 teleport could not find its destination map.
-        const auto& b = std::get<std::shared_ptr<BufferValue>>(key);
+        const auto& b = std::get<lpc::Ref<BufferValue>>(key);
         uint32_t h = 2166136261u;
         for (unsigned char c : b->data) {
             h ^= c;
@@ -272,8 +280,8 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         // tag-only types)
         uintptr_t p = 0;
         switch (key.index()) {
-        case 5: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<ArrayValue>>(key).get()); break;
-        case 6: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<MappingValue>>(key).get()); break;
+        case 5: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<ArrayValue>>(key).get()); break;
+        case 6: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<MappingValue>>(key).get()); break;
         case 7: {
             // OBJECT keys hash by the object's logical path (programName) - the
             // behaviour this port boots with.  NOTE: the original compares the
@@ -285,7 +293,7 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
             // stall (unbounded growth, ~1 GB RSS, 8160 never opens), so the
             // object identity has to be fixed together with whatever boot-time
             // mapping it breaks.
-            const auto& ov = std::get<std::shared_ptr<ObjectValue>>(key);
+            const auto& ov = std::get<lpc::Ref<ObjectValue>>(key);
             uint32_t h = 2166136261u;
             if (ov) {
                 for (unsigned char c : ov->programName) {
@@ -295,8 +303,8 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
             }
             return h;
         }
-        case 8: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<ClosureValue>>(key).get()); break;
-        case 9: p = reinterpret_cast<uintptr_t>(std::get<std::shared_ptr<LoopCtrl>>(key).get()); break;
+        case 8: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<ClosureValue>>(key).get()); break;
+        case 9: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<LoopCtrl>>(key).get()); break;
         default: p = key.index(); break;
         }
         return static_cast<uint32_t>(p >> 4);
@@ -343,7 +351,7 @@ void iidProbeOp(const char* what, const Value& key, const MappingValue& m, bool 
     if (!found && haveKey && bufKeys > 0 && susp.fetch_add(1) < 6) {
         std::string kb;
         if (key.index() == 10) {
-            const std::string& d = std::get<std::shared_ptr<BufferValue>>(key)->data;
+            const std::string& d = std::get<lpc::Ref<BufferValue>>(key)->data;
             for (size_t i = 0; i < d.size() && i < 10; ++i) {
                 char buf[4];
                 std::snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned char>(d[i]));
@@ -377,25 +385,25 @@ bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {    if (a.
     case 4:
         if (caseSensitive) return std::get<SharedString>(a) == std::get<SharedString>(b);
         return striequal(std::get<SharedString>(a), std::get<SharedString>(b));
-    case 5: return std::get<std::shared_ptr<ArrayValue>>(a).get() == std::get<std::shared_ptr<ArrayValue>>(b).get();
-    case 6: return std::get<std::shared_ptr<MappingValue>>(a).get() == std::get<std::shared_ptr<MappingValue>>(b).get();
+    case 5: return std::get<lpc::Ref<ArrayValue>>(a).get() == std::get<lpc::Ref<ArrayValue>>(b).get();
+    case 6: return std::get<lpc::Ref<MappingValue>>(a).get() == std::get<lpc::Ref<MappingValue>>(b).get();
     case 7: {
         // Object keys compare by programName (matching the hash above).
-        const auto& oa = std::get<std::shared_ptr<ObjectValue>>(a);
-        const auto& ob = std::get<std::shared_ptr<ObjectValue>>(b);
+        const auto& oa = std::get<lpc::Ref<ObjectValue>>(a);
+        const auto& ob = std::get<lpc::Ref<ObjectValue>>(b);
         if (oa.get() == ob.get()) return true;
         if (!oa || !ob) return false;
         // Matches the hash above (programName); see the note there.
         return oa->programName == ob->programName;
     }
-    case 8: return std::get<std::shared_ptr<ClosureValue>>(a).get() == std::get<std::shared_ptr<ClosureValue>>(b).get();
-    case 9: return std::get<std::shared_ptr<LoopCtrl>>(a).get() == std::get<std::shared_ptr<LoopCtrl>>(b).get();
+    case 8: return std::get<lpc::Ref<ClosureValue>>(a).get() == std::get<lpc::Ref<ClosureValue>>(b).get();
+    case 9: return std::get<lpc::Ref<LoopCtrl>>(a).get() == std::get<lpc::Ref<LoopCtrl>>(b).get();
     case 10:
         // BUFFER keys compare by CONTENT (mirrors value_equal's case 10 and the
         // content hash above).  Returning false here made iid_map lookups
         // impossible even for the very same buffer instance.
-        return std::get<std::shared_ptr<BufferValue>>(a)->data ==
-               std::get<std::shared_ptr<BufferValue>>(b)->data;
+        return std::get<lpc::Ref<BufferValue>>(a)->data ==
+               std::get<lpc::Ref<BufferValue>>(b)->data;
     default: return false;
     }
 }
@@ -591,26 +599,26 @@ Value make_float(double v) { return static_cast<double>(static_cast<float>(v)); 
 // the Value (push/assign/param/local read) is a pointer + refcount bump.
 Value make_string(std::string s) { return SharedString(std::move(s)); }
 Value make_buffer(std::string data) {
-    auto b = std::make_shared<BufferValue>();
+    auto b = lpc::Ref<BufferValue>(new BufferValue());
     b->data = std::move(data);
     return b;
 }
-Value make_array() { return std::make_shared<ArrayValue>(); }
-Value make_mapping() { return std::make_shared<MappingValue>(); }
+Value make_array() { return lpc::Ref<ArrayValue>(new ArrayValue()); }
+Value make_mapping() { return lpc::Ref<MappingValue>(new MappingValue()); }
 Value make_object(std::string programName) {
-    auto o = std::make_shared<ObjectValue>();
+    auto o = lpc::make_ref<ObjectValue>();
     o->programName = std::move(programName);
     return o;
 }
 Value make_object_owned(std::string programName, const struct OriginalObject* owner) {
-    auto o = std::make_shared<ObjectValue>();
+    auto o = lpc::make_ref<ObjectValue>();
     o->programName = std::move(programName);
     o->owner = owner;
     return o;
 }
-Value make_crossvm_ref(std::shared_ptr<CrossVmRef> r) { return std::move(r); }
+Value make_crossvm_ref(lpc::Ref<CrossVmRef> r) { return std::move(r); }
 Value make_closure(std::string name, std::vector<Value> args) {
-    auto c = std::make_shared<ClosureValue>();
+    auto c = lpc::Ref<ClosureValue>(new ClosureValue());
     c->functionName = std::move(name);
     c->boundArgs = std::move(args);
     return c;
@@ -687,7 +695,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 5: {
-        auto& arr = *std::get<std::shared_ptr<ArrayValue>>(v);
+        auto& arr = *std::get<lpc::Ref<ArrayValue>>(v);
         std::string out = "({";
         for (size_t i = 0; i < arr.items.size(); ++i) {
             if (i) out += ", ";
@@ -697,7 +705,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 6: {
-        auto& mp = *std::get<std::shared_ptr<MappingValue>>(v);
+        auto& mp = *std::get<lpc::Ref<MappingValue>>(v);
         std::string out = "([";
         auto items = mp.items();
         for (size_t i = 0; i < items.size(); ++i) {
@@ -710,10 +718,10 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 7: {
-        return std::string("object(") + std::get<std::shared_ptr<ObjectValue>>(v)->programName + ")";
+        return std::string("object(") + std::get<lpc::Ref<ObjectValue>>(v)->programName + ")";
     }
     case 8: {
-        auto c = std::get<std::shared_ptr<ClosureValue>>(v);
+        auto c = std::get<lpc::Ref<ClosureValue>>(v);
         std::string out = "<function " + c->functionName + "(";
         for (size_t i = 0; i < c->boundArgs.size(); ++i) {
             if (i) out += ", ";
@@ -723,7 +731,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 10: {
-        const std::string& s = std::get<std::shared_ptr<BufferValue>>(v)->data;
+        const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
         static const char* hex = "0123456789ABCDEF";
         std::string out = ":";
         for (unsigned char c : s) { out += hex[c >> 4]; out += hex[c & 0xF]; }
@@ -790,8 +798,8 @@ bool value_equal(const Value& a, const Value& b) {
     case 3: return std::get<double>(a) == std::get<double>(b);
     case 4: return std::get<SharedString>(a) == std::get<SharedString>(b);
     case 5: {
-        auto pa = std::get<std::shared_ptr<ArrayValue>>(a);
-        auto pb = std::get<std::shared_ptr<ArrayValue>>(b);
+        auto pa = std::get<lpc::Ref<ArrayValue>>(a);
+        auto pb = std::get<lpc::Ref<ArrayValue>>(b);
         // Same array instance (aliased variable) - equality is by identity
         // before contents.  LPC code frequently compares a value against
         // itself or against a copy that aliases the same container; without
@@ -806,8 +814,8 @@ bool value_equal(const Value& a, const Value& b) {
         return true;
     }
     case 6: {
-        auto pa = std::get<std::shared_ptr<MappingValue>>(a);
-        auto pb = std::get<std::shared_ptr<MappingValue>>(b);
+        auto pa = std::get<lpc::Ref<MappingValue>>(a);
+        auto pb = std::get<lpc::Ref<MappingValue>>(b);
         if (pa == pb) return true;
         auto& aa = *pa;
         auto& bb = *pb;
@@ -823,8 +831,8 @@ bool value_equal(const Value& a, const Value& b) {
         return eq;
     }
     case 7: {
-        auto pa = std::get<std::shared_ptr<ObjectValue>>(a);
-        auto pb = std::get<std::shared_ptr<ObjectValue>>(b);
+        auto pa = std::get<lpc::Ref<ObjectValue>>(a);
+        auto pb = std::get<lpc::Ref<ObjectValue>>(b);
         if (pa == pb) return true;
         if (pa->programName == pb->programName) return true;
         // Object IDENTITY, exactly like the original: vm_compareValue (0x80bbcb4)
@@ -853,8 +861,8 @@ bool value_equal(const Value& a, const Value& b) {
         return canonicalObjectPath(pa->programName) == canonicalObjectPath(pb->programName);
     }
     case 8: {
-        auto pa = std::get<std::shared_ptr<ClosureValue>>(a);
-        auto pb = std::get<std::shared_ptr<ClosureValue>>(b);
+        auto pa = std::get<lpc::Ref<ClosureValue>>(a);
+        auto pb = std::get<lpc::Ref<ClosureValue>>(b);
         if (pa == pb) return true;
         auto& ca = *pa;
         auto& cb = *pb;
@@ -865,8 +873,8 @@ bool value_equal(const Value& a, const Value& b) {
         return true;
     }
     case 10: {
-        auto pa = std::get<std::shared_ptr<BufferValue>>(a);
-        auto pb = std::get<std::shared_ptr<BufferValue>>(b);
+        auto pa = std::get<lpc::Ref<BufferValue>>(a);
+        auto pb = std::get<lpc::Ref<BufferValue>>(b);
         if (pa == pb) return true;
         return pa->data == pb->data;
     }

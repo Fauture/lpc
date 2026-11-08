@@ -148,7 +148,7 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e) {
 int64_t timerSchedule(const std::string& name, const std::string& callback,
                       VmObject* owner, int64_t timeoutSecs,
                       std::vector<Value> boundArgs,
-                      const std::shared_ptr<ClosureValue>& efunCb) {
+                      const lpc::Ref<ClosureValue>& efunCb) {
     auto entry = std::make_shared<TimerEntry>();
     entry->id = g_timerSeq.fetch_add(1);
     entry->name = name;
