@@ -74,8 +74,13 @@ struct VmPool {
 std::recursive_mutex& vmValueMutex();
 
 struct RefCountedBase {
-    int32_t refs = 1;   // 创建即持有 1 份 (adopt 语义)
-    void retain() noexcept { ++refs; }   // 非模板 —— Value 的 union 槽直接调
+    // [fix-atomic-refs] 容器计数原子化。原版是普通 ++/-- (vm_getVmMutex
+    // 单一大锁保证同刻一个线程碰值); 本实现没有全局值锁, Value 跨线程
+    // 流转 (网络收包线程 -> 调度器) 时非原子计数竞争 -> double release ->
+    // 池 double push -> 自由链损坏 (gs 运行 14.5min 崩 VmPool<BufferValue>
+    // ::pop 读到已释放页, 实锤)。SharedString::Block 同因早已原子化。
+    std::atomic<int32_t> refs{1};   // 创建即持有 1 份 (adopt 语义)
+    void retain() noexcept { refs.fetch_add(1, std::memory_order_relaxed); }
 };
 // Value 析构的类型化释放 —— 实现在 value.h 尾部 (容器 struct 完整定义后)。
 void destroyValueObject(uint8_t t, RefCountedBase* p) noexcept;
@@ -87,11 +92,16 @@ void mapDeleteTrace(const void* self) noexcept;
 template <class T>
 struct RefBase : RefCountedBase {
     void release() noexcept {
-        if (--refs == 0) delete static_cast<T*>(this);
+        if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1)
+            delete static_cast<T*>(this);
     }
 protected:
     RefBase() = default;
-    RefBase(const RefBase&) noexcept = default;   // 拷贝构造 = 新对象 (基类 refs=1)
+    // 拷贝构造 = 新对象 (基类 refs 重置 1) —— 供派生类本体克隆
+    // (new ClosureValue(*src) 等) 使用; atomic 成员需手写 (=default 不可拷贝)。
+    RefBase(const RefBase&) noexcept : RefCountedBase() {
+        refs.store(1, std::memory_order_relaxed);
+    }
     RefBase& operator=(const RefBase&) = delete;
     ~RefBase() = default;
 };
@@ -134,7 +144,9 @@ public:
     T& operator*() const noexcept { return *p_; }
     explicit operator bool() const noexcept { return p_ != nullptr; }
     bool operator!() const noexcept { return p_ == nullptr; }
-    int32_t use_count() const noexcept { return p_ ? p_->refs : 0; }
+    int32_t use_count() const noexcept {
+        return p_ ? p_->refs.load(std::memory_order_relaxed) : 0;
+    }
     void reset() noexcept { if (p_) { p_->release(); p_ = nullptr; } }
     template <class U> bool operator==(const Ref<U>& o) const noexcept { return p_ == o.get(); }
     template <class U> bool operator!=(const Ref<U>& o) const noexcept { return p_ != o.get(); }
@@ -728,16 +740,16 @@ struct BufferValue : RefBase<BufferValue> {
 inline void destroyValueObject(uint8_t t, RefCountedBase* p) noexcept {
     if (!p) return;
     switch (t) {
-    case VT_ARR:  if (--p->refs == 0) delete static_cast<ArrayValue*>(p);  break;
-    case VT_MAP:  if (--p->refs == 0) {
+    case VT_ARR:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<ArrayValue*>(p);  break;
+    case VT_MAP:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
                       if (g_mapDelTraceOn) mapDeleteTrace(p);
                       delete static_cast<MappingValue*>(p);
                   } break;
-    case VT_OBJ:  if (--p->refs == 0) delete static_cast<ObjectValue*>(p); break;
-    case VT_CLO:  if (--p->refs == 0) delete static_cast<ClosureValue*>(p); break;
-    case VT_LOOP: if (--p->refs == 0) delete static_cast<LoopCtrl*>(p);    break;
-    case VT_BUF:  if (--p->refs == 0) delete static_cast<BufferValue*>(p); break;
-    case VT_XREF: if (--p->refs == 0) delete static_cast<CrossVmRef*>(p);  break;
+    case VT_OBJ:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<ObjectValue*>(p); break;
+    case VT_CLO:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<ClosureValue*>(p); break;
+    case VT_LOOP: if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<LoopCtrl*>(p);    break;
+    case VT_BUF:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<BufferValue*>(p); break;
+    case VT_XREF: if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<CrossVmRef*>(p);  break;
     default: break;
     }
 }

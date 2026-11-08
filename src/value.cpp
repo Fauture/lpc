@@ -574,7 +574,7 @@ std::vector<std::pair<Value, Value>> MappingValue::items() const {
                   << " table.size=" << table.size()
                   << " nodes.size=" << nodes.size()
                   << " cnt=" << cnt
-                  << " (refs=" << refs << ")\n";
+                  << " (refs=" << refs.load(std::memory_order_relaxed) << ")\n";
         std::cerr.flush();
     }
     // vm_mappingIndices (0x809e688): buckets from tableSize DOWN TO 0,
