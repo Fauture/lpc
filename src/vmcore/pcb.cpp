@@ -48,6 +48,15 @@ std::string VmPcb::frameChainText(size_t maxFrames) const {
     for (auto it = frames.rbegin(); it != frames.rend() && n < maxFrames; ++it, ++n) {
         if (!out.empty()) out += " ";
         out += (it->fn ? it->fn->name : std::string("<ctx>"));
+        // 对象名 (短路径): 同名函数 (daemon()) 无法只靠 fn 名定位归属。
+        if (it->obj) {
+            const VmProgram* pr = it->obj->prog();
+            if (pr) {
+                const std::string& pn = pr->name();
+                size_t sl = pn.find_last_of('/');
+                out += "@" + (sl == std::string::npos ? pn : pn.substr(sl + 1));
+            }
+        }
     }
     return out;
 }

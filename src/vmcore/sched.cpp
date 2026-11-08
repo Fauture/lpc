@@ -42,6 +42,9 @@
 namespace lpc {
 namespace vmcore {
 
+// [mips] 全局指令计数 (定义见 vmcore.h 声明)
+std::atomic<uint64_t> g_vmInsnCount{0};
+
 // [性能] CTRACE 环境开关启动时缓存: wakeEvent/park 每次都 getenv 会在
 // boot 高频事件路径上线性扫描环境块+锁。
 static const bool g_ctraceOn = ::getenv("LPCVM_CTRACE") != nullptr;
@@ -133,18 +136,28 @@ struct Scheduler::Impl {
         // LPCVM_PARKDBG(热布防): 只记录停泊 >8ms 的唤醒——一键点化/羽化
         // 每件物品之间有 ~21ms/64ms 的静默空档且 CPU 空闲,需要看清链在
         // 等什么(kind/事件/时长)。探针关时仅 1 次原子读。
+        // [yuhua-timing] 硬编码诊断版 (dynProbeFlag 已退役): >1ms 的唤醒
+        // 全打 —— 羽化 135 跳 × 1.8ms 的帧间等待就是它们, 看每跳的
+        // kind/ev/entry 直接定位链在等什么。诊断完撤。
         {
-            static const std::atomic<bool>& pk = dynProbeFlag("LPCVM_PARKDBG");
-            if (pk.load(std::memory_order_relaxed) && p->parkAtMs) {
-                const int64_t dur = nowMs() - p->parkAtMs;
-                if (dur > 8)
-                    std::cerr << "[park-slow] t=" << nowMs() << "ms tid=" << p->tid
-                              << " dur=" << dur << "ms kind=" << p->cond.kind
-                              << " ev=" << p->cond.ename
-                              << " entry=" << p->entry
-                              << " frames=[" << p->frameChainText(4) << "]\n";
+            const int64_t dur = nowMs() - p->parkAtMs;
+            if (p->parkAtMs && dur > 1) {
+                // [late] kind=1 定时唤醒的迟到量: 实际唤醒 - 应唤醒。
+                // 正常应 <2ms; 大值 = 定时器丢失/调度饿死, 直接定位。
+                const int64_t late = (p->cond.kind == 1 && p->cond.wakeAtMs > 0)
+                                         ? nowMs() - p->cond.wakeAtMs : -1;
+                std::cerr << "[park-slow] t=" << nowMs() << "ms tid=" << p->tid
+                          << " dur=" << dur << "ms"
+                          << (late >= 0 ? " late=" + std::to_string(late) + "ms" : "")
+                          << " kind=" << p->cond.kind
+                          << " ev=" << p->cond.ename
+                          << " q=" << p->cond.qkey
+                          << " entry=" << p->entry
+                          << " frames=[" << p->frameChainText(4) << "]\n";
+                std::cerr.flush();
             }
         }
+        p->lastWakeMs = nowMs();   // [ran] 本轮执行时长 = 下次 park 时刻 - 此刻
         p->parkAtMs = 0;
         // 原版语义（vm_removeTimer）：事件唤醒时必须作废该 pcb 挂着的
         // "超时唤醒"定时器。kind=3/5/6 的 park 双注册 eventWaiters+timers——
@@ -523,6 +536,11 @@ void Scheduler::parkCurrent(const ResumeCond& cond) {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     p->cond = cond;
     p->parkAtMs = impl_->nowMs();   // PARKDBG: 停泊时长测量
+    // [ran] 本轮执行时长: 唤醒到再次 park。scansocketd 诊断用。
+    if (p->lastWakeMs && impl_->nowMs() - p->lastWakeMs > 2)
+        std::cerr << "[ran] t=" << p->parkAtMs << "ms tid=" << p->tid
+                  << " ran=" << (p->parkAtMs - p->lastWakeMs) << "ms"
+                  << " entry=" << p->entry << "\n";
     // Fresh park: clear stale bookkeeping; purge previous wait entries.
     p->eventWoken = false;
     p->timedEvent = false;
@@ -1432,7 +1450,12 @@ void Scheduler::run() {
                 if (waitMs > 0)
                     impl_->cv.wait_for(lk, std::chrono::milliseconds(waitMs));
             } else if (next < 0) {
-                impl_->cv.wait(lk);
+                // [fix-idle-freeze] 无超时 wait 依赖"必然有人 notify" ——
+                // 唤醒源一旦丢失 (socket 表清空/账目异常) 就是全局冻结:
+                // gs 实测 schedIters 60s +0, 全部链饿死 ("服务端炸了")。
+                // 封顶 200ms: 空转成本可忽略 (一次队列/定时器检查), 换
+                // 调度器永不停摆。
+                impl_->cv.wait_for(lk, std::chrono::milliseconds(200));
             } else {
                 const int64_t now = impl_->nowMs();
                 if (next > now)

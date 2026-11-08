@@ -53,6 +53,12 @@ struct StackRef {
     lpc::Ref<ArrayValue> arr;          // member ref container
     lpc::Ref<MappingValue> map;
     Value key;
+
+    // [perf] 引用槽在热路径上高频生灭 (push_vptr 族指令 / m[k]=v / 传引用
+    // 参数) —— 全局 malloc/free 曾占调度器执行样本的一半 (stackdump 实锤
+    // Interp::makeSlotRef -> operator new)。走线程本地自由链池。
+    static void* operator new(std::size_t) { return VmPool<StackRef>::pop(); }
+    static void operator delete(void* p) noexcept { VmPool<StackRef>::push(p); }
 };
 
 struct StackItem {
@@ -243,6 +249,7 @@ struct VmPcb : std::enable_shared_from_this<VmPcb> {
     bool eventWoken = false;         // event fired before its timeout timer
     bool timedEvent = false;         // kind-3 wait with a timeout
     int64_t parkAtMs = 0;            // park 时刻(msSinceStart)，PARKDBG 测停泊时长
+    int64_t lastWakeMs = 0;          // 上次唤醒时刻 —— park 时 ran=parkAtMs-lastWakeMs 即本轮执行时长
     std::shared_ptr<std::atomic<bool>> parkTimerCancelled;
     std::shared_ptr<void> timerEntry;   // set_timer cancellation token
 

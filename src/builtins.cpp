@@ -5529,6 +5529,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // value in the vm_saveValueAscii format.  On failure the original
         // raises (caught by xdbc_wait_command's try/catch); returning the
         // input lets the caller's is_mapping check fail the same way.
+        // [yuhua-timing] 每次调用计时累计 (每 200 次打均值) —— 羽化每帧
+        // restore+send ≈ 2ms 的归因实测。诊断完撤。
+        auto rvT0 = std::chrono::steady_clock::now();
+        Value rvOut = [&]() -> Value {
         if (!args.empty() && args[0].index() == 4) {
             Value out;
             const std::string& rvs = lpc::vget<SharedString>(args[0]).str();
@@ -5575,6 +5579,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (ok) return out;
         }
         return args.empty() ? make_int(0) : args[0];
+        }();
+        {
+            static std::atomic<int64_t> rvN{0}, rvNs{0};
+            const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - rvT0).count();
+            const int64_t n = rvN.fetch_add(1) + 1;
+            rvNs.fetch_add(ns);
+            if (n % 200 == 0)
+                std::cerr << "[rv-cost] n=" << n << " avg="
+                          << rvNs.load() / n / 1000 << "us last=" << ns / 1000
+                          << "us\n";
+        }
+        return rvOut;
     }
     if (eid == CID("save_buffer")) {
         // vm_f_save_buffer (0x80dafe4) -> vm_saveValueToBuffer; we keep the

@@ -25,6 +25,10 @@ namespace vmcore {
 // 当前 PCB。驱动在调度线程上执行 LPC 时必有当前 PCB; 纯 C++ 上下文
 // (无 LPC 在跑) 返回 null。thread_local: 各服务线程各持各的当前进程。
 VmPcb* currentPcb();
+
+// [mips] 全局指令计数 (诊断): Interp::loop 每指令 +1, [hb] 心跳换算
+// 指令吞吐。VM 执行速度是否达到原版水平的直接标尺。
+extern std::atomic<uint64_t> g_vmInsnCount;
 class VmPcbSetter {
 public:
     explicit VmPcbSetter(VmPcb* pcb);

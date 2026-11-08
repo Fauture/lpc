@@ -811,6 +811,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             }
         }
         opTraceRecord(pcb->lastIp, in.op, pcb->stack.size(), pcb->frames.size());
+        g_vmInsnCount.fetch_add(1, std::memory_order_relaxed);   // [mips]
         // ---- time slice (master process; 原版 runTicks) ----
         if (pcb->yieldEvery > 0 && --pcb->yieldCountdown <= 0) {
             pcb->yieldCountdown = pcb->yieldEvery;

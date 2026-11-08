@@ -639,12 +639,34 @@ std::string masterRegistryKey(const std::string& searchRoot) {
 }
 vmcore::VmObject* findMasterVmObject() {
     auto& reg = vmcore::Registry::instance();
-    if (reg.findByName("<main>")) return reg.findByName("<main>");
+    // [perf] 快路径旧代码 findByName("<main>") 对 "/gs/<main>" 这类带
+    // searchRoot 前缀的键永远 miss → 每次调用都 allObjects() 全量扫
+    // (registry 锁 + 全对象向量分配 + 每对象 string::find), 而本函数在
+    // 每个玩家包 (dispatchCommand/applyLpc) 与每次 RPC 回包路径上都要
+    // 走 —— stackdump 实锤 Socket 线程停在 allObjects。缓存解析结果:
+    // 键唯一, 用注册表当前对象为准 (master 若被重建也自动跟随)。
+    static vmcore::VmObject* cached = nullptr;
+    static std::string cachedKey;
+    if (cached && !cachedKey.empty()) {
+        vmcore::VmObject* cur = reg.findByName(cachedKey);
+        if (cur) { cached = cur; return cur; }
+        cached = nullptr;   // 键已消失: 走重新解析
+    }
+    if (reg.findByName("<main>")) {
+        cached = reg.findByName("<main>");
+        cachedKey = cached->key();
+        return cached;
+    }
     for (vmcore::VmObject* o : reg.allObjects()) {
-        if (o->key().find("<main>") != std::string::npos) return o;
+        if (o->key().find("<main>") != std::string::npos) {
+            cached = o;
+            cachedKey = o->key();
+            return o;
+        }
     }
     return nullptr;
 }
+
 }  // namespace
 
 int runOriginalObject(const OriginalObject& obj, std::ostream& out,

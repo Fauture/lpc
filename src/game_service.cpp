@@ -33,6 +33,7 @@
 #include "original_vm.h"
 #include "pkt_protocol.h"
 #include "value.h"
+#include "vmcore/vmcore.h"   // [mips] g_vmInsnCount
 #include "value.h"
 
 namespace lpc {
@@ -88,15 +89,19 @@ static bool takePacket(int cno, std::string& out) {
 }
 
 static void waitFlowSettled(int cno) {
-    // Bounded (~1s per packet) and EVENT DRIVEN: lpc::waitClientSendIdle blocks
-    // until this connection's send flow has been quiet for 50ms (the send path
-    // notifies a condition variable), instead of polling every 5ms.
+    // Bounded and EVENT DRIVEN: lpc::waitClientSendIdle blocks until this
+    // connection's send flow has been quiet, the send path notifies a
+    // condition variable (no polling).
+    // [perf-gate] 静默窗 50ms -> 2ms: 50ms 是当年建角 bug 的补丁残留 ——
+    // 其根因 (loader 丢 PROG_VARS) 已修。羽化/操作类多包往返每轮回包后
+    // 都吃满窗 (实测 300ms/次的主体即 5 包 x 50ms), 玩家操作感知卡顿的
+    // 头号来源; 2ms 保留重入保护的事件结构, 原版本无此 gate。
     for (int i = 0; i < 200; ++i) {
         if (!lpc::serviceQueueIdle()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
-        if (lpc::waitClientSendIdle(cno, 50, 1000)) break;
+        if (lpc::waitClientSendIdle(cno, 2, 1000)) break;
     }
 }
 
@@ -161,12 +166,36 @@ static void sendBufToSocket(int clientNo, int fd, const std::string& buf) {
         return;
     }
     int sent = 0;
+    // [fix-send-block] WSAEWOULDBLOCK 重试上限: 客户端停收 (卡死/半关) 后
+    // 发送缓冲塞满, 无限 Sleep(1) 重试会把调用线程 (调度器 flush!) 永久
+    // 拖死 —— schedIters 冻结、全部链饿死。上限 2s; 超限把剩余数据回塞
+    // 该连接的聚合缓冲, 由后续 flush/静默窗自然重试。
+    int busySpins = 0;
     while (sent < static_cast<int>(buf.size())) {
         int n = send(static_cast<SOCKET>(fd), buf.data() + sent,
                      static_cast<int>(buf.size()) - sent, 0);
         if (n <= 0) {
             int err = WSAGetLastError();
             if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+                if (++busySpins > 2000) {
+                    {
+                        std::lock_guard<std::mutex> lk(gameMutex());
+                        auto it = gameClients().find(clientNo);
+                        if (it != gameClients().end()) {
+                            std::string rest(buf.data() + sent,
+                                             buf.size() - sent);
+                            it->second.outBuf = std::move(rest) +
+                                                it->second.outBuf;
+                            it->second.outLastMs = lpc::msSinceStart();
+                        }
+                    }
+                    std::cerr << "[send-stall] cno=" << clientNo
+                              << " fd=" << fd << " sent=" << sent << "/"
+                              << buf.size() << " (client not draining) t="
+                              << lpc::msSinceStart() << "ms\n";
+                    std::cerr.flush();
+                    return;
+                }
                 Sleep(1);
                 continue;
             }
@@ -177,6 +206,7 @@ static void sendBufToSocket(int clientNo, int fd, const std::string& buf) {
             return;
         }
         sent += n;
+        busySpins = 0;
     }
 }
 
@@ -12475,6 +12505,18 @@ void filedWatchdogSweep() {
 // frame is framed for the wire).  Without this a service that only ever ANSWERS
 // - the dba - has nothing registered, so every reply it sent looked like
 // "REPLY WITH NO PENDING REQUEST".
+// [yuhua-timing] 端到端包计时总开关: 默认关, LPCVM_YUHUA=1 (启动时读取,
+// 进程内缓存) 才开 —— 每包一行的 stderr 会自己拖慢收发路径, 诊断时用。
+static bool yuhuaTraceOn() {
+    static const bool on = [] {
+        char b[8] = {};
+        size_t n = 0;
+        getenv_s(&n, b, sizeof(b), "LPCVM_YUHUA");
+        return n > 0 && b[0] == '1';
+    }();
+    return on;
+}
+
 void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t len) {
     // ---- per-connection command gate (public-driver rule) -------------------
     // LDMud's backend loop hands the interpreter the next input line of an
@@ -12533,13 +12575,14 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     }
     // LPCVM_RECV2: one line per inbound command (no body) - enough to see which
     // client request the server never answers.
-    {
-        static const std::atomic<bool>& r2 = dynProbeFlag("LPCVM_RECV2");
-        if (r2.load(std::memory_order_relaxed)) {
-            std::cerr << "[rx] t=" << lpc::msSinceStart() << "ms cno=" << cl.clientNo
-                      << " cmd=0x" << std::hex << cmdNo << std::dec << " len=" << len << "\n";
-            std::cerr.flush();
-        }
+    // [yuhua-timing] 端到端计时: 默认关 (每次回包一行会自己拖慢发送路径),
+    // LPCVM_YUHUA=1 (启动时缓存) 才开 —— 诊断时用, 平时零成本。
+    if (yuhuaTraceOn()) {
+        std::cerr << "[yuhua-rx] t=" << lpc::msSinceStart() << "ms cno="
+                  << cl.clientNo << " attrib=" << cl.attrib
+                  << " cmd=0x" << std::hex << cmdNo << std::dec
+                  << " len=" << len << "\n";
+        std::cerr.flush();
     }
     // LPCVM_RECV: log EVERY inbound packet (cmd + length + head bytes + wall
     // clock).  Paired with the [send] audit from builtins.cpp this shows exactly
@@ -13887,7 +13930,9 @@ int startGameService(int port) {
                           << " filedOut=" << nFOut << "(+" << (nFOut - fOut) << ")"
                           << " schedIters=" << nSi << "(+" << (nSi - si) << ")"
                           << " sendFail=" << nSf << "(+" << (nSf - sf) << ")"
-                          << " clients=" << clients << "\n";
+                          << " clients=" << clients
+                          << " insns=" << lpc::vmcore::g_vmInsnCount.load(
+                                 std::memory_order_relaxed) << "\n";
                 std::cerr.flush();
                 pIn = nIn; pOut = nOut; fIn = nFIn; fOut = nFOut; si = nSi; sf = nSf;
             }
@@ -14179,6 +14224,23 @@ void gameServiceSetAttrib(int clientNo, uint32_t attribOrMask, int maxBodySize, 
 }
 
 bool gameServiceSend(int clientNo, const std::string& data) {
+    // [yuhua-timing] 每帧发送全链路计时 (每 200 帧打均值) —— 与
+    // [rv-cost] 对照归因每帧 2ms 在 LPC 侧还是发送侧。诊断完撤。
+    auto txT0 = std::chrono::steady_clock::now();
+    struct TxStat {
+        ~TxStat() {
+            static std::atomic<int64_t> n{0}, ns{0};
+            const int64_t d = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            const int64_t c = n.fetch_add(1) + 1;
+            ns.fetch_add(d);
+            if (c % 200 == 0)
+                std::cerr << "[tx-cost] n=" << c << " avg="
+                          << ns.load() / c / 1000 << "us last=" << d / 1000
+                          << "us\n";
+        }
+        std::chrono::steady_clock::time_point t0;
+    } txStat{txT0};
     // vm_sendFullPacket: write the complete wire frame to the client socket.
     // A partial write counts as failure (vm_writeDataToSocket returning -3).
     liveness().pktsOut.fetch_add(1, std::memory_order_relaxed);
@@ -14207,7 +14269,6 @@ bool gameServiceSend(int clientNo, const std::string& data) {
         }
     }
     int fd = -1;
-    bool buffered = false;
     std::string buf;
     {
         std::lock_guard<std::mutex> lk(gameMutex());
@@ -14223,24 +14284,24 @@ bool gameServiceSend(int clientNo, const std::string& data) {
             if (LPCVM_GETENV("LPCVM_TRACE")) std::cerr << "[send] cno=" << clientNo << " not-found\n";
             return false;
         }
-        // 聚合发送：帧一律进 outBuf（任何线程）。调度器空闲且缓冲静默
-        // （≥30ms 无新帧）时统一刷出 = 原版"命令突发结束才一次 write"。
-        // 抓包实证：一键点化/羽化每件物品间有 15-20ms 停泊空隙，曾因
-        // "首帧年龄 ≥50ms 立即刷"被拆成 4500B×6；原版是 1-2 个大包。
-        // 安全阀只剩 ≥16KB（防止调度器长期繁忙时无限积压）。
+        // [fix-immediate-send] 对齐原版逐包即发 (用户原版 Wireshark 实证:
+        // 羽化周期服务端 9 帧密集发送, 间隔 5-10ms, 客户端不卡)。此前的
+        // "聚合发送" (帧进 outBuf, 等调度器空闲 + ≥30ms 静默才刷) 给每帧
+        // 回包强加 30-50ms 粒度 —— 原版羽化周期 175ms vs 我们 270ms 的
+        // 差额主体。outBuf 机制保留给 sendBufToSocket 的 stall 回塞。
         GameClient& c = it->second;
         c.outBuf += data;
-        c.outLastMs = static_cast<uint64_t>(lpc::msSinceStart());
-        const bool big = c.outBuf.size() >= 16 * 1024;
-        if (big) {
-            buf.swap(c.outBuf);
-            c.outLastMs = 0;
-            fd = c.fd;
-        } else {
-            buffered = true;
-        }
+        buf.swap(c.outBuf);
+        c.outLastMs = 0;
+        fd = c.fd;
     }
-    if (!buffered) sendBufToSocket(clientNo, fd, buf);
+    // [yuhua-timing] 每个客户端回包一行 (与 [yuhua-rx] 同一时钟)。默认关。
+    if (yuhuaTraceOn()) {
+        std::cerr << "[yuhua-tx] t=" << lpc::msSinceStart() << "ms cno="
+                  << clientNo << " wire=" << data.size() << "\n";
+        std::cerr.flush();
+    }
+    sendBufToSocket(clientNo, fd, buf);
     // LPCVM_CLIENTDBG: the only exit at which a CLIENT-bound frame becomes
     // visible.  Without it there is no record of what the server told a stuck
     // client - which is exactly the gap that made a "正在连接中"/通讯故障 repro
@@ -14287,8 +14348,7 @@ bool gameServiceSend(int clientNo, const std::string& data) {
     }
     if (LPCVM_GETENV("LPCVM_TRACE"))
         std::cerr << "[send] cno=" << clientNo << " fd=" << fd
-                  << (buffered ? " buffered=" : " sent=")
-                  << (buffered ? data.size() : buf.size()) << "\n";
+                  << " sent=" << buf.size() << "\n";
     return true;
 }
 
