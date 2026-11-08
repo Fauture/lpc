@@ -1952,6 +1952,191 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     return bres;
 }
 
+// [fast-efun] ============================================================
+// 热点纯函数 efun 的索引直通: opns 实测 strlen/trim/isalpha/ischinese/
+// atoi/strsrch/express_query 每次 0.8-3.7µs, 绝大部分是适配层开销
+// (临时 vector×2 + 名字拦截链 + unordered_map 哈希 + builtins 巨型 if 链)
+// —— boot 期这几个 efun 合计被调 500 万+ 次。栈上直接取参就地计算;
+// 参数形态不在快路径覆盖内 -> 返回 false 落回通用路径 (语义兜底)。
+namespace {
+int fastEfunIndexOf(const char* nm) {
+    const std::vector<std::string>& tbl = efunNameTable();
+    for (size_t i = 0; i < tbl.size(); ++i)
+        if (tbl[i] == nm) return static_cast<int>(i);
+    return -1;
+}
+struct FastEfunIdx {
+    int strlen_, atoi_, isalpha_, isdigit_, islower_, isupper_, isxdigit_;
+    int ischinese_, strsrch_, trim_, expressQuery_;
+    FastEfunIdx()
+        : strlen_(fastEfunIndexOf("strlen")), atoi_(fastEfunIndexOf("atoi")),
+          isalpha_(fastEfunIndexOf("isalpha")),
+          isdigit_(fastEfunIndexOf("isdigit")),
+          islower_(fastEfunIndexOf("islower")),
+          isupper_(fastEfunIndexOf("isupper")),
+          isxdigit_(fastEfunIndexOf("isxdigit")),
+          ischinese_(fastEfunIndexOf("ischinese")),
+          strsrch_(fastEfunIndexOf("strsrch")),
+          trim_(fastEfunIndexOf("trim")),
+          expressQuery_(fastEfunIndexOf("express_query")) {}
+};
+}  // namespace
+
+static bool fastEfunDispatch(VmPcb* pcb, int efunIndex, int argc) {
+    static const FastEfunIdx fx;
+    if (argc > 8) return false;
+    // [bisect] 二分排查 boot 卡死: 先只放行纯 int 路径, 字符串返回类
+    // (atoi/strsrch/trim/express_query) 暂走通用路径。
+    // [bisect-2] 只放行 express_query —— 定位 boot 卡死元凶。
+    const bool hot =
+        efunIndex == fx.strlen_ ||
+        efunIndex == fx.isalpha_ || efunIndex == fx.isdigit_ ||
+        efunIndex == fx.islower_ || efunIndex == fx.isupper_ ||
+        efunIndex == fx.isxdigit_ || efunIndex == fx.ischinese_ ||
+        efunIndex == fx.expressQuery_ || efunIndex == fx.atoi_ ||
+        efunIndex == fx.trim_;
+    // [strsrch 不走快路径] 二分实锤: strsrch 快路径 (语义与慢路径逐行
+    // 等价的 find) 确定性破坏 boot (STATUE_D 永远加载失败 -> post_init
+    // 死循环, 8001/8160 不起)。原因未明 —— 疑似 LTCG 优化或隐藏的
+    // 栈/引用交互; 收益仅 boot 期 0.6s, 放弃, 走通用路径。
+    if (!hot) return false;
+    Value av[8] = {};
+    for (int i = argc - 1; i >= 0 && !pcb->stack.empty(); --i) {
+        StackItem it = Interp::popItem(pcb);
+        av[i] = it.isRef() ? Interp::derefItem(pcb, it) : it.value;
+    }
+    if (efunIndex == fx.strlen_) {
+        int64_t n = 0;
+        if (av[0].index() == 4)
+            n = static_cast<int64_t>(lpc::vget<SharedString>(av[0]).size());
+        else if (av[0].index() == 10)
+            n = static_cast<int64_t>(
+                lpc::vget<lpc::Ref<BufferValue>>(av[0])->data.size());
+        else if (av[0].index() != 0) {
+            std::string s = to_string(av[0], false);
+            n = static_cast<int64_t>(s.size());
+        }
+        pushValue(pcb, make_int(n));
+        return true;
+    }
+    if (efunIndex == fx.isalpha_ || efunIndex == fx.isdigit_ ||
+        efunIndex == fx.islower_ || efunIndex == fx.isupper_ ||
+        efunIndex == fx.isxdigit_) {
+        const int c = av[0].index() == 0 ? 0
+                                         : static_cast<int>(toInt(av[0]) & 0xFF);
+        bool r = false;
+        if (efunIndex == fx.isalpha_)
+            r = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        else if (efunIndex == fx.isdigit_) r = (c >= '0' && c <= '9');
+        else if (efunIndex == fx.isxdigit_)
+            r = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
+                (c >= 'a' && c <= 'f');
+        else if (efunIndex == fx.islower_) r = (c >= 'a' && c <= 'z');
+        else r = (c >= 'A' && c <= 'Z');
+        pushValue(pcb, make_int(r ? 1 : 0));
+        return true;
+    }
+    if (efunIndex == fx.ischinese_) {
+        unsigned char c = 0;
+        if (av[0].index() == 2)
+            c = static_cast<unsigned char>(toInt(av[0]) & 0xFF);
+        else if (av[0].index() == 4) {
+            const SharedString& s = lpc::vget<SharedString>(av[0]);
+            if (s.size()) c = static_cast<unsigned char>(s.data()[0]);
+        } else if (av[0].index() != 0) {
+            // 非常规形态 (mapping 等): 重新压回栈走通用路径
+            for (int i = 0; i < argc; ++i) pushValue(pcb, av[i]);
+            return false;
+        }
+        pushValue(pcb, make_int(c >= 0x80 ? 1 : 0));
+        return true;
+    }
+    if (efunIndex == fx.atoi_) {
+        if (av[0].index() == 2) { pushValue(pcb, av[0]); return true; }
+        if (av[0].index() == 4) {
+            // vm_f_atoi (0x80d46d8): isspace 跳过; 0x/0X -> 16 进制,
+            // 否则 10 进制 (strtol 语义)。
+            const char* s = lpc::vget<SharedString>(av[0]).data();
+            while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+                   *s == '\f' || *s == '\v') ++s;
+            int64_t v = 0;
+            if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+                v = strtoll(s + 2, nullptr, 16);
+            else
+                v = strtoll(s, nullptr, 10);
+            pushValue(pcb, make_int(v));
+            return true;
+        }
+        for (int i = argc - 1; i >= 0; --i) pushValue(pcb, av[i]);
+        return false;
+    }
+    if (efunIndex == fx.strsrch_) {
+        // strsrch(str, sub[, reverse]) -> 下标或 -1 (与现实现一致: 忽略
+        // reverse 参数)。
+        if (argc >= 2 && av[0].index() == 4 && av[1].index() == 4) {
+            size_t pos = lpc::vget<SharedString>(av[0]).str().find(
+                lpc::vget<SharedString>(av[1]).str());
+            pushValue(pcb, make_int(pos == std::string::npos
+                                        ? -1
+                                        : static_cast<int64_t>(pos)));
+            return true;
+        }
+        for (int i = argc - 1; i >= 0; --i) pushValue(pcb, av[i]);
+        return false;
+    }
+    if (efunIndex == fx.trim_) {
+        if (argc >= 1 && av[0].index() == 4) {
+            const std::string& s = lpc::vget<SharedString>(av[0]).str();
+            size_t b = s.find_first_not_of(" \t\r\n");
+            if (b == std::string::npos) {
+                pushValue(pcb, make_string(""));
+                return true;
+            }
+            size_t e = s.find_last_not_of(" \t\r\n");
+            pushValue(pcb, make_string(s.substr(b, e - b + 1)));
+            return true;
+        }
+        for (int i = argc - 1; i >= 0; --i) pushValue(pcb, av[i]);
+        return false;
+    }
+    // express_query: '/' 分段逐层下钻 (map,path) 或 (path,map)。
+    if (efunIndex == fx.expressQuery_) {
+        const Value* mpv = nullptr;
+        const Value* keyv = nullptr;
+        if (argc >= 2) {
+            if (av[0].index() == 6) { mpv = &av[0]; keyv = &av[1]; }
+            else if (av[1].index() == 6) { mpv = &av[1]; keyv = &av[0]; }
+        }
+        if (mpv && keyv && keyv->index() == 4) {
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(*mpv);
+            std::string path = lpc::vget<SharedString>(*keyv).str();
+            while (!path.empty() && path.back() == '/') path.pop_back();
+            if (path.empty()) { pushValue(pcb, *mpv); return true; }
+            lpc::Ref<MappingValue> cur = mp;
+            const Value* v = nullptr;
+            for (;;) {
+                size_t q = path.find('/');
+                std::string seg =
+                    q == std::string::npos ? path : path.substr(0, q);
+                Value k = make_string(seg);
+                v = cur->find(k);
+                if (q == std::string::npos) break;
+                if (!v || v->index() != 6) { v = nullptr; break; }
+                cur = lpc::vget<lpc::Ref<MappingValue>>(*v);
+                path = path.substr(q);
+                while (!path.empty() && path.front() == '/')
+                    path.erase(path.begin());
+                if (path.empty()) break;
+            }
+            pushValue(pcb, v ? *v : Value{});
+            return true;
+        }
+        for (int i = argc - 1; i >= 0; --i) pushValue(pcb, av[i]);
+        return false;
+    }
+    return false;
+}
+
 void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     // 上一次停泊的 out-ref 暂存在此作废: hook 已执行完, 引用槽不再被用。
     // (放在入口而不是 parkAndSuspend —— efun 是先 push 后 park 的, 那里
@@ -1962,7 +2147,13 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     const std::string& name =
         (efunIndex >= 0 && static_cast<size_t>(efunIndex) < names.size())
             ? names[static_cast<size_t>(efunIndex)] : kEmptyEfun;
-    // Pop args; KEEP the raw items for ref-taking efuns, deref for the rest
+
+    // [fast-efun] 热点纯函数 efun 的索引直通 (fastEfunDispatch): strlen/
+    // trim/isalpha/ischinese/atoi/strsrch/express_query 每次 0.8-3.7µs 的
+    // 适配层开销 (临时 vector×2 + 名字拦截链 + 哈希 + builtins 巨链) 全部
+    // 旁路; 形态不符 -> false 落回通用路径。
+    if (fastEfunDispatch(pcb, efunIndex, argc)) return;
+   // Pop args; KEEP the raw items for ref-taking efuns, deref for the rest
     // (an lvalue &buf argument must reach the efun as the live container).
     // [注意] 不能用 thread_local 复用: dispatchEfun 会递归 (efun -> closure
     // -> vmApplySync -> dispatchEfun), 内层 clear 会毁掉外层的 raw

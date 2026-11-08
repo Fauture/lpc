@@ -470,6 +470,11 @@ static const bool g_opTraceOn = getenv("LPCVM_OPTRACE") != nullptr;
 // [性能] CTRACE/LPCVM 环境开关一律启动时缓存 —— construct 链等热路径上
 // 每条指令 getenv 会线性扫描环境块并加锁(采样实测占 VM 线程 100% 时间)。
 static const bool g_ctraceOn = getenv("LPCVM_CTRACE") != nullptr;
+
+// [opns] OPNS 总开关 (LPCVM_OPNS=1, 启动时缓存) + op6 按 efun 的耗时账本
+static const bool g_opnsOn = getenv("LPCVM_OPNS") != nullptr;
+static std::atomic<uint64_t> g_op6EfunNs[512];
+static std::atomic<uint64_t> g_op6EfunCnt[512];
 static inline void opTraceRecord(uint32_t ip, uint8_t op, size_t stackSize,
                                  size_t frames) {
     if (!g_opTraceOn) return;
@@ -746,14 +751,12 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 gapPrevIp = pcb->ip - 1;
             }
         }
-        // [opns] 按 op 的执行耗时直方图 (touch _probe_on/LPCVM_OPNS 热布防)。
-        // 上一条指令的耗时归因给它自己; 每 4M 条已计指令 dump top10 +
-        // 总速率。 Armed 时每指令一次 chrono(~25ns)。用于定位"每指令
-        // ~2.3µs、比原版慢 3 个量级"的固定开销落在哪类 op。
+        // [opns] 按 op 的执行耗时直方图 (LPCVM_OPNS=1, 启动时缓存 ——
+        // dynProbeFlag 已退役)。上一条指令的耗时归因给它自己; 每 1M 条
+        // 已计指令 dump top8 + 总速率。 Armed 时每指令一次 chrono(~25ns)。
         {
-            static const std::atomic<bool>& opnsOn =
-                lpc::dynProbeFlag("LPCVM_OPNS");
-            if (opnsOn.load(std::memory_order_relaxed)) {
+            static const bool opnsOn = g_opnsOn;
+            if (opnsOn) {
                 using clk = std::chrono::steady_clock;
                 static thread_local clk::time_point opnsT0{};
                 static thread_local int opnsLast = -1;
@@ -802,6 +805,40 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                       << " avgNs="
                                       << (wCnt ? bestNs / wCnt : 0)
                                       << "\n";
+                        }
+                        // [opns-efun] top8 efun (读后清, 同窗口口径)
+                        {
+                            const std::vector<std::string>& et =
+                                efunNameTable();
+                            for (int r = 0; r < 8; ++r) {
+                                int best = -1;
+                                uint64_t bestNs = 0;
+                                for (int i = 0; i < 512; ++i)
+                                    if (g_op6EfunNs[i].load(
+                                            std::memory_order_relaxed) >
+                                        bestNs) {
+                                        bestNs = g_op6EfunNs[i].load(
+                                            std::memory_order_relaxed);
+                                        best = i;
+                                    }
+                                if (best < 0 || bestNs == 0) break;
+                                const uint64_t wCnt =
+                                    g_op6EfunCnt[best].load(
+                                        std::memory_order_relaxed);
+                                g_op6EfunNs[best].store(
+                                    0, std::memory_order_relaxed);
+                                g_op6EfunCnt[best].store(
+                                    0, std::memory_order_relaxed);
+                                std::cerr << "[opns-efun] " << best << " ("
+                                          << (best < static_cast<int>(et.size())
+                                                  ? et[static_cast<size_t>(best)]
+                                                  : "?")
+                                          << ") cnt=" << wCnt
+                                          << " totalMs=" << bestNs / 1000000
+                                          << " avgNs="
+                                          << (wCnt ? bestNs / wCnt : 0)
+                                          << "\n";
+                            }
                         }
                         std::cerr.flush();
                     }
@@ -1784,7 +1821,21 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         }
                     }
                 }
-                dispatchEfun(pcb, efun, argc);   // pushes result (void-aware)
+                // [opns-efun] op6 按 efun 细分计时 —— 找最贵的 efun。
+                if (g_opnsOn) {
+                    using clk6 = std::chrono::steady_clock;
+                    auto t6 = clk6::now();
+                    dispatchEfun(pcb, efun, argc);   // pushes result (void-aware)
+                    auto ns6 = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                   clk6::now() - t6).count();
+                    if (efun >= 0 && efun < 512) {
+                        g_op6EfunNs[efun].fetch_add(static_cast<uint64_t>(ns6),
+                                                    std::memory_order_relaxed);
+                        g_op6EfunCnt[efun].fetch_add(1, std::memory_order_relaxed);
+                    }
+                } else {
+                    dispatchEfun(pcb, efun, argc);   // pushes result (void-aware)
+                }
                 if (balWatch) {
                     int d = static_cast<int>(pcb->stack.size()) - bal0;
                     const std::vector<std::string>& et6b = efunNameTable();
