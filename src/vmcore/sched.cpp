@@ -953,6 +953,9 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                     result = dispatchEfunByName(p.get(), cl->functionName,
                                                 cl->boundArgs);
                 }
+                // [no-throw park] daemon 循环体内的阻塞 efun (sleep 等):
+                // 浅层 throw 交付 park, resume 后重入同一循环。
+                if (p->parkReq) throw SuspendSignal{};
                 vmchainEnd(cno, chainKey, p.get(), cl->functionName, true);
                 p->state = VmPcb::State::Done;
                 p->cond.kind = 0;
@@ -971,8 +974,11 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                 if (p->constructStack.empty())
                     p->constructStack.push_back(p->construct);
                 vmStartInlineConstruction(p.get(), p->construct);
+                // [no-throw park] 构造步骤内的阻塞 efun: 浅层交付
+                if (p->parkReq) throw SuspendSignal{};
                 if (p->construct && !p->construct->finished)
                     Interp::run(p.get());   // park escapes / whole chain done
+                if (p->parkReq) throw SuspendSignal{};   // [no-throw park]
                 if (p->construct && !p->construct->finished) {
                     // Returned without a SuspendSignal (no [park] printed):
                     // the chain ended while the plan is STILL unfinished —
@@ -1029,6 +1035,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
             // no driver loop here.  vmResume runs to the next chain end.
             loopWatchDump("resume", p.get());
             p->cond.kind = 0;   // no longer parked; guards see a clean pcb
+            p->parkReq = false;   // [no-throw park] resume 时清残留 (防死循环 park)
             if (vmcore::traceOn()) {
                 std::cerr << "[resume] tid=" << p->tid
                           << " slice=" << (p->sliceYield ? 1 : 0)
@@ -1046,8 +1053,14 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                     auto hook = std::move(p->resumeHook);
                     p->resumeHook = nullptr;
                     hook();
+                    // [no-throw park] 恢复 hook 请求重 park (forever-wait
+                    // 事件未就绪): 浅层 throw 交付, 仅 2-3 帧展开。
+                    if (p->parkReq) throw SuspendSignal{};
                 }
                 result = vmResume(p.get(), p->resumeValue);
+                // [no-throw park] loop 在指令边界切出 (常见 park 路径,
+                // 零深层展开): 浅层 throw 交给下方 catch 统一 park。
+                if (p->parkReq) throw SuspendSignal{};
             }
         }
         // Chain finished normally.
@@ -1081,6 +1094,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
     } catch (const SuspendSignal&) {
         // Blocking efun: park the CURRENT process with ITS cond (never a
         // shared slot — two processes never share a PCB).
+        p->parkReq = false;   // [no-throw park] 消费标志
         p->state = VmPcb::State::Parked;
         chainExit.parked = true;
         loopWatchDump("park", p.get());

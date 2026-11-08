@@ -111,7 +111,7 @@ static void parkAndSuspend(VmPcb* pcb, const ResumeCond& cond,
     // used to wipe the installed hook — the parked process then resumed
     // with nobody to write through its by-ref out slots.
     if (hook) pcb->resumeHook = std::move(hook);
-    throw SuspendSignal{};
+    pcb->parkReq = true;   // [no-throw park] loop() 顶部切出, runProcess 浅层交付
 }
 
 // ---------------------------------------------------------------------------
@@ -724,7 +724,7 @@ static void parkOnEvent(VmPcb* pcb, const std::string& ename, const Value& eref,
         }
         if (forever) {
             parkOnEvent(pcb, ename, eref, mask, secs);   // still waiting
-            throw SuspendSignal{};
+            return;   // [no-throw] parkReq 已置位; runProcess 浅层交付
         }
         pcb->resumeValue = make_int(rc == -101 ? -101 : -501);
     };
@@ -778,6 +778,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         cond.wakeAtMs = static_cast<int64_t>(wakeMs);
         parkAndSuspend(pcb, cond, nullptr, make_int(1));
+        return make_int(1);   // [no-throw park] 已置位; 勿落入后续 name 检查
     }
     if (name == "wait_event") {
         // vm_f_wait_event (0x80f097c): wait_event(name, mask, ref, timeout).
@@ -815,7 +816,9 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (secs == 0.0) return make_int(-501);
         lpc::flowProbePark(ename.c_str(), frameFnName(pcb).c_str());
         parkOnEvent(pcb, ename, eref, mask, secs);
-    }
+        return make_int(0);   // [no-throw park] 已置位; 勿落入后续检查/tail
+    }                        // (原设计靠 throw 跳出 —— 掉进 builtins 的
+                             //  wait_event 内联 cv::wait 会冻死调度器)
     if (name == "raise_event") {
         // vm_f_raise_event (0x80f07b8): OR the mask into the driver's event
         // store, then wake parked processes whose wait mask intersects.
@@ -848,6 +851,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         cond.kind = 2;
         cond.qkey = "q:" + std::to_string(qid);
         parkAndSuspend(pcb, cond, nullptr, make_int(-402));
+        return make_int(-402);   // [no-throw park]
     }
     if (name == "send_to_queue") {
         // vm_f_send_to_queue (0x80f2d94): enqueue + wake a parked receiver.
@@ -904,6 +908,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             pcb->resumeValue = make_int(xdbcAccept(fd));
         };
         parkAndSuspend(pcb, cond, nullptr, make_int(-1));
+        return make_int(-1);   // [no-throw park]
     }
     if (name == "connect") {
         // vm_f_connect (0x80e83b4): NON-BLOCKING connect; on EINPROGRESS park
@@ -923,6 +928,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                 pcb->resumeValue = make_int(xdbcConnectResult(fd));
             };
             parkAndSuspend(pcb, cond, nullptr, make_int(0));
+            return make_int(0);   // [no-throw park]
         }
         return make_int(-1);
     }
@@ -1859,6 +1865,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (tform == 1 && tsecs > 0.0)
             cond.wakeAtMs = steadyMs() + static_cast<int64_t>(tsecs * 1000.0);
         parkAndSuspend(pcb, cond, nullptr, make_int(0));
+        return make_int(0);   // [no-throw park]
     }
     if (h == 0x41211ABFE4EFFB1Aull) {
         // vm_f_give_mutex (0x80f1564)
@@ -2221,6 +2228,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
                                             : -101);
         };
         parkAndSuspend(pcb, cond, nullptr, make_int(0));
+        return;   // [no-throw park] 勿落入后续 name 检查/tail
     }
     if (name == "select" && !raw.empty()) {
         // vm_f_select (0x80e7348): select(&read, &write, &except, timeout)
@@ -2319,6 +2327,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
             pcb->resumeValue = make_int(n > 0 ? n : -126);
         };
         parkAndSuspend(pcb, cond, nullptr, make_int(-126));
+        return;   // [no-throw park]
     }
     if (name == "receive_from_queue" && raw.size() >= 2) {
         // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
@@ -2389,6 +2398,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
             if (rok) Interp::storeItem(pcb, msgRef, m);
         };
         parkAndSuspend(pcb, cond, nullptr, make_int(0));
+        return;   // [no-throw park]
     }
     if (name == "put_sub_data") {
         efunPutSubData(pcb, raw);
@@ -2492,6 +2502,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         for (auto& it : raw)
             eargs.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
         const Value r = dispatchEfunByName(pcb, name, eargs);
+        if (pcb->parkReq) return;   // [no-throw park] 同上
         if (pcb->efunTakeover) {
             pcb->efunTakeover = false;
             return;   // construction frame takeover: the retHook chain pushes
@@ -2508,6 +2519,11 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     for (auto& it : raw)
         args.push_back(it.isRef() ? Interp::derefItem(pcb, it) : it.value);
     Value r = dispatchEfunByName(pcb, name, args);
+    if (pcb->parkReq) {
+        // [no-throw park] 阻塞 efun: 结果由 resume hook 在唤醒时压栈,
+        // 这里跳过 —— 语义同原异常路径 (throw 跳过 pushValue)。
+        return;
+    }
     if (pcb->efunTakeover) {
         pcb->efunTakeover = false;
         return;   // construction frame takeover (see above)
@@ -2605,6 +2621,8 @@ void vmRunGlobalInit(VmPcb* pcb, VmObject* obj) {
     pcb->returned = false;
     Interp::run(pcb);
     // The context frame stays for the caller (construction flow pops it).
+    // [no-throw park] park 中: ctx 帧必须保留 (resume 从这里继续), 不弹。
+    if (pcb->parkReq) return;
     if (!pcb->frames.empty() && pcb->frames.back().fn == nullptr)
         pcb->frames.pop_back();
 }

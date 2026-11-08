@@ -459,6 +459,9 @@ Value vmRunFunction(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
     pushFrameInPlace(pcb, obj, obj ? obj->prog() : nullptr, fn,
                      passedArgCount(args), false, 0);
     Interp::run(pcb);
+    // [no-throw park] 链在指令边界切出: 转回异常路径交付 (调用方原有
+    // SuspendSignal 处理不变 —— 浅层展开, 成本可忽略)。
+    if (pcb->parkReq) throw SuspendSignal{};
     return pcb->returnValue;
 }
 
@@ -466,12 +469,14 @@ Value vmResume(VmPcb* pcb, const Value& resumeValue) {
     VmPcbSetter setPcb(pcb);
     Interp::pushValue(pcb, resumeValue);
     Interp::run(pcb);
+    if (pcb->parkReq) throw SuspendSignal{};   // [no-throw park] 同上
     return pcb->returnValue;
 }
 
 Value vmResumeSlice(VmPcb* pcb) {
     VmPcbSetter setPcb(pcb);
     Interp::run(pcb);
+    if (pcb->parkReq) throw SuspendSignal{};   // [no-throw park] 同上
     return pcb->returnValue;
 }
 
@@ -505,6 +510,9 @@ Value vmApplySync(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
     if (okA && args.empty() && fn->argCount == 0 && !pcb->frames.empty())
         pcb->frames.back().zeroArgPlaceholder = true;
     Interp::runNested(pcb, depth);
+    // [no-throw park] 嵌套回调中的阻塞: 转回异常路径 (C++ 连续层按原
+    // 异常语义析构, resume hook 重驱动) —— 罕见路径, 保持既有语义。
+    if (pcb->parkReq) throw SuspendSignal{};
     return popValueNested(pcb);
 }
 
@@ -693,6 +701,7 @@ Value vmCallOtherArray(const std::vector<Value>& targets, const std::string& fun
     // the C++ caller.  (A blocking efun inside an element throws SuspendSignal
     // out; the bytecode-level broadcast continues on resume via the hooks.)
     Interp::runNested(pcb, depth);
+    if (pcb->parkReq) throw SuspendSignal{};   // [no-throw park] 嵌套边界
     return popValueNested(pcb);
 }
 
@@ -737,6 +746,7 @@ Value vmCallOther(const Value& target, const std::string& funName,
     }
     const size_t depth = pcb->frames.size() - 1;
     Interp::runNested(pcb, depth);
+    if (pcb->parkReq) throw SuspendSignal{};   // [no-throw park] 嵌套边界
     return popValueNested(pcb);
 }
 
@@ -943,6 +953,10 @@ Value vmRunConstructionSync(VmPcb* scratch,
         scratch->construct = nullptr;
         return Value{};   // 构造失败: void
     }
+    // [no-throw park] park 不再抛异常 —— 必须在此转回异常路径, 否则上面的
+    // 正常完成流程会把"构造中途 park"当成"构造完成" (半成品对象继续跑,
+    // boot 期 construct 链 2s/轮慢速重试, CONFIG_D 永不就绪)。
+    if (scratch->parkReq) throw SuspendSignal{};
     scratch->construct = nullptr;
     return plan->failed ? Value(make_int(0))
                         : Registry::makeObjectValue(plan->obj);

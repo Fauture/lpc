@@ -248,6 +248,11 @@ struct VmPcb : std::enable_shared_from_this<VmPcb> {
     bool inReady = false;            // sits in the ready queue (no double-enqueue)
     bool eventWoken = false;         // event fired before its timeout timer
     bool timedEvent = false;         // kind-3 wait with a timeout
+    // [no-throw park] 阻塞 efun 置位: 链在指令边界自然切出 (loop 顶部检查),
+    // runProcess 见位后浅层交付 park —— 替代深层 C++ 异常展开 (OPNS 实测
+    // park 往返 ~50µs 占活动期墙钟 84%; 原版 park = 返回码亚微秒)。
+    // 嵌套 C++ 回调 (vmApplySync/vmCallOther*) 在边界转回异常路径 (罕见)。
+    bool parkReq = false;
     int64_t parkAtMs = 0;            // park 时刻(msSinceStart)，PARKDBG 测停泊时长
     int64_t lastWakeMs = 0;          // 上次唤醒时刻 —— park 时 ran=parkAtMs-lastWakeMs 即本轮执行时长
     std::shared_ptr<std::atomic<bool>> parkTimerCancelled;

@@ -703,7 +703,11 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
     } lsGuard{dynProbeFlag("LPCVM_LOOP2"), std::chrono::steady_clock::now(),
               pcb};
     pcb->instrCount = 0;
-    while (pcb->code && pcb->ip < pcb->code->size()) {        const OriginalInsn& in = (*pcb->code)[pcb->ip++];
+    while (pcb->code && pcb->ip < pcb->code->size()) {
+        // [no-throw park] 阻塞 efun 已在 pcb 上置位: 指令边界切出 (ip 指向
+        // 下一条指令, 唤醒后从此继续), runProcess 浅层交付 park。
+        if (pcb->parkReq) return;
+        const OriginalInsn& in = (*pcb->code)[pcb->ip++];
         ++pcb->instrCount;
         pcb->lastOp = in.op;
         pcb->lastIp = pcb->ip - 1;
