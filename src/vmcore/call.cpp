@@ -84,7 +84,7 @@ static void pushArgs(VmPcb* pcb, const OriginalFunction* fn,
         // 调用方的槽上。
         if (v.index() == 11) {
             const auto& r =
-                std::get<lpc::Ref<CrossVmRef>>(v);
+                lpc::vget<lpc::Ref<CrossVmRef>>(v);
             if (r && r->slotIndex >= 0) {
                 StackItem ref;
                 ref.ref = std::make_unique<StackRef>();
@@ -411,14 +411,14 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
             if (r8Log.fetch_add(1) < 300) {
                 size_t asz = 0;
                 if (pcb->returnValue.index() == 5 &&
-                    std::get<lpc::Ref<ArrayValue>>(pcb->returnValue))
-                    asz = std::get<lpc::Ref<ArrayValue>>(
+                    lpc::vget<lpc::Ref<ArrayValue>>(pcb->returnValue))
+                    asz = lpc::vget<lpc::Ref<ArrayValue>>(
                               pcb->returnValue)
                               ->items.size();
                 std::string extra;
                 if (f.fn->name == "get_name" &&
                     pcb->returnValue.index() == 4) {
-                    const std::string s = std::get<SharedString>(
+                    const std::string s = lpc::vget<SharedString>(
                                               pcb->returnValue)
                                               .str();
                     std::string hex;
@@ -556,14 +556,14 @@ void vmCallOtherPush(VmPcb* pcb, const Value& target, const std::string& funName
                      const std::vector<Value>& args) {
     VmObject* obj = nullptr;
     if (target.index() == 7) {
-        auto ov = std::get<lpc::Ref<ObjectValue>>(target);
+        auto ov = lpc::vget<lpc::Ref<ObjectValue>>(target);
         if (ov) {
             obj = ov->vmObj;
             if (!obj && !ov->programName.empty())
                 obj = Registry::instance().findByName(ov->programName);
         }
     } else if (target.index() == 4) {
-        obj = Registry::instance().findByName(std::get<SharedString>(target).str());
+        obj = Registry::instance().findByName(lpc::vget<SharedString>(target).str());
     } else {
         vmError("call_other: bad target type.");
     }
@@ -707,14 +707,14 @@ void vmCallOtherArrayPush(VmPcb* pcb, const std::vector<Value>& targets,
     for (const auto& t : targets) {
         VmObject* obj = nullptr;
         if (t.index() == 7) {
-            auto ov = std::get<lpc::Ref<ObjectValue>>(t);
+            auto ov = lpc::vget<lpc::Ref<ObjectValue>>(t);
             if (ov) {
                 obj = ov->vmObj;
                 if (!obj && !ov->programName.empty())
                     obj = Registry::instance().findByName(ov->programName);
             }
         } else if (t.index() == 4) {
-            obj = Registry::instance().findByName(std::get<SharedString>(t).str());
+            obj = Registry::instance().findByName(lpc::vget<SharedString>(t).str());
         }
         st->targets.push_back(obj);   // null/destructed elements yield int 0
     }

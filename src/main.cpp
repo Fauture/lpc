@@ -636,6 +636,9 @@ static bool safeNextFrame(uintptr_t ebp, uintptr_t* ret, uintptr_t* next) {
 static void walkEbpChain(uintptr_t ebp) {
     // PDB 符号解析 (build/Release 的 lpcvm.pdb): 直接给函数名+offset,
     // 省去人工 map 换算 —— exe 基址/地址变动时 map 解析会静默错位。
+    // [prewarm] dbghelp 必须在 main 早期就绪: 崩溃发生时堆已损坏,
+    // SymInitialize 需要分配内存 —— 拖到首次崩溃时初始化会失败
+    // (上次 boot 崩溃 ebp-chain 全部退化为 exe+RVA 就是这个原因)。
     static const bool symReady = [] {
         SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS |
                       SYMOPT_LOAD_LINES);
@@ -645,6 +648,8 @@ static void walkEbpChain(uintptr_t ebp) {
         if (bs) *bs = 0;
         return SymInitialize(GetCurrentProcess(), exePath, TRUE) != 0;
     }();
+    (void)symReady;
+    if (!ebp) return;   // prewarm call: init symbols only, print nothing
     HMODULE exeMod = nullptr;
     GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -667,6 +672,18 @@ static void walkEbpChain(uintptr_t ebp) {
             if (SymFromAddr(GetCurrentProcess(),
                             static_cast<DWORD64>(ret), &disp, sym)) {
                 std::cerr << "(" << sym->Name << "+0x" << disp << ")";
+                // [crash-line] 源码行号 —— 精确定位崩溃语句
+                IMAGEHLP_LINE64 line{};
+                line.SizeOfStruct = sizeof(line);
+                DWORD lineDisp = 0;
+                if (SymGetLineFromAddr64(GetCurrentProcess(),
+                                         static_cast<DWORD64>(ret),
+                                         &lineDisp, &line)) {
+                    const char* f = strrchr(line.FileName, '\\');
+                    std::cerr << "["
+                              << (f ? f + 1 : line.FileName) << ":"
+                              << line.LineNumber << "]";
+                }
             } else if (exeMod) {
                 std::cerr << "(exe+0x"
                           << (ret - reinterpret_cast<uintptr_t>(exeMod))
@@ -683,8 +700,13 @@ static void walkEbpChain(uintptr_t ebp) {
     std::cerr << std::dec << "\n";
 }
 
+// main 早期调用: 把 dbghelp 的 SymInitialize (遍历加载全部模块符号)
+// 提前到堆/服务健康时完成, 崩溃 filter 里 walkEbpChain 直接复用。
+void prewarmCrashSymbols() { walkEbpChain(0); }
+
 int main(int argc, char** argv) {
     g_mainTid = GetCurrentThreadId();
+    prewarmCrashSymbols();   // [prewarm] 符号初始化须在堆健康时完成
     // Unbuffered stdout/stderr: the service logs are redirected to files and
     // must appear line-by-line like the original driver (Load:/printf lines
     // otherwise sit in the C++ stdio buffer for minutes).
@@ -706,6 +728,44 @@ int main(int argc, char** argv) {
         std::cerr << "[crash] code=0x" << std::hex
                   << (ep ? ep->ExceptionRecord->ExceptionCode : 0)
                   << " addr=0x" << (ep ? ep->ExceptionRecord->ExceptionAddress : 0);
+        // [crash-eip] 崩溃指令本身的符号+行号 (ExceptionAddress 即 eip)
+        {
+            static const bool symReadyEip = [] {
+                SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS |
+                              SYMOPT_LOAD_LINES);
+                char exePath2[MAX_PATH] = {};
+                GetModuleFileNameA(nullptr, exePath2, MAX_PATH);
+                char* bs2 = strrchr(exePath2, '\\');
+                if (bs2) *bs2 = 0;
+                return SymInitialize(GetCurrentProcess(), exePath2, TRUE) != 0;
+            }();
+            (void)symReadyEip;
+        }
+        if (ep) {
+            char symBuf2[sizeof(SYMBOL_INFO) + 256] = {};
+            SYMBOL_INFO* sym2 = reinterpret_cast<SYMBOL_INFO*>(symBuf2);
+            sym2->SizeOfStruct = sizeof(SYMBOL_INFO);
+            sym2->MaxNameLen = 255;
+            DWORD64 disp2 = 0;
+            if (SymFromAddr(GetCurrentProcess(),
+                            reinterpret_cast<DWORD64>(
+                                ep->ExceptionRecord->ExceptionAddress),
+                            &disp2, sym2)) {
+                IMAGEHLP_LINE64 ln{};
+                ln.SizeOfStruct = sizeof(ln);
+                DWORD lnDisp = 0;
+                std::cerr << " eip=" << sym2->Name << "+0x" << disp2;
+                if (SymGetLineFromAddr64(
+                        GetCurrentProcess(),
+                        reinterpret_cast<DWORD64>(
+                            ep->ExceptionRecord->ExceptionAddress),
+                        &lnDisp, &ln)) {
+                    const char* f2 = strrchr(ln.FileName, '\\');
+                    std::cerr << "[" << (f2 ? f2 + 1 : ln.FileName) << ":"
+                              << ln.LineNumber << "]";
+                }
+            }
+        }
         // An access violation carries the ACCESS TYPE in Information[0] (0 read,
         // 1 write, 8 DEP/execute) and the address it touched in Information[1].
         // Without them a crash whose ExceptionAddress points into the HEAP is

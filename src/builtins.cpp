@@ -275,9 +275,9 @@ static std::atomic<int64_t> g_pendingServices{0};
 // name registered by create_queue (vm_lookupPendObject path).  Returns -1 if
 // unknown.
 int64_t resolveQidLocked(const Value& v) {
-    if (v.index() == 2) return std::get<int64_t>(v);
+    if (v.index() == 2) return lpc::vget<int64_t>(v);
     if (v.index() == 4) {
-        const std::string& s = std::get<SharedString>(v);
+        const std::string& s = lpc::vget<SharedString>(v);
         auto& reg = queueRegistry();
         auto it = reg.nameToQid.find(s);
         if (it != reg.nameToQid.end()) return it->second;
@@ -319,9 +319,9 @@ EventRegistry& eventRegistry() {
 // Resolve an event reference: a string name, or an int oid from
 // create_event().  Returns the event name, or "" if unknown.
 std::string resolveEventNameLocked(const Value& v, EventRegistry& reg) {
-    if (v.index() == 4) return std::get<SharedString>(v);
+    if (v.index() == 4) return lpc::vget<SharedString>(v);
     if (v.index() == 2) {
-        auto it = reg.oidToName.find(std::get<int64_t>(v));
+        auto it = reg.oidToName.find(lpc::vget<int64_t>(v));
         if (it != reg.oidToName.end()) return it->second;
     }
     return "";
@@ -684,15 +684,15 @@ int64_t as_int(const Value& v) {
     switch (v.index()) {
     case 0: return 0;
     case 1: return 0;
-    case 2: return std::get<int64_t>(v);
-    case 3: return static_cast<int64_t>(std::get<double>(v));
-    case 4: return std::get<SharedString>(v).empty() ? 0 : 1;
+    case 2: return lpc::vget<int64_t>(v);
+    case 3: return static_cast<int64_t>(lpc::vget<double>(v));
+    case 4: return lpc::vget<SharedString>(v).empty() ? 0 : 1;
     default: return 0;
     }
 }
 
 std::string as_string(const Value& v) {
-    if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
+    if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
     return to_string(v, false);
 }
 
@@ -742,7 +742,7 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
         // INSERT and the scan table stayed empty.  Build the output with a
         // dynamically sized buffer so long strings survive unchanged.
         if (type == 's' || type == 'S') {
-            std::string sv = (v.index() == 4) ? std::get<SharedString>(v).str() : as_string(v);
+            std::string sv = (v.index() == 4) ? lpc::vget<SharedString>(v).str() : as_string(v);
             size_t len = sv.find('\0');
             if (len == std::string::npos) len = sv.size();
             int prec = -1;
@@ -773,7 +773,7 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
         }
         if (type == 'f' || type == 'F' || type == 'e' || type == 'E' || type == 'g' || type == 'G') {
             char buf[256];
-            double d = (v.index() == 3) ? std::get<double>(v) : static_cast<double>(as_int(v));
+            double d = (v.index() == 3) ? lpc::vget<double>(v) : static_cast<double>(as_int(v));
             snprintf(buf, sizeof(buf), spec.c_str(), d);
             out += buf;
         } else if (type == 'c') {
@@ -789,14 +789,14 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
             //   sprintf("%O", (buffer)"({[]})") -> "28 7B 5B 5D 7D 29 ...({[]})").
             if (v.index() == 4) {
                 out += "\"";
-                out += std::get<SharedString>(v);
+                out += lpc::vget<SharedString>(v);
                 out += "\"";
             } else if (v.index() == 0) {
                 out += "(undefined)";
             } else if (v.index() == 1) {
                 out += "(void)";
             } else if (v.index() == 10) {
-                const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
+                const std::string& s = lpc::vget<lpc::Ref<BufferValue>>(v)->data;
                 for (unsigned char c : s) {
                     char b[8];
                     snprintf(b, sizeof(b), "%02X ", c);
@@ -805,7 +805,7 @@ std::string formatLpc(const std::string& fmt, const std::vector<Value>& args) {
                 out += " ";
                 for (unsigned char c : s) out += (c >= 32 && c < 127) ? static_cast<char>(c) : '.';
             } else if (v.index() == 3) {
-                snprintf(buf, sizeof(buf), "%g", std::get<double>(v));
+                snprintf(buf, sizeof(buf), "%g", lpc::vget<double>(v));
                 out += buf;
             } else if (v.index() == 6 || v.index() == 5) {
                 out += to_string(v, true);
@@ -1694,7 +1694,7 @@ void dumpKeyTypes(const Value& v, const char* tag) {
         std::cerr << "[keyt] " << tag << " not-a-mapping(t" << v.index() << ")\n";
         return;
     }
-    auto mp = std::get<lpc::Ref<MappingValue>>(v);
+    auto mp = lpc::vget<lpc::Ref<MappingValue>>(v);
     std::cerr << "[keyt] " << tag << " entries=" << mp->items().size() << "\n";
     for (auto& kv : mp->items()) {
         std::cerr << "[keyt]   key=" << to_string(kv.first, false).substr(0, 20)
@@ -1712,7 +1712,7 @@ void dumpDbaseKeys(const Value& v, const char* tag) {
     static int budget = 60;
     if (budget <= 0 || v.index() != 6) return;
     --budget;
-    auto mp = std::get<lpc::Ref<MappingValue>>(v);
+    auto mp = lpc::vget<lpc::Ref<MappingValue>>(v);
     std::cerr << "[keyt] " << tag << " topEntries=" << mp->items().size() << "\n";
     int shown = 0;
     for (auto& kv : mp->items()) {
@@ -1720,7 +1720,7 @@ void dumpDbaseKeys(const Value& v, const char* tag) {
             std::cerr << "[keyt]   <nonstring key type=" << kv.first.index() << ">\n";
             continue;
         }
-        const std::string& k = std::get<SharedString>(kv.first).str();
+        const std::string& k = lpc::vget<SharedString>(kv.first).str();
         if (k == "task" || k == "carry" || k == "achieve" || k == "name" ||
             k == "account" || k == "patch" || k == "guide" || k == "newbie" ||
             k == "trace_task")
@@ -1740,14 +1740,14 @@ Value simpleDbSelect(const std::string& table) {
 
 Value get_index(const Value& c, const Value& idx) {
     if (c.index() == 5) {
-        auto arr = std::get<lpc::Ref<ArrayValue>>(c);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(c);
         int64_t i = as_int(idx);
         if (i < 0) i += static_cast<int64_t>(arr->items.size());
         if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) return arr->items[static_cast<size_t>(i)];
         return Value{};   // OOB -> original type 0 "undefined"
     }
     if (c.index() == 6) {
-        auto mp = std::get<lpc::Ref<MappingValue>>(c);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(c);
         const Value* hit = mp->find(idx);
         if (hit) return *hit;
         return Value{};   // miss -> original type 0 "undefined"
@@ -2003,20 +2003,20 @@ void padVariableValue(const Value& v, std::string& out) {
     if (!dg.ok) { out.push_back(0); out.push_back(0); return; }
     switch (v.index()) {
     case 2: {
-        uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
+        uint32_t u = static_cast<uint32_t>(lpc::vget<int64_t>(v)) & 0xFFFF;
         out.push_back(static_cast<char>((u >> 8) & 0xFF));
         out.push_back(static_cast<char>(u & 0xFF));
         break;
     }
     case 3: {
-        float f = static_cast<float>(std::get<double>(v));
+        float f = static_cast<float>(lpc::vget<double>(v));
         uint32_t u = 0;
         std::memcpy(&u, &f, 4);
         for (int k = 0; k < 4; ++k) out.push_back(static_cast<char>((u >> (8 * k)) & 0xFF));
         break;
     }
     case 4: {
-        const std::string& s = std::get<SharedString>(v);
+        const std::string& s = lpc::vget<SharedString>(v);
         if (s.find('\0') != std::string::npos) {
             out.append(s);  // buffer: raw bytes
         } else {
@@ -2028,12 +2028,12 @@ void padVariableValue(const Value& v, std::string& out) {
         break;
     }
     case 5: {
-        auto arr = std::get<lpc::Ref<ArrayValue>>(v);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(v);
         for (const auto& e : arr->items) padVariableValue(e, out);
         break;
     }
     case 10: {
-        out.append(std::get<lpc::Ref<BufferValue>>(v)->data);  // raw bytes
+        out.append(lpc::vget<lpc::Ref<BufferValue>>(v)->data);  // raw bytes
         break;
     }
     default:
@@ -2048,20 +2048,20 @@ static Value dupValue(const Value& v) {
     if (!dg.ok) return v;   // cyclic: keep the reference instead of recursing
     switch (v.index()) {
     case 5: { // array -> deep copy
-        auto src = std::get<lpc::Ref<ArrayValue>>(v);
+        auto src = lpc::vget<lpc::Ref<ArrayValue>>(v);
         auto r = lpc::Ref<ArrayValue>(new ArrayValue());
         r->items.reserve(src->items.size());
         for (const auto& e : src->items) r->items.push_back(dupValue(e));
         return r;
     }
     case 6: { // mapping -> deep copy
-        auto src = std::get<lpc::Ref<MappingValue>>(v);
+        auto src = lpc::vget<lpc::Ref<MappingValue>>(v);
         auto r = lpc::Ref<MappingValue>(new MappingValue());
         for (const auto& kv : src->items()) r->insert(dupValue(kv.first), dupValue(kv.second));
         return r;
     }
     case 10: { // buffer -> deep copy
-        return make_buffer(std::get<lpc::Ref<BufferValue>>(v)->data);
+        return make_buffer(lpc::vget<lpc::Ref<BufferValue>>(v)->data);
     }
     default:
         return v;   // int/float/string/object/closure/nil/undefined
@@ -2227,8 +2227,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (args[0].index() == 6) { mpv = &args[0]; keyv = &args[1]; }
             else if (args[1].index() == 6) { mpv = &args[1]; keyv = &args[0]; }
             if (mpv && keyv && keyv->index() == 4) {
-                auto mp = std::get<lpc::Ref<MappingValue>>(*mpv);
-                std::string path = std::get<SharedString>(*keyv);
+                auto mp = lpc::vget<lpc::Ref<MappingValue>>(*mpv);
+                std::string path = lpc::vget<SharedString>(*keyv);
                 while (!path.empty() && path.back() == '/') path.pop_back();  // "a/" == "a"
                 if (path.empty()) return *mpv;   // "" / "/" -> the mapping itself
                 lpc::Ref<MappingValue> cur = mp;
@@ -2240,7 +2240,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     v = cur->find(k);
                     if (q == std::string::npos) break;   // last segment
                     if (!v || v->index() != 6) return Value{};   // mid-path non-mapping
-                    cur = std::get<lpc::Ref<MappingValue>>(*v);
+                    cur = lpc::vget<lpc::Ref<MappingValue>>(*v);
                     path = path.substr(q);
                     while (!path.empty() && path.front() == '/') path.erase(path.begin());
                     if (path.empty()) break;   // trailing slashes -> last segment done
@@ -2261,14 +2261,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // msgLen counts the cmdNo field through the body end, so the receiver
         // reads bodyLen = msgLen - 2.
         if (args.size() >= 2 && args[0].index() == 2) {
-            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            int cno = static_cast<int>(lpc::vget<int64_t>(args[0]));
             noteClientSend(cno);   // per-connection flow gate (see its comment)
             std::string data;
             int64_t msgNo = 0;
             if (args.size() >= 3) {
                 msgNo = as_int(args[1]);
                 if (LPCVM_GETENV("LPCVM_TAIL") && msgNo == 17520) {
-                    auto sv = [](const Value& v) { return v.index() == 4 ? std::get<SharedString>(v).str() : to_string(v, false); };
+                    auto sv = [](const Value& v) { return v.index() == 4 ? lpc::vget<SharedString>(v).str() : to_string(v, false); };
                     std::cerr << "[cfg-req] dist=" << sv(args[2])
                               << " section=" << sv(args[3])
                               << " key=" << sv(args[4])
@@ -2589,7 +2589,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_get_client_info (0x804d478): get_client_info(client_no) ->
         // mapping of the client slot (empty mapping if absent).
         if (args.empty() || args[0].index() != 2) return make_mapping();
-        return lpc::gameGetClientInfo(static_cast<int>(std::get<int64_t>(args[0])));
+        return lpc::gameGetClientInfo(static_cast<int>(lpc::vget<int64_t>(args[0])));
     }
     if (eid == CID("pad_buffer")) {
         // vm_f_pad_buffer (efun idx 524): same value-type padding as
@@ -2661,7 +2661,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // the 2012 spring-festival entries in etc/banner.list look current, so
         // gs broadcast 「新春快乐」 banners the original never shows.
         if (!args.empty() && args[0].index() == 4) {
-            const std::string s = std::get<SharedString>(args[0]).str();
+            const std::string s = lpc::vget<SharedString>(args[0]).str();
             std::tm when{};
             const size_t n = s.size();
             auto at = [&s](size_t off) -> int {
@@ -2700,7 +2700,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("save_string") && !args.empty() && args[0].index() == 6 &&
         LPCVM_GETENV("LPCVM_KEYT")) {
-        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
         dumpDbaseKeys(args[0], "save");
         for (const char* k : {"task", "carry", "achieve"}) {
             const Value* sub = mp->find(make_string(k));
@@ -2721,7 +2721,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (mdOn.load(std::memory_order_relaxed) &&
                 stubCallCtx().obj.find("open_menu") != std::string::npos) {
                 std::string k;
-                if (r.index() == 7) k = std::get<lpc::Ref<ObjectValue>>(r)->programName;
+                if (r.index() == 7) k = lpc::vget<lpc::Ref<ObjectValue>>(r)->programName;
                 std::cerr << "[menudbg] get_object_by_id id="
                           << (args.empty() ? -1 : as_int(args[0])) << " -> "
                           << (k.empty() ? std::string("0 (NOT FOUND)") : k) << "\n";
@@ -2730,7 +2730,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
-            if (r.index() == 7) key = std::get<lpc::Ref<ObjectValue>>(r)->programName;
+            if (r.index() == 7) key = lpc::vget<lpc::Ref<ObjectValue>>(r)->programName;
             std::cerr << "[iddbg] get_object_by_id id="
                       << (args.empty() ? -1 : as_int(args[0])) << " -> key=[" << key << "] caller="
                       << stubCallCtx().obj << "::" << stubCallCtx().fn
@@ -2788,11 +2788,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string ad;
             if (!args.empty()) {
                 if (args[0].index() == 4) {
-                    std::string s = std::get<SharedString>(args[0]);
+                    std::string s = lpc::vget<SharedString>(args[0]);
                     if (s.size() > 48) s = s.substr(0, 48) + "...";
                     ad = "a0='" + s + "'";
                 } else if (args[0].index() == 2) {
-                    ad = "a0=" + std::to_string(std::get<int64_t>(args[0]));
+                    ad = "a0=" + std::to_string(lpc::vget<int64_t>(args[0]));
                 } else {
                     ad = "a0=t" + std::to_string(args[0].index());
                 }
@@ -2848,7 +2848,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         double raw;
         if (args.empty()) raw = 0.0;
         else if (args[0].index() == 2) raw = static_cast<double>(static_cast<float>(as_int(args[0])));
-        else if (args[0].index() == 3) raw = std::get<double>(args[0]);
+        else if (args[0].index() == 3) raw = lpc::vget<double>(args[0]);
         else return make_int(0);
         long double r = static_cast<long double>(raw);
         int64_t result = 0;
@@ -2923,12 +2923,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 const Value& a = rest[ai];
                 std::cerr << " a" << ai << "=t" << a.index() << ":";
                 if (a.index() == 4) {
-                    const std::string& st = std::get<SharedString>(a).str();
+                    const std::string& st = lpc::vget<SharedString>(a).str();
                     for (size_t z = 0; z < st.size() && z < 24; ++z)
                         std::cerr << std::hex << (static_cast<unsigned char>(st[z])) << " ";
                     std::cerr << std::dec << "(len=" << st.size() << ")";
                 } else if (a.index() == 2) {
-                    std::cerr << std::get<int64_t>(a);
+                    std::cerr << lpc::vget<int64_t>(a);
                 } else if (a.index() == 1) {
                     std::cerr << "void";
                 } else if (a.index() == 0) {
@@ -2994,7 +2994,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // came out 0, room.c::set_permission() left permission == 0 and
             // permission.c::refresh_permission() sent 0x1A03 with 0 - the client
             // then refuses ALT+Z with "本地图无法使用自动遇敌".
-            const std::string s = std::get<SharedString>(v).str();
+            const std::string s = lpc::vget<SharedString>(v).str();
             size_t i = 0;
             while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' ||
                                     s[i] == '\n' || s[i] == '\v' || s[i] == '\f'))
@@ -3013,9 +3013,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_float(0);
         const Value& v = args[0];
         if (v.index() == 3) return v;
-        if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
+        if (v.index() == 2) return make_float(static_cast<double>(lpc::vget<int64_t>(v)));
         if (v.index() == 4) {
-            try { return make_float(std::stod(sqlTrim(std::get<SharedString>(v)))); }
+            try { return make_float(std::stod(sqlTrim(lpc::vget<SharedString>(v)))); }
             catch (...) { return make_float(0); }
         }
         return make_float(0);
@@ -3023,12 +3023,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("sizeof") || eid == CID("size")) {
         if (args.empty()) return make_int(0);
         const Value& v = args[0];
-        if (v.index() == 5) return make_int(static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(v)->items.size()));
-        if (v.index() == 6) return make_int(static_cast<int64_t>(std::get<lpc::Ref<MappingValue>>(v)->size()));
-        if (v.index() == 4) return make_int(static_cast<int64_t>(std::get<SharedString>(v).size()));
+        if (v.index() == 5) return make_int(static_cast<int64_t>(lpc::vget<lpc::Ref<ArrayValue>>(v)->items.size()));
+        if (v.index() == 6) return make_int(static_cast<int64_t>(lpc::vget<lpc::Ref<MappingValue>>(v)->size()));
+        if (v.index() == 4) return make_int(static_cast<int64_t>(lpc::vget<SharedString>(v).size()));
         // vm_f_sizeof (0x80dbcec) case 5 (buffer): byte length
         // (*(pValue+12) = Vm_Buffer_T length).
-        if (v.index() == 10) return make_int(static_cast<int64_t>(std::get<lpc::Ref<BufferValue>>(v)->data.size()));
+        if (v.index() == 10) return make_int(static_cast<int64_t>(lpc::vget<lpc::Ref<BufferValue>>(v)->data.size()));
         return make_int(0);
     }
     if (eid == CID("strlen") && LPCVM_GETENV("LPCVM_NAMERULE")) {
@@ -3132,7 +3132,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_int(0);
         std::string path;
         if (args[0].index() == 7) {
-            auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+            auto ov = lpc::vget<lpc::Ref<ObjectValue>>(args[0]);
             path = ov->programName;
             // clone:<rel>#<seq> / pak:<rel>: normalize to the program path.
             // A CLONE target keeps its "#<seq>" instance identity: cloning the
@@ -3191,7 +3191,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 const Value& a = args[0];
                 std::string desc;
                 if (a.index() == 7) {
-                    auto ov = std::get<lpc::Ref<ObjectValue>>(a);
+                    auto ov = lpc::vget<lpc::Ref<ObjectValue>>(a);
                     desc = std::string("prog=") +
                            (ov ? ov->programName : "<null>") +
                            " owner=" + (ov && ov->owner ? "set" : "null") +
@@ -3220,23 +3220,23 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("keys")) {
         if (args.empty() || args[0].index() != 6) return make_array();
         auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
-        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
         for (auto& kv : mp->items()) arr->items.push_back(kv.first);
         return arr;
     }
     if (eid == CID("values")) {
         if (args.empty() || args[0].index() != 6) return make_array();
         auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
-        for (auto& kv : std::get<6>(args[0])->items()) arr->items.push_back(kv.second);
+        for (auto& kv : lpc::vgetI<6>(args[0])->items()) arr->items.push_back(kv.second);
         return arr;
     }
     if (eid == CID("map_delete")) {
         if (args.size() >= 2 && args[0].index() == 6) {
-            auto mp = std::get<6>(args[0]);
+            auto mp = lpc::vgetI<6>(args[0]);
             static const bool mdProbe = LPCVM_GETENV("LPCVM_ISMAP") != nullptr;
             if (mdProbe && args[1].index() == 2) {
                 std::cerr << "[mapdel] map=" << mp.get()
-                          << " intkey=" << std::get<int64_t>(args[1])
+                          << " intkey=" << lpc::vget<int64_t>(args[1])
                           << " size=" << mp->size()
                           << " caller=" << stubCallCtx().obj << "::"
                           << stubCallCtx().fn << "\n";
@@ -3248,7 +3248,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("member_array")) {
         if (args.size() >= 2 && args[1].index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[1]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[1]);
             for (size_t i = 0; i < arr->items.size(); ++i) if (value_equal(arr->items[i], args[0])) return make_int(static_cast<int64_t>(i));
         }
         return make_int(-1);
@@ -3292,12 +3292,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string dbg;
             for (size_t i = 0; i < arr->items.size() && i < 4; ++i) {
                 if (!dbg.empty()) dbg += "|";
-                const std::string& e = std::get<SharedString>(arr->items[i]);
+                const std::string& e = lpc::vget<SharedString>(arr->items[i]);
                 dbg += "[" + e.substr(0, 12) + "]";
             }
             std::string hex0;
             if (!arr->items.empty()) {
-                const std::string& e0 = std::get<SharedString>(arr->items[0]);
+                const std::string& e0 = lpc::vget<SharedString>(arr->items[0]);
                 char b[8];
                 for (size_t k = 0; k < e0.size() && k < 8; ++k) { snprintf(b, sizeof(b), "%02X ", (unsigned char)e0[k]); hex0 += b; }
             }
@@ -3307,7 +3307,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("implode")) {
         if (args.size() < 2 || args[0].index() != 5) return make_string("");
-        auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
         std::string sep = as_string(args[1]), out;
         for (size_t i = 0; i < arr->items.size(); ++i) {
             if (i) out += sep;
@@ -3341,7 +3341,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // key is the other non-mapping leading arg, value is args[2].
             size_t mpIdx = args[0].index() == 6 ? 0 : (args[1].index() == 6 ? 1 : size_t(-1));
             if (mpIdx != size_t(-1)) {
-                auto mp = std::get<lpc::Ref<MappingValue>>(args[mpIdx]);
+                auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[mpIdx]);
                 size_t keyIdx = mpIdx == 0 ? 1 : 0;
                 std::string path = as_string(args[keyIdx]);
                 // Normalise the path exactly like the original helpers:
@@ -3416,7 +3416,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                         Value& nv = cur->insert(k, sub);
                         hit = &nv;
                     }
-                    cur = std::get<lpc::Ref<MappingValue>>(*hit);
+                    cur = lpc::vget<lpc::Ref<MappingValue>>(*hit);
                     path = path.substr(q);
                 }
                 return make_int(1);
@@ -3435,7 +3435,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (eid == CID("destruct_object") && !args.empty()) {
             std::string k;
             if (args[0].index() == 7) {
-                auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+                auto ov = lpc::vget<lpc::Ref<ObjectValue>>(args[0]);
                 if (ov) {
                     k = ov->programName;
                     // this_object() yields the placeholder "<this>" (on a
@@ -3451,7 +3451,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     if (k.empty() || k == "<this>") k = stubCallCtx().key;
                 }
             } else if (args[0].index() == 4) {
-                k = std::get<SharedString>(args[0]).str();
+                k = lpc::vget<SharedString>(args[0]).str();
                 if (k.empty() || k == "<this>") k = stubCallCtx().key;
             }
             static const bool lifeProbe = (LPCVM_GETENV("LPCVM_LIFE") != nullptr);
@@ -3482,7 +3482,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // refers to the current object; call_builtin cannot see the current
         // object, so a no-arg is_clone returns 0 (matches non-clone).
         if (args.empty() || args[0].index() != 7) return make_int(0);
-        auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+        auto ov = lpc::vget<lpc::Ref<ObjectValue>>(args[0]);
         return make_int(ov->programName.find('#') != std::string::npos ? 1 : 0);
     }
     if (eid == CID("register_daemon_data") || eid == CID("unregister_daemon_data")) {
@@ -3535,7 +3535,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         }
         if (it == tbl.end() || it->second.empty()) return Value{};
         Value m = make_mapping();
-        auto mp = std::get<lpc::Ref<MappingValue>>(m);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(m);
         for (const auto& kv : it->second) mp->insert(make_string(kv.first), kv.second);
         return m;
     }
@@ -3582,7 +3582,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // __BIN_DIR__ (vm_getBinDir) returns the -b directory WRAPPED IN
         // DOUBLE QUOTES; the LPC startup strips them with [1..<2].
         if (!args.empty() && args[0].index() == 4) {
-            const std::string& key = std::get<SharedString>(args[0]);
+            const std::string& key = lpc::vget<SharedString>(args[0]);
             {
                 // Boot-injected predefines (/D CONFIG=...) win over the .o
                 // define table, matching the original driver's runtime
@@ -3632,7 +3632,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // itself stays on the stack (returned) - the LPC code assigns the
         // result: "_cmd_types = set_case_check(([...]), 0)".
         if (args.size() >= 2 && args[0].index() == 6) {
-            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
             int flag = static_cast<int>(as_int(args[1]));
             int obsorb = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 0;
             mp->setCaseCheck(flag != 0, obsorb);
@@ -3784,7 +3784,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr << "[loaddbg] " << name << " path='" << vpath << "' ok=" << ok
                           << " retType=" << rv.index()
                           << " ret=" << (rv.index() == 7
-                                             ? std::get<lpc::Ref<ObjectValue>>(rv)->programName
+                                             ? lpc::vget<lpc::Ref<ObjectValue>>(rv)->programName
                                              : to_string(rv, false).substr(0, 40))
                           << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
                 std::cerr.flush();
@@ -3847,7 +3847,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 Value rv = findObjectInRegistry(vpath, vfsRoot());
                 std::cerr << "[loaddbg] find_object '" << vpath << "' -> type=" << rv.index()
                           << " ret=" << (rv.index() == 7
-                                             ? std::get<lpc::Ref<ObjectValue>>(rv)->programName
+                                             ? lpc::vget<lpc::Ref<ObjectValue>>(rv)->programName
                                              : to_string(rv, false).substr(0, 40))
                           << " caller=" << stubCallCtx().obj << "::" << stubCallCtx().fn << "\n";
                 std::cerr.flush();
@@ -3910,12 +3910,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 int64_t cmdNo = 0;
                 Value mv = call_builtin(nullptr, "expand_macro", {make_string(macro)});
                 if (mv.index() == 2) {
-                    cmdNo = std::get<int64_t>(mv);
+                    cmdNo = lpc::vget<int64_t>(mv);
                 } else if (mv.index() == 4) {
                     // expand_macro returns a STRING (original vm_f_expand_macro
                     // always pushes a string).  Parse the numeric define
                     // (accepts "0x2478" / "9336" / "                  0x5351").
-                    const std::string& es = std::get<SharedString>(mv);
+                    const std::string& es = lpc::vget<SharedString>(mv);
                     size_t b0 = es.find_first_not_of(" \t\r\n");
                     size_t e0 = es.find_last_not_of(" \t\r\n");
                     std::string trimS = (b0 == std::string::npos) ? "" : es.substr(b0, e0 - b0 + 1);
@@ -3984,11 +3984,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             std::string out;
             std::function<void(const Value&)> pad = [&](const Value& v) {
                 if (v.index() == 2) {
-                    uint32_t u = static_cast<uint32_t>(std::get<int64_t>(v)) & 0xFFFF;
+                    uint32_t u = static_cast<uint32_t>(lpc::vget<int64_t>(v)) & 0xFFFF;
                     out.push_back(static_cast<char>((u >> 8) & 0xFF));
                     out.push_back(static_cast<char>(u & 0xFF));
                 } else if (v.index() == 4) {
-                    const std::string& s = std::get<SharedString>(v);
+                    const std::string& s = lpc::vget<SharedString>(v);
                     size_t n = s.size(); if (n > 255) n = 255;
                     out.push_back(static_cast<char>(n));
                     out.append(s.data(), n);
@@ -4022,9 +4022,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // returns the CLONE's program path WITHOUT the "#<seq>" instance
         // suffix (basic_object.c's init_basic_object derives file_id via
         // object_name(this_object(), 1)); flag==0 keeps the instance suffix.
-        bool noInstance = args.size() >= 2 && !(args[1].index() == 2 && std::get<int64_t>(args[1]) == 0);
+        bool noInstance = args.size() >= 2 && !(args[1].index() == 2 && lpc::vget<int64_t>(args[1]) == 0);
         if (!args.empty() && args[0].index() == 7) {
-            auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+            auto ov = lpc::vget<lpc::Ref<ObjectValue>>(args[0]);
             std::string p = ov->programName;
             // [fix] 双前缀归一化: clone:pak:... 两层都要剥 (与 efun_adapt
             // 的 object_name 同步修复), 否则 roomd 的 sscanf THIS_PLACE
@@ -4079,7 +4079,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr.flush();
             }
             if (args.size() >= 2 && args[1].index() == 4 &&
-                std::get<SharedString>(args[1]).str() == "b")
+                lpc::vget<SharedString>(args[1]).str() == "b")
                 return make_buffer(rv);
             return make_string(rv);
         }
@@ -4329,7 +4329,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // number (and the nominal/max bounds were never respected).  Use a
         // triangular distribution with the mode at `nominal`.
         auto numOf = [](const Value& v) -> double {
-            return v.index() == 3 ? std::get<double>(v) : static_cast<double>(as_int(v));
+            return v.index() == 3 ? lpc::vget<double>(v) : static_cast<double>(as_int(v));
         };
         double mn = args.size() > 0 ? numOf(args[0]) : 0.0;
         double md = args.size() > 1 ? numOf(args[1]) : mn;
@@ -4524,11 +4524,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     if (LPCVM_GETENV("LPCVM_PWD_DIAG") && sql.find("account where account") != std::string::npos) {
                         std::cerr << "[pwd-diag] account select rows=" << arr->items.size() << "\n";
                         for (size_t ri = 0; ri < arr->items.size() && ri < 1; ++ri) {
-                            auto mp = std::get<lpc::Ref<MappingValue>>(arr->items[ri]);
+                            auto mp = lpc::vget<lpc::Ref<MappingValue>>(arr->items[ri]);
                             std::string dbg;
                             for (auto& kv : mp->items()) {
                                 if (!dbg.empty()) dbg += ", ";
-                                std::string ks = kv.first.index() == 4 ? std::get<SharedString>(kv.first).str() : to_string(kv.first, false);
+                                std::string ks = kv.first.index() == 4 ? lpc::vget<SharedString>(kv.first).str() : to_string(kv.first, false);
                                 dbg += ks + "=" + to_string(kv.second, false).substr(0, 60);
                             }
                             std::cerr << "[pwd-diag]   row={" << dbg << "}\n";
@@ -4547,7 +4547,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (!table.empty()) {
                 Value r = simpleDbSelect(table);
                 if (r.index() == 5) {
-                    auto arr = std::get<lpc::Ref<ArrayValue>>(r);
+                    auto arr = lpc::vget<lpc::Ref<ArrayValue>>(r);
                     {
                         std::lock_guard<std::mutex> lk(mysqlStateMutex());
                         mysqlCursor()[arr.get()] = -1;
@@ -4564,7 +4564,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("mysql_num_records")) {
         if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
             if (LPCVM_GETENV("LPCVM_TRACE"))
                 std::cerr << "[mysql_num_records] ptr=" << arr.get() << " size=" << arr->items.size() << "\n";
             return make_int(static_cast<int64_t>(arr->items.size()));
@@ -4577,7 +4577,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // Advance the result-set cursor and publish the current record.
         // Returns 0 while a record is available, nonzero past the end.
         if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
             int cur;
             {
                 std::lock_guard<std::mutex> lk(mysqlStateMutex());
@@ -4597,7 +4597,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("mysql_this_record")) {
         // The current record of THIS result set (published by fetch_record).
         if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
             std::lock_guard<std::mutex> lk(mysqlStateMutex());
             auto it = mysqlRecords().find(arr.get());
             if (it != mysqlRecords().end()) return it->second;
@@ -4606,7 +4606,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("mysql_finalize")) {
         if (!args.empty() && args[0].index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[0]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
             std::lock_guard<std::mutex> lk(mysqlStateMutex());
             mysqlCursor().erase(arr.get());
             mysqlRecords().erase(arr.get());
@@ -4615,7 +4615,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("mysql_field_value") || eid == CID("mysql_field_name")) {
         if (args.size() >= 2 && args[0].index() == 6) {
-            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
             const Value* hit = mp->find(args[1]);
             if (hit) return *hit;
         }
@@ -4739,16 +4739,16 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             const Value& p = args[param++];
             switch (p.index()) {
             case 2:  // int
-                out += std::to_string(std::get<int64_t>(p));
+                out += std::to_string(lpc::vget<int64_t>(p));
                 break;
             case 3: {  // float
                 char buf[64];
-                snprintf(buf, sizeof(buf), "%g", std::get<double>(p));
+                snprintf(buf, sizeof(buf), "%g", lpc::vget<double>(p));
                 out += buf;
                 break;
             }
             case 4: {  // string, single-quoted with escaping
-                const std::string& s = std::get<SharedString>(p);
+                const std::string& s = lpc::vget<SharedString>(p);
                 out += '\'';
                 for (char sc : s) {
                     if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
@@ -4775,7 +4775,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::string sql = as_string(args[0]);
         std::vector<Value> params;
         if (args[1].index() == 5)
-            params = std::get<lpc::Ref<ArrayValue>>(args[1])->items;
+            params = lpc::vget<lpc::Ref<ArrayValue>>(args[1])->items;
         else
             for (size_t i = 1; i < args.size(); ++i) params.push_back(args[i]);
         std::string out;
@@ -4787,10 +4787,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (param >= params.size()) { out += c; continue; }
             const Value& p = params[param++];
             switch (p.index()) {
-            case 2: out += std::to_string(std::get<int64_t>(p)); break;
-            case 3: { char buf[64]; snprintf(buf, sizeof(buf), "%g", std::get<double>(p)); out += buf; break; }
+            case 2: out += std::to_string(lpc::vget<int64_t>(p)); break;
+            case 3: { char buf[64]; snprintf(buf, sizeof(buf), "%g", lpc::vget<double>(p)); out += buf; break; }
             case 4: {
-                const std::string& s = std::get<SharedString>(p);
+                const std::string& s = lpc::vget<SharedString>(p);
                 out += '\'';
                 for (char sc : s) {
                     if (sc == '\'' || sc == '\\' || sc == '\n' || sc == '\r' ||
@@ -4838,7 +4838,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (sqlTrace) {
                 std::cerr << "[mysql_select] rows=" << arr->items.size();
                 if (!arr->items.empty()) {
-                    auto& mp0 = std::get<lpc::Ref<MappingValue>>(arr->items[0]);
+                    auto& mp0 = lpc::vget<lpc::Ref<MappingValue>>(arr->items[0]);
                     std::string dbg;
                     for (auto& kv : mp0->items()) {
                         if (!dbg.empty()) dbg += ",";
@@ -4857,7 +4857,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("mysql_select_single_result")) {
         if (args.size() >= 2 && args[1].index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[1]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[1]);
             if (!arr->items.empty()) return arr->items[0];
             return make_int(0);
         }
@@ -4869,7 +4869,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 2 && args[1].index() == 4) {
             Value arr = call_builtin(nullptr, "mysql_select", args);
             if (arr.index() == 5) {
-                auto av = std::get<lpc::Ref<ArrayValue>>(arr);
+                auto av = lpc::vget<lpc::Ref<ArrayValue>>(arr);
                 if (!av->items.empty()) return av->items[0];
             }
         }
@@ -4885,6 +4885,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 std::cerr << "[read_ini] section=" << section << " key=" << key
                           << " file=" << as_string(args[2]) << " -> " << path << "\n";
             std::ifstream in(path);
+            std::string hit;
+            bool found = false;
             if (in) {
                 std::string cur;
                 std::string line;
@@ -4916,12 +4918,19 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     if (!ieq(cur, section)) continue;
                     size_t eq = line.find('=', s);
                     if (eq == std::string::npos) continue;
-                    if (ieq(trim(line.substr(s, eq - s)), key))
-                        return make_string(trim(line.substr(eq + 1)));
+                    if (ieq(trim(line.substr(s, eq - s)), key)) {
+                        hit = trim(line.substr(eq + 1));
+                        found = true;
+                        break;
+                    }
                 }
             } else {
                 std::cout << "read_ini: cannot open " << path << "\n";
             }
+            if (LPCVM_GETENV("LPCVM_TRACE"))
+                std::cerr << "[read_ini] result section=" << section << " key=" << key
+                          << " found=" << found << " value=[" << hit << "]\n";
+            return make_string(hit);
         }
         return make_string("");
     }
@@ -5023,8 +5032,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("telnet_config")) {
         // telnet_config(fd, mapping) - set per-client options.
         if (args.size() >= 2 && args[0].index() == 2 && args[1].index() == 6) {
-            int cno = static_cast<int>(std::get<int64_t>(args[0]));
-            auto mp = std::get<lpc::Ref<MappingValue>>(args[1]);
+            int cno = static_cast<int>(lpc::vget<int64_t>(args[0]));
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[1]);
             TelnetClient* cl = findTelnetClient(cno);
             if (cl) {
                 auto getInt = [&](const char* k, int def) {
@@ -5071,10 +5080,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // table and registers it as a game client (attrib = type, default
         // INTERNAL_COMM = 2), starting its receive/dispatch loop.
         if (!args.empty() && args[0].index() == 2) {
-            int fd = static_cast<int>(std::get<int64_t>(args[0]));
+            int fd = static_cast<int>(lpc::vget<int64_t>(args[0]));
             uint32_t clientType = 2;
             if (args.size() >= 2 && args[1].index() == 2)
-                clientType = static_cast<uint32_t>(std::get<int64_t>(args[1]));
+                clientType = static_cast<uint32_t>(lpc::vget<int64_t>(args[1]));
             uintptr_t sock = xdbcDetachSocket(fd);
             if (!sock) return make_int(-1);
             if (LPCVM_GETENV("LPCVM_TRACE"))
@@ -5091,17 +5100,17 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // client -> 1, from_server -> 0x404) so the (attrib & flag & 7) check
         // in dispatch accepts INTERNAL_COMM packets from dba/gs/cta servers.
         if (args.size() >= 2 && args[0].index() == 2) {
-            int cno = static_cast<int>(std::get<int64_t>(args[0]));
+            int cno = static_cast<int>(lpc::vget<int64_t>(args[0]));
             uint32_t attribOr = 0;
             int maxBodySize = 0;   // 0 -> keep current
             int peek = 0;
             if (args[1].index() == 6) {
-                auto mp = std::get<lpc::Ref<MappingValue>>(args[1]);
+                auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[1]);
                 for (auto& kv : mp->items()) {
                     if (kv.first.index() != 4) continue;
-                    std::string k = std::get<SharedString>(kv.first);
+                    std::string k = lpc::vget<SharedString>(kv.first);
                     if (k == "type" && kv.second.index() == 4) {
-                        const std::string& t = std::get<SharedString>(kv.second);
+                        const std::string& t = lpc::vget<SharedString>(kv.second);
                         if (_stricmp(t.c_str(), "internal") == 0) attribOr |= 0x302;
                         else if (_stricmp(t.c_str(), "client") == 0) attribOr |= 1;
                         else if (_stricmp(t.c_str(), "from_server") == 0) attribOr |= 0x404;
@@ -5315,8 +5324,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         double secs = -1.0;
         if (args.size() >= 4) {
             const Value& t = args[3];
-            if (t.index() == 2) secs = static_cast<double>(std::get<int64_t>(t));
-            else if (t.index() == 3) secs = std::get<double>(t);
+            if (t.index() == 2) secs = static_cast<double>(lpc::vget<int64_t>(t));
+            else if (t.index() == 3) secs = lpc::vget<double>(t);
         }
         return make_int(lpc::eventWait(args[0], mask, secs));
     }
@@ -5333,7 +5342,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (qid < 0) return make_int(-101);
         int timeoutMs = -1;
         if (args.size() >= 3) {
-            double secs = (args[2].index() == 3) ? std::get<double>(args[2]) : static_cast<double>(as_int(args[2]));
+            double secs = (args[2].index() == 3) ? lpc::vget<double>(args[2]) : static_cast<double>(as_int(args[2]));
             timeoutMs = secs < 0 ? -1 : static_cast<int>(secs * 1000.0);
         }
         bool ok = false;
@@ -5439,7 +5448,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("mktime")) {
         // mktime(mapping) - build an epoch value from a {year,mon,day,hour,min,sec} map.
         if (!args.empty() && args[0].index() == 6) {
-            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
             auto get = [&](const char* k, int def) -> int {
                 const Value* hit = mp->find(make_string(k));
                 if (hit) return static_cast<int>(as_int(*hit));
@@ -5471,7 +5480,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         static std::atomic<int64_t> pendSeq{0};
         int64_t qid = pendSeq.fetch_add(1, std::memory_order_relaxed) + 1;
         std::string qname;
-        if (!args.empty() && args[0].index() == 4) qname = std::get<SharedString>(args[0]);
+        if (!args.empty() && args[0].index() == 4) qname = lpc::vget<SharedString>(args[0]);
         if (eid == CID("create_queue")) lpc::queueCreate(qid, qname);
         else if (!qname.empty()) lpc::eventCreate(qname, qid);
         if (LPCVM_GETENV("LPCVM_EVENT_TRACE") || LPCVM_GETENV("LPCVM_TRACE"))
@@ -5485,7 +5494,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (qid >= 0) lpc::queueDelete(qid);
         }
         if (eid == CID("delete_event") && !args.empty() && args[0].index() == 4)
-            lpc::eventDelete(std::get<SharedString>(args[0]));
+            lpc::eventDelete(lpc::vget<SharedString>(args[0]));
         return make_int(1);
     }
     if (eid == CID("raise_event")) {
@@ -5506,9 +5515,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (rc == 0) {
             std::string ename;
             if (args[0].index() == 4)
-                ename = std::get<SharedString>(args[0]).str();
+                ename = lpc::vget<SharedString>(args[0]).str();
             else if (args[0].index() == 2)
-                ename = "oid:" + std::to_string(std::get<int64_t>(args[0]));
+                ename = "oid:" + std::to_string(lpc::vget<int64_t>(args[0]));
             if (!ename.empty())
                 vmcore::Scheduler::instance().wakeEvent(
                     ename, static_cast<uint32_t>(as_int(args[1])));
@@ -5522,7 +5531,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // input lets the caller's is_mapping check fail the same way.
         if (!args.empty() && args[0].index() == 4) {
             Value out;
-            const std::string& rvs = std::get<SharedString>(args[0]).str();
+            const std::string& rvs = lpc::vget<SharedString>(args[0]).str();
             bool ok = restoreValueAscii(rvs, out);
             {
                 // LPCVM_RVDBG: large-payload parse audit (user save/restore
@@ -5546,14 +5555,14 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 // purchase record as save_string(mapping) and restores it here;
                 // a parse failure makes do_when_got_precost_coin return
                 // SILENTLY (no packet, coin lock held for lock_timeout=600s).
-                const std::string& rvs = std::get<SharedString>(args[0]).str();
+                const std::string& rvs = lpc::vget<SharedString>(args[0]).str();
                 std::cerr << "[mall-rv] in=" << rvs.size()
                           << " ok=" << ok << " type=" << (ok ? out.index() : -1)
                           << " head=" << rvs.substr(0, 90) << "\n";
                 std::cerr.flush();
             }
             if (ok && out.index() == 6 && LPCVM_GETENV("LPCVM_KEYT")) {
-                auto mp = std::get<lpc::Ref<MappingValue>>(out);
+                auto mp = lpc::vget<lpc::Ref<MappingValue>>(out);
                 dumpDbaseKeys(out, "restore");
                 for (const char* k : {"task", "carry", "achieve"}) {
                     const Value* sub = mp->find(make_string(k));
@@ -5894,13 +5903,13 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // mirrors original_vm's compareValues (vm_compareValue_0 semantics for
         // the numeric/string comparisons the game uses).
         if (a.index() == 3 || b.index() == 3) {
-            double x = (a.index() == 3) ? std::get<double>(a) : static_cast<double>(as_int(a));
-            double y = (b.index() == 3) ? std::get<double>(b) : static_cast<double>(as_int(b));
+            double x = (a.index() == 3) ? lpc::vget<double>(a) : static_cast<double>(as_int(a));
+            double y = (b.index() == 3) ? lpc::vget<double>(b) : static_cast<double>(as_int(b));
             return x < y ? -1 : (x > y ? 1 : 0);
         }
         if (a.index() == 4 && b.index() == 4) {
-            const auto& x = std::get<SharedString>(a);
-            const auto& y = std::get<SharedString>(b);
+            const auto& x = lpc::vget<SharedString>(a);
+            const auto& y = lpc::vget<SharedString>(b);
             return x < y ? -1 : (x > y ? 1 : 0);
         }
         int64_t x = as_int(a), y = as_int(b);
@@ -5912,7 +5921,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         std::vector<Value> out;
         for (const auto& a : args) {
             if (a.index() == 5) {
-                const auto& arr = std::get<lpc::Ref<ArrayValue>>(a)->items;
+                const auto& arr = lpc::vget<lpc::Ref<ArrayValue>>(a)->items;
                 out.insert(out.end(), arr.begin(), arr.end());
             } else {
                 out.push_back(a);
@@ -5950,22 +5959,22 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         const Value& v = args[0];
         double total = 0.0;
         if (v.index() == 6) {
-            auto mp = std::get<lpc::Ref<MappingValue>>(v);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(v);
             // Iterate by index: nodes is a compact vector; inserting during
             // iteration would invalidate references.
             for (size_t i = 0; i < mp->nodes.size(); ++i) {
                 const Value& val = mp->nodes[i].value;
-                if (val.index() == 3) total += std::get<double>(val);
+                if (val.index() == 3) total += lpc::vget<double>(val);
                 else total += static_cast<double>(as_int(val));
             }
         } else if (v.index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(v);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(v);
             for (auto& e : arr->items) {
-                if (e.index() == 3) total += std::get<double>(e);
+                if (e.index() == 3) total += lpc::vget<double>(e);
                 else total += static_cast<double>(as_int(e));
             }
         } else {
-            total = (v.index() == 3) ? std::get<double>(v) : static_cast<double>(as_int(v));
+            total = (v.index() == 3) ? lpc::vget<double>(v) : static_cast<double>(as_int(v));
         }
         // The original returns an int when every element is int (the game
         // sums day counts and cost counters, always ints).
@@ -5975,10 +5984,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_map_add_values: mapping + array of (key,value) pairs, or
         // mapping + mapping: fold the second into the first (returns it).
         if (args.size() < 2 || args[0].index() != 6) return args.empty() ? make_mapping() : args[0];
-        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
         const Value& src = args[1];
         if (src.index() == 6) {
-            auto srcMp = std::get<lpc::Ref<MappingValue>>(src);
+            auto srcMp = lpc::vget<lpc::Ref<MappingValue>>(src);
             // Snapshot the source entries first: inserting into mp may rehash
             // srcMp too when srcMp == mp (or share storage).
             std::vector<std::pair<Value, Value>> entries;
@@ -5986,7 +5995,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 entries.emplace_back(srcMp->nodes[i].key, srcMp->nodes[i].value);
             for (auto& kv : entries) mp->insert(kv.first, kv.second);
         } else if (src.index() == 5) {
-            const auto& items = std::get<lpc::Ref<ArrayValue>>(src)->items;
+            const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(src)->items;
             for (size_t i = 0; i + 1 < items.size(); i += 2)
                 mp->insert(items[i], items[i + 1]);
         }
@@ -5997,7 +6006,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // array, func) applies func to each element and returns the result
         // array (the game: mapping_array(explode(...), (: trim :))).
         if (args.size() < 2 || args[0].index() != 5) return make_array();
-        auto src = std::get<lpc::Ref<ArrayValue>>(args[0]);
+        auto src = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
         auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         // NOTE: applying the closure via applyClosureOnOwner from the builtin
         // path can crash when the closure's owner VM is mid-load; keep a safe
@@ -6012,7 +6021,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.empty()) return make_array();
         auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         if (args[0].index() == 6) {
-            auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
             std::string needle = args.size() >= 2 ? as_string(args[1]) : "";
             std::string nl = needle;
             std::transform(nl.begin(), nl.end(), nl.begin(), ::tolower);
@@ -6037,7 +6046,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // field starting at bitno.  On a BUFFER the field is read MSB-first (the
         // protocol's network order); on an int it is the LSB-first scalar form.
         if (!args.empty() && args[0].index() == 10) {
-            auto buf = std::get<lpc::Ref<BufferValue>>(args[0]);
+            auto buf = lpc::vget<lpc::Ref<BufferValue>>(args[0]);
             int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
             int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
             if (!buf || bitno < 0 || nbits <= 0 ||
@@ -6066,7 +6075,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // (buildmsgd_v37.c:5817).  The scalar-int form below stays for callers
         // that use it arithmetically.
         if (!args.empty() && args[0].index() == 10) {
-            auto buf = std::get<lpc::Ref<BufferValue>>(args[0]);
+            auto buf = lpc::vget<lpc::Ref<BufferValue>>(args[0]);
             int bitno = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 0;
             int nbits = args.size() >= 3 ? static_cast<int>(as_int(args[2])) : 1;
             int64_t field = args.size() >= 4 ? as_int(args[3]) : 0;
@@ -6129,7 +6138,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("sin") || eid == CID("cos") || eid == CID("tan") || eid == CID("asin") ||
         eid == CID("acos") || eid == CID("atan") || eid == CID("exp") || eid == CID("log") ||
         eid == CID("log10") || eid == CID("sqrt")) {
-        double x = args.empty() ? 0.0 : (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0])));
+        double x = args.empty() ? 0.0 : (args[0].index() == 3 ? lpc::vget<double>(args[0]) : static_cast<double>(as_int(args[0])));
         double r = 0.0;
         if (eid == CID("sin")) r = std::sin(x);
         else if (eid == CID("cos")) r = std::cos(x);
@@ -6143,18 +6152,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_float(r);
     }
     if (eid == CID("pow")) {
-        double x = args.size() > 0 ? (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0]))) : 0.0;
-        double y = args.size() > 1 ? (args[1].index() == 3 ? std::get<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 0.0;
+        double x = args.size() > 0 ? (args[0].index() == 3 ? lpc::vget<double>(args[0]) : static_cast<double>(as_int(args[0]))) : 0.0;
+        double y = args.size() > 1 ? (args[1].index() == 3 ? lpc::vget<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 0.0;
         return make_float(std::pow(x, y));
     }
     if (eid == CID("ceil") || eid == CID("floor") || eid == CID("fabs") || eid == CID("fmod")) {
-        double x = args.empty() ? 0.0 : (args[0].index() == 3 ? std::get<double>(args[0]) : static_cast<double>(as_int(args[0])));
+        double x = args.empty() ? 0.0 : (args[0].index() == 3 ? lpc::vget<double>(args[0]) : static_cast<double>(as_int(args[0])));
         double r = 0.0;
         if (eid == CID("ceil")) r = std::ceil(x);
         else if (eid == CID("floor")) r = std::floor(x);
         else if (eid == CID("fabs")) r = std::fabs(x);
         else if (eid == CID("fmod")) {
-            double y = args.size() > 1 ? (args[1].index() == 3 ? std::get<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 1.0;
+            double y = args.size() > 1 ? (args[1].index() == 3 ? lpc::vget<double>(args[1]) : static_cast<double>(as_int(args[1]))) : 1.0;
             r = std::fmod(x, y);
         }
         return make_float(r);
@@ -6178,7 +6187,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // in-place (reference) form is restricted to the coupon call site
         // (matches the validated regress83 build plus the coupon fix).
         if (args.empty() || args[0].index() != 5) return make_array();
-        auto src = std::get<lpc::Ref<ArrayValue>>(args[0]);
+        auto src = lpc::vget<lpc::Ref<ArrayValue>>(args[0]);
         int type = args.size() >= 2 ? static_cast<int>(as_int(args[1])) : 255;
         // Value variant index -> LPC type code: 0 nil, 1 undefined/void,
         // 2 int, 3 real, 4 string, 5 array, 6 mapping, 7 object,
@@ -6199,7 +6208,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 // the corps after _do_combat_team destructs a member that
                 // stays listed (Star-Lord-mount combat hang).  Match op8's
                 // dead test exactly.
-                auto ov = std::get<lpc::Ref<ObjectValue>>(e);
+                auto ov = lpc::vget<lpc::Ref<ObjectValue>>(e);
                 const lpc::vmcore::VmObject* t = ov ? ov->vmObj : nullptr;
                 if (ov && !t && !ov->programName.empty())
                     t = lpc::vmcore::Registry::instance().findByName(
@@ -6210,8 +6219,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                 // default: drop nil/undefined (reference type 0) and (as the
                 // validated engine build did) numeric zeros as well.
                 if (vt == 0 || vt == 1) return false;
-                if (vt == 2) return std::get<int64_t>(e) != 0;
-                if (vt == 3) return std::get<double>(e) != 0.0;
+                if (vt == 2) return lpc::vget<int64_t>(e) != 0;
+                if (vt == 3) return lpc::vget<double>(e) != 0.0;
                 return true;
             }
             return vt == type;
@@ -6299,8 +6308,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         uint64_t real = 0;
         if (!args.empty()) {
             const Value& a = args[0];
-            if (a.index() == 2) real = static_cast<uint64_t>(std::get<int64_t>(a));
-            else if (a.index() == 3) real = static_cast<uint64_t>(static_cast<int64_t>(std::get<double>(a)));
+            if (a.index() == 2) real = static_cast<uint64_t>(lpc::vget<int64_t>(a));
+            else if (a.index() == 3) real = static_cast<uint64_t>(static_cast<int64_t>(lpc::vget<double>(a)));
             else {
                 std::string s = as_string(a);
                 const char* p = s.c_str();
@@ -6319,7 +6328,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // combined 64-bit value (negative when the high half is negative).
         uint64_t v = 0;
         if (!args.empty() && args[0].index() == 5) {
-            auto items = std::get<lpc::Ref<ArrayValue>>(args[0])->items;
+            auto items = lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items;
             if (items.size() >= 1) v |= static_cast<uint64_t>(static_cast<uint32_t>(as_int(items[0]))) << 32;
             if (items.size() >= 2) v |= static_cast<uint64_t>(static_cast<uint32_t>(as_int(items[1])));
         }
@@ -6410,7 +6419,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     }
     if (eid == CID("isupper")) {
         if (args.empty() || args[0].index() != 4) return make_int(0);
-        const std::string& s = std::get<SharedString>(args[0]);
+        const std::string& s = lpc::vget<SharedString>(args[0]);
         if (s.empty()) return make_int(0);
         bool all = true;
         for (unsigned char c : s)
@@ -6439,7 +6448,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         size_t arrCount = args.size();
         int64_t randomRange = 0;
         if (args.back().index() == 2) {          // trailing int = range
-            randomRange = std::get<int64_t>(args.back());
+            randomRange = lpc::vget<int64_t>(args.back());
             arrCount = args.size() - 1;
             if (randomRange <= 0) return make_int(-1);
         }
@@ -6448,11 +6457,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // rate 0) for A/B.
         static const bool noRateStr = (LPCVM_GETENV("LPCVM_NO_RATESTR") != nullptr);
         auto objectDbRate = [](const Value& obj, int64_t& out) -> bool {
-            auto ov = std::get<lpc::Ref<ObjectValue>>(obj);
+            auto ov = lpc::vget<lpc::Ref<ObjectValue>>(obj);
             if (!ov) return false;
             auto it = ov->variables.find("dbase");
             if (it == ov->variables.end() || it->second.index() != 6) return false;
-            auto mp = std::get<lpc::Ref<MappingValue>>(it->second);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(it->second);
             if (!mp) return false;
             const Value* rv = mp->find(make_string("rate"));
             if (!rv) return false;
@@ -6460,9 +6469,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             return true;
         };
         auto rateOf = [&](const Value& e, int64_t& out) -> bool {
-            if (e.index() == 2) { out = std::get<int64_t>(e); return true; }
+            if (e.index() == 2) { out = lpc::vget<int64_t>(e); return true; }
             if (e.index() == 6) {                 // mapping with "rate"
-                auto mp = std::get<lpc::Ref<MappingValue>>(e);
+                auto mp = lpc::vget<lpc::Ref<MappingValue>>(e);
                 if (!mp) return false;
                 const Value* rv = mp->find(make_string("rate"));
                 if (!rv) return false;
@@ -6489,7 +6498,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             // and only destructed the combat object, so is_in_combat() stayed true
             // forever (NPC dialogue blocked, admin_kickoff refused).
             if (e.index() == 4 && !noRateStr) {
-                const std::string nm = std::get<SharedString>(e).str();
+                const std::string nm = lpc::vget<SharedString>(e).str();
                 Value ov = findObjectInRegistry(nm, vfsRoot());
                 if (ov.index() != 7) return false;
                 return objectDbRate(ov, out);
@@ -6498,7 +6507,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         };
         for (size_t a = 0; a < arrCount; ++a) {
             if (args[a].index() != 5) continue;
-            auto arr = std::get<lpc::Ref<ArrayValue>>(args[a]);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(args[a]);
             for (auto& e : arr->items) {
                 int64_t r = 0;
                 if (rateOf(e, r) && r >= 0) rates.push_back(r);
@@ -6573,7 +6582,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // nil placeholders, so monster pet attrib was saved as name-keyed U
         // values instead of the numeric id keys REF stores (R127 pet attrib U).
         if (args.empty() || args[0].index() != 6) return make_int(1);
-        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
         std::vector<Value> dead;
         if (args.size() < 2) {
             // single-arg (type = 255): drop entries whose VALUE is nil /
@@ -6607,7 +6616,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // defaults type to 255 and removes entries whose KEY is type 0
         // (undefined/nil); two-arg keeps keys of the given LPC type.
         if (args.empty() || args[0].index() != 6) return make_int(1);
-        auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
         std::vector<Value> dead;
         if (args.size() < 2) {
             for (size_t i = 0; i < mp->nodes.size(); ++i) {
@@ -6821,7 +6830,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // stubCallCtx().key holds the real instance key.
         Value idArg = args.empty() ? Value{} : args[0];
         if (idArg.index() == 7) {
-            auto ov = std::get<lpc::Ref<ObjectValue>>(idArg);
+            auto ov = lpc::vget<lpc::Ref<ObjectValue>>(idArg);
             const std::string& pn = ov ? ov->programName : std::string();
             if (pn.empty() || pn == "<this>" || pn == ".") {
                 const std::string& ck = stubCallCtx().key;
@@ -6845,11 +6854,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (LPCVM_GETENV("LPCVM_IDDBG")) {
             std::string key;
             if (idArg.index() == 7)
-                key = std::get<lpc::Ref<ObjectValue>>(idArg)->programName;
+                key = lpc::vget<lpc::Ref<ObjectValue>>(idArg)->programName;
             std::cerr << "[iddbg] allocate_id key=[" << key << "] caller="
                       << stubCallCtx().obj << "::" << stubCallCtx().fn
                       << " callerKey=[" << stubCallCtx().key << "] -> id="
-                      << (r.index() == 2 ? std::to_string(std::get<int64_t>(r)) : std::string("?"))
+                      << (r.index() == 2 ? std::to_string(lpc::vget<int64_t>(r)) : std::string("?"))
                       << "\n";
             std::cerr.flush();
         }
@@ -6871,22 +6880,22 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // name mentions yunxiaogong / maze / xiyugucheng + result + failure
         // diagnostics for zero results generally (first 60 zero-returns).
         if (!args.empty() && args[0].index() == 4) {
-            std::string bmN = std::get<SharedString>(args[0]).str();
+            std::string bmN = lpc::vget<SharedString>(args[0]).str();
             static int bmN0 = 0;
             bool rel = bmN.find("yunxiaogong") != std::string::npos ||
                        bmN.find("xiyugucheng") != std::string::npos ||
                        bmN.find("migong") != std::string::npos ||
                        bmN.find("zahuodian") != std::string::npos;
-            bool isZero = (bmR.index() == 2 && std::get<int64_t>(bmR) == 0);
+            bool isZero = (bmR.index() == 2 && lpc::vget<int64_t>(bmR) == 0);
             if (rel || (isZero && bmN0 < 60)) {
                 if (isZero) ++bmN0;
                 std::string d;
                 for (size_t bi = 1; bi < args.size() && bi < 5; ++bi) {
                     d += " a" + std::to_string(bi) + "=t" + std::to_string(args[bi].index());
-                    if (args[bi].index() == 2) d += ":" + std::to_string(std::get<int64_t>(args[bi]));
+                    if (args[bi].index() == 2) d += ":" + std::to_string(lpc::vget<int64_t>(args[bi]));
                 }
                 std::cerr << "[bm] name=" << bmN << d << " res="
-                          << (bmR.index() == 2 ? std::to_string(std::get<int64_t>(bmR)) : "t" + std::to_string(bmR.index()))
+                          << (bmR.index() == 2 ? std::to_string(lpc::vget<int64_t>(bmR)) : "t" + std::to_string(bmR.index()))
                           << "\n";
                 std::cerr.flush();
             }
@@ -6952,7 +6961,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             static int csN = 0;
             if (csN++ < 80) {
                 int n = (args.size() >= 4 && args[3].index() == 5)
-                            ? static_cast<int>(std::get<lpc::Ref<ArrayValue>>(args[3])->items.size() / 2)
+                            ? static_cast<int>(lpc::vget<lpc::Ref<ArrayValue>>(args[3])->items.size() / 2)
                             : -1;
                 std::cerr << "[move] check_steps map=" << (args.empty() ? -1 : as_int(args[0]))
                           << " from=(" << (args.size() > 1 ? as_int(args[1]) : -1) << ","
@@ -6968,7 +6977,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // vm_f_is_pt_in_poly(x, y, poly): even-odd point-in-polygon test used
         // by region/trigger checks (script_*.c, warcraftd).
         if (args.size() < 3 || args[2].index() != 5) return make_int(0);
-        const auto& items = std::get<lpc::Ref<ArrayValue>>(args[2])->items;
+        const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(args[2])->items;
         std::vector<int> poly;
         poly.reserve(items.size());
         for (const auto& v : items) poly.push_back(static_cast<int>(as_int(v)));
@@ -6987,7 +6996,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() < 4) return make_int(0);
         std::vector<int> poly;
         if (args[1].index() == 5) {
-            const auto& items = std::get<lpc::Ref<ArrayValue>>(args[1])->items;
+            const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(args[1])->items;
             poly.reserve(items.size());
             for (const auto& v : items) poly.push_back(static_cast<int>(as_int(v)));
         }
@@ -7037,21 +7046,21 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // the OLD position after every fast move (0x4130).
         if (args[0].index() != 10)
             throw std::runtime_error("The first argument need a buffer.");
-        auto buf = std::get<lpc::Ref<BufferValue>>(args[0]);
+        auto buf = lpc::vget<lpc::Ref<BufferValue>>(args[0]);
         const int64_t off = as_int(args[1]);
         const Value& v = args[2];
         std::string data;
         if (v.index() == 2) {
-            const int64_t n = std::get<int64_t>(v);
+            const int64_t n = lpc::vget<int64_t>(v);
             data.assign(4, '\0');
             data[0] = static_cast<char>((n >> 24) & 0xFF);
             data[1] = static_cast<char>((n >> 16) & 0xFF);
             data[2] = static_cast<char>((n >> 8) & 0xFF);
             data[3] = static_cast<char>(n & 0xFF);
         } else if (v.index() == 10) {
-            data = std::get<lpc::Ref<BufferValue>>(v)->data;
+            data = lpc::vget<lpc::Ref<BufferValue>>(v)->data;
         } else if (v.index() == 4) {
-            data = std::get<SharedString>(v).str();
+            data = lpc::vget<SharedString>(v).str();
         } else {
             throw std::runtime_error("Bad type of argument 3, expeced buffer, string or IntR.");
         }
@@ -7116,9 +7125,9 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         int64_t h = hSeq.fetch_add(1);
         std::vector<std::string> ws;
         if (!args.empty() && args[0].index() == 5) {
-            const auto& items = std::get<lpc::Ref<ArrayValue>>(args[0])->items;
+            const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items;
             for (const auto& v : items) {
-                if (v.index() == 4) ws.push_back(std::get<SharedString>(v).str());
+                if (v.index() == 4) ws.push_back(lpc::vget<SharedString>(v).str());
                 else ws.push_back(to_string(v, false));
             }
         }
@@ -7148,7 +7157,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() >= 2) {
             int64_t h = as_int(args[0]);
             std::string text;
-            if (args[1].index() == 4) text = std::get<SharedString>(args[1]).str();
+            if (args[1].index() == 4) text = lpc::vget<SharedString>(args[1]).str();
             else text = to_string(args[1], false);
             int res = illegalWordsFind(h, text);
             if (LPCVM_GETENV("LPCVM_TAIL") && LPCVM_GETENV("LPCVM_BAN")) {
@@ -7201,7 +7210,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         if (args.size() < 2 || (args[0].index() != 7 && args[0].index() != 4) ||
             args[1].index() != 4)
             return make_int(0);
-        const std::string text = std::get<SharedString>(args[1]).str();
+        const std::string text = lpc::vget<SharedString>(args[1]).str();
         std::function<Value(const std::string&, size_t&)> pv =
             [&](const std::string& s, size_t& i) -> Value {
             while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
@@ -7286,8 +7295,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (bmvN++ < 60) {
                 std::string dk;
                 if (!args.empty()) {
-                    if (args[0].index() == 7) dk = std::get<lpc::Ref<ObjectValue>>(args[0])->programName;
-                    else if (args[0].index() == 4) dk = std::get<SharedString>(args[0]).str();
+                    if (args[0].index() == 7) dk = lpc::vget<lpc::Ref<ObjectValue>>(args[0])->programName;
+                    else if (args[0].index() == 4) dk = lpc::vget<SharedString>(args[0]).str();
                 }
                 std::cerr << "[bmv] builtins move_object self=" << stubCallCtx().obj << " dest=" << dk << "\n";
                 std::cerr.flush();
@@ -7309,11 +7318,11 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         // iface dump: `sf_enter_room=arr1[n3 t7 t7 t2]` (t2 = int) versus a plain
         // closure registration `sf_kill=arr1[n3 t7 t4 t8:sf_kill]` (t8 = closure).
         if (args.size() >= 2 && args[1].index() == 8) {
-            auto srcCl = std::get<lpc::Ref<ClosureValue>>(args[1]);
+            auto srcCl = lpc::vget<lpc::Ref<ClosureValue>>(args[1]);
             if (!srcCl) return args[1];
             auto cl = lpc::Ref<ClosureValue>(new ClosureValue(*srcCl));
             if (args[0].index() == 7) {
-                auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+                auto ov = lpc::vget<lpc::Ref<ObjectValue>>(args[0]);
                 cl->owner = ov ? ov->owner : nullptr;
                 cl->ownerKey = (ov && ov->programName != "<this>") ? ov->programName : std::string();
             } else {
@@ -7351,8 +7360,8 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             if (bevN++ < 80) {
                 std::string qk;
                 if (!args.empty()) {
-                    if (args[0].index() == 7) qk = std::get<lpc::Ref<ObjectValue>>(args[0])->programName;
-                    else if (args[0].index() == 4) qk = std::get<SharedString>(args[0]).str();
+                    if (args[0].index() == 7) qk = lpc::vget<lpc::Ref<ObjectValue>>(args[0])->programName;
+                    else if (args[0].index() == 4) qk = lpc::vget<SharedString>(args[0]).str();
                 }
                 std::cerr << "[bev] builtins env_object q=" << qk << " self=" << stubCallCtx().obj << "\n";
                 std::cerr.flush();
@@ -7373,10 +7382,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             key = stubCallCtx().key;
             if (key.empty()) key = stubCallCtx().obj;
         } else if (args[0].index() == 7) {
-            auto ov = std::get<lpc::Ref<ObjectValue>>(args[0]);
+            auto ov = lpc::vget<lpc::Ref<ObjectValue>>(args[0]);
             if (ov) key = ov->programName;
         } else if (args[0].index() == 4) {
-            key = std::get<SharedString>(args[0]).str();
+            key = lpc::vget<SharedString>(args[0]).str();
         }
         return makeLodgerArray(key);
     }
@@ -7723,7 +7732,7 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
             else if (args[k].index() == 2 && sDir < 0) sDir = static_cast<int>(k);
         }
         if (sArr < 0) return make_array();
-        auto src = std::get<lpc::Ref<ArrayValue>>(args[static_cast<size_t>(sArr)]);
+        auto src = lpc::vget<lpc::Ref<ArrayValue>>(args[static_cast<size_t>(sArr)]);
         std::vector<Value> items = src->items;
         const bool desc = (sDir >= 0) && (as_int(args[static_cast<size_t>(sDir)]) < 0);
         if (sCmp >= 0 && args[static_cast<size_t>(sCmp)].index() == 8) {
@@ -7738,10 +7747,10 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         } else {
             auto less = [](const Value& a, const Value& b) -> bool {
                 if (a.index() == 2 && b.index() == 2)
-                    return std::get<int64_t>(a) < std::get<int64_t>(b);
+                    return lpc::vget<int64_t>(a) < lpc::vget<int64_t>(b);
                 if (a.index() == 3 || b.index() == 3) {
-                    double x = (a.index() == 3) ? std::get<double>(a) : static_cast<double>(as_int(a));
-                    double y = (b.index() == 3) ? std::get<double>(b) : static_cast<double>(as_int(b));
+                    double x = (a.index() == 3) ? lpc::vget<double>(a) : static_cast<double>(as_int(a));
+                    double y = (b.index() == 3) ? lpc::vget<double>(b) : static_cast<double>(as_int(b));
                     return x < y;
                 }
                 return to_string(a, false) < to_string(b, false);

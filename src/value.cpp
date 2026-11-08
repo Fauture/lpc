@@ -241,17 +241,17 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
     switch (key.index()) {
     case 0: return 0;
     case 2: {
-        int32_t n = static_cast<int32_t>(std::get<int64_t>(key));
+        int32_t n = static_cast<int32_t>(lpc::vget<int64_t>(key));
         return static_cast<uint32_t>(n >> 4);
     }
     case 3: {
-        double d = std::get<double>(key);
+        double d = lpc::vget<double>(key);
         int32_t low;
         std::memcpy(&low, &d, 4);
         return static_cast<uint32_t>(low >> 4);
     }
     case 4: {
-        const std::string& s = std::get<SharedString>(key);
+        const std::string& s = lpc::vget<SharedString>(key);
         return caseSensitive ? whashstr(s.c_str(), 32) : whashstrc(s.c_str(), 32);
     }
     case 10: {
@@ -267,7 +267,7 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         // needs is_object(find_object_by_iid(item_info["boot"]))), item-use
         // messages degraded to "你使用了0", mall pets came out level 0 and the
         // 特级八卦 teleport could not find its destination map.
-        const auto& b = std::get<lpc::Ref<BufferValue>>(key);
+        const auto& b = lpc::vget<lpc::Ref<BufferValue>>(key);
         uint32_t h = 2166136261u;
         for (unsigned char c : b->data) {
             h ^= c;
@@ -280,8 +280,8 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
         // tag-only types)
         uintptr_t p = 0;
         switch (key.index()) {
-        case 5: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<ArrayValue>>(key).get()); break;
-        case 6: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<MappingValue>>(key).get()); break;
+        case 5: p = reinterpret_cast<uintptr_t>(lpc::vget<lpc::Ref<ArrayValue>>(key).get()); break;
+        case 6: p = reinterpret_cast<uintptr_t>(lpc::vget<lpc::Ref<MappingValue>>(key).get()); break;
         case 7: {
             // OBJECT keys hash by the object's logical path (programName) - the
             // behaviour this port boots with.  NOTE: the original compares the
@@ -293,7 +293,7 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
             // stall (unbounded growth, ~1 GB RSS, 8160 never opens), so the
             // object identity has to be fixed together with whatever boot-time
             // mapping it breaks.
-            const auto& ov = std::get<lpc::Ref<ObjectValue>>(key);
+            const auto& ov = lpc::vget<lpc::Ref<ObjectValue>>(key);
             uint32_t h = 2166136261u;
             if (ov) {
                 for (unsigned char c : ov->programName) {
@@ -303,8 +303,8 @@ uint32_t MappingValue_hashKey(const Value& key, bool caseSensitive) {
             }
             return h;
         }
-        case 8: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<ClosureValue>>(key).get()); break;
-        case 9: p = reinterpret_cast<uintptr_t>(std::get<lpc::Ref<LoopCtrl>>(key).get()); break;
+        case 8: p = reinterpret_cast<uintptr_t>(lpc::vget<lpc::Ref<ClosureValue>>(key).get()); break;
+        case 9: p = reinterpret_cast<uintptr_t>(lpc::vget<lpc::Ref<LoopCtrl>>(key).get()); break;
         default: p = key.index(); break;
         }
         return static_cast<uint32_t>(p >> 4);
@@ -351,7 +351,7 @@ void iidProbeOp(const char* what, const Value& key, const MappingValue& m, bool 
     if (!found && haveKey && bufKeys > 0 && susp.fetch_add(1) < 6) {
         std::string kb;
         if (key.index() == 10) {
-            const std::string& d = std::get<lpc::Ref<BufferValue>>(key)->data;
+            const std::string& d = lpc::vget<lpc::Ref<BufferValue>>(key)->data;
             for (size_t i = 0; i < d.size() && i < 10; ++i) {
                 char buf[4];
                 std::snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned char>(d[i]));
@@ -380,30 +380,30 @@ namespace {
 bool mapKeyEqual(const Value& a, const Value& b, bool caseSensitive) {    if (a.index() != b.index()) return false;
     switch (a.index()) {
     case 0: case 1: return true;
-    case 2: return std::get<int64_t>(a) == std::get<int64_t>(b);
-    case 3: return std::get<double>(a) == std::get<double>(b);
+    case 2: return lpc::vget<int64_t>(a) == lpc::vget<int64_t>(b);
+    case 3: return lpc::vget<double>(a) == lpc::vget<double>(b);
     case 4:
-        if (caseSensitive) return std::get<SharedString>(a) == std::get<SharedString>(b);
-        return striequal(std::get<SharedString>(a), std::get<SharedString>(b));
-    case 5: return std::get<lpc::Ref<ArrayValue>>(a).get() == std::get<lpc::Ref<ArrayValue>>(b).get();
-    case 6: return std::get<lpc::Ref<MappingValue>>(a).get() == std::get<lpc::Ref<MappingValue>>(b).get();
+        if (caseSensitive) return lpc::vget<SharedString>(a) == lpc::vget<SharedString>(b);
+        return striequal(lpc::vget<SharedString>(a), lpc::vget<SharedString>(b));
+    case 5: return lpc::vget<lpc::Ref<ArrayValue>>(a).get() == lpc::vget<lpc::Ref<ArrayValue>>(b).get();
+    case 6: return lpc::vget<lpc::Ref<MappingValue>>(a).get() == lpc::vget<lpc::Ref<MappingValue>>(b).get();
     case 7: {
         // Object keys compare by programName (matching the hash above).
-        const auto& oa = std::get<lpc::Ref<ObjectValue>>(a);
-        const auto& ob = std::get<lpc::Ref<ObjectValue>>(b);
+        const auto& oa = lpc::vget<lpc::Ref<ObjectValue>>(a);
+        const auto& ob = lpc::vget<lpc::Ref<ObjectValue>>(b);
         if (oa.get() == ob.get()) return true;
         if (!oa || !ob) return false;
         // Matches the hash above (programName); see the note there.
         return oa->programName == ob->programName;
     }
-    case 8: return std::get<lpc::Ref<ClosureValue>>(a).get() == std::get<lpc::Ref<ClosureValue>>(b).get();
-    case 9: return std::get<lpc::Ref<LoopCtrl>>(a).get() == std::get<lpc::Ref<LoopCtrl>>(b).get();
+    case 8: return lpc::vget<lpc::Ref<ClosureValue>>(a).get() == lpc::vget<lpc::Ref<ClosureValue>>(b).get();
+    case 9: return lpc::vget<lpc::Ref<LoopCtrl>>(a).get() == lpc::vget<lpc::Ref<LoopCtrl>>(b).get();
     case 10:
         // BUFFER keys compare by CONTENT (mirrors value_equal's case 10 and the
         // content hash above).  Returning false here made iid_map lookups
         // impossible even for the very same buffer instance.
-        return std::get<lpc::Ref<BufferValue>>(a)->data ==
-               std::get<lpc::Ref<BufferValue>>(b)->data;
+        return lpc::vget<lpc::Ref<BufferValue>>(a)->data ==
+               lpc::vget<lpc::Ref<BufferValue>>(b)->data;
     default: return false;
     }
 }
@@ -563,6 +563,20 @@ void MappingValue::setCaseCheck(bool cs, int obsorb) {
 }
 
 std::vector<std::pair<Value, Value>> MappingValue::items() const {
+    // [map-bad] 结构哨兵: table 桶数必须恒等于 tableSize+1 (构造/rehash
+    // 不变式)。悬空 this (池复用后被野 Value 引用) 或本体被 move 走
+    // (vector _Myfirst 被偷空) 会让循环从 table[tableSize] 读到野指针,
+    // 换成一次性比较成本换来确凿现场 —— faultaddr=0x1c (空 table 读
+    // table[7]) 的实锤渠道。
+    if (table.size() != static_cast<size_t>(tableSize) + 1) {
+        std::cerr << "[map-bad] items: this=" << static_cast<const void*>(this)
+                  << " tableSize=" << tableSize
+                  << " table.size=" << table.size()
+                  << " nodes.size=" << nodes.size()
+                  << " cnt=" << cnt
+                  << " (refs=" << refs << ")\n";
+        std::cerr.flush();
+    }
     // vm_mappingIndices (0x809e688): buckets from tableSize DOWN TO 0,
     // each chain head first — the order keys()/values() return.
     // NOTE the loop statement does NOT use this order: vm_cmpAndJmpInLoop
@@ -578,6 +592,15 @@ std::vector<std::pair<Value, Value>> MappingValue::items() const {
 }
 
 std::vector<std::pair<Value, Value>> MappingValue::itemsAscending() const {
+    // [map-bad] 同 items() 的结构哨兵。
+    if (table.size() != static_cast<size_t>(tableSize) + 1) {
+        std::cerr << "[map-bad] itemsAsc: this=" << static_cast<const void*>(this)
+                  << " tableSize=" << tableSize
+                  << " table.size=" << table.size()
+                  << " nodes.size=" << nodes.size()
+                  << " cnt=" << cnt << "\n";
+        std::cerr.flush();
+    }
     // vm_cmpAndJmpInLoop (0x80bcae0) ctrl 902: buckets ASCENDING 0..maxSize-1,
     // each chain head first, yielding (key, value, counter) triples.
     std::vector<std::pair<Value, Value>> out;
@@ -674,17 +697,17 @@ std::string to_string(const Value& v, bool quote_strings) {
     case 2: {
         // int -> text without ostringstream (was ~85% of gs import CPU)
         (void)fmtSelfCheckOnce();
-        return formatInt64(std::get<int64_t>(v));
+        return formatInt64(lpc::vget<int64_t>(v));
     }
     case 3: {
-        double d = std::get<double>(v);
+        double d = lpc::vget<double>(v);
         (void)fmtSelfCheckOnce();
         std::string out;
         appendReal64(out, d);
         return out;
     }
     case 4: {
-        const std::string& s = std::get<SharedString>(v);
+        const std::string& s = lpc::vget<SharedString>(v);
         if (!quote_strings) return s;
         std::string out = "\"";
         for (char c : s) {
@@ -695,7 +718,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 5: {
-        auto& arr = *std::get<lpc::Ref<ArrayValue>>(v);
+        auto& arr = *lpc::vget<lpc::Ref<ArrayValue>>(v);
         std::string out = "({";
         for (size_t i = 0; i < arr.items.size(); ++i) {
             if (i) out += ", ";
@@ -705,7 +728,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 6: {
-        auto& mp = *std::get<lpc::Ref<MappingValue>>(v);
+        auto& mp = *lpc::vget<lpc::Ref<MappingValue>>(v);
         std::string out = "([";
         auto items = mp.items();
         for (size_t i = 0; i < items.size(); ++i) {
@@ -718,10 +741,10 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 7: {
-        return std::string("object(") + std::get<lpc::Ref<ObjectValue>>(v)->programName + ")";
+        return std::string("object(") + lpc::vget<lpc::Ref<ObjectValue>>(v)->programName + ")";
     }
     case 8: {
-        auto c = std::get<lpc::Ref<ClosureValue>>(v);
+        auto c = lpc::vget<lpc::Ref<ClosureValue>>(v);
         std::string out = "<function " + c->functionName + "(";
         for (size_t i = 0; i < c->boundArgs.size(); ++i) {
             if (i) out += ", ";
@@ -731,7 +754,7 @@ std::string to_string(const Value& v, bool quote_strings) {
         return out;
     }
     case 10: {
-        const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
+        const std::string& s = lpc::vget<lpc::Ref<BufferValue>>(v)->data;
         static const char* hex = "0123456789ABCDEF";
         std::string out = ":";
         for (unsigned char c : s) { out += hex[c >> 4]; out += hex[c & 0xF]; }
@@ -745,7 +768,7 @@ std::string to_string(const Value& v, bool quote_strings) {
 
 void append_text(std::string& out, const Value& v) {
     if (v.index() == 4) {
-        const std::string& s = std::get<SharedString>(v).str();
+        const std::string& s = lpc::vget<SharedString>(v).str();
         out.append(s.data(), s.size());
         return;
     }
@@ -756,8 +779,8 @@ bool is_truthy(const Value& v) {
     switch (v.index()) {
     case 0: return false;
     case 1: return false;
-    case 2: return std::get<int64_t>(v) != 0;
-    case 3: return std::get<double>(v) != 0.0;
+    case 2: return lpc::vget<int64_t>(v) != 0;
+    case 3: return lpc::vget<double>(v) != 0.0;
     case 4: return true;  // strings are ALWAYS truthy in the original driver
                           // (probed on the live original: if("") is truthy;
                           // vm_isZero only zeroes number-0/real-0/undefined).
@@ -784,22 +807,22 @@ bool value_equal(const Value& a, const Value& b) {
     if (a.index() != b.index()) {
         // LPC usually converts int/float
         if (a.index() == 2 && b.index() == 3) {
-            return std::get<int64_t>(a) == static_cast<int64_t>(std::get<double>(b));
+            return lpc::vget<int64_t>(a) == static_cast<int64_t>(lpc::vget<double>(b));
         }
         if (a.index() == 3 && b.index() == 2) {
-            return static_cast<int64_t>(std::get<double>(a)) == std::get<int64_t>(b);
+            return static_cast<int64_t>(lpc::vget<double>(a)) == lpc::vget<int64_t>(b);
         }
         return false;
     }
     switch (a.index()) {
     case 0: return true;
     case 1: return true;
-    case 2: return std::get<int64_t>(a) == std::get<int64_t>(b);
-    case 3: return std::get<double>(a) == std::get<double>(b);
-    case 4: return std::get<SharedString>(a) == std::get<SharedString>(b);
+    case 2: return lpc::vget<int64_t>(a) == lpc::vget<int64_t>(b);
+    case 3: return lpc::vget<double>(a) == lpc::vget<double>(b);
+    case 4: return lpc::vget<SharedString>(a) == lpc::vget<SharedString>(b);
     case 5: {
-        auto pa = std::get<lpc::Ref<ArrayValue>>(a);
-        auto pb = std::get<lpc::Ref<ArrayValue>>(b);
+        auto pa = lpc::vget<lpc::Ref<ArrayValue>>(a);
+        auto pb = lpc::vget<lpc::Ref<ArrayValue>>(b);
         // Same array instance (aliased variable) - equality is by identity
         // before contents.  LPC code frequently compares a value against
         // itself or against a copy that aliases the same container; without
@@ -814,8 +837,8 @@ bool value_equal(const Value& a, const Value& b) {
         return true;
     }
     case 6: {
-        auto pa = std::get<lpc::Ref<MappingValue>>(a);
-        auto pb = std::get<lpc::Ref<MappingValue>>(b);
+        auto pa = lpc::vget<lpc::Ref<MappingValue>>(a);
+        auto pb = lpc::vget<lpc::Ref<MappingValue>>(b);
         if (pa == pb) return true;
         auto& aa = *pa;
         auto& bb = *pb;
@@ -831,8 +854,8 @@ bool value_equal(const Value& a, const Value& b) {
         return eq;
     }
     case 7: {
-        auto pa = std::get<lpc::Ref<ObjectValue>>(a);
-        auto pb = std::get<lpc::Ref<ObjectValue>>(b);
+        auto pa = lpc::vget<lpc::Ref<ObjectValue>>(a);
+        auto pb = lpc::vget<lpc::Ref<ObjectValue>>(b);
         if (pa == pb) return true;
         if (pa->programName == pb->programName) return true;
         // Object IDENTITY, exactly like the original: vm_compareValue (0x80bbcb4)
@@ -861,8 +884,8 @@ bool value_equal(const Value& a, const Value& b) {
         return canonicalObjectPath(pa->programName) == canonicalObjectPath(pb->programName);
     }
     case 8: {
-        auto pa = std::get<lpc::Ref<ClosureValue>>(a);
-        auto pb = std::get<lpc::Ref<ClosureValue>>(b);
+        auto pa = lpc::vget<lpc::Ref<ClosureValue>>(a);
+        auto pb = lpc::vget<lpc::Ref<ClosureValue>>(b);
         if (pa == pb) return true;
         auto& ca = *pa;
         auto& cb = *pb;
@@ -873,8 +896,8 @@ bool value_equal(const Value& a, const Value& b) {
         return true;
     }
     case 10: {
-        auto pa = std::get<lpc::Ref<BufferValue>>(a);
-        auto pb = std::get<lpc::Ref<BufferValue>>(b);
+        auto pa = lpc::vget<lpc::Ref<BufferValue>>(a);
+        auto pb = lpc::vget<lpc::Ref<BufferValue>>(b);
         if (pa == pb) return true;
         return pa->data == pb->data;
     }
@@ -883,15 +906,69 @@ bool value_equal(const Value& a, const Value& b) {
 }
 
 bool value_less(const Value& a, const Value& b) {
-    if (a.index() == 2 && b.index() == 3) return std::get<int64_t>(a) < std::get<double>(b);
-    if (a.index() == 3 && b.index() == 2) return std::get<double>(a) < std::get<int64_t>(b);
+    if (a.index() == 2 && b.index() == 3) return lpc::vget<int64_t>(a) < lpc::vget<double>(b);
+    if (a.index() == 3 && b.index() == 2) return lpc::vget<double>(a) < lpc::vget<int64_t>(b);
     if (a.index() != b.index()) return a.index() < b.index();
     switch (a.index()) {
-    case 2: return std::get<int64_t>(a) < std::get<int64_t>(b);
-    case 3: return std::get<double>(a) < std::get<double>(b);
-    case 4: return std::get<SharedString>(a) < std::get<SharedString>(b);
+    case 2: return lpc::vget<int64_t>(a) < lpc::vget<int64_t>(b);
+    case 3: return lpc::vget<double>(a) < lpc::vget<double>(b);
+    case 4: return lpc::vget<SharedString>(a) < lpc::vget<SharedString>(b);
     default: return false;
     }
 }
 
+} // namespace lpc
+
+// ---------------------------------------------------------------------------
+// [map-bad] MappingValue delete 取证: 悬空引用定位。任何一次 VT_MAP 引用
+// 计数归零 (即将 delete) 都按需 dump this + 符号化调用栈 —— 从日志直接
+// 指认"谁删的", 与后续崩溃 (insert/items 访问毒化内存) 的持有者对照,
+// 漏 retain / 多 release 的凶手路径当场现形。
+// 开关: LPCVM_MAPDEL=1 (启动时缓存, 热路径零 getenv —— 铁律)。
+// ---------------------------------------------------------------------------
+#include <windows.h>
+#include <dbghelp.h>
+
+namespace lpc {
+const bool g_mapDelTraceOn = [] {
+    char b[8] = {};
+    DWORD n = GetEnvironmentVariableA("LPCVM_MAPDEL", b, 8);
+    return n > 0 && n < 8 && b[0] == '1';
+}();
+
+void mapDeleteTrace(const void* self) noexcept {
+    void* fr[12] = {};
+    USHORT cnt = CaptureStackBackTrace(1, 12, fr, nullptr);
+    std::cerr << "[map-del] this=" << self << " n=" << cnt << " bt:";
+    std::cerr.flush();
+    for (USHORT i = 0; i < cnt; ++i) {
+        char symBuf[sizeof(SYMBOL_INFO) + 160] = {};
+        SYMBOL_INFO* sym = reinterpret_cast<SYMBOL_INFO*>(symBuf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 159;
+        DWORD64 disp = 0;
+        DWORD64 addr = reinterpret_cast<DWORD64>(fr[i]);
+        if (SymFromAddr(GetCurrentProcess(), addr, &disp, sym)) {
+            IMAGEHLP_LINE64 line{};
+            line.SizeOfStruct = sizeof(line);
+            DWORD lineDisp = 0;
+            const char* ln = "";
+            char fbuf[300] = {};
+            if (SymGetLineFromAddr64(GetCurrentProcess(), addr,
+                                     &lineDisp, &line)) {
+                const char* f = strrchr(line.FileName, '\\');
+                _snprintf_s(fbuf, sizeof(fbuf), _TRUNCATE, "[%s:%lu]",
+                            f ? f + 1 : line.FileName,
+                            static_cast<unsigned long>(line.LineNumber));
+                ln = fbuf;
+            }
+            std::cerr << " " << sym->Name << "+" << std::hex << disp
+                      << std::dec << ln;
+        } else {
+            std::cerr << " 0x" << std::hex << addr << std::dec;
+        }
+    }
+    std::cerr << "\n";
+    std::cerr.flush();
+}
 } // namespace lpc

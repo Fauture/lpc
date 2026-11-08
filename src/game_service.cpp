@@ -2695,7 +2695,7 @@ void handle_vm_cmdCheckServer(GameClient& cl, const uint8_t* body, size_t len)
     // asking every ~10-30 s and walks back to the login screen after a few
     // minutes without it), run the whole challenge driver-side and send the
     // answer ourselves.
-    if (r.index() == 2 && std::get<int64_t>(r) == 1) return;   // LPC handled it
+    if (r.index() == 2 && lpc::vget<int64_t>(r) == 1) return;   // LPC handled it
     int x = 0, y = 0, answer = -1;
     if (!lpc::antiCheatCheckServer(std::string(reinterpret_cast<const char*>(body + 4), blen),
                                    x, y, answer))

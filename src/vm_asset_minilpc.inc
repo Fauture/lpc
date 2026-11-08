@@ -448,9 +448,9 @@ struct Interp {
     }
     static bool isSelf(const Value& v) {
         if (v.index() != 5) return false;
-        auto a = std::get<lpc::Ref<ArrayValue>>(v);
+        auto a = lpc::vget<lpc::Ref<ArrayValue>>(v);
         return a && !a->items.empty() && a->items[0].index() == 4 &&
-               std::get<SharedString>(a->items[0]).str() == "\x01MINILPC_SELF";
+               lpc::vget<SharedString>(a->items[0]).str() == "\x01MINILPC_SELF";
     }
 
     [[noreturn]] void fail(const std::string& m) const { throw std::runtime_error("minilpc rt: " + m); }
@@ -475,10 +475,10 @@ struct Interp {
     }
 
     static int64_t toInt(const Value& v) {
-        if (v.index() == 2) return std::get<int64_t>(v);
-        if (v.index() == 3) return static_cast<int64_t>(std::get<double>(v));
+        if (v.index() == 2) return lpc::vget<int64_t>(v);
+        if (v.index() == 3) return static_cast<int64_t>(lpc::vget<double>(v));
         if (v.index() == 4) {
-            const std::string& s = std::get<SharedString>(v).str();
+            const std::string& s = lpc::vget<SharedString>(v).str();
             return strtoll(s.c_str(), nullptr, 10);
         }
         return 0;
@@ -486,11 +486,11 @@ struct Interp {
 
     static int cmpValues(const Value& a, const Value& b) {
         if (a.index() == 4 && b.index() == 4) {
-            const int c = std::get<SharedString>(a).str().compare(std::get<SharedString>(b).str());
+            const int c = lpc::vget<SharedString>(a).str().compare(lpc::vget<SharedString>(b).str());
             return c < 0 ? -1 : (c > 0 ? 1 : 0);
         }
         if (a.index() == 2 && b.index() == 2) {
-            const int64_t x = std::get<int64_t>(a), y = std::get<int64_t>(b);
+            const int64_t x = lpc::vget<int64_t>(a), y = lpc::vget<int64_t>(b);
             return x < y ? -1 : (x > y ? 1 : 0);
         }
         const int64_t x = toInt(a), y = toInt(b);
@@ -499,7 +499,7 @@ struct Interp {
 
     std::string sprintfImpl(const std::vector<Value>& a) {
         if (a.empty() || a[0].index() != 4) return "";
-        const std::string& f = std::get<SharedString>(a[0]).str();
+        const std::string& f = lpc::vget<SharedString>(a[0]).str();
         std::string out;
         size_t ai = 1;
         for (size_t i = 0; i < f.size(); ++i) {
@@ -527,10 +527,10 @@ struct Interp {
                     break;
                 }
                 case 's':
-                    piece = v.index() == 4 ? std::get<SharedString>(v).str() : "";
+                    piece = v.index() == 4 ? lpc::vget<SharedString>(v).str() : "";
                     break;
                 case 'f':
-                    snprintf(buf, sizeof buf, "%f", v.index() == 3 ? std::get<double>(v) : static_cast<double>(toInt(v)));
+                    snprintf(buf, sizeof buf, "%f", v.index() == 3 ? lpc::vget<double>(v) : static_cast<double>(toInt(v)));
                     piece = buf;
                     break;
                 default:
@@ -555,30 +555,30 @@ struct Interp {
         if (fn == "sprintf") return make_string(sprintfImpl(args));
         if (fn == "strlen") {
             return make_int(args.empty() || args[0].index() != 4 ? 0
-                             : static_cast<int64_t>(std::get<SharedString>(args[0]).str().size()));
+                             : static_cast<int64_t>(lpc::vget<SharedString>(args[0]).str().size()));
         }
         if (fn == "sizeof") {
             if (args.empty()) return make_int(0);
-            if (args[0].index() == 5) return make_int(static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(args[0])->items.size()));
-            if (args[0].index() == 6) return make_int(static_cast<int64_t>(std::get<lpc::Ref<MappingValue>>(args[0])->size()));
+            if (args[0].index() == 5) return make_int(static_cast<int64_t>(lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items.size()));
+            if (args[0].index() == 6) return make_int(static_cast<int64_t>(lpc::vget<lpc::Ref<MappingValue>>(args[0])->size()));
             return make_int(0);
         }
         if (fn == "toupper" || fn == "tolower") {
             if (args.empty() || args[0].index() != 4) return make_string("");
-            std::string s = std::get<SharedString>(args[0]).str();
+            std::string s = lpc::vget<SharedString>(args[0]).str();
             for (char& c : s) c = (fn == "toupper") ? static_cast<char>(toupper(static_cast<unsigned char>(c))) : static_cast<char>(tolower(static_cast<unsigned char>(c)));
             return make_string(s);
         }
         if (fn == "values") {
             if (args.empty() || args[0].index() != 6) return make_array();
             auto out = lpc::Ref<ArrayValue>(new ArrayValue());
-            for (auto& kv : std::get<lpc::Ref<MappingValue>>(args[0])->items()) out->items.push_back(kv.second);
+            for (auto& kv : lpc::vget<lpc::Ref<MappingValue>>(args[0])->items()) out->items.push_back(kv.second);
             return out;
         }
         if (fn == "keys") {
             if (args.empty() || args[0].index() != 6) return make_array();
             auto out = lpc::Ref<ArrayValue>(new ArrayValue());
-            for (auto& kv : std::get<lpc::Ref<MappingValue>>(args[0])->items()) out->items.push_back(kv.first);
+            for (auto& kv : lpc::vget<lpc::Ref<MappingValue>>(args[0])->items()) out->items.push_back(kv.first);
             return out;
         }
         if (fn == "allocate_mapping") return lpc::Ref<MappingValue>(new MappingValue());
@@ -590,15 +590,15 @@ struct Interp {
             // family_guard counts entries (count_total(values(map))).
             int64_t sum = 0;
             if (!args.empty() && args[0].index() == 5)
-                for (auto& it : std::get<lpc::Ref<ArrayValue>>(args[0])->items) sum += toInt(it);
+                for (auto& it : lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items) sum += toInt(it);
             return make_int(sum);
         }
         if (fn == "sort") {
             if (args.empty() || args[0].index() != 5) return make_array();
-            auto items = std::get<lpc::Ref<ArrayValue>>(args[0])->items;
+            auto items = lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items;
             std::vector<std::pair<Value, Value>> keyed(items.size());
             if (args.size() >= 2 && args[1].index() == 8) {
-                auto cl = std::get<lpc::Ref<ClosureValue>>(args[1]);
+                auto cl = lpc::vget<lpc::Ref<ClosureValue>>(args[1]);
                 for (size_t i = 0; i < items.size(); ++i) {
                     std::vector<Value> call;
                     call.push_back(items[i]);
@@ -669,7 +669,7 @@ struct Interp {
             case Stmt::LOOPIN: {
                 Value seq = eval(s->expr, scope);
                 if (seq.index() == 5) {
-                    auto items = std::get<lpc::Ref<ArrayValue>>(seq)->items;  // copy: body may mutate
+                    auto items = lpc::vget<lpc::Ref<ArrayValue>>(seq)->items;  // copy: body may mutate
                     for (auto& it : items) {
                         scope[s->name] = it;
                         for (auto& st : s->stmts) {
@@ -683,7 +683,7 @@ struct Interp {
                     //     loop (mks in m)  result += mks[0] + mks[1];
                     // with int keys and int values, so the only consistent
                     // original-VM semantics is a two-element array per step.
-                    auto kvs = std::get<lpc::Ref<MappingValue>>(seq)->items();  // copy
+                    auto kvs = lpc::vget<lpc::Ref<MappingValue>>(seq)->items();  // copy
                     for (auto& kv : kvs) {
                         auto pair = lpc::Ref<ArrayValue>(new ArrayValue());
                         pair->items.push_back(kv.first);
@@ -720,11 +720,11 @@ struct Interp {
 
     static void mapSet(const Value& mv, const Value& key, const Value& val) {
         if (mv.index() != 6) return;
-        std::get<lpc::Ref<MappingValue>>(mv)->insert(key, val);
+        lpc::vget<lpc::Ref<MappingValue>>(mv)->insert(key, val);
     }
     static const Value* mapGet(const Value& mv, const Value& key) {
         if (mv.index() != 6) return nullptr;
-        return std::get<lpc::Ref<MappingValue>>(mv)->find(key);
+        return lpc::vget<lpc::Ref<MappingValue>>(mv)->find(key);
     }
 
     Value applyAssign(const NodeP& np, std::map<std::string, Value>& scope) {
@@ -738,16 +738,16 @@ struct Interp {
                 // array += array concatenates (the generator template does
                 //   a += ({ (y - y + i + 37) & mask });
                 if (lv->index() == 5 && r.index() == 5) {
-                    auto dst = std::get<lpc::Ref<ArrayValue>>(*lv);
-                    auto src = std::get<lpc::Ref<ArrayValue>>(r);
+                    auto dst = lpc::vget<lpc::Ref<ArrayValue>>(*lv);
+                    auto src = lpc::vget<lpc::Ref<ArrayValue>>(r);
                     if (dst && src)
                         for (auto& it : src->items) dst->items.push_back(it);
                     nv = *lv;
                 } else if (lv->index() == 4 && r.index() == 4) {
                     // string += string: s += sprintf("%02X", x) - the generator
                     // builds the challenge answer through string concatenation.
-                    nv = make_string(std::get<SharedString>(*lv).str() +
-                                     std::get<SharedString>(r).str());
+                    nv = make_string(lpc::vget<SharedString>(*lv).str() +
+                                     lpc::vget<SharedString>(r).str());
                 } else {
                     nv = make_int(toInt(*lv) + toInt(r));
                 }
@@ -773,7 +773,7 @@ struct Interp {
                 return val;
             }
             if (base.index() == 5) {
-                auto& items = std::get<lpc::Ref<ArrayValue>>(base)->items;
+                auto& items = lpc::vget<lpc::Ref<ArrayValue>>(base)->items;
                 int64_t i = toInt(key);
                 if (i >= 0 && static_cast<size_t>(i) < items.size()) items[static_cast<size_t>(i)] = val;
                 return val;
@@ -857,7 +857,7 @@ struct Interp {
                 Value base = eval(n->kids[0], scope);
                 Value key = eval(n->kids[1], scope);
                 if (base.index() == 5) {
-                    auto& items = std::get<lpc::Ref<ArrayValue>>(base)->items;
+                    auto& items = lpc::vget<lpc::Ref<ArrayValue>>(base)->items;
                     int64_t i = toInt(key);
                     if (i < 0 || static_cast<size_t>(i) >= items.size()) return make_int(0);
                     return items[static_cast<size_t>(i)];
@@ -867,7 +867,7 @@ struct Interp {
                     return v ? *v : Value{};
                 }
                 if (base.index() == 4) {
-                    const std::string& s = std::get<SharedString>(base).str();
+                    const std::string& s = lpc::vget<SharedString>(base).str();
                     int64_t i = toInt(key);
                     if (i < 0 || static_cast<size_t>(i) >= s.size()) return make_int(0);
                     return make_int(static_cast<unsigned char>(s[static_cast<size_t>(i)]));

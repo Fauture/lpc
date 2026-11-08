@@ -28,9 +28,9 @@ int64_t as_int(const Value& v) {
     switch (v.index()) {
     case 0: return 0;
     case 1: return 0;
-    case 2: return std::get<int64_t>(v);
-    case 3: return static_cast<int64_t>(std::get<double>(v));
-    case 4: return std::get<SharedString>(v).empty() ? 0 : 1;
+    case 2: return lpc::vget<int64_t>(v);
+    case 3: return static_cast<int64_t>(lpc::vget<double>(v));
+    case 4: return lpc::vget<SharedString>(v).empty() ? 0 : 1;
     default: return 0;
     }
 }
@@ -39,9 +39,9 @@ double as_float(const Value& v) {
     switch (v.index()) {
     case 0: return 0.0;
     case 1: return 0.0;
-    case 2: return static_cast<double>(std::get<int64_t>(v));
-    case 3: return std::get<double>(v);
-    case 4: return std::stod(std::get<SharedString>(v));
+    case 2: return static_cast<double>(lpc::vget<int64_t>(v));
+    case 3: return lpc::vget<double>(v);
+    case 4: return std::stod(lpc::vget<SharedString>(v));
     default: return 0.0;
     }
 }
@@ -84,7 +84,7 @@ void Interpreter::runGlobal() {
 Value Interpreter::callBuiltin(const std::string& name, const std::vector<Value>& args) {
     if (name == "create_thread") {
         if (args.size() >= 2 && args[1].index() == 8) {
-            auto cl = std::get<lpc::Ref<ClosureValue>>(args[1]);
+            auto cl = lpc::vget<lpc::Ref<ClosureValue>>(args[1]);
             threads_.emplace_back(cl->functionName, cl->boundArgs);
             return make_int(static_cast<int64_t>(threads_.size()));
         }
@@ -213,7 +213,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
     case Stmt::Kind::Loop: {
         Value container = eval(stmt->cond, env);
         if (container.index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(container);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(container);
             for (auto& item : arr->items) {
                 if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = item;
@@ -222,7 +222,7 @@ Flow Interpreter::exec(StmtPtr stmt, Environment& env) {
                 if (f == Flow::Break) break;
             }
         } else if (container.index() == 6) {
-            auto mp = std::get<lpc::Ref<MappingValue>>(container);
+            auto mp = lpc::vget<lpc::Ref<MappingValue>>(container);
             for (auto& kv : mp->items()) {
                 if (++stepCounter_ > 50000) throw ThreadYield();
                 env.vars[stmt->loopVar] = kv.first;
@@ -346,7 +346,7 @@ Value Interpreter::eval(ExprPtr expr, Environment& env) {
     case Expr::Kind::Member: {
         Value obj = eval(expr->lhs, env);
         if (obj.index() == 7) {
-            auto& vars = std::get<lpc::Ref<ObjectValue>>(obj)->variables;
+            auto& vars = lpc::vget<lpc::Ref<ObjectValue>>(obj)->variables;
             auto it = vars.find(expr->text);
             if (it != vars.end()) return it->second;
             return make_int(0);
@@ -418,15 +418,15 @@ Value Interpreter::evalBinary(const std::string& op, const Value& a, const Value
         if (a.index() == 5 && b.index() == 5) {
             // LPC array concatenation: a + b
             auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
-            arr->items = std::get<lpc::Ref<ArrayValue>>(a)->items;
-            const auto& bv = std::get<lpc::Ref<ArrayValue>>(b)->items;
+            arr->items = lpc::vget<lpc::Ref<ArrayValue>>(a)->items;
+            const auto& bv = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
             arr->items.insert(arr->items.end(), bv.begin(), bv.end());
             return arr;
         }
         if (a.index() == 4 || b.index() == 4) {
             std::string r;
-            r.reserve((a.index() == 4 ? std::get<SharedString>(a).str().size() : 0) +
-                      (b.index() == 4 ? std::get<SharedString>(b).str().size() : 0) + 16);
+            r.reserve((a.index() == 4 ? lpc::vget<SharedString>(a).str().size() : 0) +
+                      (b.index() == 4 ? lpc::vget<SharedString>(b).str().size() : 0) + 16);
             append_text(r, a);
             append_text(r, b);
             return make_string(std::move(r));
@@ -482,12 +482,12 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     };
     if (rhs->kind == Expr::Kind::Range) {
         int64_t len = 0;
-        if (c.index() == 5) len = static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(c)->items.size());
-        else if (c.index() == 4) len = static_cast<int64_t>(std::get<SharedString>(c).size());
+        if (c.index() == 5) len = static_cast<int64_t>(lpc::vget<lpc::Ref<ArrayValue>>(c)->items.size());
+        else if (c.index() == 4) len = static_cast<int64_t>(lpc::vget<SharedString>(c).size());
         int64_t start = resolveIndex(rhs->lhs, len);
         int64_t end = resolveIndex(rhs->rhs, len);
         if (c.index() == 5) {
-            auto arr = std::get<lpc::Ref<ArrayValue>>(c);
+            auto arr = lpc::vget<lpc::Ref<ArrayValue>>(c);
             int64_t len = static_cast<int64_t>(arr->items.size());
             if (start < 0) start += len;
             if (end < 0) end += len;
@@ -501,7 +501,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
             return out;
         }
         if (c.index() == 4) {
-            const std::string& s = std::get<SharedString>(c);
+            const std::string& s = lpc::vget<SharedString>(c);
             int64_t len = static_cast<int64_t>(s.size());
             if (start < 0) start += len;
             if (end < 0) end += len;
@@ -514,7 +514,7 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
         return Value{};   // bad range -> undefined (type 0)
     }
     if (c.index() == 5) {
-        auto arr = std::get<lpc::Ref<ArrayValue>>(c);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(c);
         int64_t len = static_cast<int64_t>(arr->items.size());
         int64_t i = resolveIndex(rhs, len);
         if (i < 0) i += len;
@@ -523,13 +523,13 @@ Value Interpreter::evalIndex(ExprPtr lhs, ExprPtr rhs, Environment& env) {
     }
     if (c.index() == 6) {
         Value idx = eval(rhs, env);
-        auto mp = std::get<lpc::Ref<MappingValue>>(c);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(c);
         const Value* hit = mp->find(idx);
         if (hit) return *hit;
         return Value{};   // miss -> undefined (type 0)
     }
     if (c.index() == 4) {
-        const std::string& s = std::get<SharedString>(c);
+        const std::string& s = lpc::vget<SharedString>(c);
         int64_t len = static_cast<int64_t>(s.size());
         int64_t i = resolveIndex(rhs, len);
         if (i < 0) i += len;
@@ -543,14 +543,14 @@ void Interpreter::assignIndex(ExprPtr lhs, ExprPtr rhs, const Value& v, Environm
     Value c = eval(lhs, env);
     Value idx = eval(rhs, env);
     if (c.index() == 5) {
-        auto arr = std::get<lpc::Ref<ArrayValue>>(c);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(c);
         int64_t i = as_int(idx);
         if (i < 0) i += static_cast<int64_t>(arr->items.size());
         if (i >= 0 && i < static_cast<int64_t>(arr->items.size())) arr->items[static_cast<size_t>(i)] = v;
         return;
     }
     if (c.index() == 6) {
-        auto mp = std::get<lpc::Ref<MappingValue>>(c);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(c);
         mp->insert(idx, v);
         return;
     }
@@ -568,7 +568,7 @@ Value Interpreter::evalCall(ExprPtr target, const std::vector<ExprPtr>& args, En
     }
     Value callee = eval(target, env);
     if (callee.index() == 8) {
-        auto cl = std::get<lpc::Ref<ClosureValue>>(callee);
+        auto cl = lpc::vget<lpc::Ref<ClosureValue>>(callee);
         std::vector<Value> all = cl->boundArgs;
         all.insert(all.end(), argValues.begin(), argValues.end());
         return callFunction(cl->functionName, all);
@@ -585,10 +585,10 @@ Value Interpreter::evalCallOther(ExprPtr target, const std::string& fn, const st
     std::vector<Value> argValues;
     for (auto& a : args) argValues.push_back(eval(a, env));
     if (obj.index() == 7) {
-        auto o = std::get<lpc::Ref<ObjectValue>>(obj);
+        auto o = lpc::vget<lpc::Ref<ObjectValue>>(obj);
         auto it = o->variables.find(fn);
         if (it != o->variables.end() && it->second.index() == 8) {
-            auto cl = std::get<lpc::Ref<ClosureValue>>(it->second);
+            auto cl = lpc::vget<lpc::Ref<ClosureValue>>(it->second);
             return callFunction(cl->functionName, argValues);
         }
         // If the object is one of our in-memory objects we might still have the function in the current program.
@@ -599,7 +599,7 @@ Value Interpreter::evalCallOther(ExprPtr target, const std::string& fn, const st
     // the requested function through the original bytecode VM.
     if (obj.index() == 4) {
         if (functions_.find(fn) != functions_.end()) return callFunction(fn, argValues);
-        return callOriginalObjectFunction(std::get<SharedString>(obj), fn, argValues, "out/lib_aaa32");
+        return callOriginalObjectFunction(lpc::vget<SharedString>(obj), fn, argValues, "out/lib_aaa32");
     }
     return make_int(0);
 }

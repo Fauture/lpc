@@ -772,7 +772,7 @@ Value findObjectInRegistry(const std::string& virtualPath,
 
 bool objectValueAlive(const Value& v) {
     if (v.index() != 7) return false;
-    auto ov = std::get<lpc::Ref<ObjectValue>>(v);
+    auto ov = lpc::vget<lpc::Ref<ObjectValue>>(v);
     if (!ov) return false;
     // 原版 O_DESTRUCTED 语义: 析构标记一置, is_object/find_object 视角下
     // 对象即死 (引用视角); 真正释放 (alive=false, 引用失效) 延迟到链结束
@@ -959,7 +959,7 @@ std::string objectTemplateKey(const std::string& key) {
 
 Value makeLodgerArray(const std::string& containerKey) {
     Value arr = make_array();
-    auto av = std::get<lpc::Ref<ArrayValue>>(arr);
+    auto av = lpc::vget<lpc::Ref<ArrayValue>>(arr);
     for (const std::string& k : vmcore::envLodgerKeysOf(containerKey))
         av->items.push_back(make_object(k));
     return arr;
@@ -971,12 +971,12 @@ Value makeLodgerArray(const std::string& containerKey) {
 namespace {
 vmcore::VmObject* vmOfObjValue(const Value& obj) {
     if (obj.index() == 4) {
-        const std::string& nm = std::get<SharedString>(obj).str();
+        const std::string& nm = lpc::vget<SharedString>(obj).str();
         return nm.empty() ? nullptr
                           : vmcore::Registry::instance().findByName(nm);
     }
     if (obj.index() != 7) return nullptr;
-    auto ov = std::get<lpc::Ref<ObjectValue>>(obj);
+    auto ov = lpc::vget<lpc::Ref<ObjectValue>>(obj);
     if (!ov) return nullptr;
     if (ov->vmObj) return ov->vmObj;
     if (!ov->programName.empty())
@@ -1031,7 +1031,7 @@ std::string objVarsToString(const Value& obj) {
 // ===========================================================================
 Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) {
     if (closure.index() != 8) return make_int(0);
-    auto cl = std::get<lpc::Ref<ClosureValue>>(closure);
+    auto cl = lpc::vget<lpc::Ref<ClosureValue>>(closure);
     if (!cl) return make_int(0);
     std::vector<Value> all = cl->boundArgs;
     all.insert(all.end(), args.begin(), args.end());
@@ -1051,7 +1051,7 @@ Value applyClosureOnOwner(const Value& closure, const std::vector<Value>& args) 
 // every call).
 Value callClosureForEfun(const Value& closure, const std::vector<Value>& args) {
     if (closure.index() != 8) return Value{};
-    auto cl = std::get<lpc::Ref<ClosureValue>>(closure);
+    auto cl = lpc::vget<lpc::Ref<ClosureValue>>(closure);
     if (!cl) return Value{};
     vmcore::VmPcb* pcb = vmcore::currentPcb();
     return vmcore::vmInvokeClosure(pcb, cl, args);

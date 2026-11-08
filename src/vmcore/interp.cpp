@@ -452,8 +452,8 @@ static StackItem makeMemberRefItem(const Value& container, const Value& key) {
     StackItem it;
     it.ref = std::make_unique<StackRef>();
     it.ref->key = key;
-    if (container.index() == 5) it.ref->arr = std::get<lpc::Ref<ArrayValue>>(container);
-    else if (container.index() == 6) it.ref->map = std::get<lpc::Ref<MappingValue>>(container);
+    if (container.index() == 5) it.ref->arr = lpc::vget<lpc::Ref<ArrayValue>>(container);
+    else if (container.index() == 6) it.ref->map = lpc::vget<lpc::Ref<MappingValue>>(container);
     return it;
 }
 
@@ -561,7 +561,7 @@ static void loopStep(VmPcb* pcb, size_t& ip, int ctrlSlot,
     } else {
         if (slotItem.value.index() != 9)  // LoopCtrl is variant index 9
             badCtrl();
-        c = std::get<lpc::Ref<LoopCtrl>>(slotItem.value);
+        c = lpc::vget<lpc::Ref<LoopCtrl>>(slotItem.value);
     }
     if (!c) badCtrl();
     auto setVar = [&](const Value& v) {
@@ -1510,9 +1510,9 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         StackItem& slot =
                             pcb->stack[static_cast<size_t>(tgt->ref->slotIndex)];
                         if (!slot.isRef() && slot.value.index() == 4) {
-                            SharedString& ts = std::get<SharedString>(slot.value);
+                            SharedString& ts = lpc::vget<SharedString>(slot.value);
                             if (ts.size() >= 4096 && ts.blockRefs() == 1) {
-                                const SharedString& rs = std::get<SharedString>(rhs);
+                                const SharedString& rs = lpc::vget<SharedString>(rhs);
                                 std::string more = rs.str();
                                 ts.appendInPlace(more);
                                 pushValue(pcb, slot.value);
@@ -1528,8 +1528,8 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // array += array: append in place when the LHS array is
                     // uniquely owned (the plain path deep-copies per append).
                     if (target.index() == 5 && rhs.index() == 5) {
-                        auto trg = std::get<lpc::Ref<ArrayValue>>(target);
-                        auto rv = std::get<lpc::Ref<ArrayValue>>(rhs);
+                        auto trg = lpc::vget<lpc::Ref<ArrayValue>>(target);
+                        auto rv = lpc::vget<lpc::Ref<ArrayValue>>(rhs);
                         if (trg.use_count() <= 2) {
                             trg->items.insert(trg->items.end(),
                                               rv->items.begin(), rv->items.end());
@@ -1573,19 +1573,19 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 switch (v.index()) {
                 case 4:
                     pushValue(pcb, make_int(static_cast<int64_t>(
-                                      std::get<SharedString>(v).size())));
+                                      lpc::vget<SharedString>(v).size())));
                     break;
                 case 5:
                     pushValue(pcb, make_int(static_cast<int64_t>(
-                                      std::get<lpc::Ref<ArrayValue>>(v)->items.size())));
+                                      lpc::vget<lpc::Ref<ArrayValue>>(v)->items.size())));
                     break;
                 case 6:
                     pushValue(pcb, make_int(static_cast<int64_t>(
-                                      std::get<lpc::Ref<MappingValue>>(v)->size())));
+                                      lpc::vget<lpc::Ref<MappingValue>>(v)->size())));
                     break;
                 case 10:
                     pushValue(pcb, make_int(static_cast<int64_t>(
-                                      std::get<lpc::Ref<BufferValue>>(v)->data.size())));
+                                      lpc::vget<lpc::Ref<BufferValue>>(v)->data.size())));
                     break;
                 default:
                     pushValue(pcb, make_int(0));
@@ -1609,7 +1609,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 //   0x8000/已摘表 真释放(链尾 markDestructed+closeReferences)
                 //   → is_object 判假 (all_team 缓存里的僵尸 team 靠此剔除)。
                 if (got == t && t == 10 && v.index() == 7) {
-                    auto ov = std::get<lpc::Ref<ObjectValue>>(v);
+                    auto ov = lpc::vget<lpc::Ref<ObjectValue>>(v);
                     if (!ov || (ov->alive && !ov->alive->load())) got = -1;
                 }
                 if (vmcore::traceOn() && t == 7 && got != 7) {
@@ -1648,11 +1648,11 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 if (mflag & 1) {
                     size_t len = 0;
                     if (container.index() == 4)
-                        len = std::get<SharedString>(container).size();
+                        len = lpc::vget<SharedString>(container).size();
                     else if (container.index() == 5)
-                        len = std::get<lpc::Ref<ArrayValue>>(container)->items.size();
+                        len = lpc::vget<lpc::Ref<ArrayValue>>(container)->items.size();
                     else if (container.index() == 10)
-                        len = std::get<lpc::Ref<BufferValue>>(container)->data.size();
+                        len = lpc::vget<lpc::Ref<BufferValue>>(container)->data.size();
                     key = make_int(static_cast<int64_t>(len) - toInt(key));
                 }
                 Value got = queryMemberValue(container, key);
@@ -1683,11 +1683,11 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 if (mflag & 1) {
                     size_t len = 0;
                     if (container.index() == 4)
-                        len = std::get<SharedString>(container).size();
+                        len = lpc::vget<SharedString>(container).size();
                     else if (container.index() == 5)
-                        len = std::get<lpc::Ref<ArrayValue>>(container)->items.size();
+                        len = lpc::vget<lpc::Ref<ArrayValue>>(container)->items.size();
                     else if (container.index() == 10)
-                        len = std::get<lpc::Ref<BufferValue>>(container)->data.size();
+                        len = lpc::vget<lpc::Ref<BufferValue>>(container)->data.size();
                     key = make_int(static_cast<int64_t>(len) - toInt(key));
                 }
                 {
@@ -1885,8 +1885,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                             std::string cdesc =
                                 "<idx" + std::to_string(top.index()) + ">";
                             if (top.index() == 8) {
-                                auto cl = std::get<
-                                    lpc::Ref<ClosureValue>>(top);
+                                auto cl = lpc::vget<lpc::Ref<ClosureValue>>(top);
                                 if (cl)
                                     cdesc = cl->functionName + "@" +
                                             cl->ownerKey;
@@ -1988,9 +1987,9 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 std::string funName;
                 int funIndex = -1;
                 if (funVal.index() == 4)
-                    funName = std::get<SharedString>(funVal).str();
+                    funName = lpc::vget<SharedString>(funVal).str();
                 else if (funVal.index() == 2)
-                    funIndex = static_cast<int>(std::get<int64_t>(funVal));
+                    funIndex = static_cast<int>(lpc::vget<int64_t>(funVal));
                 trcCallStack(pcb, 8, funName.empty()
                                           ? ("fn#" + std::to_string(funIndex))
                                           : funName, argn);
@@ -2012,7 +2011,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                          funName == "get_skill_ob" ||
                          funName == "set_attrib") &&
                         !items.empty() && items.back().value.index() == 4) {
-                        const std::string s = std::get<SharedString>(
+                        const std::string s = lpc::vget<SharedString>(
                                                   items.back().value)
                                                   .str();
                         std::string hex;
@@ -2061,11 +2060,11 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // nested arrays flatten one level, non-objects skipped,
                     // result = array of results (hook-driven so a blocking
                     // efun inside an element parks mid-broadcast).
-                    auto arr = std::get<lpc::Ref<ArrayValue>>(pathVal);
+                    auto arr = lpc::vget<lpc::Ref<ArrayValue>>(pathVal);
                     std::vector<Value> targets;
                     for (auto& el : arr->items) {
                         if (el.index() == 5) {
-                            auto inner = std::get<lpc::Ref<ArrayValue>>(el);
+                            auto inner = lpc::vget<lpc::Ref<ArrayValue>>(el);
                             for (auto& e2 : inner->items) targets.push_back(e2);
                         } else {
                             targets.push_back(el);
@@ -2079,7 +2078,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 }
                 VmObject* target = nullptr;
                 if (pathVal.index() == 7) {
-                    auto ov = std::get<lpc::Ref<ObjectValue>>(pathVal);
+                    auto ov = lpc::vget<lpc::Ref<ObjectValue>>(pathVal);
                     if (ov) {
                         target = ov->vmObj;
                         // Reconstructed reference (get_object_by_id / DBFS
@@ -2092,7 +2091,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     }
                 } else if (pathVal.index() == 4) {
                     const std::string p =
-                        std::get<SharedString>(pathVal).str();
+                        lpc::vget<SharedString>(pathVal).str();
                     target = Registry::instance().findByName(p);
                     if (!target) {
                         // mudlib by-path call_other spelling
@@ -2129,9 +2128,9 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         static std::atomic<int> op8MissLog{0};
                         if (op8MissLog.fetch_add(1) < 40) {
                             std::string p = pathVal.index() == 4
-                                ? std::get<SharedString>(pathVal).str()
-                                : (pathVal.index() == 7 && std::get<lpc::Ref<ObjectValue>>(pathVal)
-                                       ? "ov:" + std::get<lpc::Ref<ObjectValue>>(pathVal)->programName
+                                ? lpc::vget<SharedString>(pathVal).str()
+                                : (pathVal.index() == 7 && lpc::vget<lpc::Ref<ObjectValue>>(pathVal)
+                                       ? "ov:" + lpc::vget<lpc::Ref<ObjectValue>>(pathVal)->programName
                                        : "idx" + std::to_string(pathVal.index()));
                             std::cerr << "[op8-miss] path=" << p
                                       << " fn=" << funName
@@ -2239,7 +2238,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                 std::cerr << "[minic] " << fk1 << " on " << tk1
                                           << " -> idx" << rv.index()
                                           << (rv.index() == 2
-                                                  ? "=" + std::to_string(std::get<int64_t>(rv))
+                                                  ? "=" + std::to_string(lpc::vget<int64_t>(rv))
                                                   : "")
                                           << "\n";
                                 std::cerr.flush();
@@ -2258,13 +2257,13 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     static const std::atomic<bool>& nsDbg = dynProbeFlag("LPCVM_NSDBG");
                     if (nsDbg.load(std::memory_order_relaxed) && funName == "query" &&
                         !pcb->stack.empty() && pcb->stack.back().value.index() == 4 &&
-                        std::get<SharedString>(pcb->stack.back().value).str() ==
+                        lpc::vget<SharedString>(pcb->stack.back().value).str() ==
                             "not_start_room") {
                         const std::string tk = target->key();
                         vmcore::vmHookCallbackWhenReturn(pcb, [tk](Value& rv) {
                             std::cerr << "[nsroom] " << tk << " -> "
                                       << (rv.index() == 2
-                                              ? std::to_string(std::get<int64_t>(rv))
+                                              ? std::to_string(lpc::vget<int64_t>(rv))
                                               : "idx" + std::to_string(rv.index()))
                                       << "\n";
                             std::cerr.flush();
@@ -2283,7 +2282,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         funName == "query" && argn == 1 && !items.empty() &&
                         items[0].value.index() == 4) {
                         const std::string qk =
-                            std::get<SharedString>(items[0].value).str();
+                            lpc::vget<SharedString>(items[0].value).str();
                         if (qk == "monster_list" || qk == "template" ||
                             qk == "map_index" || qk == "exits") {
                             const std::string tk0 = target->key();
@@ -2311,8 +2310,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         vmcore::vmHookCallbackWhenReturn(
                             pcb, [tk0](Value& rv) {
                                 if (rv.index() == 6) {
-                                    auto m = std::get<
-                                        lpc::Ref<MappingValue>>(rv);
+                                    auto m = lpc::vget<lpc::Ref<MappingValue>>(rv);
                                     std::cerr << "[qed] " << tk0
                                               << " map=" << (const void*)m.get()
                                               << " sz=" << m->size() << "\n";
@@ -2367,7 +2365,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                     // 的 do_init 按名调用全部被吞, daemon 永不初始化。)
                     if (funItem.value.index() == 4) {
                         const auto& nameS =
-                            std::get<SharedString>(funItem.value);
+                            lpc::vget<SharedString>(funItem.value);
                         std::vector<StackItem> callItems;
                         for (int i = 0; i < argc && !pcb->stack.empty(); ++i)
                             callItems.push_back(popItem(pcb));
@@ -2426,7 +2424,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                             "function or string.");
                     break;
                 }
-                auto cl = std::get<lpc::Ref<ClosureValue>>(funItem.value);
+                auto cl = lpc::vget<lpc::Ref<ClosureValue>>(funItem.value);
                 if (!cl) {
                     for (int i = 0; i < argc && !pcb->stack.empty(); ++i) popItem(pcb);
                     pushValue(pcb, Value{});   // null closure: void
@@ -2627,7 +2625,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 const int offset = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 const int number = fromMeta ? m1 : 0;
                 const Value& v = pcb->stack.back().value;
-                if (v.index() == 2 && std::get<int64_t>(v) == number) {
+                if (v.index() == 2 && lpc::vget<int64_t>(v) == number) {
                     popItem(pcb);
                     pcb->ip += static_cast<size_t>(static_cast<int64_t>(offset));
                 }
@@ -2640,7 +2638,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 const std::vector<std::string>* tbl = curStrings(pcb);
                 if (v.index() == 4 && tbl && strIndex >= 0 &&
                     static_cast<size_t>(strIndex) < tbl->size() &&
-                    std::get<SharedString>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
+                    lpc::vget<SharedString>(v) == (*tbl)[static_cast<size_t>(strIndex)]) {
                     popItem(pcb);
                     pcb->ip += static_cast<size_t>(static_cast<int64_t>(offset));
                 }
@@ -2834,11 +2832,11 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 } else if (number == 997) {
                     if (second.index() == 5) {
                         ctrl->type = 901;
-                        ctrl->arr = std::get<lpc::Ref<ArrayValue>>(second);
+                        ctrl->arr = lpc::vget<lpc::Ref<ArrayValue>>(second);
                         ctrl->iter = 0;
                     } else if (second.index() == 6) {
                         ctrl->type = 902;
-                        ctrl->map = std::get<lpc::Ref<MappingValue>>(second);
+                        ctrl->map = lpc::vget<lpc::Ref<MappingValue>>(second);
                         ctrl->mIdx = 0;
                         ctrl->mElementIndex = 0;
                     }

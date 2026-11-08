@@ -31,11 +31,11 @@ namespace lpc {
 namespace {
 std::string asStr(const Value& v) {
     switch (v.index()) {
-    case 2: return std::to_string(std::get<int64_t>(v));
-    case 4: return std::get<SharedString>(v);
+    case 2: return std::to_string(lpc::vget<int64_t>(v));
+    case 4: return lpc::vget<SharedString>(v);
     case 3: {
         char buf[32];
-        snprintf(buf, sizeof(buf), "%g", std::get<double>(v));
+        snprintf(buf, sizeof(buf), "%g", lpc::vget<double>(v));
         return buf;
     }
     default: return "";
@@ -51,9 +51,9 @@ void ensureWsa() {
 }
 int64_t toInt64(const Value& v) {
     switch (v.index()) {
-    case 2: return std::get<int64_t>(v);
-    case 3: return static_cast<int64_t>(std::get<double>(v));
-    case 4: return std::strtoll(std::get<SharedString>(v).c_str(), nullptr, 10);
+    case 2: return lpc::vget<int64_t>(v);
+    case 3: return static_cast<int64_t>(lpc::vget<double>(v));
+    case 4: return std::strtoll(lpc::vget<SharedString>(v).c_str(), nullptr, 10);
     default: return 0;
     }
 }
@@ -279,27 +279,27 @@ std::string saveValueAscii(const Value& v) {
     switch (v.index()) {
     case 0: return "U";
     case 1: return "V";
-    case 2: return std::to_string(std::get<int64_t>(v));
+    case 2: return std::to_string(lpc::vget<int64_t>(v));
     case 3: {
         char buf[64];
-        snprintf(buf, sizeof(buf), "%#g", std::get<double>(v));
+        snprintf(buf, sizeof(buf), "%#g", lpc::vget<double>(v));
         return buf;
     }
     case 4:
     {
         std::string out;
-        saveEscapeString(std::get<SharedString>(v), out);
+        saveEscapeString(lpc::vget<SharedString>(v), out);
         return out;
     }
     case 5: {
-        auto arr = std::get<lpc::Ref<ArrayValue>>(v);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(v);
         std::string out = "({";
         for (const auto& item : arr->items) out += saveValueAscii(item) + ",";
         out += "})";
         return out;
     }
     case 6: {
-        auto mp = std::get<lpc::Ref<MappingValue>>(v);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(v);
         std::string out = "([";
         for (const auto& kv : mp->items()) {
             out += saveValueAscii(kv.first) + ":" + saveValueAscii(kv.second) + ",";
@@ -314,7 +314,7 @@ std::string saveValueAscii(const Value& v) {
         return "U";
     case 10: {
         // buffer -> ":HEX:"
-        const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
+        const std::string& s = lpc::vget<lpc::Ref<BufferValue>>(v)->data;
         static const char* hex = "0123456789ABCDEF";
         std::string out = ":";
         for (unsigned char c : s) { out += hex[c >> 4]; out += hex[c & 0xF]; }
@@ -542,18 +542,18 @@ Value handleXdbcCommand(XdbcConn& conn, const Value& para) {
     // para is a mapping; missing pieces degrade gracefully
     auto get = [&para](const char* k) -> Value {
         if (para.index() != 6) return Value{};   // missing -> undefined (type 0)
-        const Value* hit = std::get<lpc::Ref<MappingValue>>(para)->find(make_string(k));
+        const Value* hit = lpc::vget<lpc::Ref<MappingValue>>(para)->find(make_string(k));
         return hit ? *hit : Value{};             // missing -> undefined (type 0)
     };
     std::string cmd;
     {
         Value c = get("cmd");
-        if (c.index() == 4) cmd = std::get<SharedString>(c);
+        if (c.index() == 4) cmd = lpc::vget<SharedString>(c);
     }
     if (cmd == "set_key") {
         int64_t key = 0;
         Value k = get("key");
-        if (k.index() == 2) key = std::get<int64_t>(k);
+        if (k.index() == 2) key = lpc::vget<int64_t>(k);
         char buf[32];
         snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(key & 0xFFFFFFFFLL));
         conn.keyHex = buf;
@@ -701,8 +701,8 @@ void processXdbcFrames(SocketEntry& se) {
         Value result = handleXdbcCommand(conn, para);
         std::string cmd = "unknown";
         {
-            const Value* c = std::get<lpc::Ref<MappingValue>>(para)->find(make_string("cmd"));
-            if (c && c->index() == 4) cmd = std::get<SharedString>(*c);
+            const Value* c = lpc::vget<lpc::Ref<MappingValue>>(para)->find(make_string("cmd"));
+            if (c && c->index() == 4) cmd = lpc::vget<SharedString>(*c);
         }
         auto resp = lpc::Ref<MappingValue>(new MappingValue());
         resp->insert(make_string("cmd"), make_string(cmd));

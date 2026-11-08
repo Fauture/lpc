@@ -15,23 +15,23 @@ namespace vmcore {
 
 int64_t toInt(const Value& v) {
     switch (v.index()) {
-    case 2: return std::get<int64_t>(v);
-    case 3: return static_cast<int64_t>(std::get<double>(v));
+    case 2: return lpc::vget<int64_t>(v);
+    case 3: return static_cast<int64_t>(lpc::vget<double>(v));
     case 4: {
-        const std::string& s = std::get<SharedString>(v);
+        const std::string& s = lpc::vget<SharedString>(v);
         return s.empty() ? 0 : std::strtoll(s.c_str(), nullptr, 10);
     }
-    case 5: return static_cast<int64_t>(std::get<lpc::Ref<ArrayValue>>(v)->items.size());
-    case 6: return static_cast<int64_t>(std::get<lpc::Ref<MappingValue>>(v)->size());
+    case 5: return static_cast<int64_t>(lpc::vget<lpc::Ref<ArrayValue>>(v)->items.size());
+    case 6: return static_cast<int64_t>(lpc::vget<lpc::Ref<MappingValue>>(v)->size());
     default: return 0;
     }
 }
 
 double toReal(const Value& v) {
     switch (v.index()) {
-    case 2: return static_cast<double>(std::get<int64_t>(v));
-    case 3: return std::get<double>(v);
-    case 4: return std::strtod(std::get<SharedString>(v).c_str(), nullptr);
+    case 2: return static_cast<double>(lpc::vget<int64_t>(v));
+    case 3: return lpc::vget<double>(v);
+    case 4: return std::strtod(lpc::vget<SharedString>(v).c_str(), nullptr);
     default: return 0.0;
     }
 }
@@ -40,14 +40,14 @@ bool isZero(const Value& v) {
     switch (v.index()) {
     case 0:
     case 1: return true;
-    case 2: return std::get<int64_t>(v) == 0;
-    case 3: return std::get<double>(v) == 0.0;
+    case 2: return lpc::vget<int64_t>(v) == 0;
+    case 3: return lpc::vget<double>(v) == 0.0;
     case 7: {
         // Reference invalidation (original driver semantics): an object value
         // whose alive flag was cleared at real free IS 0 — master's iid map
         // entries and every other stored reference stop being truthy, so
         // `if (global_95[iid])` skips instead of reporting a duplicate iid.
-        auto ov = std::get<lpc::Ref<ObjectValue>>(v);
+        auto ov = lpc::vget<lpc::Ref<ObjectValue>>(v);
         if (!ov) return true;
         return ov->alive && !ov->alive->load(std::memory_order_relaxed);
     }
@@ -82,8 +82,8 @@ static int64_t truncWrap(double v) { return i32(static_cast<int64_t>(v)); }
 Value addValues(const Value& a, const Value& b) {
     if (a.index() == 5 && b.index() == 5) {
         auto r = lpc::Ref<ArrayValue>(new ArrayValue());
-        const auto& aa = std::get<lpc::Ref<ArrayValue>>(a)->items;
-        const auto& bb = std::get<lpc::Ref<ArrayValue>>(b)->items;
+        const auto& aa = lpc::vget<lpc::Ref<ArrayValue>>(a)->items;
+        const auto& bb = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
         r->items.reserve(aa.size() + bb.size());
         r->items.insert(r->items.end(), aa.begin(), aa.end());
         r->items.insert(r->items.end(), bb.begin(), bb.end());
@@ -91,25 +91,25 @@ Value addValues(const Value& a, const Value& b) {
     }
     if (a.index() == 6 && b.index() == 6) {
         auto r = lpc::Ref<MappingValue>(new MappingValue(
-            static_cast<uint32_t>(std::get<lpc::Ref<MappingValue>>(a)->size())));
-        for (const auto& kv : std::get<lpc::Ref<MappingValue>>(a)->items())
+            static_cast<uint32_t>(lpc::vget<lpc::Ref<MappingValue>>(a)->size())));
+        for (const auto& kv : lpc::vget<lpc::Ref<MappingValue>>(a)->items())
             r->insert(kv.first, kv.second);
-        for (const auto& kv : std::get<lpc::Ref<MappingValue>>(b)->items())
+        for (const auto& kv : lpc::vget<lpc::Ref<MappingValue>>(b)->items())
             r->insert(kv.first, kv.second);
         return r;
     }
     if (a.index() == 10 || b.index() == 10) {
         // buffer concatenation: buffer + anything = raw byte concat.
         auto cat = [](const Value& v) -> std::string {
-            if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
+            if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
             return to_string(v, false);
         };
         return make_buffer(cat(a) + cat(b));
     }
     if (a.index() == 4 || b.index() == 4) {
         std::string r;
-        r.reserve((a.index() == 4 ? std::get<SharedString>(a).str().size() : 0) +
-                  (b.index() == 4 ? std::get<SharedString>(b).str().size() : 0) + 8);
+        r.reserve((a.index() == 4 ? lpc::vget<SharedString>(a).str().size() : 0) +
+                  (b.index() == 4 ? lpc::vget<SharedString>(b).str().size() : 0) + 8);
         append_text(r, a);
         append_text(r, b);
         return make_string(std::move(r));
@@ -123,8 +123,8 @@ Value subValues(const Value& a, const Value& b) {
     // array - array: remove b's elements from a (vm_subValue / vm_subArray)
     if (a.index() == 5 && b.index() == 5) {
         auto r = lpc::Ref<ArrayValue>(new ArrayValue());
-        const auto& bb = std::get<lpc::Ref<ArrayValue>>(b)->items;
-        for (const auto& item : std::get<lpc::Ref<ArrayValue>>(a)->items) {
+        const auto& bb = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
+        for (const auto& item : lpc::vget<lpc::Ref<ArrayValue>>(a)->items) {
             bool found = false;
             for (const auto& x : bb)
                 if (value_equal(item, x)) { found = true; break; }
@@ -135,13 +135,13 @@ Value subValues(const Value& a, const Value& b) {
     // mapping - mapping/array: remove keys present in b
     if (a.index() == 6) {
         auto r = lpc::Ref<MappingValue>(new MappingValue());
-        auto am = std::get<lpc::Ref<MappingValue>>(a);
+        auto am = lpc::vget<lpc::Ref<MappingValue>>(a);
         for (const auto& kv : am->items()) {
             bool found = false;
             if (b.index() == 6) {
-                found = std::get<lpc::Ref<MappingValue>>(b)->find(kv.first) != nullptr;
+                found = lpc::vget<lpc::Ref<MappingValue>>(b)->find(kv.first) != nullptr;
             } else if (b.index() == 5) {
-                for (const auto& x : std::get<lpc::Ref<ArrayValue>>(b)->items)
+                for (const auto& x : lpc::vget<lpc::Ref<ArrayValue>>(b)->items)
                     if (value_equal(kv.first, x)) { found = true; break; }
             }
             if (!found) r->insert(kv.first, kv.second);
@@ -194,8 +194,8 @@ Value lshValues(const Value& a, const Value& b) {
     // (vm_concatMapping) — LPC relies on the aliasing everywhere
     // (register_daemon_data / itemd / partywar `m << ([...])`).
     if (a.index() == 6 && b.index() == 6) {
-        auto left = std::get<lpc::Ref<MappingValue>>(a);
-        auto right = std::get<lpc::Ref<MappingValue>>(b);
+        auto left = lpc::vget<lpc::Ref<MappingValue>>(a);
+        auto right = lpc::vget<lpc::Ref<MappingValue>>(b);
         // [lshdbg] import 合并取证: room import 的 dbase<<room_info 若左值
         // 是副本（非 dbase 引用）合并即丢失 (monster_list undefined 实锤)。
         static const std::atomic<bool>& ldFlag =
@@ -250,8 +250,8 @@ Value xorValues(const Value& a, const Value& b) {
 Value lpcOrValues(const Value& a, const Value& b) {
     if (a.index() == 5 && b.index() == 5) {
         auto out = lpc::Ref<ArrayValue>(new ArrayValue());
-        const auto& ai = std::get<lpc::Ref<ArrayValue>>(a)->items;
-        const auto& bi = std::get<lpc::Ref<ArrayValue>>(b)->items;
+        const auto& ai = lpc::vget<lpc::Ref<ArrayValue>>(a)->items;
+        const auto& bi = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
         out->items.reserve(ai.size() + bi.size());
         for (const auto& x : ai) out->items.push_back(x);
         for (const auto& x : bi) {
@@ -276,8 +276,8 @@ int compareValues(const Value& a, const Value& b) {
         return x < y ? -1 : (x > y ? 1 : 0);
     }
     if (a.index() == 4 && b.index() == 4) {
-        const auto& x = std::get<SharedString>(a);
-        const auto& y = std::get<SharedString>(b);
+        const auto& x = lpc::vget<SharedString>(a);
+        const auto& y = lpc::vget<SharedString>(b);
         return x < y ? -1 : (x > y ? 1 : 0);
     }
     int64_t x = toInt(a), y = toInt(b);
@@ -303,16 +303,16 @@ int compareValuesOriginal(const Value& a, const Value& b) {
     case 0: case 1:
         return 0;
     case 2: {
-        int64_t x = std::get<int64_t>(a), y = std::get<int64_t>(b);
+        int64_t x = lpc::vget<int64_t>(a), y = lpc::vget<int64_t>(b);
         return x < y ? -1 : (x > y ? 1 : 0);
     }
     case 3: {
-        double x = std::get<double>(a), y = std::get<double>(b);
+        double x = lpc::vget<double>(a), y = lpc::vget<double>(b);
         return x < y ? -1 : (x > y ? 1 : 0);
     }
     case 4: {
-        const std::string x = std::get<SharedString>(a).str();
-        const std::string y = std::get<SharedString>(b).str();
+        const std::string x = lpc::vget<SharedString>(a).str();
+        const std::string y = lpc::vget<SharedString>(b).str();
         if (!x.empty() && !y.empty() &&
             std::isdigit(static_cast<unsigned char>(x[0])) &&
             std::isdigit(static_cast<unsigned char>(y[0]))) {
@@ -325,8 +325,8 @@ int compareValuesOriginal(const Value& a, const Value& b) {
         return c < 0 ? -1 : (c > 0 ? 1 : 0);
     }
     case 5: {
-        const std::string& x = std::get<lpc::Ref<BufferValue>>(a)->data;
-        const std::string& y = std::get<lpc::Ref<BufferValue>>(b)->data;
+        const std::string& x = lpc::vget<lpc::Ref<BufferValue>>(a)->data;
+        const std::string& y = lpc::vget<lpc::Ref<BufferValue>>(b)->data;
         size_t n = x.size() < y.size() ? x.size() : y.size();
         if (n) {
             int c = std::memcmp(x.data(), y.data(), n);
@@ -337,12 +337,12 @@ int compareValuesOriginal(const Value& a, const Value& b) {
     default: {
         auto ptr = [](const Value& v) -> const void* {
             switch (v.index()) {
-            case 5: return std::get<5>(v).get();
-            case 6: return std::get<6>(v).get();
-            case 7: return std::get<7>(v).get();
-            case 8: return std::get<8>(v).get();
-            case 9: return std::get<9>(v).get();
-            case 10: return std::get<10>(v).get();
+            case 5: return lpc::vgetI<5>(v).get();
+            case 6: return lpc::vgetI<6>(v).get();
+            case 7: return lpc::vgetI<7>(v).get();
+            case 8: return lpc::vgetI<8>(v).get();
+            case 9: return lpc::vgetI<9>(v).get();
+            case 10: return lpc::vgetI<10>(v).get();
             default: return nullptr;
             }
         };
@@ -356,11 +356,11 @@ int compareValuesOriginal(const Value& a, const Value& b) {
 Value castValue(Value v, int targetType) {
     switch (targetType) {
     case 2:
-        if (v.index() == 3) return make_int(static_cast<int64_t>(std::get<double>(v)));
+        if (v.index() == 3) return make_int(static_cast<int64_t>(lpc::vget<double>(v)));
         if (v.index() == 4) {
             // (int)string -> strtol; non-numeric string of >=4 bytes -> big-endian
             // first 4 bytes (buffers are byte strings in this VM).
-            const std::string& s = std::get<SharedString>(v);
+            const std::string& s = lpc::vget<SharedString>(v);
             char* end = nullptr;
             long long parsed = std::strtoll(s.c_str(), &end, 10);
             if (end && *end == '\0' && end != s.c_str()) return make_int(parsed);
@@ -375,7 +375,7 @@ Value castValue(Value v, int targetType) {
         }
         if (v.index() == 10) {
             // (int)buffer: every byte big-endian (v22 = byte | (v22 << 8)).
-            const std::string& s = std::get<lpc::Ref<BufferValue>>(v)->data;
+            const std::string& s = lpc::vget<lpc::Ref<BufferValue>>(v)->data;
             uint64_t be = 0;
             for (unsigned char c : s) be = (be << 8) | c;
             return make_int(static_cast<int64_t>(be));
@@ -383,15 +383,15 @@ Value castValue(Value v, int targetType) {
         if (v.index() == 1 || v.index() == 0) return make_int(0);
         return v;
     case 3:
-        if (v.index() == 2) return make_float(static_cast<double>(std::get<int64_t>(v)));
-        if (v.index() == 4) return make_float(std::strtod(std::get<SharedString>(v).c_str(), nullptr));
+        if (v.index() == 2) return make_float(static_cast<double>(lpc::vget<int64_t>(v)));
+        if (v.index() == 4) return make_float(std::strtod(lpc::vget<SharedString>(v).c_str(), nullptr));
         if (v.index() == 1 || v.index() == 0) return make_float(0.0);
         return v;
     case 4:
         if (v.index() == 4) return v;
         if (v.index() == 10) {
             // (string)buffer: raw bytes, stripping a leading UTF-8 BOM.
-            std::string s = std::get<lpc::Ref<BufferValue>>(v)->data;
+            std::string s = lpc::vget<lpc::Ref<BufferValue>>(v)->data;
             if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF &&
                 static_cast<unsigned char>(s[1]) == 0xBB &&
                 static_cast<unsigned char>(s[2]) == 0xBF)
@@ -405,7 +405,7 @@ Value castValue(Value v, int targetType) {
         // (buffer) casts ALWAYS allocate a real buffer:
         //   int -> 4-byte big-endian; string -> same bytes; nil -> empty.
         if (v.index() == 2) {
-            uint32_t n = static_cast<uint32_t>(static_cast<int32_t>(std::get<int64_t>(v)));
+            uint32_t n = static_cast<uint32_t>(static_cast<int32_t>(lpc::vget<int64_t>(v)));
             std::string s;
             s += static_cast<char>((n >> 24) & 0xFF);
             s += static_cast<char>((n >> 16) & 0xFF);
@@ -413,7 +413,7 @@ Value castValue(Value v, int targetType) {
             s += static_cast<char>(n & 0xFF);
             return make_buffer(s);
         }
-        if (v.index() == 4) return make_buffer(std::get<SharedString>(v));
+        if (v.index() == 4) return make_buffer(lpc::vget<SharedString>(v));
         if (v.index() == 1 || v.index() == 0) return make_buffer("");
         if (v.index() == 10) return v;
         return make_buffer(to_string(v, false));
@@ -430,7 +430,7 @@ Value castValue(Value v, int targetType) {
 
 Value queryMemberValue(const Value& container, const Value& key) {
     if (container.index() == 6) {
-        auto mp = std::get<lpc::Ref<MappingValue>>(container);
+        auto mp = lpc::vget<lpc::Ref<MappingValue>>(container);
         // A NULL (or implausible) mapping payload reads as a miss instead of
         // crashing (tmp_dbase[path] before materialisation).
         if (!mp || reinterpret_cast<uintptr_t>(mp.get()) < 0x10000)
@@ -441,13 +441,13 @@ Value queryMemberValue(const Value& container, const Value& key) {
             if (vmcore::traceOn() && key.index() == 2) {
                 std::cerr << "[mapmiss] map=" << mp.get()
                           << " size=" << mp->size()
-                          << " intkey=" << std::get<int64_t>(key) << "\n";
+                          << " intkey=" << lpc::vget<int64_t>(key) << "\n";
             }
         }
         return Value{};   // miss -> original type 0 "undefined"
     }
     if (container.index() == 5) {
-        auto arr = std::get<lpc::Ref<ArrayValue>>(container);
+        auto arr = lpc::vget<lpc::Ref<ArrayValue>>(container);
         if (!arr || reinterpret_cast<uintptr_t>(arr.get()) < 0x10000)
             return Value{};
         int64_t i = toInt(key);
@@ -457,7 +457,7 @@ Value queryMemberValue(const Value& container, const Value& key) {
     }
     if (container.index() == 4) {
         // string indexing returns the ASCII code (int).
-        const std::string& s = std::get<SharedString>(container);
+        const std::string& s = lpc::vget<SharedString>(container);
         int64_t i = toInt(key);
         if (i >= 0 && i < static_cast<int64_t>(s.size()))
             return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
@@ -466,7 +466,7 @@ Value queryMemberValue(const Value& container, const Value& key) {
     if (container.index() == 10) {
         // buffer indexing yields the BYTE as an int (vm_queryMember type-5
         // branch) — admincommandd::get_args relies on it.
-        const std::string& s = std::get<lpc::Ref<BufferValue>>(container)->data;
+        const std::string& s = lpc::vget<lpc::Ref<BufferValue>>(container)->data;
         int64_t i = toInt(key);
         if (i >= 0 && i < static_cast<int64_t>(s.size()))
             return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
@@ -502,11 +502,11 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
     // String ranges are BYTE based, exactly like the original
     // (vm_queryRange 0x808fd04 does byte pointer arithmetic over pString->len).
     if (container.index() == 5)
-        len = std::get<lpc::Ref<ArrayValue>>(container)->items.size();
+        len = lpc::vget<lpc::Ref<ArrayValue>>(container)->items.size();
     else if (container.index() == 4)
-        len = std::get<SharedString>(container).size();
+        len = lpc::vget<SharedString>(container).size();
     else if (container.index() == 10)
-        len = std::get<lpc::Ref<BufferValue>>(container)->data.size();
+        len = lpc::vget<lpc::Ref<BufferValue>>(container)->data.size();
     if (flag & 1) { if (b <= 0) b = 1; b = static_cast<int64_t>(len) - b; }
     if (flag & 2) { if (a <= 0) a = 1; a = static_cast<int64_t>(len) - a; }
     if (a < 0) a = 0;
@@ -518,18 +518,18 @@ Value queryRangeValue(const Value& container, const Value& from, const Value& to
         return make_array();
     }
     if (container.index() == 4) {
-        const std::string& s = std::get<SharedString>(container);
+        const std::string& s = lpc::vget<SharedString>(container);
         const size_t b0 = static_cast<size_t>(a);
         const size_t b1 = static_cast<size_t>(b + 1);
         std::string out = s.substr(b0, b1 > b0 ? b1 - b0 : 0);
         return make_string(out);
     }
     if (container.index() == 10) {
-        const std::string& s = std::get<lpc::Ref<BufferValue>>(container)->data;
+        const std::string& s = lpc::vget<lpc::Ref<BufferValue>>(container)->data;
         return make_buffer(s.substr(static_cast<size_t>(a), static_cast<size_t>(b - a + 1)));
     }
     if (container.index() == 5) {
-        const auto& items = std::get<lpc::Ref<ArrayValue>>(container)->items;
+        const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(container)->items;
         auto arr = lpc::Ref<ArrayValue>(new ArrayValue());
         for (int64_t i = a; i <= b; ++i) arr->items.push_back(items[static_cast<size_t>(i)]);
         return arr;

@@ -209,7 +209,7 @@ if (eid == CID("hash")) {
     if (!args.empty()) {
         if (args[0].index() == 4) s = as_string(args[0]);
         else if (args[0].index() == 10)
-            s = std::get<lpc::Ref<BufferValue>>(args[0])->data;
+            s = lpc::vget<lpc::Ref<BufferValue>>(args[0])->data;
     }
     uint32_t h = 0;
     size_t n = s.size() < 32 ? s.size() : 32;
@@ -231,9 +231,9 @@ if (eid == CID("net8") || eid == CID("net16") || eid == CID("net32")) {
 if (eid == CID("empty_value")) {
     if (args.empty()) return make_int(0);
     if (args[0].index() == 5) {
-        std::get<lpc::Ref<ArrayValue>>(args[0])->items.clear();
+        lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items.clear();
     } else if (args[0].index() == 6) {
-        auto m = std::get<lpc::Ref<MappingValue>>(args[0]);
+        auto m = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
         m->nodes.clear();
         m->table.assign(8, -1);
         m->tableSize = 7;
@@ -290,11 +290,11 @@ if (eid == CID("atomac")) {
 if (eid == CID("fxn")) {
     // vm_f_fxn(x, c1, c2, ...) = c1*x + c2*x^2 + ... (Horner form, float).
     if (args.size() < 2) return make_float(0.0);
-    double x = (args[0].index() == 3) ? std::get<double>(args[0])
+    double x = (args[0].index() == 3) ? lpc::vget<double>(args[0])
                                       : static_cast<double>(as_int(args[0]));
     double ret = 0.0, xn = x;
     for (size_t i = 1; i < args.size(); ++i) {
-        double c = (args[i].index() == 3) ? std::get<double>(args[i])
+        double c = (args[i].index() == 3) ? lpc::vget<double>(args[i])
                                           : static_cast<double>(as_int(args[i]));
         ret += c * xn;
         xn *= x;
@@ -382,7 +382,7 @@ if (eid == CID("combine_utf8")) {
     // vm_f_combine_utf8: array of code points -> UTF-8 text.
     std::string out;
     if (!args.empty() && args[0].index() == 5) {
-        for (const Value& v : std::get<lpc::Ref<ArrayValue>>(args[0])->items) {
+        for (const Value& v : lpc::vget<lpc::Ref<ArrayValue>>(args[0])->items) {
             uint32_t cp = static_cast<uint32_t>(as_int(v));
             if (cp < 0x80) out.push_back(static_cast<char>(cp));
             else if (cp < 0x800) {
@@ -465,9 +465,9 @@ if (eid == CID("convert_mapping_to_string")) {
     // for every key in the array that exists in the mapping.
     if (args.size() < 2 || args[0].index() != 6 || args[1].index() != 5)
         return make_string("");
-    auto mp = std::get<lpc::Ref<MappingValue>>(args[0]);
+    auto mp = lpc::vget<lpc::Ref<MappingValue>>(args[0]);
     std::string out;
-    for (const Value& k : std::get<lpc::Ref<ArrayValue>>(args[1])->items) {
+    for (const Value& k : lpc::vget<lpc::Ref<ArrayValue>>(args[1])->items) {
         if (k.index() != 4) continue;
         const Value* got = mp->find(k);
         if (got && got->index() == 2)

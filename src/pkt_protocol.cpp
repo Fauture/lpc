@@ -191,10 +191,10 @@ void wr64be(std::string& s, uint64_t v) {
 }
 
 int64_t valInt(const Value& v) {
-    if (v.index() == 2) return std::get<int64_t>(v);
-    if (v.index() == 3) return static_cast<int64_t>(std::get<double>(v));
+    if (v.index() == 2) return lpc::vget<int64_t>(v);
+    if (v.index() == 3) return static_cast<int64_t>(lpc::vget<double>(v));
     if (v.index() == 4) {
-        const std::string& t = std::get<SharedString>(v);
+        const std::string& t = lpc::vget<SharedString>(v);
         return t.empty() ? 0 : std::strtoll(t.c_str(), nullptr, 10);
     }
     return 0;
@@ -207,7 +207,7 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
         size_t cnt = 0;
         std::vector<Value> items;
         if (val.index() == 5) {
-            items = std::get<lpc::Ref<ArrayValue>>(val)->items;
+            items = lpc::vget<lpc::Ref<ArrayValue>>(val)->items;
             cnt = items.size();
         }
         wr16be(out, static_cast<uint16_t>(cnt));
@@ -229,9 +229,9 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
     } else if (f.type.rfind("string", 0) == 0 || f.type.rfind("buffer", 0) == 0) {
         // length-prefixed string/buffer (1/2/4 byte length)
         std::string s;
-        if (val.index() == 4) s = std::get<SharedString>(val);
+        if (val.index() == 4) s = lpc::vget<SharedString>(val);
         else if (val.index() == 10)
-            s = std::get<lpc::Ref<BufferValue>>(val)->data;   // raw buffer bytes
+            s = lpc::vget<lpc::Ref<BufferValue>>(val)->data;   // raw buffer bytes
         // Original vm_pktPadDefValue: for string/buffer fields a NON-string/
         // non-buffer value (e.g. int) is treated as EMPTY - it writes a
         // zero-length prefix and no payload (LABEL_21/LABEL_67 paths).  dba's
@@ -253,11 +253,11 @@ void encodeField(const PktField& f, const Value& val, std::string& out) {
             for (const auto& sf : dit->second) {
                 Value v;
                 if (val.index() == 6) {
-                    auto mp = std::get<lpc::Ref<MappingValue>>(val);
+                    auto mp = lpc::vget<lpc::Ref<MappingValue>>(val);
                     const Value* fv = mp->find(make_string(sf.name));
                     if (fv) v = *fv;
                 } else if (val.index() == 5) {
-                    auto arr = std::get<lpc::Ref<ArrayValue>>(val);
+                    auto arr = lpc::vget<lpc::Ref<ArrayValue>>(val);
                     size_t fi = 0;
                     for (size_t k = 0; k < dit->second.size(); ++k) if (&dit->second[k] == &sf) { fi = k; break; }
                     if (fi < arr->items.size()) v = arr->items[fi];
@@ -297,7 +297,7 @@ std::string pktPadInterface(uint16_t msgNo, const Value& args) {
     if (pi.encapType == 1) {
         // args is an array of field values in order
         std::vector<Value> items;
-        if (args.index() == 5) items = std::get<lpc::Ref<ArrayValue>>(args)->items;
+        if (args.index() == 5) items = lpc::vget<lpc::Ref<ArrayValue>>(args)->items;
         for (size_t i = 0; i < pi.fields.size() && i < items.size(); ++i)
             encodeField(pi.fields[i], items[i], out);
     } else {
@@ -305,7 +305,7 @@ std::string pktPadInterface(uint16_t msgNo, const Value& args) {
         for (const auto& f : pi.fields) {
             Value v;
             if (args.index() == 6) {
-                auto mp = std::get<lpc::Ref<MappingValue>>(args);
+                auto mp = lpc::vget<lpc::Ref<MappingValue>>(args);
                 const Value* fv = mp->find(make_string(f.name));
                 if (fv) v = *fv;
             }
@@ -501,7 +501,7 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     // ordering is enforced where the packets are read (game_service's per
     // connection gates), not here.
     if (func.index() == 8) {
-        auto cl = std::get<lpc::Ref<ClosureValue>>(func);
+        auto cl = lpc::vget<lpc::Ref<ClosureValue>>(func);
         // LPCVM_PKTSTEP: step-by-step trace of the dispatch.  [pkt-filed] proves
         // we ENTERED pktAnalyse and [filed-disp] is only printed AFTER it
         // returns - so when a request is received and never answered, with no
@@ -536,10 +536,10 @@ int pktAnalyse(int clientNo, uint32_t attrib, uint16_t cmdNo,
     }
     if (func.index() == 4) {
         if (LPCVM_GETENV("LPCVM_TRACE"))
-            std::cerr << "[pkt] calling string fn " << std::get<SharedString>(func).str() << "\n";
-        callMasterProgramFunction(std::get<SharedString>(func), args, lpc::masterSearchRoot());
+            std::cerr << "[pkt] calling string fn " << lpc::vget<SharedString>(func).str() << "\n";
+        callMasterProgramFunction(lpc::vget<SharedString>(func), args, lpc::masterSearchRoot());
         if (cmdNo == 0x3A01 || cmdNo == 0x3A02)
-            std::cerr << "[pkt-filed] string fn " << std::get<SharedString>(func).str() << " returned\n";
+            std::cerr << "[pkt-filed] string fn " << lpc::vget<SharedString>(func).str() << " returned\n";
         return 1;
     }
     if (LPCVM_GETENV("LPCVM_TRACE"))

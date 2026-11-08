@@ -75,18 +75,23 @@ std::recursive_mutex& vmValueMutex();
 
 struct RefCountedBase {
     int32_t refs = 1;   // 创建即持有 1 份 (adopt 语义)
+    void retain() noexcept { ++refs; }   // 非模板 —— Value 的 union 槽直接调
 };
+// Value 析构的类型化释放 —— 实现在 value.h 尾部 (容器 struct 完整定义后)。
+void destroyValueObject(uint8_t t, RefCountedBase* p) noexcept;
+// [map-bad] VT_MAP delete 取证: LPCVM_MAPDEL=1 时 dump this+符号化调用栈
+// (dbghelp, main 已 prewarm)。定位悬空 mapping 的 delete 现场。
+extern const bool g_mapDelTraceOn;
+void mapDeleteTrace(const void* self) noexcept;
 
 template <class T>
-struct RefBase {
-    int32_t refs = 1;
-    void retain() noexcept { ++refs; }
+struct RefBase : RefCountedBase {
     void release() noexcept {
         if (--refs == 0) delete static_cast<T*>(this);
     }
 protected:
     RefBase() = default;
-    RefBase(const RefBase&) noexcept : refs(1) {}   // 拷贝构造 = 新对象新计数
+    RefBase(const RefBase&) noexcept = default;   // 拷贝构造 = 新对象 (基类 refs=1)
     RefBase& operator=(const RefBase&) = delete;
     ~RefBase() = default;
 };
@@ -374,19 +379,156 @@ struct CrossVmRef : RefBase<CrossVmRef> {
     int slotIndex = -1;        // index into the caller's stack (local slot; or -1)
 };
 
-using Value = std::variant<
-    std::monostate,          // nil / 0
-    UndefinedTag,            // undefined
-    int64_t,                 // integer
-    double,                  // float
-    SharedString,            // string (reference-counted shared text)
-    Ref<ArrayValue>,
-    Ref<MappingValue>,
-    Ref<ObjectValue>,
-    Ref<ClosureValue>,
-    Ref<LoopCtrl>,
-    Ref<BufferValue>,
-    Ref<CrossVmRef>>;   // cross-VM object-variable reference
+// ---- [pvalue] 扁平 tagged union Value（替代 std::variant）--------------------
+// 采样实证: variant 的 _Variant_raw_visit / 构造析构是每指令 ~700ns 的稳定
+// 构成 —— 解释器每条指令 push/pop 2-4 次 Value。原版 Vm_Value 是 24B POD。
+// 16B 平铺: 1B 类型码 + union, 类型码与原 variant 的 index 一一对应 (681 处
+// .index() 判断编号不变)。计数手工管理:
+//   VT_STR          -> SharedString 原地内嵌 (placement, 原子块计数)
+//   VT_ARR..VT_XREF -> RefCountedBase* 裸指针 (非原子侵入式计数)
+// vget<T> 取代 std::get<T>; vgetI<N> 取代 std::get<N>。
+enum VTypeCode : uint8_t {
+    VT_NIL = 0, VT_UNDEF = 1, VT_INT = 2, VT_FLOAT = 3, VT_STR = 4,
+    VT_ARR = 5, VT_MAP = 6, VT_OBJ = 7, VT_CLO = 8, VT_LOOP = 9,
+    VT_BUF = 10, VT_XREF = 11
+};
+template <class T> struct VTypeCodeOf;
+template <> struct VTypeCodeOf<ArrayValue>  { static constexpr uint8_t code = VT_ARR; };
+template <> struct VTypeCodeOf<MappingValue>{ static constexpr uint8_t code = VT_MAP; };
+template <> struct VTypeCodeOf<ObjectValue> { static constexpr uint8_t code = VT_OBJ; };
+template <> struct VTypeCodeOf<ClosureValue>{ static constexpr uint8_t code = VT_CLO; };
+template <> struct VTypeCodeOf<LoopCtrl>    { static constexpr uint8_t code = VT_LOOP; };
+template <> struct VTypeCodeOf<BufferValue> { static constexpr uint8_t code = VT_BUF; };
+template <> struct VTypeCodeOf<CrossVmRef>  { static constexpr uint8_t code = VT_XREF; };
+
+class Value {
+public:
+    Value() noexcept : t_(VT_NIL), i_(0) {}
+    Value(std::monostate) noexcept : Value() {}
+    Value(UndefinedTag) noexcept : t_(VT_UNDEF), i_(0) {}
+    Value(int64_t v) noexcept : t_(VT_INT), i_(v) {}
+    Value(double v) noexcept : t_(VT_FLOAT), d_(v) {}
+    Value(SharedString s) noexcept : t_(VT_STR), i_(0) {
+        // [fix-emptystr] 空串是合法字符串 (原版 type 4), 不得折叠成 NIL ——
+        // 否则 mudlib 侧所有空串值 (read_ini 缺键/trim("")/空文件行) 全部
+        // 变 undefined: as_string(undefined) 渲染 "(undefined)" 洗成真串,
+        // strlen 变 11 —— dbd 把 "(undefined)" 拼进 mysql host, AAA 的
+        // post_init 永不排空 (8001/8160 不开)。SharedString 空文本 =
+        // b_=nullptr 槽, 拷贝/析构/str() 全路径安全。
+        new (strSlot()) SharedString(std::move(s));
+    }
+    template <class T>
+    Value(const lpc::Ref<T>& r) noexcept : t_(VTypeCodeOf<T>::code), i_(0) {
+        // [fix-refown] 持有一份属于本 Value 的引用。原版(by value 形参 +
+        // "直接接管") 从 lvalue Ref 构造时形参拷贝 retain 的一份会被形参
+        // 析构 release 掉 —— Value 净获得 0 份却会在析构时 release 一次,
+        // 净 -1: op22/op24 压栈的数组/mapping 天生少一份计数, 后续任意
+        // 一次 release 提前 delete, 持有者悬空 (boot 期 insert/items 段错误
+        // 实锤)。prvalue (make_* 工厂 return) 走 C++17 elision 才侥幸平账,
+        // 单测因此没暴露。const& + retain: lvalue/prvalue/xvalue 全形态
+        // 账均正确。
+        if (r) { p_ = r.get(); p_->retain(); }
+    }
+    Value(const Value& o) noexcept : t_(o.t_) {
+        switch (t_) {
+        case VT_STR:
+            new (strSlot()) SharedString(o.strRef());
+            break;
+        case VT_ARR: case VT_MAP: case VT_OBJ: case VT_CLO:
+        default:
+            i_ = o.i_;      // 全 8 字节复制 (int/double/对象指针槽统一)
+            break;
+        }
+        if (t_ >= VT_ARR && p_) p_->retain();
+    }
+    Value(Value&& o) noexcept : t_(o.t_) {
+        switch (t_) {
+        case VT_STR:
+            new (strSlot()) SharedString(std::move(o.strRef()));
+            o.strRef().~SharedString();
+            break;
+        default:
+            i_ = o.i_;      // 全 8 字节复制
+            break;
+        }
+        o.t_ = VT_NIL;
+        o.i_ = 0;
+    }
+    Value& operator=(const Value& o) noexcept {
+        if (this != &o) {
+            this->~Value();
+            new (static_cast<void*>(this)) Value(o);
+        }
+        return *this;
+    }
+    Value& operator=(Value&& o) noexcept {
+        if (this != &o) {
+            this->~Value();
+            new (static_cast<void*>(this)) Value(std::move(o));
+        }
+        return *this;
+    }
+    ~Value() noexcept {
+        if (t_ == VT_STR) strRef().~SharedString();
+        else if (t_ >= VT_ARR) destroyValueObject(t_, p_);
+        t_ = VT_NIL;
+        i_ = 0;
+    }
+
+    uint8_t index() const noexcept { return t_; }
+
+private:
+    uint8_t t_;
+    union {
+        int64_t i_;
+        double d_;
+        RefCountedBase* p_;
+        std::aligned_storage_t<sizeof(void*), alignof(void*)> ss_;
+    };
+    SharedString* strSlot() noexcept { return reinterpret_cast<SharedString*>(&ss_); }
+    const SharedString* strSlot() const noexcept { return reinterpret_cast<const SharedString*>(&ss_); }
+    SharedString& strRef() noexcept { return *strSlot(); }
+    const SharedString& strRef() const noexcept { return *strSlot(); }
+    template <class T>
+    static void* slotPtr(Value& v) noexcept {
+        if constexpr (std::is_same_v<T, SharedString>) return &v.ss_;
+        else return &v.p_;
+    }
+    template <class T>
+    static const void* slotPtr(const Value& v) noexcept {
+        if constexpr (std::is_same_v<T, SharedString>) return &v.ss_;
+        else return &v.p_;
+    }
+    template <class T> friend T& vget(Value& v) noexcept;
+    template <class T> friend const T& vget(const Value& v) noexcept;
+};
+
+template <class T>
+inline T& vget(Value& v) noexcept {
+    return *reinterpret_cast<T*>(Value::slotPtr<T>(v));
+}
+template <class T>
+inline const T& vget(const Value& v) noexcept {
+    return *reinterpret_cast<const T*>(Value::slotPtr<T>(v));
+}
+// variant 的按序号形态 std::get<N>(v) —— N 即 alternative 下标。
+template <unsigned I> struct VAltOf;
+template <> struct VAltOf<4>  { using type = SharedString; };
+template <> struct VAltOf<5>  { using type = lpc::Ref<ArrayValue>; };
+template <> struct VAltOf<6>  { using type = lpc::Ref<MappingValue>; };
+template <> struct VAltOf<7>  { using type = lpc::Ref<ObjectValue>; };
+template <> struct VAltOf<8>  { using type = lpc::Ref<ClosureValue>; };
+template <> struct VAltOf<9>  { using type = lpc::Ref<LoopCtrl>; };
+template <> struct VAltOf<10> { using type = lpc::Ref<BufferValue>; };
+template <> struct VAltOf<11> { using type = lpc::Ref<CrossVmRef>; };
+template <unsigned I>
+inline typename VAltOf<I>::type& vgetI(Value& v) noexcept {
+    return vget<typename VAltOf<I>::type>(v);
+}
+template <unsigned I>
+inline const typename VAltOf<I>::type& vgetI(const Value& v) noexcept {
+    return vget<typename VAltOf<I>::type>(v);
+}
 
 struct ArrayValue : RefBase<ArrayValue> {
     // [vpool] 高频分配走线程本地自由链池
@@ -406,7 +548,9 @@ struct ArrayValue : RefBase<ArrayValue> {
 //   - keys()/values()/foreach iterate buckets from tableSize DOWN TO 0 and
 //     each chain head-first, which is what produces the original load order.
 struct MappingValue : RefBase<MappingValue> {
-    // [vpool] 高频分配走线程本地自由链池
+    // [vpool] 高频分配走线程本地自由链池。[map-bad] 取证期曾临时去池化 +
+    // 0xDD 毒化 delete 定位悬空引用 (refown 修复后已还原; 取证开关
+    // LPCVM_MAPDEL 与 items 结构哨兵保留, 默认零成本)。
     static void* operator new(std::size_t) { return VmPool<MappingValue>::pop(); }
     static void operator delete(void* p) noexcept { VmPool<MappingValue>::push(p); }
     struct Node {
@@ -576,6 +720,27 @@ struct BufferValue : RefBase<BufferValue> {
     static void operator delete(void* p) noexcept { VmPool<BufferValue>::push(p); }
     std::string data;
 };
+
+// [pvalue] 类型化释放 (声明见 RefCountedBase 处)
+// [map-bad] 取证声明已上移至 RefCountedBase 处 (MappingValue::operator
+// delete 需要在定义点可见)。
+
+inline void destroyValueObject(uint8_t t, RefCountedBase* p) noexcept {
+    if (!p) return;
+    switch (t) {
+    case VT_ARR:  if (--p->refs == 0) delete static_cast<ArrayValue*>(p);  break;
+    case VT_MAP:  if (--p->refs == 0) {
+                      if (g_mapDelTraceOn) mapDeleteTrace(p);
+                      delete static_cast<MappingValue*>(p);
+                  } break;
+    case VT_OBJ:  if (--p->refs == 0) delete static_cast<ObjectValue*>(p); break;
+    case VT_CLO:  if (--p->refs == 0) delete static_cast<ClosureValue*>(p); break;
+    case VT_LOOP: if (--p->refs == 0) delete static_cast<LoopCtrl*>(p);    break;
+    case VT_BUF:  if (--p->refs == 0) delete static_cast<BufferValue*>(p); break;
+    case VT_XREF: if (--p->refs == 0) delete static_cast<CrossVmRef*>(p);  break;
+    default: break;
+    }
+}
 
 Value make_int(int64_t v);
 Value make_float(double v);

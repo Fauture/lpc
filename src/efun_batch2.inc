@@ -38,7 +38,7 @@ if (eid == CID("padd") || eid == CID("psub")) {
     } else {
         auto bytesOf = [](const Value& v) -> std::string {
             if (v.index() == 4) return as_string(v);
-            if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
+            if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
             return std::string();
         };
         a = bytesOf(args[0]);
@@ -102,7 +102,7 @@ if (eid == CID("psum")) {
     } else if (args[0].index() == 4) {
         s = as_string(args[0]);
     } else if (args[0].index() == 10) {
-        s = std::get<lpc::Ref<BufferValue>>(args[0])->data;
+        s = lpc::vget<lpc::Ref<BufferValue>>(args[0])->data;
     } else {
         return make_int(0);
     }
@@ -135,7 +135,7 @@ if (eid == CID("pcmp")) {
     } else {
         auto bytesOf = [](const Value& v) -> std::string {
             if (v.index() == 4) return as_string(v);
-            if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
+            if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
             return std::string();
         };
         a = bytesOf(args[0]);
@@ -154,7 +154,7 @@ if (eid == CID("sig")) {
     // vm_f_sig: sign of the argument (-1 / 0 / 1).
     if (args.empty()) return make_int(0);
     if (args[0].index() == 3) {
-        double d = std::get<double>(args[0]);
+        double d = lpc::vget<double>(args[0]);
         return make_int(d < 0.0 ? -1 : (d > 0.0 ? 1 : 0));
     }
     int64_t n = as_int(args[0]);

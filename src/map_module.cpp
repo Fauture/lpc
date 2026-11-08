@@ -21,17 +21,17 @@ std::string valToString(const Value& v) {
 }
 
 int64_t valToInt(const Value& v) {
-    if (v.index() == 2) return std::get<int64_t>(v);
-    if (v.index() == 3) return static_cast<int64_t>(std::get<double>(v));
+    if (v.index() == 2) return lpc::vget<int64_t>(v);
+    if (v.index() == 3) return static_cast<int64_t>(lpc::vget<double>(v));
     if (v.index() == 4) {
-        try { return std::stoll(std::get<SharedString>(v)); } catch (...) { return 0; }
+        try { return std::stoll(lpc::vget<SharedString>(v)); } catch (...) { return 0; }
     }
     return 0;
 }
 
 std::string valToStr(const Value& v) {
-    if (v.index() == 4) return std::get<SharedString>(v);
-    if (v.index() == 10) return std::get<lpc::Ref<BufferValue>>(v)->data;
+    if (v.index() == 4) return lpc::vget<SharedString>(v);
+    if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
     return "";
 }
 } // namespace
@@ -50,7 +50,7 @@ MapModule::MapInfo* MapModule::getMapInfoByValue(const Value& v) {
     // mapIndex is an int; the original vm_getMapInfo also accepts a name
     // string, but the game always passes the int index.
     if (v.index() == 4) {
-        auto it = mapByName_.find(std::get<SharedString>(v));
+        auto it = mapByName_.find(lpc::vget<SharedString>(v));
         if (it == mapByName_.end()) return nullptr;
         return findMapIndex(it->second);
     }
@@ -88,7 +88,7 @@ Value MapModule::allocateId(const Value& objVal) {
     if (idPool_.empty() || poolSize_ <= 0) return make_int(0);
     std::string key;
     if (objVal.index() == 7) {
-        key = std::get<lpc::Ref<ObjectValue>>(objVal)->programName;
+        key = lpc::vget<lpc::Ref<ObjectValue>>(objVal)->programName;
     }
     if (key.empty()) return make_int(0);
     // scan the bitmap for a free slot
@@ -351,7 +351,7 @@ Value MapModule::putInMap(const std::vector<Value>& args) {
             static int n1 = 0;
             if (n1++ < 60) {
                 std::cerr << "[pim] FAIL no-map arg0.t=" << args[0].index()
-                          << " val=" << (args[0].index() == 2 ? std::to_string(std::get<int64_t>(args[0]))
+                          << " val=" << (args[0].index() == 2 ? std::to_string(lpc::vget<int64_t>(args[0]))
                                                              : "t" + std::to_string(args[0].index()))
                           << "\n";
                 std::cerr.flush();
@@ -504,7 +504,7 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
             static int n4 = 0;
             if (n4++ < 60) {
                 std::cerr << "[gfm] FAIL no-map arg0.t=" << args[0].index()
-                          << " val=" << (args[0].index() == 2 ? std::to_string(std::get<int64_t>(args[0]))
+                          << " val=" << (args[0].index() == 2 ? std::to_string(lpc::vget<int64_t>(args[0]))
                                                              : "t" + std::to_string(args[0].index()))
                           << "\n";
                 std::cerr.flush();
@@ -540,8 +540,8 @@ Value MapModule::getFromMap(const std::vector<Value>& args) {
             if (n5++ < 60) {
                 std::string ids;
                 for (size_t k = 0; k < arr->items.size() && k < 6; ++k) {
-                    auto& e = std::get<lpc::Ref<ArrayValue>>(arr->items[k])->items;
-                    ids += " " + std::to_string(std::get<int64_t>(e[0]));
+                    auto& e = lpc::vget<lpc::Ref<ArrayValue>>(arr->items[k])->items;
+                    ids += " " + std::to_string(lpc::vget<int64_t>(e[0]));
                 }
                 std::cerr << "[gfm] map=" << m->name << " objs=" << arr->items.size()
                           << " first:[" << ids << " ]\n";
@@ -809,7 +809,7 @@ Value MapModule::checkSteps(const std::vector<Value>& args) {
     int x = static_cast<int>(valToInt(args[1]));
     int y = static_cast<int>(valToInt(args[2]));
     if (args[3].index() != 5) return make_int(1);   // no path data: allow
-    const auto& items = std::get<lpc::Ref<ArrayValue>>(args[3])->items;
+    const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(args[3])->items;
     int moveType = (args.size() >= 6) ? static_cast<int>(valToInt(args[5])) : 0;
     bool fly = (moveType == 1);
     size_t n = items.size() / 2;
@@ -854,7 +854,7 @@ Value MapModule::getInPolygens(const std::vector<Value>& args) {
     if (args.size() < 2 || args[1].index() != 5) return out;
     MapInfo* m = findMapIndex(static_cast<int>(valToInt(args[0])));
     if (!m) return out;
-    const auto& items = std::get<lpc::Ref<ArrayValue>>(args[1])->items;
+    const auto& items = lpc::vget<lpc::Ref<ArrayValue>>(args[1])->items;
     std::vector<int> poly;
     poly.reserve(items.size());
     for (const auto& v : items) poly.push_back(static_cast<int>(valToInt(v)));

@@ -814,7 +814,7 @@ static void loopWatchDump(const char* tag, const VmPcb* p) {
             const void* ptr = nullptr;
             if (slot >= 0 && static_cast<size_t>(slot) < p->stack.size() &&
                 p->stack[static_cast<size_t>(slot)].value.index() == 9) {
-                const auto& sp = std::get<lpc::Ref<LoopCtrl>>(
+                const auto& sp = lpc::vget<lpc::Ref<LoopCtrl>>(
                     p->stack[static_cast<size_t>(slot)].value);
                 ptr = sp.get();
             }
