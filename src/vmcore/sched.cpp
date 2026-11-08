@@ -206,13 +206,21 @@ static std::shared_ptr<VmPcb> makePcb(Scheduler::Impl& im, VmObject* obj,
     p->entry = entry;
     p->args = std::move(args);
     p->tid = im.tidPool.alloc();   // -1 = pool empty; the run loop queues it
-    // [runTicks] 原版驱动对所有进程跑 runTicks 时间片 (select(timeout=0) 主循
-    // 环每量子回泵 socket) —— 用户连点/停止自动羽化的命令能在量子边界被
-    // 处理, 不必等当前命令整条跑完 (一键羽化连续 400ms 不让出时, 连点
-    // 明显卡顿、停止自动要多点一次)。2 万条 ≈ 20-30ms 量子, 与原版体感
-    // 对齐; nested 执行不抛 TimeSliceSignal (interp 内已有保护)。
-    p->yieldEvery = 20000;
+    // [runTicks-IDA 修正 2026-11-09] 原版 vm_doActions (0x8097008) 内
+    // vm_processor 一次一条指令、循环到进程自然阻塞/结束 —— **没有按指令
+    // 数的抢占让出**; scheduleProcessInternal (0x80ad1d4) 的 20*runTicks
+    // 是整轮巡访的墙钟预算 (runTicks=自适应 100/进程数, 2..10), 不是指令
+    // 量子。此前 yieldEvery=20000 是误读: 玩家点击链被反复打断扔回队尾,
+    // 排到十来个周期 daemon 后面 —— 原版 3 下停变成 4 下 (实测对齐)。
+    // 修正为对齐原版契约: 链跑到自然阻塞点; 仅保留 40 万条 (~200ms, 与
+    // 原版整轮预算同量级) 的失控保险, 防 holdTicks>600K 那类无 park 死循环。
+    p->yieldEvery = 400000;
     p->yieldCountdown = p->yieldEvery;
+    // [perf] 帧栈/值栈预留: LPC 调用链典型深度 8-32 帧, 值栈几百槽。
+    // 不预留时深链每次跨过 2/4/8... 容量边界都整段 realloc+拷贝
+    // (op7/op8/op73 的 0.6-3.5µs 里相当部分是这个)。
+    p->frames.reserve(32);
+    p->stack.reserve(256);
     // Continuation chains (create_thread / timers / dispatched closures
     // spawned BY a running command) join that command's connection so the
     // per-connection gate counts them (vmchainTagLive semantics).
@@ -228,7 +236,12 @@ VmPcb* Scheduler::spawn(VmObject* obj, const std::string& entry,
     auto p = makePcb(*impl_, obj, entry, std::move(args));
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
-        impl_->wakeLocked(p, false);
+        // [player-priority] 玩家发起的链 (clientNo>=0, setDispatchCno 派发)
+        // 插队到就绪队列首: 原版主循环 select(timeout=0) 每轮先泵玩家输入,
+        // 玩家命令从不排在周期 daemon 后面。我们单线程队列尾插会让点击链
+        // 排在 scansocketd 等十来个 5ms 级 daemon 后面 —— 连点 3 下停变成
+        // 4 下 (实测对齐)。daemon 链 clientNo<0 仍走队尾。
+        impl_->wakeLocked(p, p->clientNo >= 0);
     }
     impl_->cv.notify_one();
     return p.get();
@@ -238,6 +251,7 @@ VmPcb* Scheduler::spawnEfunThread(VmObject* owner,
                                   const lpc::Ref<struct ClosureValue>& cl) {
     auto p = makePcb(*impl_, owner, "<efun-thread>", {});
     p->threadClosure = cl;
+    const bool playerChain = p->clientNo >= 0;
     if (g_ctraceOn) {
         std::cerr << "[spawn-efun-thread] tid=" << p->tid
                   << " fn=" << cl->functionName << "\n";
@@ -245,7 +259,7 @@ VmPcb* Scheduler::spawnEfunThread(VmObject* owner,
     }
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
-        impl_->wakeLocked(p, false);
+        impl_->wakeLocked(p, playerChain);   // [player-priority] 同 spawn
     }
     impl_->cv.notify_one();
     return p.get();
@@ -257,7 +271,7 @@ VmPcb* Scheduler::spawnTelnet(VmObject* obj, const std::string& entry,
     p->telnetCno = telnetCno;
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
-        impl_->wakeLocked(p, false);
+        impl_->wakeLocked(p, true);   // [player-priority] telnet 玩家链
     }
     impl_->cv.notify_one();
     return p.get();

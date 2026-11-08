@@ -499,10 +499,21 @@ void Registry::clearConstructing(const std::string& key) {
 
 Value Registry::makeObjectValue(VmObject* obj) {
     if (!obj) return make_int(0);
+    // [perf] 规范包装缓存: 原版对象值 = v.info 指针零分配; 此前每次执行
+    // op65 (push_this_object) 都 new ObjectValue + key 字符串拷贝。首建后
+    // 缓存于对象本体; 命中 = 一次 relaxed retain + 指针拷贝。
+    if (void* cached = obj->objValCacheAcquire()) {
+        auto* ov = static_cast<ObjectValue*>(cached);
+        ov->retain();                              // 下方 Ref(adopt) + Value 拷贝净持 1
+        return Value(lpc::Ref<ObjectValue>(ov));   // Ref(T*) adopt; Value(const Ref&) 再 retain
+    }
     Value v = make_object(obj->key());
     auto ov = lpc::vget<lpc::Ref<ObjectValue>>(v);
     ov->vmObj = obj;                       // the pointer IS the identity
     ov->alive = obj->aliveFlag();          // liveness of the instance
+    void* expect = nullptr;
+    if (obj->objValCachePublish(ov.get(), expect))
+        ov->retain();                      // 缓存自持一份 (调用方 Value 另持)
     return v;
 }
 

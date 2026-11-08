@@ -473,6 +473,7 @@ static const bool g_ctraceOn = getenv("LPCVM_CTRACE") != nullptr;
 
 // [opns] OPNS 总开关 (LPCVM_OPNS=1, 启动时缓存) + op6 按 efun 的耗时账本
 static const bool g_opnsOn = getenv("LPCVM_OPNS") != nullptr;
+static const std::string kEmptyFnName;   // op8 非 string 函数名的零拷贝占位
 static std::atomic<uint64_t> g_op6EfunNs[512];
 static std::atomic<uint64_t> g_op6EfunCnt[512];
 static inline void opTraceRecord(uint32_t ip, uint8_t op, size_t stackSize,
@@ -2036,15 +2037,21 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 const int op8flags = fromMeta ? m0 : in.a;
                 Value pathVal = popValue(pcb);
                 Value funVal = popValue(pcb);
-                std::string funName;
+                // [perf] str() 返回块内 const& —— 零拷贝引用; 之前按值拷贝
+                // = 每次 op8 一次堆分配 (boot 期数十万次)。
+                const std::string& funName =
+                    funVal.index() == 4
+                        ? lpc::vget<SharedString>(funVal).str()
+                        : kEmptyFnName;
                 int funIndex = -1;
-                if (funVal.index() == 4)
-                    funName = lpc::vget<SharedString>(funVal).str();
-                else if (funVal.index() == 2)
+                if (funVal.index() == 2)
                     funIndex = static_cast<int>(lpc::vget<int64_t>(funVal));
-                trcCallStack(pcb, 8, funName.empty()
-                                          ? ("fn#" + std::to_string(funIndex))
-                                          : funName, argn);
+                if (vmcore::traceOn() && vmcore::traceWantOp(8))
+                    trcCallStack(pcb, 8,
+                                 funName.empty()
+                                     ? ("fn#" + std::to_string(funIndex))
+                                     : funName,
+                                 argn);
                 // Args popped as ITEMS: by-ref arguments must reach the callee
                 // as live references (same stack — the callee's
                 // push_local_vptr/assign_value writes through to OUR slots).

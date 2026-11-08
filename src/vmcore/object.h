@@ -176,6 +176,21 @@ public:
     std::shared_ptr<std::atomic<bool>> aliveFlag() const { return alive_; }
     void closeReferences() { if (alive_) alive_->store(false); }
 
+    // [perf] 规范对象值包装缓存 (Registry::makeObjectValue 用)。原版对象值
+    // 就是 v.info 指针+标志零分配; 我们每次 push_this_object/efun 结果都
+    // new ObjectValue + key 字符串拷贝 —— op65 的主要成本。包装不可变
+    // (vmObj/programName/owner 固定; alive 是共享旗标 closeReferences 统一
+    // 翻转, 缓存副本失效感知一致; variables 运行期只读) → 首建后缓存复用。
+    // 裸指针 + 手工计数 (Ref<T*> 是 adopt 语义); 竞态首建无害 (输者的
+    // 临时包装自然析构, 下次起走缓存)。
+    void* objValCacheAcquire() const {
+        return objValCache_.load(std::memory_order_acquire);
+    }
+    bool objValCachePublish(void* p, void*& expect) {
+        return objValCache_.compare_exchange_strong(
+            expect, p, std::memory_order_release, std::memory_order_acquire);
+    }
+
     // ---- env (容器/房客链) — 由 efuns (move_object/lodger_object) 维护 ----
     std::string envKey;                        // container key ("" = none)
     std::vector<VmObject*> lodgers;            // contents, tail-link order
@@ -194,6 +209,7 @@ private:
     std::atomic<bool> destructed_{false};
     std::atomic<bool> destructing_{false};   // 原版 0x2000: destructor chain in flight
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    mutable std::atomic<void*> objValCache_{nullptr};   // ObjectValue* (见上)
 };
 
 // ---------------------------------------------------------------------------
