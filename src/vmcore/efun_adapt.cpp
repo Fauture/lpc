@@ -61,6 +61,21 @@ static int64_t steadyMs() {
 static VmObject* frameObj(VmPcb* pcb) {
     return pcb && !pcb->frames.empty() ? pcb->frames.back().obj : nullptr;
 }
+// [eid-dispatch] (2026-11-09 stackdump: dispatchEfunByName 比较链 17%) 名字
+// strcmp 链 → FNV-1a 常量整数比较 (与 builtins.cpp 的 CID 同法同常数)。
+static inline uint64_t efFnv1aStr(const std::string& s) {
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+    return h;
+}
+constexpr uint64_t efFnv1aLit(const char* s) {
+    uint64_t h = 1469598103934665603ull;
+    while (*s) { h ^= static_cast<unsigned char>(*s); h *= 1099511628211ull; ++s; }
+    return h;
+}
+// 必须经 static constexpr local 落地为编译期常量 (见 builtins.cpp CID 注)。
+#define EFCID(lit) ([]() -> uint64_t { static constexpr uint64_t v = efFnv1aLit(lit); return v; }())
+
 static std::string frameObjKey(VmPcb* pcb) {
     VmObject* o = frameObj(pcb);
     return o ? o->key() : std::string();
@@ -102,8 +117,15 @@ static std::string keyOfArg(const Value& v) {
 // ---------------------------------------------------------------------------
 // park helpers — set cond (+ default resume value, + hook), throw.
 // ---------------------------------------------------------------------------
+// [opns-park] park 次数计数 (仅调度线程读写): op6 归账时检测到本指令
+// 发生过 park 就跳过记账 —— sleep/wait_event 的停泊墙钟不再污染
+// op6 (call_in_efun) 的耗时直方图 (曾把 51% 记账算给 op6)。
+uint64_t g_parkCount = 0;
+
 static void parkAndSuspend(VmPcb* pcb, const ResumeCond& cond,
                            std::function<void()> hook, Value defResume) {
+    ++g_parkCount;
+    Interp::interpResetHotClock();   // [stall-watch] 停泊墙钟不计入停顿
     pcb->cond = cond;
     pcb->resumeValue = std::move(defResume);
     // Keep a PRE-INSTALLED hook (several efun sites install theirs before
@@ -737,29 +759,15 @@ static void parkOnEvent(VmPcb* pcb, const std::string& ename, const Value& eref,
 Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
                          std::vector<Value>& args) {
     if (name.empty()) return make_int(0);
-    // ---- the FNV-1a hash dispatch (same constants as the verified layer) --
-    static std::unordered_map<std::string, uint64_t> s_hash;
-    uint64_t h = 0;
-    {
-        auto it = s_hash.find(name);
-        if (it == s_hash.end()) {
-            uint64_t hh = 1469598103934665603ull;
-            for (char c : name) {
-                hh ^= static_cast<unsigned char>(c);
-                hh *= 1099511628211ull;
-            }
-            s_hash[name] = hh;
-            h = hh;
-        } else {
-            h = it->second;
-        }
-    }
+    // [eid-dispatch] 一次 FNV 折叠, 下游全部分支变单次整数比较
+    // (旧 s_hash unordered_map 备忘录比直接算还慢: 每调用一次 hash+桶查)。
+    const uint64_t h = efFnv1aStr(name);
     const VmObject* fobj = frameObj(pcb);
     const std::string fkey = frameObjKey(pcb);
     VmObject* mutableFrameObj = frameObj(pcb);
 
     // ---- blocking efuns first (they may throw) --------------------------
-    if (name == "sleep") {
+    if (h == EFCID("sleep")) {
         // vm_f_sleep (0x80ec9e4): sleep(secs) parks on a timer; resume 1.
         double secs = 0;
         if (!args.empty()) {
@@ -780,7 +788,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         parkAndSuspend(pcb, cond, nullptr, make_int(1));
         return make_int(1);   // [no-throw park] 已置位; 勿落入后续 name 检查
     }
-    if (name == "wait_event") {
+    if (h == EFCID("wait_event")) {
         // vm_f_wait_event (0x80f097c): wait_event(name, mask, ref, timeout).
         // Probe with timeout 0 first; -101 = unknown event (never park on an
         // event nobody can raise); 0 = already raised; secs == 0 = poll miss
@@ -819,7 +827,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         return make_int(0);   // [no-throw park] 已置位; 勿落入后续检查/tail
     }                        // (原设计靠 throw 跳出 —— 掉进 builtins 的
                              //  wait_event 内联 cv::wait 会冻死调度器)
-    if (name == "raise_event") {
+    if (h == EFCID("raise_event")) {
         // vm_f_raise_event (0x80f07b8): OR the mask into the driver's event
         // store, then wake parked processes whose wait mask intersects.
         std::string ename;
@@ -836,7 +844,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (rc == 0) Scheduler::instance().wakeEvent(ename, mask);
         return make_int(rc);
     }
-    if (name == "receive_from_queue" || name == "receive_from_queue_ex") {
+    if (h == EFCID("receive_from_queue") || h == EFCID("receive_from_queue_ex")) {
         // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
         // timeout).  The ref write-through needs the RAW item — the dispatch
         // below re-pops it when called with raw items; from a closure (no
@@ -853,7 +861,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         parkAndSuspend(pcb, cond, nullptr, make_int(-402));
         return make_int(-402);   // [no-throw park]
     }
-    if (name == "send_to_queue") {
+    if (h == EFCID("send_to_queue")) {
         // vm_f_send_to_queue (0x80f2d94): enqueue + wake a parked receiver.
         if (args.empty()) return make_int(-101);
         const int64_t qid = lpc::queueResolveId(args[0]);
@@ -895,7 +903,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (ok) Scheduler::instance().wakeQueueOne("q:" + std::to_string(qid));
         return make_int(ok ? 0 : -101);
     }
-    if (name == "accept") {
+    if (h == EFCID("accept")) {
         // vm_f_accept (0x80e53c4): park on the listener socket; the hook
         // accepts when readable (a pending connection is present).
         if (args.empty()) return make_int(-1);
@@ -910,7 +918,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         parkAndSuspend(pcb, cond, nullptr, make_int(-1));
         return make_int(-1);   // [no-throw park]
     }
-    if (name == "connect") {
+    if (h == EFCID("connect")) {
         // vm_f_connect (0x80e83b4): NON-BLOCKING connect; on EINPROGRESS park
         // until the socket is writable, then report the connect result.
         if (args.size() >= 3) {
@@ -932,19 +940,19 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         return make_int(-1);
     }
-    if (name == "exit" || name == "exit_thread" || name == "clear_env") {
+    if (h == EFCID("exit") || h == EFCID("exit_thread") || h == EFCID("clear_env")) {
         // vm_f_exit (0x80d5c4c) / vm_f_exit_thread (0x80ed268) /
         // vm_f_clear_env (0x80d4ee0): the current LPC thread terminates.
         throw ThreadExitSignal{};
     }
-    if (name == "relinquish") {
+    if (h == EFCID("relinquish")) {
         // vm_f_relinquish: voluntary yield — push 1 NOW (the resumed process
         // sees the value on the stack), then yield; the slice resume pushes
         // nothing (the old core's exact rule).
         pushValue(pcb, make_int(1));
         throw TimeSliceSignal{};
     }
-    if (name == "error") {
+    if (h == EFCID("error")) {
         // vm_f_error (0x80d64bc): raise an LPC error (catchable).
         // args[0] is a FORMAT string ("Object (id = %d) is not found."), the
         // rest are its arguments — the original formats it (evidence: gs
@@ -1284,22 +1292,22 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         m->insert(make_string("all_function"), arr);
         return m;
     }
-    if (name == "values" || name == "keys") {
+    if (h == EFCID("values") || h == EFCID("keys")) {
         // vm_f_keys / vm_f_values: the mapping's key/value list.  A missing
         // handler once made every values(map) call return UNDEFINED and
         // whole trade flows silently did nothing.
         if (args.empty() || args[0].index() != 6) return make_array();
         auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         for (auto& kv : lpc::vget<lpc::Ref<MappingValue>>(args[0])->items())
-            out->items.push_back(name == "values" ? kv.second : kv.first);
+            out->items.push_back(h == EFCID("values") ? kv.second : kv.first);
         return out;
     }
-    if (name == "get_function_report") return make_array();
-    if (name == "orphan_values") return make_array();
-    if (name == "seq_no_to_tid") return make_int(-1);
-    if (name == "get_thread_name") return make_string("");
-    if (name == "get_thread_seq_no") return make_int(0);
-    if (name == "get_thread_priority") return make_int(0);
+    if (h == EFCID("get_function_report")) return make_array();
+    if (h == EFCID("orphan_values")) return make_array();
+    if (h == EFCID("seq_no_to_tid")) return make_int(-1);
+    if (h == EFCID("get_thread_name")) return make_string("");
+    if (h == EFCID("get_thread_seq_no")) return make_int(0);
+    if (h == EFCID("get_thread_priority")) return make_int(0);
     if (h == 0x93974224DCC554B0ull) {
         // vm_f_get_thread_info: the CURRENT process's identity.
         auto m = lpc::Ref<MappingValue>(new MappingValue());
@@ -1357,7 +1365,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         if (t) return Registry::makeObjectValue(t);
         return make_int(0);
     }
-    if (name == "object_name" && args.empty()) {
+    if (h == EFCID("object_name") && args.empty()) {
         // vm_f_object_name, no argument: the CURRENT object's full virtual
         // path (".c" spelling; clone keys keep their "#<seq>" suffix).
         std::string n = fkey;
@@ -1373,7 +1381,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             n.replace(n.size() - 2, 2, ".c");
         return make_string(n);
     }
-    if (name == "object_name" && !args.empty()) {
+    if (h == EFCID("object_name") && !args.empty()) {
         // object_name(ob, flag): the argument object's path; flag != 0 strips
         // the "#<seq>" instance suffix (the PROGRAM path — dbase.c's clone
         // fallback reads the template's dbase through it).
@@ -1404,7 +1412,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
             key.replace(key.size() - 2, 2, ".c");
         return make_string(key + hashPart);
     }
-    if (name == "call_other" && args.size() >= 2) {
+    if (h == EFCID("call_other") && args.size() >= 2) {
         // vm_f_call_other (0x80f5aa0): call_other(ob, fun, a1..aN).
         if (args[0].index() == 5) {
             return vmCallOtherArray(
@@ -1422,7 +1430,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         return make_int(0);
     }
-    if (name == "call_other_arg" && args.size() >= 3) {
+    if (h == EFCID("call_other_arg") && args.size() >= 3) {
         // vm_f_call_other_arg (0x80f5afc): the PARAMETER LIST is the LAST
         // argument; an ARRAY there is SPLICED after the fixed arguments:
         //   call_other_arg(file, "func_entry", from_info, args)
@@ -1443,7 +1451,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         return vmCallOther(obv, funName, callArgs);
     }
-    if (name == "mapping_array" && args.size() >= 2 && args[0].index() == 5) {
+    if (h == EFCID("mapping_array") && args.size() >= 2 && args[0].index() == 5) {
         // vm_f_mapping_array: same size, same order; the callable resolves
         // through its owner's CURRENT table (or the efun for an efun closure
         // — re-entering this dispatcher with the same name would recurse).
@@ -1546,7 +1554,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         pcb->efunTakeover = true;
         return outArr;
     }
-    if (name == "is_clone" && args.empty()) {
+    if (h == EFCID("is_clone") && args.empty()) {
         // vm_f_is_clone (0x80f7900): the CURRENT object's clone flag.
         return make_int(fkey.find('#') != std::string::npos ? 1 : 0);
     }
@@ -1556,7 +1564,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // _arg form expands a trailing ARRAY into individual bound arguments.
         bool expandLastArray = false;
         size_t bindFrom = 1;
-        if (name == "find_function_arg" && args.size() >= 2 &&
+        if (h == EFCID("find_function_arg") && args.size() >= 2 &&
             args.back().index() == 5) {
             expandLastArray = true;
             bindFrom = 1;
@@ -1728,7 +1736,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // registered closures from the global code); the efun form is a no-op.
         return make_int(1);
     }
-    if (name == "set_timer" && args.size() >= 3) {
+    if (h == EFCID("set_timer") && args.size() >= 3) {
         // vm_f_set_timer: set_timer(timeout, id|&ref|name, func, arg1, ...)
         // — every argument after func is handed to the callback on fire.
         const Value& fn = args[2];
@@ -1827,7 +1835,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         timerUnregister(e);
         return make_int(0);
     }
-    if (name == "sort" || name == "sort_mapping")
+    if (h == EFCID("sort") || h == EFCID("sort_mapping"))
         return efunSort(pcb, args);
     if (h == 0xC70B9A266114A70Cull) {
         // vm_f_take_mutex (0x80f16cc): PROCESS-level named mutex.  free or
@@ -1884,7 +1892,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         Scheduler::instance().mutexErase(to_string(args[0], false));
         return make_int(1);
     }
-    if (name == "clone_object" && !args.empty()) {
+    if (h == EFCID("clone_object") && !args.empty()) {
         // vm_f_clone_object (0x80f8eac): the argument may be a path or an
         // object value (cloning that very instance); extra args -> create().
         // 原版语义: 参数既非字符串也非对象值 → vm_error("Not found the
@@ -1928,7 +1936,7 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         }
         return vmLoadObjectValue(vpath, createArgs, progImage);
     }
-    if (name == "load_object" || name == "safe_load_object") {
+    if (h == EFCID("load_object") || h == EFCID("safe_load_object")) {
         // (safe_)load_object(path[, createArgs]) without the image argument.
         if (args.empty()) return make_int(0);
         std::string vpath;
@@ -1946,8 +1954,8 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
     lpc::stubCallCtx().fn = frameFnName(pcb);
     lpc::stubCallCtx().key = fkey;
     Value bres = call_builtin(nullptr, name, args);
-    if (name == "move_in_map" || name == "put_in_map" ||
-        name == "remove_from_map") {
+    if (h == EFCID("move_in_map") || h == EFCID("put_in_map") ||
+        h == EFCID("remove_from_map")) {
         bool chainArmed = false;
         fireMapHooks(pcb, name, args, bres, &chainArmed);
         if (chainArmed) {
@@ -2160,6 +2168,8 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
     // 适配层开销 (临时 vector×2 + 名字拦截链 + 哈希 + builtins 巨链) 全部
     // 旁路; 形态不符 -> false 落回通用路径。
     if (fastEfunDispatch(pcb, efunIndex, argc)) return;
+    // [eid-dispatch] RAW 拦截链用整数比较 (一次折叠)。
+    const uint64_t h = efFnv1aStr(name);
    // Pop args; KEEP the raw items for ref-taking efuns, deref for the rest
     // (an lvalue &buf argument must reach the efun as the live container).
     // [注意] 不能用 thread_local 复用: dispatchEfun 会递归 (efun -> closure
@@ -2171,7 +2181,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
 
 
     // ---- RAW-REF intercepts (the reference must SURVIVE the call) --------
-    if (name == "sscanf" && raw.size() >= 2) {
+    if (h == EFCID("sscanf") && raw.size() >= 2) {
         // sscanf(input, fmt, &a, &b, ...): parse, write each conversion back
         // through its reference, push the match count.
         auto strOf = [&](const StackItem& r) -> std::string {
@@ -2189,7 +2199,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         pushValue(pcb, make_int(n));
         return;
     }
-    if (name == "recv" && raw.size() >= 3) {
+    if (h == EFCID("recv") && raw.size() >= 3) {
         // vm_f_recv (0x80e80c8): recv(fd, &buf, maxlen).  Data -> a BUFFER
         // written through the ref + the byte count; no data yet -> park on
         // the socket (kind 5), the hook receives on wake.
@@ -2230,7 +2240,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         parkAndSuspend(pcb, cond, nullptr, make_int(0));
         return;   // [no-throw park] 勿落入后续 name 检查/tail
     }
-    if (name == "select" && !raw.empty()) {
+    if (h == EFCID("select") && !raw.empty()) {
         // vm_f_select (0x80e7348): select(&read, &write, &except, timeout)
         // (exactly 4 args; each mask is a referenced array of socket ids or
         // 0; timeout SECONDS, <0 -> 0).  The process ALWAYS pends (timer +
@@ -2329,7 +2339,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         parkAndSuspend(pcb, cond, nullptr, make_int(-126));
         return;   // [no-throw park]
     }
-    if (name == "receive_from_queue" && raw.size() >= 2) {
+    if (h == EFCID("receive_from_queue") && raw.size() >= 2) {
         // vm_f_receive_from_queue (0x80f29f8): receive_from_queue(qid, &msg,
         // timeout) — non-blocking receive first; on empty PARK on the queue
         // (send_to_queue wakes it); the hook writes the message through the
@@ -2400,7 +2410,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         parkAndSuspend(pcb, cond, nullptr, make_int(0));
         return;   // [no-throw park]
     }
-    if (name == "put_sub_data") {
+    if (h == EFCID("put_sub_data")) {
         efunPutSubData(pcb, raw);
         // 原版 vm_returnFromEfan (0x08093c5c): efun 返回时栈上恒有恰好 1 个
         // 返回值 —— C 实现没压就 vm_pushVoid() 补压 (retType==255 且 v2==0
@@ -2411,7 +2421,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         pushValue(pcb, Value{});
         return;
     }
-    if (name == "new_view_point" && raw.size() >= 7) {
+    if (h == EFCID("new_view_point") && raw.size() >= 7) {
         // vm_f_new_view_point(map, ox, oy, nx, ny, &app, &dis): the sight
         // window diff that drives move_to's walking appear/disappear
         // notifications.  The constant-0 stub silenced every walking reveal.
@@ -2444,7 +2454,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         return;
     }
 
-    if ((name == "find_reachable" || name == "find_reachable_ex") &&
+    if ((h == EFCID("find_reachable") || h == EFCID("find_reachable_ex")) &&
         raw.size() >= 3) {
         // vm_f_find_reachable / vm_f_find_reachable_ex
         //   find_reachable(map_index, &x, &y [, radius [, plot]])
@@ -2493,7 +2503,7 @@ void dispatchEfun(VmPcb* pcb, int efunIndex, int argc) {
         return;
     }
 
-    if (name == "set_timer" && raw.size() >= 3) {
+    if (h == EFCID("set_timer") && raw.size() >= 3) {
         // set_timer(timeout, &timer_id, func, ...): the 2nd parameter is a
         // by-reference OUT slot for the new timer id — dispatch it where the
         // StackItem (and its reference) is still available.

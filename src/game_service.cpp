@@ -34,6 +34,7 @@
 #include "pkt_protocol.h"
 #include "value.h"
 #include "vmcore/vmcore.h"   // [mips] g_vmInsnCount
+#include "vmcore/driver_model.h"   // [stall-diag] vmPendingFreeCount
 #include "value.h"
 
 namespace lpc {
@@ -103,6 +104,199 @@ static void waitFlowSettled(int cno) {
         }
         if (lpc::waitClientSendIdle(cno, 2, 1000)) break;
     }
+}
+
+// ---------------------------------------------------------------------------
+// [net-pump] 网络事件泵 (2026-11-09 原版架构对齐)
+// socket 线程只做阻塞 recv + 原始字节入队; feedClient/解析/handler/applyLpc
+// 全部移到调度线程执行 —— future<Value> 跨线程消失, 引用计数可回归普通
+// int (原版 vm_getVmMutex 单锁语义: 全部值操作单线程)。
+// 事件序: NEWCONN → DATA* → DISC 由单一 FIFO 保证; 门控连接 (原版
+// 9101/9112: 下一条命令不得重入正在运行的一条) 非阻塞挂起 —— 该连接的
+// 后续 DATA 挪入 hold, 其他连接与内部链路 (dba/aaa 回包 = 恢复钥匙)
+// 照常处理, 恢复条件与旧 waitFlowSettled 同口径 (服务队列空闲 + 发送流
+// 静默 ≥2ms), 零轮询阻塞。
+// ---------------------------------------------------------------------------
+Value applyLpc(const char* fun, const std::vector<Value>& args);   // ~1300 定义
+std::mutex& gameMutex();                                           // ~下方定义
+std::unordered_map<int, GameClient>& gameClients();
+void feedClient(GameClient& cl, const char* data, size_t n);       // ~13800 定义
+static bool clientFlowGated(int cno);   // 前置: dispatchCommand 使用
+static std::shared_ptr<std::atomic<bool>> inflightDoneOf(int cno); // ~applyLpc 区定义
+
+struct NetEvent {
+    int type = 0;   // 1=NEWCONN 2=DATA 3=DISC
+    int cno = 0;
+    std::string data;
+};
+static std::deque<NetEvent> g_netEv;
+static std::mutex g_netEvMtx;
+static std::atomic<bool> g_netEvHas{false};
+static std::deque<NetEvent> g_netEvHold;   // 门控连接的后续事件 (保序)
+static int g_netDeferredCno = -1;
+// [net-pump] NEWCONN 完成旗标: cno → done。未完成前该连接的 DATA 全部
+// hold (旧 socket 线程 future 同步语义的等价物 —— 注册完成先于首包)。
+static std::map<int, std::shared_ptr<std::atomic<bool>>> g_newconnPending;
+static std::deque<NetEvent> g_netEvNewconnHold;   // NEWCONN 未完成连接的事件
+// 在飞命令链完成旗标 (per-connection): applyLpc 登记, 泵按旗标串行放行。
+static std::map<int, std::shared_ptr<std::atomic<bool>>> g_inflightDone;
+static std::mutex g_inflightMtx;
+
+static bool netEvHoldWorthy(int cno) {
+    if (cno == g_netDeferredCno) return true;
+    auto it = g_newconnPending.find(cno);
+    return it != g_newconnPending.end() && !it->second->load();
+}
+
+static void pushNetEvent(NetEvent&& ev) {
+    {
+        std::lock_guard<std::mutex> lk(g_netEvMtx);
+        g_netEv.push_back(std::move(ev));
+    }
+    g_netEvHas.store(true, std::memory_order_release);
+    lpc::vmcore::Scheduler::notifyExternalWork();
+}
+
+static thread_local bool tl_inNetPump = false;   // dispatchCommand 门用
+
+static void netPump() {
+    tl_inNetPump = true;
+    for (;;) {
+        // 连接级 hold 恢复检查 (锁外, 非阻塞): NEWCONN 完成 / 在飞链完成
+        // 的连接, 把 hold 事件还回队首 (保序)。
+        {
+            bool recovered = false;
+            for (auto it = g_newconnPending.begin();
+                 it != g_newconnPending.end();) {
+                if (it->second->load()) {
+                    recovered = true;
+                    it = g_newconnPending.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            {
+                std::lock_guard<std::mutex> lk(g_inflightMtx);
+                for (auto it = g_inflightDone.begin();
+                     it != g_inflightDone.end();) {
+                    if (it->second->load()) {
+                        recovered = true;
+                        it = g_inflightDone.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+            if (recovered) {
+                std::lock_guard<std::mutex> lk(g_netEvMtx);
+                if (!g_netEvNewconnHold.empty()) {
+                    g_netEv.insert(g_netEv.begin(),
+                                   std::make_move_iterator(
+                                       g_netEvNewconnHold.begin()),
+                                   std::make_move_iterator(
+                                       g_netEvNewconnHold.end()));
+                    g_netEvNewconnHold.clear();
+                }
+                if (!g_netEvHold.empty()) {
+                    g_netEv.insert(g_netEv.begin(),
+                                   std::make_move_iterator(g_netEvHold.begin()),
+                                   std::make_move_iterator(g_netEvHold.end()));
+                    g_netEvHold.clear();
+                }
+            }
+        }
+        NetEvent ev;
+        bool have = false;
+        {
+            std::lock_guard<std::mutex> lk(g_netEvMtx);
+            while (!g_netEv.empty()) {
+                NetEvent& f = g_netEv.front();
+                if ((f.type == 2 || f.type == 3) && netEvHoldWorthy(f.cno)) {
+                    g_netEvNewconnHold.push_back(std::move(f));
+                    g_netEv.pop_front();
+                    continue;
+                }
+                if (f.type == 2) {
+                    auto d = inflightDoneOf(f.cno);
+                    if (d && !d->load()) {
+                        g_netEvHold.push_back(std::move(f));
+                        g_netEv.pop_front();
+                        continue;
+                    }
+                }
+                ev = std::move(f);
+                g_netEv.pop_front();
+                have = true;
+                break;
+            }
+            if (g_netEv.empty())
+                g_netEvHas.store(false, std::memory_order_release);
+        }
+        if (!have) {
+            tl_inNetPump = false;
+            return;
+        }
+        try {
+        switch (ev.type) {
+        case 1: { // NEWCONN: 注册派发 (真调度进程, 可 park/恢复)
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            {
+                std::lock_guard<std::mutex> lk(g_netEvMtx);
+                g_newconnPending[ev.cno] = done;
+            }
+            callMasterProgramFunctionSpawn("cmd_new_connection",
+                                           {make_int(ev.cno)}, ev.cno, done);
+            break;
+        }
+        case 3:   // DISC: 槽位仍在注册表中时调用 (LPC 按 cno 查用户)
+            callMasterProgramFunctionSpawn("cmd_disconnected",
+                                           {make_int(ev.cno), make_int(2)},
+                                           ev.cno);
+            {
+                std::lock_guard<std::mutex> lk(gameMutex());
+                gameClients().erase(ev.cno);
+            }
+            break;
+        case 2: { // DATA
+            GameClient* cur;
+            {
+                std::lock_guard<std::mutex> lk(gameMutex());
+                auto it = gameClients().find(ev.cno);
+                if (it == gameClients().end()) break;
+                cur = &it->second;
+            }
+            // 注册保护: cmd_new_connection 的 threadd 服务未跑完时首包
+            // 重排队 (与旧 socket 线程 wait 循环同语义, 零阻塞)。
+            if ((cur->attrib & ATTRIB_CLIENT_USER) && !lpc::serviceQueueIdle()) {
+                Value u = callMasterProgramFunction(
+                    "find_user_by_client", {make_int(ev.cno)},
+                    lpc::masterSearchRoot());
+                Value a = callMasterProgramFunction(
+                    "find_agent_by_client", {make_int(ev.cno)},
+                    lpc::masterSearchRoot());
+                if (u.index() != 7 && a.index() != 7) {
+                    std::lock_guard<std::mutex> lk(g_netEvMtx);
+                    g_netEv.push_front(std::move(ev));
+                    return;
+                }
+            }
+            feedClient(*cur, ev.data.data(), ev.data.size());
+            // 在飞链完成旗标由 applyLpc 登记; 泵下一轮按旗标放行该连接
+            // 的下一条 DATA (原版 9101/9112 一连接一命令语义, 零阻塞)。
+            break;
+        }
+        default:
+            break;
+        }
+        } catch (const lpc::vmcore::SuspendSignal&) {
+
+            // 泵里同步执行的查询链意外 park: 把事件放回队首, 下一轮重试
+            // (防御性 —— 查询类调用不应 park)。
+            std::lock_guard<std::mutex> lk(g_netEvMtx);
+            g_netEv.push_front(std::move(ev));
+        }
+    }
+    tl_inNetPump = false;
 }
 
 // (per-connection command absorption removed: the character-creation bug it was
@@ -1202,12 +1396,29 @@ const CmdEntry* findCmd(uint16_t cmdNo) {
 }
 
 // Apply an LPC function on the master program with a variable argument list.
+// [net-pump] 2026-11-09: handler 全部在调度线程 (netPump) 上运行 —— 派发改
+// 火忘 spawn (真 pcb 进程, 可 park/恢复, 返回值无人使用)。旧 execOnMain
+// future 路径在调度线程上会走 scratch 同步执行, 命令链 park 时
+// SuspendSignal 无主 —— 泵路径必须 spawn。
+// 每次调用登记本连接的完成旗标: 泵按 g_inflightDone[cno] 保持"一连接
+// 同时只有一条命令链" (原版 9101/9112 协作语义, 零阻塞)。
+std::shared_ptr<std::atomic<bool>> inflightDoneOf(int cno) {
+    std::lock_guard<std::mutex> lk(g_inflightMtx);
+    auto it = g_inflightDone.find(cno);
+    return it == g_inflightDone.end()
+               ? nullptr : it->second;
+}
 Value applyLpc(const char* fun, const std::vector<Value>& args) {
     // The master VM is registered under "<main>" with the pak's search root
     // (e.g. "linux/aaa - bak/<main>"); find it regardless of the exact root.
-    // callMasterProgramFunction is exposed by original_vm.h; pass the root of
-    // whichever <main> entry exists.
-    return callMasterProgramFunction(fun, args, lpc::masterSearchRoot());
+    const int64_t cno = lpc::dispatchCno();
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    {
+        std::lock_guard<std::mutex> lk(g_inflightMtx);
+        g_inflightDone[static_cast<int>(cno)] = done;
+    }
+    callMasterProgramFunctionSpawn(fun, args, static_cast<int>(cno), done);
+    return make_int(0);
 }
 
 // ---- command handlers -----------------------------------------------------
@@ -2717,7 +2928,18 @@ void handle_vm_cmdCheckServer(GameClient& cl, const uint8_t* body, size_t len)
                   << " 0x5108 blen=" << blen << " head=" << hx << "\n";
         std::cerr.flush();
     }
-    Value r = applyLpc("cmd_check_server", {make_int(cl.clientNo), make_buffer(body + 4, blen)});
+    // 该 handler 需要返回值区分 "LPC 已处理 / 驱动兜底": 走同步查询
+    // (调度线程 scratch 路径; 查证类短链, park 即放弃转驱动兜底)。
+    Value r;
+    try {
+        r = callMasterProgramFunction("cmd_check_server",
+                                      {make_int(cl.clientNo),
+                                       make_buffer(body + 4, blen)},
+                                      lpc::masterSearchRoot());
+    } catch (const lpc::vmcore::SuspendSignal&) {
+
+        r = make_int(0);
+    }
     if (acFlag.load(std::memory_order_relaxed))
         std::cerr << "[ac] cmd_check_server returned " << to_string(r, false) << "\n";
     // The LPC path (/gs/cmds/normal/check_server.c) must reply with
@@ -12541,7 +12763,21 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
     // flowGated() (defined near the top of this file) already encodes the
     // correct rule and documents this exact 0x303 case.
     const bool gateNeeded = flowGated(cl.attrib);
-    if (gateNeeded) {
+    // [net-pump] 泵路径 (调度线程) 禁止阻塞等待 —— 前一条链只有调度器
+    // 继续跑才能完成, 这里阻塞 = 整个 VM 自锁。串行由泵的 in-flight
+    // 旗标保证 (feedClient 前已放行非在飞连接); 这里仅留非阻塞双检。
+    if (gateNeeded && tl_inNetPump) {
+        if (lpc::clientCommandBusy(gateCno)) {
+            static int pumpDrops = 0;
+            if (pumpDrops++ < 20)
+                std::cerr << "[chain-gate-pump] cno=" << gateCno
+                          << " cmd=0x" << std::hex << cmdNo << std::dec
+                          << " dropped: previous command still running\n";
+            return;
+        }
+        // Attribute the LPC chain(s) this packet starts to this connection.
+        lpc::setDispatchCno(gateCno);
+    } else if (gateNeeded) {
         lpc::vmchainMailbox(gateCno, -1, "dispatch-wait");
         // LPCVM_GATEDBG: how long the one-command-per-connection gate held
         // this packet (menu-click latency suspects the previous chain hogging
@@ -13841,8 +14077,16 @@ void gameServiceFlushPendingOutputs(bool force) {
 // The per-connection handler lives in this translation unit only.
 static void processGameConnection(unsigned int fd);
 
+// [net-pump] 泵开关: 默认关 (旧 socket 线程路径) —— boot 期 configd/filed
+// 构造等待在泵路径下不收敛 (netpump4: FILE_D wait for CONFIG_D 永挂),
+// LPCVM_NETPUMP=1 供后续迭代排查。
+static const bool g_netPumpOn = getenv("LPCVM_NETPUMP") != nullptr;
+
 int startGameService(int port) {
     ensureWsaGame();
+    // [net-pump] 挂载网络事件泵 —— 调度循环每迭代调用, socket 线程只产
+    // 原始字节, Value 全生命周期在调度线程 (引用计数去原子化的前提)。
+    if (g_netPumpOn) lpc::vmcore::Scheduler::setNetPumpHook(&netPump);
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return 0;
     sockaddr_in addr{};
@@ -13932,7 +14176,12 @@ int startGameService(int port) {
                           << " sendFail=" << nSf << "(+" << (nSf - sf) << ")"
                           << " clients=" << clients
                           << " insns=" << lpc::vmcore::g_vmInsnCount.load(
-                                 std::memory_order_relaxed) << "\n";
+                                 std::memory_order_relaxed)
+                          // [stall-diag] 逐轮恶化假说验证: pendingFrees 积压 /
+                          // 注册表对象数 / VmPool 池存量。
+                          << " pf=" << lpc::vmcore::vmPendingFreeCount()                          << " objs=" << lpc::vmcore::Registry::instance()
+                                             .objectCount()
+                          << "\n";
                 std::cerr.flush();
                 pIn = nIn; pOut = nOut; fIn = nFIn; fOut = nFOut; si = nSi; sf = nSf;
             }
@@ -13980,85 +14229,116 @@ static void processGameConnection(unsigned int fdRaw) {
                 std::lock_guard<std::mutex> lk(gameMutex());
                 gameClients()[clientNo] = std::move(cl);
             }
-            // vm_gameListenSocketCallback: after binding the client slot,
-            // notify the LPC master: vm_apply("cmd_new_connection", clientNo)
-            // -> cmd_new_connection -> threadd dispatch -> post_new_connection
-            // (creates/registers the client agent).
-            try {
-                callMasterProgramFunction("cmd_new_connection", {make_int(clientNo)},
-                                          lpc::masterSearchRoot());
-            } catch (...) {
-            }
-            // The original driver is a cooperative single-threaded
-            // scheduler: the new-connection callback runs to completion
-            // (agent cloned + set_client_agent registered) BEFORE the
-            // socket is read.  Our port runs the callback on the
-            // connectiond queue thread, so wait here until the agent for
-            // this client exists before feeding any packet - otherwise the
-            // first packet's process_command -> find_agent_by_client races
-            // the registration and the command is silently dropped.
-            int waitMs = 0;
-            int agentType = 0;
-            int userType = 0;
-            {
-                // The original driver is single threaded: the listen
-                // callback (cmd_new_connection -> logind::new_user ->
-                // comm::set_client -> set_client_user) completes BEFORE the
-                // first packet is parsed.  Here cmd_new_connection only
-                // QUEUES the dispatch on the scheduler thread, so the socket
-                // thread must wait for the registration itself or the first
-                // packet (0x4124 login) finds no user object.
-                //
-                // TWO registries exist and they must not be confused:
-                //   client_users[cno]  <- find_user_by_client: every player
-                //                         connection (logind::new_user)
-                //   client_agents[cno] <- find_agent_by_client: INTERNAL
-                //                         comm agents (feature/common/
-                //                         agent.c::comm_set_client_no)
-                // Waiting on the agent alone (the previous code) never
-                // matched for a player: the loop burnt all 200 iterations
-                // (200 x 5ms + one LPC round trip each ~10ms = ~3.1s) before
-                // every read, which is exactly the "first packet after a new
-                // connection takes ~3.6s" the client reported.
-                auto root = lpc::masterSearchRoot();
-                uint64_t waitStart = GetTickCount64();
-                // Hard cap: 20 x 5ms = 100ms.  The registry checks below already
-                // break as soon as the client is known, and the queued
-                // cmd_new_connection dispatch (which is what a login connection
-                // actually needs before its first packet) completes in a few ms -
-                // a 200-iteration cap let the wait run the full 3.2s again whenever
-                // the pending-service counter was stuck ("[accept] ... wait=3219ms
-                // user-type=0", i.e. the ~3s login delay coming back). 100ms is
-                // ample for the dispatch and bounds the worst case.
-                for (int tries = 0; tries < 20; ++tries) {
-                    Value u = callMasterProgramFunction("find_user_by_client",
-                                                        {make_int(clientNo)}, root);
-                    userType = static_cast<int>(u.index());
-                    if (u.index() == 7) break;   // login object registered
-                    Value a = callMasterProgramFunction("find_agent_by_client",
-                                                        {make_int(clientNo)}, root);
-                    agentType = static_cast<int>(a.index());
-                    if (a.index() == 7) break;   // internal comm agent
-                    // Neither registry has this client - and for a LOGIN connection
-                    // that is the normal state, not a pending one: logind only
-                    // registers a "user" for a client AFTER it authenticates, which
-                    // cannot happen before this thread reads its first packet
-                    // (0x4124).  Polling the registries alone therefore burnt all
-                    // 200 iterations (200 x 5ms + one LPC round trip each) on EVERY
-                    // login - measured as "[accept] ... wait=3390ms user-type=0" -
-                    // while the CPU stayed near idle.  The thing actually worth
-                    // waiting for is the queued cmd_new_connection dispatch (it runs
-                    // on the scheduler thread): once the service queue is idle that
-                    // dispatch has completed, so reading the first packet is safe.
-                    if (tries >= 1 && lpc::serviceQueueIdle()) break;
-                    if (LPCVM_GETENV("LPCVM_TRACE"))
-                        std::cerr << "[game] waiting client=" << clientNo
-                                  << " try=" << tries << " user=" << userType
-                                  << " agent=" << agentType << "\n";
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (!g_netPumpOn) {
+                // ---- 旧路径 (默认): socket 线程同步派发 ----
+                // vm_gameListenSocketCallback: after binding the client slot,
+                // notify the LPC master: vm_apply("cmd_new_connection", clientNo)
+                // -> cmd_new_connection -> threadd dispatch -> post_new_connection
+                // (creates/registers the client agent).
+                try {
+                    callMasterProgramFunction("cmd_new_connection", {make_int(clientNo)},
+                                              lpc::masterSearchRoot());
+                } catch (...) {
                 }
-                waitMs = static_cast<int>(GetTickCount64() - waitStart);
+                int waitMs = 0;
+                int agentType = 0;
+                int userType = 0;
+                {
+                    auto root = lpc::masterSearchRoot();
+                    uint64_t waitStart = GetTickCount64();
+                    for (int tries = 0; tries < 20; ++tries) {
+                        Value u = callMasterProgramFunction("find_user_by_client",
+                                                            {make_int(clientNo)}, root);
+                        userType = static_cast<int>(u.index());
+                        if (u.index() == 7) break;   // login object registered
+                        Value a = callMasterProgramFunction("find_agent_by_client",
+                                                            {make_int(clientNo)}, root);
+                        agentType = static_cast<int>(a.index());
+                        if (a.index() == 7) break;   // internal comm agent
+                        if (tries >= 1 && lpc::serviceQueueIdle()) break;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    waitMs = static_cast<int>(GetTickCount64() - waitStart);
+                }
+                {
+                    std::string peer = "?";
+                    sockaddr_in sin{};
+                    int slen = static_cast<int>(sizeof(sin));
+                    if (getpeername(c, reinterpret_cast<sockaddr*>(&sin), &slen) == 0) {
+                        char pbuf[64];
+                        snprintf(pbuf, sizeof(pbuf), "%s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+                        peer = pbuf;
+                    }
+                    std::cerr << "[accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
+                              << " wait=" << waitMs << "ms user-type=" << userType
+                              << " agent-type=" << agentType
+                              << " peer=" << peer << "\n";
+                }
+                char buf[4096];
+                for (;;) {
+                    int n = recv(c, buf, sizeof(buf), 0);
+                    {
+                        std::string hex;
+                        static const char* hx = "0123456789ABCDEF";
+                        for (int i = 0; i < n && i < 48; ++i) { hex += hx[(unsigned char)buf[i] >> 4]; hex += hx[(unsigned char)buf[i] & 15]; }
+                        std::cerr << "[recv-accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
+                                  << " n=" << n << " " << hex << "\n";
+                    }
+                    if (n <= 0) {
+                        static const std::atomic<bool>& echoCloseFlag = dynProbeFlag("LPCVM_ECHO");
+                        if (echoCloseFlag.load(std::memory_order_relaxed)) {
+                            std::lock_guard<std::mutex> lk(gameMutex());
+                            auto it = gameClients().find(clientNo);
+                            if (it != gameClients().end())
+                                std::cerr << "[echo-state] cno=" << clientNo << " n=" << n
+                                          << " lastEchoTick=" << it->second.tickLastRecvLastEcho
+                                          << " tickServer=" << it->second.tickServer
+                                          << " echoAge=" << (time(nullptr) - it->second.timeRecvEcho)
+                                          << "s t=" << lpc::msSinceStart() << "ms\n";
+                        }
+                        break;
+                    }
+                    GameClient* cur;
+                    {
+                        std::lock_guard<std::mutex> lk(gameMutex());
+                        auto it = gameClients().find(clientNo);
+                        if (it == gameClients().end()) break;
+                        cur = &it->second;
+                    }
+                    if (cur->attrib & ATTRIB_CLIENT_USER) {
+                        queuePacket(clientNo, buf, static_cast<size_t>(n));
+                        std::string one;
+                        while (takePacket(clientNo, one)) {
+                            GameClient* c2;
+                            {
+                                std::lock_guard<std::mutex> lk(gameMutex());
+                                auto it2 = gameClients().find(clientNo);
+                                if (it2 == gameClients().end()) break;
+                                c2 = &it2->second;
+                            }
+                            feedClient(*c2, one.data(), one.size());
+                            if (clientFlowGated(clientNo)) waitFlowSettled(clientNo);
+                        }
+                        continue;
+                    }
+                    feedClient(*cur, buf, static_cast<size_t>(n));
+                }
+                closesocket(c);
+                try {
+                    (void)callMasterProgramFunction("cmd_disconnected",
+                                              {make_int(clientNo), make_int(2)},
+                                              lpc::masterSearchRoot());
+                } catch (...) {
+                }
+                {
+                    std::lock_guard<std::mutex> lk(gameMutex());
+                    gameClients().erase(clientNo);
+                }
+                return;
             }
+            // ---- [net-pump] 路径 (LPCVM_NETPUMP=1): 事件入队, 调度线程派发 ----
+            // NEWCONN 事件入队: 注册完成天然先于该连接的任何 DATA (完成旗标)。
+            pushNetEvent({1, clientNo, std::string()});
             {
                 std::string peer = "?";
                 sockaddr_in sin{};
@@ -14069,9 +14349,7 @@ static void processGameConnection(unsigned int fdRaw) {
                     peer = pbuf;
                 }
                 std::cerr << "[accept] t=" << lpc::msSinceStart() << "ms client=" << clientNo
-                          << " wait=" << waitMs << "ms user-type=" << userType
-                          << " agent-type=" << agentType
-                          << " peer=" << peer << "\n";
+                          << " deferred-dispatch peer=" << peer << "\n";
             }
             char buf[4096];
             for (;;) {
@@ -14103,81 +14381,15 @@ static void processGameConnection(unsigned int fdRaw) {
                     }
                     break;
                 }
-                GameClient* cur;
-                {
-                    std::lock_guard<std::mutex> lk(gameMutex());
-                    auto it = gameClients().find(clientNo);
-                    if (it == gameClients().end()) break;
-                    cur = &it->second;
-                }
-                // The original driver is cooperative: a dispatched service
-                // (e.g. _check_client_data) runs to completion - including
-                // its lite_set_temp("antibot_answer") AFTER the reply - before
-                // the client's NEXT packet is read.  Wait here until the
-                // threadd service queue drains so the account packet doesn't
-                // race that tail and see antibot_answer still unset.
-                if (cur->attrib & ATTRIB_CLIENT_USER) {
-                    // Enqueue and drain in order (see the queue comment):
-                    // never two commands at once, never a dropped packet.
-                    queuePacket(clientNo, buf, static_cast<size_t>(n));
-                    std::string one;
-                    while (takePacket(clientNo, one)) {
-                        GameClient* c2;
-                        {
-                            std::lock_guard<std::mutex> lk(gameMutex());
-                            auto it2 = gameClients().find(clientNo);
-                            if (it2 == gameClients().end()) break;
-                            c2 = &it2->second;
-                        }
-                        feedClient(*c2, one.data(), one.size());
-                        if (clientFlowGated(clientNo)) waitFlowSettled(clientNo);
-                    }
-                    continue;
-                }
-                feedClient(*cur, buf, static_cast<size_t>(n));
+                // [net-pump] 原始字节入队: 解析/handler/applyLpc 全在调度
+                // 线程 (netPump) —— chunk 边界任意, MZ 帧重组在 feedClient。
+                pushNetEvent({2, clientNo, std::string(buf, static_cast<size_t>(n))});
             }
             closesocket(c);
-            // Driver-side disconnect notification.  The original driver
-            // applies cmd_disconnected(cno, where) when the socket goes
-            // away; start_gs::_cmd_disconnected -> user.o::disconnected ->
-            // (no logout) 180s timer -> time_expired -> destruct ->
-            // userd::destroy_user -> me->save(0, cb), which is the ONLY
-            // path that writes the character's dbase back to the ddb.  Our
-            // port used to drop the client slot silently, so a character
-            // was written once at creation and never again: level, items
-            // and the "newbie" flag were lost on every re-login (so the
-            // newbie story re-ran and the newbie gift looked empty, making
-            // apply rebuild a NEW gift instead of listing its items).
-            // 2 = "driver_callback" per start_gs::stat_disconnect(34691).
-            // Called while the client slot is still registered: the LPC
-            // looks the user up with find_user_by_client(cno).
-            // LPCVM_DISCDBG: the disconnect->save chain is silent on failure;
-            // print whether cmd_disconnected actually reached the mudlib.
-            static const std::atomic<bool>& discFlag = dynProbeFlag("LPCVM_DISCDBG");
-            const bool discDbg = discFlag.load(std::memory_order_relaxed);
-            try {
-                Value r = callMasterProgramFunction("cmd_disconnected",
-                                          {make_int(clientNo), make_int(2)},
-                                          lpc::masterSearchRoot());
-                if (discDbg) {
-                    std::cerr << "[disc] t=" << lpc::msSinceStart()
-                              << "ms cno=" << clientNo
-                              << " cmd_disconnected called ret-type=" << r.index() << "\n";
-                    std::cerr.flush();
-                }
-            } catch (const std::exception& e) {
-                if (discDbg)
-                    std::cerr << "[disc] cno=" << clientNo
-                              << " cmd_disconnected EXC: " << e.what() << "\n";
-            } catch (...) {
-                if (discDbg)
-                    std::cerr << "[disc] cno=" << clientNo
-                              << " cmd_disconnected EXC(unknown)\n";
-            }
-            {
-                std::lock_guard<std::mutex> lk(gameMutex());
-                gameClients().erase(clientNo);
-            }
+            // [net-pump] DISC 事件: cmd_disconnected (槽位擦除随事件在泵里
+            // 完成, 顺序保持 "先 LPC 后擦除")。
+            // 2 = "driver_callback" per start_gs::stat_disconnect(34691)。
+            pushNetEvent({3, clientNo, std::string()});
 }
 
 void gameServiceFeed(int clientNo, const char* data, size_t len) {
@@ -14296,9 +14508,22 @@ bool gameServiceSend(int clientNo, const std::string& data) {
         fd = c.fd;
     }
     // [yuhua-timing] 每个客户端回包一行 (与 [yuhua-rx] 同一时钟)。默认关。
+    // LPCVM_YUHUA2: 追加帧 cmd 号 —— 帧头 = MZ(2)+cksum(2)+tick(4)+msgLen(2)
+    // +cmd(2)，cmd 在 offset 10 (offset 8-9 是 msgLen, 上一版误读)。
     if (yuhuaTraceOn()) {
-        std::cerr << "[yuhua-tx] t=" << lpc::msSinceStart() << "ms cno="
-                  << clientNo << " wire=" << data.size() << "\n";
+        static const bool txCmd = [] {
+            return LPCVM_GETENV("LPCVM_YUHUA2") != nullptr;
+        }();
+        if (txCmd && data.size() >= 12) {
+            uint16_t tc = static_cast<uint16_t>((static_cast<unsigned char>(data[10]) << 8) |
+                                                static_cast<unsigned char>(data[11]));
+            std::cerr << "[yuhua-tx] t=" << lpc::msSinceStart() << "ms cno="
+                      << clientNo << " wire=" << data.size()
+                      << " cmd=0x" << std::hex << tc << std::dec << "\n";
+        } else {
+            std::cerr << "[yuhua-tx] t=" << lpc::msSinceStart() << "ms cno="
+                      << clientNo << " wire=" << data.size() << "\n";
+        }
         std::cerr.flush();
     }
     sendBufToSocket(clientNo, fd, buf);

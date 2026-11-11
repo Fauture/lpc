@@ -146,6 +146,13 @@ struct VmFrame {
     // MAX argument count (declared + defaulted) as recorded by the last
     // check_args_num (op 15) of this frame — resort_stack needs it.
     int maxArgNo = 0;
+    // [fntime] LPCVM_FNTIME 探针: 帧进入时刻 (ns)。仅探针名单内的函数
+    // 会被置非零, 其余恒 0 —— 零热路径成本 (一次指针比较都不需要:
+    // push 时判断, return 时读 0 即跳过)。
+    uint64_t ftT0 = 0;
+    // [fntime] 帧进入时的 instrCount 快照 (含子调用) —— 拆"指令多"还是
+    // "每指令贵"。
+    uint64_t ftInsn = 0;
     // Accumulated baseVarOffset / baseFunOffset of the function's
     // constitution (vm_pushObjVar 0x8091224 / vm_callInUserFun 0x8094080).
     int varOffset = 0;
@@ -260,6 +267,10 @@ struct VmPcb : std::enable_shared_from_this<VmPcb> {
 
     // ---- external-thread call (execOnMain) ----
     std::shared_ptr<std::promise<Value>> resultPromise;
+
+    // [net-pump] 火忘 spawn 的完成旗标: 链真正结束 (成功/出错, 不含 park)
+    // 时置 true。泵用它保持 NEWCONN → 该连接首包 DATA 的顺序。
+    std::shared_ptr<std::atomic<bool>> spawnDone;
 
     // [ref] 唤醒外部等待者前清空 pcb 携带的全部 lpc Value: Ref/SharedString
     // 计数非原子, 纪律 = 调度线程在 notify 之前把本 pcb 对所有 Value 块的

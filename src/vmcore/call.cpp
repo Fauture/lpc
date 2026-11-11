@@ -15,7 +15,10 @@
 //   * 边界帧 (retCode==nullptr) 弹出 = 整条链结束。
 // ===========================================================================
 #include <atomic>
+#include <chrono>
 #include <cstring>
+#include <string_view>
+#include <unordered_set>
 
 #include "call.h"
 #include "interp.h"
@@ -151,6 +154,33 @@ bool pushFrameInPlace(VmPcb* pcb, VmObject* obj, const VmProgram* prog,
     pcb->ip = 0;
     pcb->returnValue = Value{};   // 占位: 原版 pushVoid 语义
     pcb->returned = false;
+    // [fntime] LPCVM_FNTIME=<fn1,fn2,...> (逗号分隔, 启动缓存): 命中名单的
+    // 函数帧记进入时刻, op73 return 时打 [fntime] 耗时行 —— 羽化产包链
+    // (update_skill/build_skills/update_pet_skills...) 的逐函数耗时取证。
+    static const bool ftOn = [] {
+        return getenv("LPCVM_FNTIME") != nullptr;
+    }();
+    if (ftOn && !fn->name.empty()) {
+        static const std::unordered_set<std::string> ftSet = [] {
+            std::unordered_set<std::string> s;
+            const char* e = getenv("LPCVM_FNTIME");
+            std::string_view v(e ? e : "");
+            for (size_t p = 0; p < v.size();) {
+                size_t q = v.find(',', p);
+                if (q == std::string_view::npos) q = v.size();
+                if (q > p) s.emplace(v.substr(p, q - p));
+                p = q + 1;
+            }
+            return s;
+        }();
+        if (ftSet.count(fn->name)) {
+            pcb->frames.back().ftT0 =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
+            pcb->frames.back().ftInsn = pcb->instrCount;
+        }
+    }
     return true;
 }
 
@@ -454,6 +484,7 @@ int vmReturnFromFun(VmPcb* pcb, int op) {
 // ---------------------------------------------------------------------------
 Value vmRunFunction(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
                     const std::vector<Value>& args) {
+    Interp::interpResetHotClock();   // [stall-watch] 嵌套链边界重置基线
     VmPcbSetter setPcb(pcb);
     pushArgs(pcb, fn, args);
     pushFrameInPlace(pcb, obj, obj ? obj->prog() : nullptr, fn,
@@ -489,6 +520,7 @@ Value vmResumeSlice(VmPcb* pcb) {
 Value vmApplySync(VmPcb* pcb, VmObject* obj, const OriginalFunction* fn,
                   const std::vector<Value>& args,
                   const VmProgram* progOverride) {
+    Interp::interpResetHotClock();   // [stall-watch] 嵌套同步链边界重置
     // park 窗口重入取证: cond.kind != 0 说明该 pcb 正 park 在表达式中间
     // (SuspendSignal 已抛、还没 resume) —— 此时往它栈上压帧就是毁链元凶。
     if (pcb && pcb->cond.kind != 0) {

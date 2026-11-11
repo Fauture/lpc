@@ -786,7 +786,11 @@ int main(int argc, char** argv) {
         // bogus code address, not a valid module - so print it separately from
         // the handler's own frames.
         if (ep && ep->ContextRecord) {
+#if defined(_WIN64)
+            std::cerr << " eip=0x" << static_cast<uintptr_t>(ep->ContextRecord->Rip);
+#else
             std::cerr << " eip=0x" << static_cast<uintptr_t>(ep->ContextRecord->Eip);
+#endif
         }
         std::cerr << std::dec << " frames=" << n << "\n";
         // Which thread died and how deep its stack was.  0xc00000fd
@@ -826,7 +830,12 @@ int main(int argc, char** argv) {
         // thread's EBP chain from the exception context instead: the stub has
         // no frame of its own, so the first return address is the code that
         // made the guarded indirect call.
+        // [x64] x64 无 EBP 帧 (FPO), Rbp 一般为 0/保留 —— 仅 32 位走链。
+#if defined(_WIN64)
+        (void)ep;
+#else
         if (ep && ep->ContextRecord) walkEbpChain(ep->ContextRecord->Ebp);
+#endif
         // Last entered LPC functions: a C++-level recursion (a cyclic value
         // walked by padVariableValue/to_string/saveValueAscii/value_equal)
         // never pushes an LPC frame, so this ring is what says WHERE the

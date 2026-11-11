@@ -201,6 +201,8 @@ std::string vmKeyOfObjectPtr(const void* objPtr) {
     auto it = objKeyByPtr().find(objPtr);
     return it == objKeyByPtr().end() ? std::string() : it->second;
 }
+// [stall-diag] pendingFrees 积压观测 (心跳输出)。
+size_t vmPendingFreeCount() { return pendingFrees().size(); }
 void vmFlushPendingFrees(const void* proc) {
     auto& pf = pendingFrees();
     if (pf.empty()) return;
@@ -526,6 +528,14 @@ void cmdActiveDetach(int64_t cno) {
     }
 }
 
+// [net-pump] 非阻塞探针: 该连接是否有活跃命令链 (调度线程禁止阻塞等待
+// —— 前一条链只有调度器继续跑才能完成, 泵内阻塞 = 自锁)。
+bool clientCommandBusy(int64_t clientNo) {
+    if (clientNo < 0) return false;
+    return cmdActiveCount(clientNo).load(std::memory_order_acquire) > 0 ||
+           vmchainLiveChains(clientNo) > 0 || clientLpcBusy(clientNo);
+}
+
 bool waitClientCommandIdle(int64_t clientNo, int timeoutMs) {
     if (clientNo < 0) return true;
     const int64_t totalMs = timeoutMs > 0 ? timeoutMs : 20000;
@@ -754,6 +764,21 @@ Value callMasterProgramFunction(const std::string& funName,
     // calls from a running process run directly; calls from network/telnet/
     // mysql threads spawn a scheduler process and block on its result.
     return vmcore::Scheduler::instance().execOnMain(master, funName, args);
+}
+
+// [net-pump] 火忘派发: 泵 (调度线程) 用 —— 真 pcb 进程, 可 park/恢复,
+// 不阻塞不交付 (区别于 execOnMain 的 future 同步路径)。
+void callMasterProgramFunctionSpawn(const std::string& funName,
+                                    const std::vector<Value>& args,
+                                    int clientNo,
+                                    const std::shared_ptr<std::atomic<bool>>& doneFlag) {
+    vmcore::VmObject* master = findMasterVmObject();
+    if (!master) {
+        if (doneFlag) doneFlag->store(true);
+        return;
+    }
+    vmcore::Scheduler::instance().execSpawn(master, funName, args, clientNo,
+                                            doneFlag);
 }
 
 std::string masterSearchRoot() {

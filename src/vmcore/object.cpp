@@ -228,9 +228,28 @@ VmProgram::VmProgram(std::shared_ptr<const OriginalObject> src,
     collectSegDtor(src_, 0, 0);
     for (auto it = initSegs_.rbegin(); it != initSegs_.rend(); ++it)
         collectSegDtor(it->prog, it->funOffset, it->varOffset);
+
+    // [perf] 摊平 byIndex_ → 稠密 vector (fnAtIndex 每 callsite 走树 → O(1))。
+    {
+        int maxIdx = -1;
+        for (const auto& kv : byIndex_)
+            if (kv.first > maxIdx) maxIdx = kv.first;
+        if (maxIdx >= 0) {
+            byIndexVec_.assign(static_cast<size_t>(maxIdx) + 1, nullptr);
+            for (const auto& kv : byIndex_)
+                byIndexVec_[static_cast<size_t>(kv.first)] = kv.second;
+        }
+        byIndexVecReady_ = true;
+    }
 }
 
 const OriginalFunction* VmProgram::fnAtIndex(int index) const {
+    // [perf] 构造完成后的稠密表 O(1); 构造中途 (createKeys 收集) 回落 map。
+    if (byIndexVecReady_) {
+        if (index < 0 || static_cast<size_t>(index) >= byIndexVec_.size())
+            return nullptr;
+        return byIndexVec_[static_cast<size_t>(index)];
+    }
     auto it = byIndex_.find(index);
     return it == byIndex_.end() ? nullptr : it->second;
 }
@@ -399,19 +418,34 @@ static void registerAliases(const std::string& canonical,
 void Registry::registerObject(const std::string& key, VmObject* obj) {
     std::lock_guard<std::recursive_mutex> lk(mtx_);
     objects_[key] = obj;
-    registerAliases(key, aliases_);
+    {
+        // [perf] registerAliases 写入 aliases_ 时同步维护反向索引,
+        // unregisterObject 摘别名 O(每对象别名数) 而非全表扫 (stackdump 13%)。
+        std::unordered_map<std::string, std::string> al;
+        registerAliases(key, al);
+        for (const auto& kv : al) {
+            aliases_[kv.first] = kv.second;
+            aliasesByTarget_[key].push_back(kv.first);
+        }
+    }
     // The loader's sourceName ("/gs/x/x.o") is another accepted spelling.
     if (obj && obj->prog()) {
         std::string sn = relOf(obj->prog()->name());
         if (!sn.empty() && key.compare(0, 6, "clone:") != 0) {
             aliases_[sn] = key;
+            aliasesByTarget_[key].push_back(sn);
             aliases_["/" + sn] = key;
+            aliasesByTarget_[key].push_back("/" + sn);
             if (endsWith(sn, ".o")) {
                 aliases_[sn.substr(0, sn.size() - 2) + ".c"] = key;
+                aliasesByTarget_[key].push_back(sn.substr(0, sn.size() - 2) + ".c");
                 aliases_["/" + sn.substr(0, sn.size() - 2) + ".c"] = key;
+                aliasesByTarget_[key].push_back("/" + sn.substr(0, sn.size() - 2) + ".c");
                 const std::string stem = sn.substr(0, sn.size() - 2);
                 aliases_[stem] = key;
+                aliasesByTarget_[key].push_back(stem);
                 aliases_["/" + stem] = key;
+                aliasesByTarget_[key].push_back("/" + stem);
             }
         }
     }
@@ -420,10 +454,12 @@ void Registry::registerObject(const std::string& key, VmObject* obj) {
 void Registry::unregisterObject(const std::string& key) {
     std::lock_guard<std::recursive_mutex> lk(mtx_);
     objects_.erase(key);
-    // Aliases pointing at the key die with it (identity is gone).
-    for (auto it = aliases_.begin(); it != aliases_.end();) {
-        if (it->second == key) it = aliases_.erase(it);
-        else ++it;
+    // [perf] 反向索引摘别名 (原全表扫 aliases_ —— 每次对象回收 O(全别名数))。
+    // 所有别名写点均已同步维护反向索引; 不做兜底全表扫 (那正是要省的成本)。
+    auto rit = aliasesByTarget_.find(key);
+    if (rit != aliasesByTarget_.end()) {
+        for (const auto& a : rit->second) aliases_.erase(a);
+        aliasesByTarget_.erase(rit);
     }
 }
 
@@ -431,6 +467,11 @@ VmObject* Registry::find(const std::string& key) const {
     std::lock_guard<std::recursive_mutex> lk(mtx_);
     auto it = objects_.find(key);
     return it == objects_.end() ? nullptr : it->second;
+}
+
+size_t Registry::objectCount() const {
+    std::lock_guard<std::recursive_mutex> lk(mtx_);
+    return objects_.size();
 }
 
 std::vector<VmObject*> Registry::allObjects() const {

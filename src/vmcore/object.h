@@ -116,6 +116,10 @@ public:
 private:
     std::shared_ptr<const OriginalObject> src_;
     std::map<int, const OriginalFunction*> byIndex_;
+    // [perf] op8 每 callsite fnAtIndex 的 std::map 树查找 (stackdump 5%):
+    // 构造完成后摊平为稠密 vector (键 = funOff+index, 基本连续)。
+    std::vector<const OriginalFunction*> byIndexVec_;
+    bool byIndexVecReady_ = false;
     // Inherited function copies owned here (they carry the parent's string
     // table and accumulated offsets; the loader's own records are const).
     std::vector<std::shared_ptr<OriginalFunction>> inherited_;
@@ -234,6 +238,8 @@ public:
     void unregisterObject(const std::string& key);
     VmObject* find(const std::string& key) const;          // exact canonical key
     VmObject* findByName(const std::string& name) const;   // alias + lookup
+    // [stall-diag] 注册表对象数 (心跳输出, 积压观测)。
+    size_t objectCount() const;
 
     // Construction state: loading and constructing are separate steps
     // (vm_f_load_object -> vm_loadObject split).  `initialized` = the
@@ -284,6 +290,9 @@ private:
     // Canonical-alias table: every accepted spelling of an object → its
     // canonical key (built at registration; the ONLY name resolution data).
     std::unordered_map<std::string, std::string> aliases_;
+    // [perf] 目标键→别名反向索引: unregisterObject 摘别名 O(每对象别名数),
+    // 不再全表扫 (stackdump 实测对象回收占 VM 工作 13%)。
+    std::unordered_map<std::string, std::vector<std::string>> aliasesByTarget_;
     std::unordered_set<std::string> initialized_;
     std::unordered_set<std::string> constructing_;
 };

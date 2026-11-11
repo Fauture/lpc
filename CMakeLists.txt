@@ -76,7 +76,11 @@ if(WIN32)
     # original driver ran on Linux's 8MB default.  "deep chains run on
     # create_thread threads" is no longer true - create_thread goes through
     # scheduler().spawn() (single-threaded) too.
-    target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x2000000)
+    if(CMAKE_GENERATOR_PLATFORM MATCHES "x64" OR CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_link_options(lpcvm PRIVATE /STACK:0x2000000)
+    else()
+        target_link_options(lpcvm PRIVATE /machine:X86 /LARGEADDRESSAWARE /STACK:0x2000000)
+    endif()
     # Release keeps /O2 but also emits a PDB, so crash dumps and ETW/xperf CPU
     # samples resolve to function names (boot profiling).  /OPT:REF,ICF restore
     # the linker defaults that /DEBUG would otherwise turn off.  /GL+/LTCG:

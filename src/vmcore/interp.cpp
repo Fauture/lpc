@@ -11,6 +11,7 @@
 // ===========================================================================
 #include <atomic>
 #include <chrono>
+#include <unordered_map>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -111,6 +112,13 @@ Value& sharedGlobal(int index) {
     if (static_cast<size_t>(index) >= g.size())
         g.resize(static_cast<size_t>(index) + 1);
     return g[static_cast<size_t>(index)];
+}
+
+// [stall-watch] 时间基采样基线: runProcess 每次 (重新)调度重置 —— park
+// 停泊/排队等待不计入停顿。见 Interp::loop 的 [hotsample→stall-watch]。
+std::chrono::steady_clock::time_point g_hotLast{};
+void interpResetHotClock() {
+    g_hotLast = std::chrono::steady_clock::now();
 }
 
 // ---- master (global) program ------------------------------------------------
@@ -765,11 +773,16 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 using clk = std::chrono::steady_clock;
                 static thread_local clk::time_point opnsT0{};
                 static thread_local int opnsLast = -1;
+                // [opns-park] T0 时刻的 park 计数快照: 归账时若计数已前进,
+                // 说明上一条指令内部 park 过 (sleep/wait_event 停泊) ——
+                // 停泊墙钟不属于该 op 的执行成本, 跳过记账。
+                static thread_local uint64_t opnsParkSeen = 0;
                 static std::atomic<uint64_t> opnsNs[96];
                 static std::atomic<uint64_t> opnsCnt[96];
                 static std::atomic<uint64_t> opnsTotal{0};
                 auto now = clk::now();
                 if (opnsLast >= 0) {
+                    if (g_parkCount == opnsParkSeen) {
                     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                   now - opnsT0)
                                   .count();
@@ -847,13 +860,21 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                         }
                         std::cerr.flush();
                     }
+                    }   // [opns-park] 只归账未 park 的指令
                 }
                 opnsT0 = now;
+                opnsParkSeen = g_parkCount;
                 opnsLast = static_cast<int>(in.op);
             }
         }
         opTraceRecord(pcb->lastIp, in.op, pcb->stack.size(), pcb->frames.size());
-        g_vmInsnCount.fetch_add(1, std::memory_order_relaxed);   // [mips]
+        // [perf2] 批量提交: 原每指令一次 atomic RMW (~10-20ns)。
+        // 线程局部计数每 4096 条提交一次, 总量口径不变。
+        {
+            static thread_local uint32_t insnBatch = 0;
+            if ((++insnBatch & 0xFFFu) == 0)
+                g_vmInsnCount.fetch_add(0x1000, std::memory_order_relaxed);
+        }
         // ---- time slice (master process; 原版 runTicks) ----
         if (pcb->yieldEvery > 0 && --pcb->yieldCountdown <= 0) {
             pcb->yieldCountdown = pcb->yieldEvery;
@@ -887,24 +908,33 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             if (ai.parameters == 2) m1 = readI32(*pcb->meta, off + 4);
         }
         trcStep(pcb, pcb->ip - 1, in.op, ai.name);
-        // [hotsample] 时间基采样 profiler: 每 64K 条指令看一次钟, 距上次
-        // 采样 >=150ms 才打一行 (fn/ip/op)。指令基采样会漏掉"单条 op6 efun
-        // 内部烧 10 秒 CPU"的现场 —— 时间基才能如实反映耗时分布。默认关
-        // (touch _probe_on/LPCVM_HOTLOOP 热布防)。
+        // [hotsample→stall-watch] (2026-11-09 羽化尖刺专案) 每 8K 条指令看
+        // 一次钟, 距基线 >=8ms 打一行 (fn/ip/op/efun)。基线是全局的, 由
+        // runProcess 在每次 (重新)调度时重置 —— park 停泊/排队等待不计入,
+        // 只有"链在 CPU 上跑着却被卡住"的现场才命中 (同指令数 10x 耗时)。
+        // 默认关 (LPCVM_HOTLOOP=1)。
         {
             static thread_local uint64_t hotTick = 0;
-            if (((++hotTick) & 0xFFFFull) == 0) {
-                static const std::atomic<bool>& hotOn =
-                    lpc::dynProbeFlag("LPCVM_HOTLOOP");
-                if (hotOn.load(std::memory_order_relaxed)) {
+            if (((++hotTick) & 0x1FFFull) == 0) {
+                // [stall-watch] dynProbeFlag 已退役 (恒 false) —— 启动时缓存
+                // 一次 env (热路径严禁每次 getenv)。
+                static const bool hotOn =
+                    std::getenv("LPCVM_HOTLOOP") != nullptr;
+                if (hotOn) {
                     using clk = std::chrono::steady_clock;
-                    static thread_local clk::time_point last =
-                        clk::now() - std::chrono::milliseconds(1000);
                     auto now = clk::now();
-                    if (now - last >= std::chrono::milliseconds(150)) {
-                        last = now;
+                    if (g_hotLast.time_since_epoch().count() == 0)
+                        g_hotLast = now;
+                    const auto gapNs =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            now - g_hotLast)
+                            .count();
+                    // 每个窗口都重置: gap = 恰好 8192 条指令的耗时。
+                    // >8ms = 该窗 >1µs/指令 (常态 ~300ns) —— 真停顿。
+                    g_hotLast = now;
+                    if (gapNs >= 8000000) {
                         static std::atomic<int> hotLog{0};
-                        if (hotLog.fetch_add(1) < 3000 &&
+                        if (hotLog.fetch_add(1) < 50000 &&
                             !pcb->frames.empty()) {
                             std::string extra;
                             if (in.op == 6) {   // call_in_efun: 解析 efun 名
@@ -917,7 +947,8 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                                     extra =
                                         " efun=" + et[static_cast<size_t>(efun)];
                             }
-                            std::cerr << "[hotsample] tid=" << pcb->tid
+                            std::cerr << "[hotsample] stall=" << gapNs / 1000000
+                                      << "ms tid=" << pcb->tid
                                       << " fn="
                                       << (pcb->frames.back().fn
                                               ? pcb->frames.back().fn->name
@@ -1123,6 +1154,31 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             }
             case 72: // return_from_fake_fun (closure return: value always popped)
             case 73: { // return_from_fun
+                // [fntime] LPCVM_FNTIME 名单函数: return 时打耗时行。
+                // ftT0==0 的帧零成本 (一次整数比较)。
+                if (!pcb->frames.empty() && pcb->frames.back().ftT0) {
+                    const auto ns =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count() -
+                        pcb->frames.back().ftT0;
+                    std::cerr << "[fntime] fn="
+                              << (pcb->frames.back().fn
+                                      ? pcb->frames.back().fn->name
+                                      : "<ctx>")
+                              << " obj="
+                              << (pcb->frames.back().obj
+                                      ? pcb->frames.back().obj->key()
+                                      : std::string("(null)"))
+                              << " dur=" << ns / 1000 << "us"
+                              << " insns="
+                              << (pcb->instrCount >
+                                          pcb->frames.back().ftInsn
+                                      ? pcb->instrCount -
+                                            pcb->frames.back().ftInsn
+                                      : 0)
+                              << "\n";
+                }
                 int rc = vmReturnFromFun(pcb, in.op);
                 if (rc == RET_CHAIN_END) {
                     if (nested && pcb->frames.size() > depth)
@@ -1156,22 +1212,29 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             case 64: { // push_shared_string (frame's program table)
                 // [perf] 原版只 bump 程序常量字符串的引用计数; 每次都
                 // make_string = new Block —— 操作期 30 万次堆分配 (采样堆
-                // 42% 的主力)。thread_local 表级缓存: 首访建块, 之后拷贝
-                // = 一次 relaxed 原子 inc, 零堆分配。表是 immutable 的。
-                static thread_local const std::vector<std::string>* csTbl =
-                    nullptr;
-                static thread_local std::vector<SharedString> csCache;
+                // 42% 的主力)。
+                // [perf2-op64] 旧 thread_local 单槽缓存 (csTbl) 在调用链
+                // 跨程序切换 (pet→daemon→skills) 时每次切换清空重建:
+                // 每条跨程序首访字符串都要 SharedString 构造 = 堆分配
+                // (opns2 实测 op64 均摊 368-924ns, 15% 指令量)。
+                // 按表指针持久缓存 + **每次访问内容校验** (s.str() != raw
+                // 才重建): 程序释放后表地址被复用时缓存陈旧 —— 曾返回
+                // 错误路径字符串致 boot 期任务链 "Object is not found"
+                // 不收敛 (vmopt1 实锤)。校验保证任何陈旧都自愈, 代价
+                // 一次短串比较 (~20-40ns), 远低于重建+堆分配。
+                static thread_local
+                    std::unordered_map<const std::vector<std::string>*,
+                                       std::vector<SharedString>>
+                        csCacheMap;
                 const std::vector<std::string>* tbl = curStrings(pcb);
-                if (tbl != csTbl) {
-                    csTbl = tbl;
-                    csCache.clear();
-                }
                 if (tbl && in.a < tbl->size()) {
+                    auto& csCache = csCacheMap[tbl];
                     if (csCache.size() != tbl->size())
                         csCache.resize(tbl->size());
+                    const std::string& raw = (*tbl)[in.a];
                     SharedString& s = csCache[in.a];
-                    if (s.empty() && !(*tbl)[in.a].empty())
-                        s = SharedString((*tbl)[in.a]);
+                    if (s.str() != raw)
+                        s = SharedString(raw);
                     pushValue(pcb, s);
                 } else {
                     pushValue(pcb, make_int(0));
@@ -1771,26 +1834,33 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
             case 6: { // call_in_efun
                 const int efun = fromMeta ? m0 : static_cast<int16_t>(in.a);
                 const int argc = fromMeta ? m1 : in.b;
+                // [hot-fix op6] 诊断脚手架全部惰性化。此前每次 efun 调用
+                // 无条件构造 2 个 std::string (en/en6, 各一次堆分配) +
+                // 多次字符串比较 —— 14:05 opns2 实测 op6 均摊 3µs/次
+                // (abs/object_name 这类微操作也 2-5µs), 是产包 2.4ms/帧
+                // 的主要成分之一。现在只有对应探针开着才建名。
                 {
-                    const std::vector<std::string>& et = efunNameTable();
-                    std::string en = (efun >= 0 &&
-                                      static_cast<size_t>(efun) < et.size())
-                                         ? et[static_cast<size_t>(efun)]
-                                         : "efun#" + std::to_string(efun);
-                    // [op6st] op6 set_timer watch: try_gather's chest timer
-                    // hinges on this call actually reaching the efun layer.
                     static const std::atomic<bool>& op6Flag =
                         lpc::dynProbeFlag("LPCVM_OP6ST");
-                    if (op6Flag.load(std::memory_order_relaxed) && en == "set_timer")
-                        std::cerr << "[op6st] set_timer argc=" << argc
-                                  << " obj=" << (curObj(pcb) ? curObj(pcb)->key() : std::string("(null)"))
-                                  << " fn=" << (pcb->frames.empty() || !pcb->frames.back().fn ? "(null)" : pcb->frames.back().fn->name)
-                                  << " ip=" << (pcb->ip - 1) << "\n";
-                    trcCallStack(pcb, 6, en, argc);
-                    {
-                        static const std::atomic<bool>& gapE =
-                            lpc::dynProbeFlag("LPCVM_OPGAP");
-                        if (gapE.load(std::memory_order_relaxed))
+                    static const std::atomic<bool>& gapE =
+                        lpc::dynProbeFlag("LPCVM_OPGAP");
+                    const bool op6stOn = op6Flag.load(std::memory_order_relaxed);
+                    const bool gapOn = gapE.load(std::memory_order_relaxed);
+                    if (op6stOn || gapOn || vmcore::traceOn()) {
+                        const std::vector<std::string>& et = efunNameTable();
+                        std::string en =
+                            (efun >= 0 && static_cast<size_t>(efun) < et.size())
+                                ? et[static_cast<size_t>(efun)]
+                                : "efun#" + std::to_string(efun);
+                        // [op6st] op6 set_timer watch: try_gather's chest timer
+                        // hinges on this call actually reaching the efun layer.
+                        if (op6stOn && en == "set_timer")
+                            std::cerr << "[op6st] set_timer argc=" << argc
+                                      << " obj=" << (curObj(pcb) ? curObj(pcb)->key() : std::string("(null)"))
+                                      << " fn=" << (pcb->frames.empty() || !pcb->frames.back().fn ? "(null)" : pcb->frames.back().fn->name)
+                                      << " ip=" << (pcb->ip - 1) << "\n";
+                        trcCallStack(pcb, 6, en, argc);
+                        if (gapOn)
                             tl_opGapEfun = en;
                     }
                 }
@@ -1812,15 +1882,14 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                 // (lw118: create 带参路径 op6 净 +1, init-seg 路径净 0,
                 // 语义应 -1)。
                 {
-                    const std::vector<std::string>& et6 = efunNameTable();
-                    const std::string en6 =
-                        (efun >= 0 && static_cast<size_t>(efun) < et6.size())
-                            ? et6[static_cast<size_t>(efun)]
-                            : std::string();
-                    if (en6 == "load_object") {
-                        static const std::atomic<bool>& cd6 =
-                            lpc::dynProbeFlag("LPCVM_CONSDBG");
-                        if (cd6.load(std::memory_order_relaxed)) {
+                    static const std::atomic<bool>& cd6 =
+                        lpc::dynProbeFlag("LPCVM_CONSDBG");
+                    if (cd6.load(std::memory_order_relaxed)) {
+                        const std::vector<std::string>& et6 = efunNameTable();
+                        const bool isLoad6 =
+                            efun >= 0 && static_cast<size_t>(efun) < et6.size() &&
+                            et6[static_cast<size_t>(efun)] == "load_object";
+                        if (isLoad6) {
                             bal0 = static_cast<int>(pcb->stack.size());
                             balWatch = true;
                         }

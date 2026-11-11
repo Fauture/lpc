@@ -160,6 +160,16 @@ Value callOriginalObjectFunction(const std::string& oPath, const std::string& fu
 Value callMasterProgramFunction(const std::string& funName, const std::vector<Value>& args,
                                 const std::string& searchRoot);
 
+// [net-pump] 火忘派发 (真 pcb 进程, 可 park/恢复, 不阻塞不交付)。
+// doneFlag (可选): 链真正结束时置 true。
+void callMasterProgramFunctionSpawn(const std::string& funName,
+                                    const std::vector<Value>& args, int clientNo,
+                                    const std::shared_ptr<std::atomic<bool>>& doneFlag =
+                                        std::shared_ptr<std::atomic<bool>>());
+
+// [net-pump] 非阻塞探针: 该连接是否有活跃命令链 (泵/调度线程用)。
+bool clientCommandBusy(int64_t clientNo);
+
 // The search root under which the master program ("<main>") is registered.
 std::string masterSearchRoot();
 

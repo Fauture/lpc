@@ -73,14 +73,25 @@ struct VmPool {
 // 违反纪律 = 数据竞争; 编译器不拦, 靠上述两处锁纪律兜底。
 std::recursive_mutex& vmValueMutex();
 
+// [de-atomic-refs 2026-11-09] 计数回归普通 int (对齐原版 vm_getVmMutex 架
+// 构: 全部 Value 交接 owner-transfer —— socket/RPC 线程建包后经 execOnMain
+// future 阻塞交接, 调度器独占执行, 结果经 promise 单向移交, 同一 RefBase
+// 从不双线程并发触碰)。2026-11-07 的 VmPool 自由链损坏根因是当时交接存在
+// 真并发 double-release; 现交接已全部时序化, VmPool 亦为 thread_local。
+// 回退开关: 编译期 define LPCVM_ATOMIC_REFS 恢复原子计数。
 struct RefCountedBase {
-    // [fix-atomic-refs] 容器计数原子化。原版是普通 ++/-- (vm_getVmMutex
-    // 单一大锁保证同刻一个线程碰值); 本实现没有全局值锁, Value 跨线程
-    // 流转 (网络收包线程 -> 调度器) 时非原子计数竞争 -> double release ->
-    // 池 double push -> 自由链损坏 (gs 运行 14.5min 崩 VmPool<BufferValue>
-    // ::pop 读到已释放页, 实锤)。SharedString::Block 同因早已原子化。
+#ifdef LPCVM_ATOMIC_REFS
     std::atomic<int32_t> refs{1};   // 创建即持有 1 份 (adopt 语义)
     void retain() noexcept { refs.fetch_add(1, std::memory_order_relaxed); }
+    // 减一并报告是否减到 0 (最后一份)。
+    bool releaseLast() noexcept {
+        return refs.fetch_sub(1, std::memory_order_acq_rel) == 1;
+    }
+#else
+    int32_t refs{1};                // 创建即持有 1 份 (adopt 语义)
+    void retain() noexcept { ++refs; }
+    bool releaseLast() noexcept { return --refs == 0; }
+#endif
 };
 // Value 析构的类型化释放 —— 实现在 value.h 尾部 (容器 struct 完整定义后)。
 void destroyValueObject(uint8_t t, RefCountedBase* p) noexcept;
@@ -92,7 +103,7 @@ void mapDeleteTrace(const void* self) noexcept;
 template <class T>
 struct RefBase : RefCountedBase {
     void release() noexcept {
-        if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        if (releaseLast())
             delete static_cast<T*>(this);
     }
 protected:
@@ -100,7 +111,9 @@ protected:
     // 拷贝构造 = 新对象 (基类 refs 重置 1) —— 供派生类本体克隆
     // (new ClosureValue(*src) 等) 使用; atomic 成员需手写 (=default 不可拷贝)。
     RefBase(const RefBase&) noexcept : RefCountedBase() {
+#ifdef LPCVM_ATOMIC_REFS
         refs.store(1, std::memory_order_relaxed);
+#endif
     }
     RefBase& operator=(const RefBase&) = delete;
     ~RefBase() = default;
@@ -145,7 +158,11 @@ public:
     explicit operator bool() const noexcept { return p_ != nullptr; }
     bool operator!() const noexcept { return p_ == nullptr; }
     int32_t use_count() const noexcept {
+#ifdef LPCVM_ATOMIC_REFS
         return p_ ? p_->refs.load(std::memory_order_relaxed) : 0;
+#else
+        return p_ ? p_->refs : 0;
+#endif
     }
     void reset() noexcept { if (p_) { p_->release(); p_ = nullptr; } }
     template <class U> bool operator==(const Ref<U>& o) const noexcept { return p_ == o.get(); }
@@ -739,17 +756,18 @@ struct BufferValue : RefBase<BufferValue> {
 
 inline void destroyValueObject(uint8_t t, RefCountedBase* p) noexcept {
     if (!p) return;
+    // [de-atomic-refs] 统一走 releaseLast (原子/普通由 LPCVM_ATOMIC_REFS 定)。
     switch (t) {
-    case VT_ARR:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<ArrayValue*>(p);  break;
-    case VT_MAP:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    case VT_ARR:  if (p->releaseLast()) delete static_cast<ArrayValue*>(p);  break;
+    case VT_MAP:  if (p->releaseLast()) {
                       if (g_mapDelTraceOn) mapDeleteTrace(p);
                       delete static_cast<MappingValue*>(p);
                   } break;
-    case VT_OBJ:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<ObjectValue*>(p); break;
-    case VT_CLO:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<ClosureValue*>(p); break;
-    case VT_LOOP: if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<LoopCtrl*>(p);    break;
-    case VT_BUF:  if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<BufferValue*>(p); break;
-    case VT_XREF: if (p->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete static_cast<CrossVmRef*>(p);  break;
+    case VT_OBJ:  if (p->releaseLast()) delete static_cast<ObjectValue*>(p); break;
+    case VT_CLO:  if (p->releaseLast()) delete static_cast<ClosureValue*>(p); break;
+    case VT_LOOP: if (p->releaseLast()) delete static_cast<LoopCtrl*>(p);    break;
+    case VT_BUF:  if (p->releaseLast()) delete static_cast<BufferValue*>(p); break;
+    case VT_XREF: if (p->releaseLast()) delete static_cast<CrossVmRef*>(p);  break;
     default: break;
     }
 }

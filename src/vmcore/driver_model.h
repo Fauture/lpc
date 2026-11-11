@@ -96,6 +96,8 @@ void parkVmObject(VmObject* obj);
 // Registry key of an object pointer (both VmObject* and its program's
 // OriginalObject* are recorded); "" when unknown.
 std::string vmKeyOfObjectPtr(const void* objPtr);
+// [stall-diag] pendingFrees 积压观测。
+size_t vmPendingFreeCount();
 // deferred real-free list: an object destructed from inside its own call
 // chain leaves the registry only after the issuing process finished.
 void vmFlushPendingFrees(const void* proc);

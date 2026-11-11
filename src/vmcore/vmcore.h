@@ -29,6 +29,9 @@ VmPcb* currentPcb();
 // [mips] 全局指令计数 (诊断): Interp::loop 每指令 +1, [hb] 心跳换算
 // 指令吞吐。VM 执行速度是否达到原版水平的直接标尺。
 extern std::atomic<uint64_t> g_vmInsnCount;
+
+// [opns-park] park 次数 (仅调度线程): opns 归账剔除停泊墙钟用。
+extern uint64_t g_parkCount;
 class VmPcbSetter {
 public:
     explicit VmPcbSetter(VmPcb* pcb);
@@ -161,6 +164,22 @@ public:
     // single-threaded on the VM).
     Value execOnMain(VmObject* obj, const std::string& funName,
                      const std::vector<Value>& args);
+
+    // [net-pump] 2026-11-09 原版架构对齐: socket 线程只产原始字节, 全部
+    // Value 生命周期留在调度线程 —— 调度循环每迭代调用一次泵钩子 (钩子
+    // 自己做原子旗标快路径, 空队列 ~2ns), 事件入队后 notifyExternalWork
+    // 唤醒空闲中的调度线程 (空闲路径是 cv.wait_for, 无 notify 时延迟
+    // 上限 200ms)。
+    static void setNetPumpHook(void (*fn)());
+    static void notifyExternalWork();
+    // [net-pump] 火忘派发: 生成真调度进程 (可 park/恢复), 不阻塞不交付。
+    // 泵在调度线程上运行 —— 不能走 execOnMain 的 scratch 同步路径
+    // (玩家命令链会 park, scratch 链 SuspendSignal 无主)。
+    // doneFlag (可选): 链真正结束时置 true, 泵用它保 NEWCONN→DATA 顺序。
+    void execSpawn(VmObject* obj, const std::string& funName,
+                   const std::vector<Value>& args, int clientNo,
+                   const std::shared_ptr<std::atomic<bool>>& doneFlag =
+                       std::shared_ptr<std::atomic<bool>>());
 
     // Listening sockets owned by the main loop (accept on scheduler thread).
     void addServiceSocket(int fd, std::function<bool(unsigned int)> cb);

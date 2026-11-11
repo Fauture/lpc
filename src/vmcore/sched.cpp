@@ -514,6 +514,46 @@ void Scheduler::wakeSocket(int fd, bool readable, bool writable) {
     impl_->cv.notify_all();
 }
 
+// [net-pump] 网络事件泵钩子 (2026-11-09): socket 线程只产原始字节, 泵
+// 在调度线程上把字节喂给 feedClient —— Value 不再跨线程。
+static void (*g_netPumpHook)() = nullptr;
+
+void Scheduler::setNetPumpHook(void (*fn)()) { g_netPumpHook = fn; }
+
+void Scheduler::notifyExternalWork() { instance().impl_->cv.notify_all(); }
+
+static const bool g_npDbg = getenv("LPCVM_NETPUMPDBG") != nullptr;
+
+void Scheduler::execSpawn(VmObject* obj, const std::string& funName,
+                          const std::vector<Value>& args, int clientNo,
+                          const std::shared_ptr<std::atomic<bool>>& doneFlag) {
+    const OriginalFunction* fn = obj ? obj->prog()->findFn(funName) : nullptr;
+    if (!fn) {
+        if (g_npDbg)
+            std::cerr << "[npspawn-miss] fn=" << funName << "\n";
+        if (vmcore::traceOn()) {
+            std::cerr << "[execspawn-miss] fn=" << funName
+                      << " obj=" << (obj ? obj->key() : std::string("<null>"))
+                      << "\n";
+        }
+        if (doneFlag) doneFlag->store(true);
+        return;
+    }
+    auto p = makePcb(*impl_, obj, funName, args);
+    p->clientNo = clientNo;   // 链归属连接 (每连接命令门/流控)
+    p->spawnDone = doneFlag;
+    if (g_npDbg)
+        std::cerr << "[npspawn] fn=" << funName << " cno=" << clientNo
+                  << " tid=" << p->tid << "\n";
+    // 无 resultPromise: 火忘派发, 链结束交付被 runProcess 的
+    // `if (p->resultPromise)` 守卫跳过。
+    {
+        std::lock_guard<std::mutex> lk(impl_->mtx);
+        impl_->wakeLocked(p, false);
+    }
+    impl_->cv.notify_all();
+}
+
 // ---------------------------------------------------------------------------
 // park — vm_pendCurrentProcess.  The blocking efun set pcb->cond and threw
 // SuspendSignal; run()'s handler calls this with the caught process.
@@ -827,6 +867,7 @@ static void finishConstruct(Scheduler::Impl& im,
             p->resultPromise->set_value(make_int(0));
         p->resultPromise.reset();
     }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
 }
 
 // park 窗口取证 (LPCVM_LOOPWATCH 开启时): 打印 pcb 上每个循环 ctrl 的
@@ -863,7 +904,14 @@ static void loopWatchDump(const char* tag, const VmPcb* p) {
     std::cerr.flush();
 }
 
-static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {    // currentProcess snapshot/restore: a nested process run (execOnMain from
+static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
+    // [stall-watch] 每次 (重新)调度重置时间基采样基线 —— park 停泊/排队
+    // 等待不计入停顿, 只有链在 CPU 上跑着被卡住才命中。
+    Interp::interpResetHotClock();
+    if (g_npDbg && (p->entry == "cmd_new_connection" ||
+                    p->entry == "cmd_disconnected"))
+        std::cerr << "[nprun] entry=" << p->entry << " cno=" << p->clientNo
+                  << " tid=" << p->tid << "\n";    // currentProcess snapshot/restore: a nested process run (execOnMain from
     // inside a process) must not leave ITS process behind — get_thread_id()
     // changing inside one LPC statement is the [vmown]/9112 failure class.
     auto prevProc = im.currentProcess;
@@ -964,6 +1012,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
                     p->resultPromise->set_value(std::move(result));
                     p->resultPromise.reset();
                 }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
                 return;
             }
             if (p->construct) {
@@ -1009,6 +1058,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
             p->resultPromise->set_value(make_int(0));
                     p->resultPromise.reset();
                 }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
                 return;
             }
             const OriginalFunction* fn =
@@ -1025,6 +1075,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
             p->resultPromise->set_value(make_int(0));
                     p->resultPromise.reset();
                 }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
                 return;
             }
             vmchainBegin(cno, chainKey, p.get(), p->entry);
@@ -1091,6 +1142,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
             p->resultPromise->set_value(std::move(result));
             p->resultPromise.reset();
         }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
     } catch (const SuspendSignal&) {
         // Blocking efun: park the CURRENT process with ITS cond (never a
         // shared slot — two processes never share a PCB).
@@ -1133,6 +1185,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
             p->resultPromise->set_value(make_int(0));
             p->resultPromise.reset();
         }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
     } catch (const std::exception& e) {
         // Uncaught LPC error: the chain dies — with a trace (never silent).
         std::cerr << "[chain-abort] \"" << e.what() << "\" entry=" << p->entry
@@ -1153,6 +1206,7 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
             p->resultPromise->set_value(make_int(0));
             p->resultPromise.reset();
         }
+        if (p->spawnDone) p->spawnDone->store(true);   // [net-pump] 链结束旗标 (resultPromise 条件外 —— execSpawn 无 promise)
     }
     if (wd) {
         std::lock_guard<std::mutex> lk(im.mtx);
@@ -1195,6 +1249,8 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {  
 void Scheduler::run() {
     impl_->schedThreadId = std::this_thread::get_id();
     while (true) {
+        // [net-pump] 每次迭代先泵网络事件 (钩子内部旗标快路径, 空队列 ~2ns)。
+        if (g_netPumpHook) g_netPumpHook();
         lpc::liveness().schedIters.fetch_add(1, std::memory_order_relaxed);
         if (g_ctraceOn && !impl_->runSince.empty()) {
             const int64_t now = impl_->nowMs();
@@ -1229,7 +1285,9 @@ void Scheduler::run() {
             static const std::atomic<bool>& pcDump = lpc::dynProbeFlag("LPCVM_PCDUMP");
             static std::atomic<int64_t> lastDump{0};
             const int64_t nowD = impl_->nowMs();
-            if (pcDump.load(std::memory_order_relaxed) &&
+            // [net-pump] dynProbeFlag 热布防实测不可靠 (npdbg 2026-11-09: 文件
+            // 已在 boot 前创建仍无输出) —— 环境变量门控并行使诊断可用。
+            if ((pcDump.load(std::memory_order_relaxed) || g_npDbg) &&
                 nowD - lastDump.load() > 10000) {
                 lastDump.store(nowD);
                 std::lock_guard<std::mutex> lk(impl_->mtx);

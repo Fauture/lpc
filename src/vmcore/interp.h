@@ -49,6 +49,9 @@ inline Value popValue(VmPcb* pcb) {
 std::vector<Value>& sharedGlobals();
 Value& sharedGlobal(int index);
 
+// [stall-watch] 时间基采样基线 (runProcess 调度链时重置)。
+void interpResetHotClock();
+
 // Master (global) program hooks — set once at master load, used by op7-bit7
 // (global function table, operand verbatim), op23-bit7 and closure fallback.
 void setMasterProgram(const VmProgram* prog, VmObject* obj);
