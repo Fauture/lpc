@@ -78,7 +78,19 @@ std::recursive_mutex& vmValueMutex();
 // future 阻塞交接, 调度器独占执行, 结果经 promise 单向移交, 同一 RefBase
 // 从不双线程并发触碰)。2026-11-07 的 VmPool 自由链损坏根因是当时交接存在
 // 真并发 double-release; 现交接已全部时序化, VmPool 亦为 thread_local。
-// 回退开关: 编译期 define LPCVM_ATOMIC_REFS 恢复原子计数。
+//
+// [back-to-atomic 2026-11-25] 现场推翻上面那条纪律: dba 运行 ~40 分钟后
+//   [crash] code=0xc0000005 eip=VmPool<ArrayValue>::pop+0x61
+//   ebp-chain: queryRangeValue <- Interp::loop <- vmCallOther <- dispatchEfun
+// 自由链 fl 被写成野指针 = 同一 RefBase 被两个线程各 release 一次
+// (双 push 同一内存块进两条 thread_local 链)。RPC + share_data 路径上
+// socket/pkt 线程与调度线程确实并发持有同一容器, owner-transfer 纪律没有
+// 被完整遵守 (该纪律靠人肉约定, 编译器不拦)。多线程正确性优先, 恢复原子
+// 计数: retain=relaxed, release=acq_rel —— x86 上就是 lock xadd, 只在
+// Ref 拷贝/析构时发生。确需回退时编译期加 -DLPCVM_ALLOW_NONATOMIC_REFS。
+#ifndef LPCVM_ALLOW_NONATOMIC_REFS
+#define LPCVM_ATOMIC_REFS 1
+#endif
 struct RefCountedBase {
 #ifdef LPCVM_ATOMIC_REFS
     std::atomic<int32_t> refs{1};   // 创建即持有 1 份 (adopt 语义)
