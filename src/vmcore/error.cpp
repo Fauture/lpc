@@ -24,6 +24,12 @@ thread_local VmErrorSig* t_pendingError = nullptr;
 
 [[noreturn]] void vmError(const std::string& what) {
     VmPcb* pcb = currentPcb();
+    // 原版 vm_error 的文案自带结尾 '\n'（vm_stdprintf 语义）。若原样拼接，
+    // 上下文 " @ obj::fn tid=.. frames=[..]" 会被这个换行顶到下一行，日志里
+    // 只剩半条错误串、定位不到现场 —— 先剥掉结尾换行再拼。
+    std::string msg = what;
+    while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r'))
+        msg.pop_back();
     // ---- 留痕: 谁、在哪、什么错、帧链 ----
     {
         std::string obj = "<driver>";
@@ -38,7 +44,7 @@ thread_local VmErrorSig* t_pendingError = nullptr;
             chain = " tid=" + std::to_string(pcb->tid);
             chain += " frames=[" + pcb->frameChainText(8) + "]";
         }
-        std::cerr << "[vm-error] " << what << " @ " << obj << "::" << fn << chain << "\n";
+        std::cerr << "[vm-error] " << msg << " @ " << obj << "::" << fn << chain << "\n";
         std::cerr.flush();
     }
     throw VmErrorSig(what);
