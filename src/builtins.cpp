@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -2206,6 +2207,484 @@ constexpr uint64_t fnv1aLit(const char* s) {
 // _allmul 即其 64 位乘法) —— 比 strcmp 还慢的负优化。static constexpr
 // local 由编译器放进 .rdata, 调用点只是一条取常量指令。
 #define CID(lit) ([]() -> uint64_t { static constexpr uint64_t v = fnv1aLit(lit); return v; }())
+// ===========================================================================
+// verigen 真渲染 (GDI) — gs picd 图库/验证码管线
+//
+// 原版管线 (IDA): freetype 8-bit alpha 字形位图 -> verigen_take_word_glyph
+// 每字 mapping{glyph,width,height} (0x8176840) -> verigen_layout_word_glyphs
+// alpha 画布拼接 (0x8178d60) -> verigen_transform_glyph 正弦位移 (0x8179a80)
+// -> verigen_render_glyph RGB565 上色 (0x81761d0)。噪声族是 void 扰动。
+//
+// 本实现用 GDI GetGlyphOutlineW(GGO_GRAY8_BITMAP) 取同一份 0..64 灰度 alpha
+// (归一 *255/64), 拼接/位移/上色逻辑照原版; GDI 用全局锁串行 (等价原版
+// verigen mutex)。与 cvm 轨道 vm_efun_magic.c 的 2026-11-21 真渲染同源。
+// ===========================================================================
+namespace {
+
+std::mutex& vgGdiMutex() {
+    static std::mutex m;
+    return m;
+}
+
+// verigenRandom (0x8177e50): rand()&0x7FFF, 区间翻转语义 (upper<lower 时反向)
+int vgRandom(int lower, int upper) {
+    const int v = static_cast<int>(sharedRand31() & 0x7FFF);
+    if (lower == upper) return lower;
+    if (upper - lower < 0) return v % (lower - upper) + upper;
+    return v % (upper - lower) + lower;
+}
+
+// RGB888 -> RGB565 (原版 0x81758d0 同式)
+unsigned short vgColor565(unsigned int c) {
+    return static_cast<unsigned short>(
+        ((static_cast<unsigned int>(static_cast<unsigned char>(c)) >> 3) |
+         ((c >> 5) & 0x7E0u) |
+         static_cast<unsigned int>(static_cast<unsigned short>((c >> 19) << 11))));
+}
+
+// UTF-8 首字符 -> 8-bit alpha 位图 (w*h, 行主序无 padding)。
+// 空串 = 空字形哨兵: 随机方寸全 0 位图 (原版 0x8171932 语义), 尺寸
+// rand(0.3*size, 0.7*size)。返回空 vector = 光栅失败 (原版 count!=total 面)。
+std::vector<unsigned char> vgRasterUtf8(const std::string& s, int fontSize,
+                                        int angleTenths, int* outW, int* outH) {
+    *outW = 0;
+    *outH = 0;
+    std::vector<unsigned char> out;
+    if (s.empty()) {
+        int pf = (fontSize >= 8 && fontSize <= 1024) ? fontSize : 128;
+        const int lo = static_cast<int>(0.3 * pf);
+        const int hi = static_cast<int>(0.7 * pf);
+        int dim = vgRandom(lo, hi);
+        if (dim < 1) dim = 1;
+        out.assign(static_cast<size_t>(dim) * static_cast<size_t>(dim), 0);
+        *outW = dim;
+        *outH = dim;
+        return out;
+    }
+    wchar_t wc = 0;
+    const int wcn = MultiByteToWideChar(CP_UTF8, 0, s.data(),
+                                        static_cast<int>(s.size()), &wc, 1);
+    if (wcn < 1) return out;
+    if (fontSize < 8) fontSize = 8;
+    if (fontSize > 1024) fontSize = 1024;
+
+    std::lock_guard<std::mutex> lk(vgGdiMutex());
+    HDC hdc = CreateCompatibleDC(nullptr);
+    if (!hdc) return out;
+    HFONT hf = CreateFontW(-fontSize, 0, angleTenths, angleTenths, FW_NORMAL,
+                           FALSE, FALSE, FALSE, GB2312_CHARSET, OUT_TT_PRECIS,
+                           CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                           DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
+    if (!hf) {
+        DeleteDC(hdc);
+        return out;
+    }
+    HGDIOBJ hOld = SelectObject(hdc, hf);
+    GLYPHMETRICS gm;
+    std::memset(&gm, 0, sizeof(gm));
+    MAT2 m2;
+    std::memset(&m2, 0, sizeof(m2));
+    m2.eM11.value = 1;
+    m2.eM22.value = 1;
+    UINT need = GetGlyphOutlineW(hdc, wc, GGO_GRAY8_BITMAP, &gm, 0, nullptr, &m2);
+    std::vector<unsigned char> raw;
+    if (need != GDI_ERROR) {
+        raw.assign(need ? need : 1, 0);
+        if (need && GetGlyphOutlineW(hdc, wc, GGO_GRAY8_BITMAP, &gm, need,
+                                     raw.data(), &m2) == GDI_ERROR)
+            raw.clear();
+    } else {
+        raw.clear();
+    }
+    SelectObject(hdc, hOld);
+    DeleteObject(hf);
+    DeleteDC(hdc);
+    if (raw.empty()) return out;
+    const int w = static_cast<int>(gm.gmBlackBoxX);
+    const int h = static_cast<int>(gm.gmBlackBoxY);
+    if (w > 0 && h > 0) {
+        const int pitch = (w + 3) & ~3;
+        out.assign(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const unsigned int v =
+                    raw[static_cast<size_t>(y) * pitch + static_cast<size_t>(x)];
+                out[static_cast<size_t>(y) * w + x] =
+                    static_cast<unsigned char>(v >= 64 ? 255 : v * 255u / 64u);
+            }
+        *outW = w;
+        *outH = h;
+    } else {
+        out.assign(1, 0);
+        *outW = 0;
+        *outH = 0;
+    }
+    return out;
+}
+
+bool vgMapGet(const Ref<MappingValue>& m, const char* key, Value* out) {
+    if (!m) return false;
+    for (const auto& kv : m->items()) {
+        if (kv.first.index() != 4) continue;
+        if (lpc::vget<SharedString>(kv.first).str() == key) {
+            *out = kv.second;
+            return true;
+        }
+    }
+    return false;
+}
+
+int vgParaInt(const Ref<MappingValue>& para, const char* key, int dflt) {
+    Value v;
+    if (!vgMapGet(para, key, &v) || v.index() != 2 || as_int(v) < 0) return dflt;
+    return static_cast<int>(as_int(v));
+}
+
+double vgParaRate(const Ref<MappingValue>& para, const char* key, double dflt) {
+    Value v;
+    if (!vgMapGet(para, key, &v)) return dflt;
+    double r;
+    if (v.index() == 2) r = static_cast<double>(as_int(v));
+    else if (v.index() == 3) r = lpc::vget<double>(v);
+    else return dflt;
+    if (r < 0.0) return 0.0;
+    if (r > 1.0) return 0.8;
+    return r;
+}
+
+// verigen_take_word_glyph(chars[], angles[], sizes) ->
+//   array(n) of mapping{glyph = alpha buffer(w*h), width, height}
+//   任一字光栅失败 -> int 0 (原版 count != total 的失败面)
+Value vgTakeWordGlyph(const std::vector<Value>& args) {
+    if (args.size() > 3)
+        lpc::vmcore::vmError("Too many arguments(" + std::to_string(args.size()) +
+                             ") to verigen_take_word_glyph.\n");
+    if (args.empty() || args[0].index() != 5)
+        lpc::vmcore::vmError("the total of chars taken is less than 1.");
+    auto chars = lpc::vget<Ref<ArrayValue>>(args[0]);
+    const size_t total = chars ? chars->items.size() : 0;
+    if (total == 0) lpc::vmcore::vmError("the total of chars taken is less than 1.");
+
+    int sideLength = 128;
+    std::vector<int> sizes;
+    if (args.size() > 2) {
+        if (args[2].index() == 2) {
+            sideLength = static_cast<int>(as_int(args[2]));
+        } else if (args[2].index() == 5) {
+            for (const auto& v : lpc::vget<Ref<ArrayValue>>(args[2])->items)
+                sizes.push_back(v.index() == 2 ? static_cast<int>(as_int(v)) : -1);
+        }
+    }
+    std::vector<int> angles;   // 单位 0.1 度 (原版 freetype matrix)
+    if (args.size() > 1 && args[1].index() == 5) {
+        for (const auto& v : lpc::vget<Ref<ArrayValue>>(args[1])->items) {
+            if (v.index() == 2) angles.push_back(static_cast<int>(as_int(v) * 10));
+            else if (v.index() == 3)
+                angles.push_back(static_cast<int>(lpc::vget<double>(v) * 10.0));
+            else angles.push_back(0);
+        }
+    }
+
+    std::vector<int> ws, hs;
+    std::vector<std::vector<unsigned char>> bufs;
+    size_t count = 0;
+    for (size_t i = 0; i < total; ++i) {
+        const Value& pv = chars->items[i];
+        const std::string* s = nullptr;
+        if (pv.index() == 4) s = &lpc::vget<SharedString>(pv).str();
+        else if (pv.index() == 10) s = &lpc::vget<Ref<BufferValue>>(pv)->data;
+        else continue;                       // 非法元素跳过 (原版 0x817699e)
+        int fsize = sideLength;
+        if (i < sizes.size() && sizes[i] >= 0) fsize = sizes[i];
+        const int angleT = (i < angles.size()) ? angles[i] : 0;
+        int gw = 0, gh = 0;
+        std::vector<unsigned char> g = vgRasterUtf8(*s, fsize, angleT, &gw, &gh);
+        if (g.empty()) break;                // 光栅失败 (原版 0x8176b07)
+        ws.push_back(gw);
+        hs.push_back(gh);
+        bufs.push_back(std::move(g));
+        ++count;
+    }
+    if (count != total) return make_int(0);  // 原版 0x81769ba
+    auto arr = Ref<ArrayValue>(new ArrayValue());
+    arr->items.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        auto m = Ref<MappingValue>(new MappingValue(3));
+        m->insert(make_string("glyph"),
+                  make_buffer(std::string(bufs[i].begin(), bufs[i].end())));
+        m->insert(make_string("width"), make_int(ws[i]));
+        m->insert(make_string("height"), make_int(hs[i]));
+        arr->items.push_back(Value(m));
+    }
+    return arr;
+}
+
+// verigen_layout_word_glyphs(glyphs[], format=1, para) ->
+//   mapping{glyph = alpha 画布 buffer(w*h), width, height}
+//   format 1 = 行排 (min/max_hoffset 像素 + woffset_rate 重叠率)
+//   format 2 = 列排 (min/max_woffset 像素 + hoffset_rate 重叠率)
+//   total<=1 / 有零尺寸 / 不支持 format -> 无返回值 (原版直接 return)
+Value vgLayoutWordGlyphs(const std::vector<Value>& args) {
+    if (args.size() > 3)
+        lpc::vmcore::vmError("Too many arguments(" + std::to_string(args.size()) +
+                             ") to verigen_layout_glyphs.\n");
+    if (args.empty() || args[0].index() != 5) return Value{};
+    auto glyphs = lpc::vget<Ref<ArrayValue>>(args[0]);
+    const size_t total = glyphs ? glyphs->items.size() : 0;
+    if (total <= 1) return Value{};
+    int format = 1;
+    if (args.size() > 1 && args[1].index() == 2) format = static_cast<int>(as_int(args[1]));
+    Ref<MappingValue> para;
+    if (args.size() > 2 && args[2].index() == 6)
+        para = lpc::vget<Ref<MappingValue>>(args[2]);
+
+    std::vector<int> ws, hs;
+    std::vector<const std::string*> gs;
+    for (const auto& pv : glyphs->items) {
+        if (pv.index() != 6) return Value{};   // 非 mapping 项 -> 无效
+        auto mi = lpc::vget<Ref<MappingValue>>(pv);
+        Value wv, hv, gv;
+        if (!vgMapGet(mi, "width", &wv) || wv.index() != 2) return Value{};
+        if (!vgMapGet(mi, "height", &hv) || hv.index() != 2) return Value{};
+        if (!vgMapGet(mi, "glyph", &gv) || gv.index() != 10) return Value{};
+        ws.push_back(static_cast<int>(as_int(wv)));
+        hs.push_back(static_cast<int>(as_int(hv)));
+        gs.push_back(&lpc::vget<Ref<BufferValue>>(gv)->data);
+    }
+    const size_t count = ws.size();
+    for (size_t i = 0; i < count; ++i)
+        if (ws[i] <= 0 || hs[i] <= 0 || gs[i]->empty()) return Value{};
+
+    std::vector<int> xs(count, 0), ys(count, 0);
+    int canvasW = 0, canvasH = 0, maxDim = 0;
+    if (format == 1) {
+        const int rmn = vgParaInt(para, "min_hoffset", 5);
+        const int rmx = vgParaInt(para, "max_hoffset", 10);
+        const double rateMin = vgParaRate(para, "min_woffset_rate", 0.1);
+        const double rateMax = vgParaRate(para, "max_woffset_rate", 0.25);
+        for (size_t i = 0; i < count; ++i)
+            if (hs[i] > maxDim) maxDim = hs[i];
+        const int off = vgRandom(rmn, rmx);
+        canvasH = maxDim + 2 * off;
+        if (canvasH > 2 * maxDim) canvasH = 2 * maxDim;
+        for (size_t j = 0; j < count; ++j) {
+            ys[j] = canvasH / 2 - vgRandom(hs[j] / 4, 3 * hs[j] / 4);
+            if (ys[j] < 0) ys[j] = 0;
+            else if (canvasH < hs[j] + ys[j]) ys[j] = canvasH - hs[j];
+            if (j) {
+                int lo = static_cast<int>(rateMin * ws[j - 1]);
+                int up = static_cast<int>(rateMax * ws[j - 1]);
+                if (lo > up) std::swap(lo, up);
+                const int overlap = (up > lo) ? vgRandom(lo, up) : 0;
+                xs[j] = xs[j - 1] + ws[j - 1] - overlap;
+                if (xs[j] < 0) xs[j] = 0;
+            }
+        }
+        canvasW = ws[count - 1] + xs[count - 1];
+    } else if (format == 2) {
+        const int rmn = vgParaInt(para, "min_woffset", 5);
+        const int rmx = vgParaInt(para, "max_woffset", 20);
+        const double rateMin = vgParaRate(para, "min_hoffset_rate", 0.1);
+        const double rateMax = vgParaRate(para, "max_hoffset_rate", 0.25);
+        for (size_t i = 0; i < count; ++i)
+            if (ws[i] > maxDim) maxDim = ws[i];
+        const int off = vgRandom(rmn, rmx);
+        canvasW = maxDim + 2 * off;
+        if (canvasW > 2 * maxDim) canvasW = 2 * maxDim;
+        for (size_t j = 0; j < count; ++j) {
+            xs[j] = canvasW / 2 - vgRandom(ws[j] / 4, 3 * ws[j] / 4);
+            if (xs[j] < 0) xs[j] = 0;
+            else if (canvasW < ws[j] + xs[j]) xs[j] = canvasW - ws[j];
+            if (j) {
+                int lo = static_cast<int>(rateMin * hs[j - 1]);
+                int up = static_cast<int>(rateMax * hs[j - 1]);
+                if (lo > up) std::swap(lo, up);
+                const int overlap = (up > lo) ? vgRandom(lo, up) : 0;
+                ys[j] = ys[j - 1] + hs[j - 1] - overlap;
+                if (ys[j] < 0) ys[j] = 0;
+            }
+        }
+        canvasH = hs[count - 1] + ys[count - 1];
+    } else {
+        return Value{};
+    }
+    if (canvasW <= 0 || canvasH <= 0) return Value{};
+    if (static_cast<int64_t>(canvasW) * canvasH > (1 << 26)) return Value{};  // 64M 保护
+    std::vector<unsigned char> canvas(static_cast<size_t>(canvasW) * canvasH, 0);
+    for (size_t i = 0; i < count; ++i) {
+        const std::string& src = *gs[i];
+        for (int y = 0; y < hs[i]; ++y) {
+            const int dy = ys[i] + y;
+            if (dy < 0 || dy >= canvasH) continue;
+            for (int x = 0; x < ws[i]; ++x) {
+                const int dx = xs[i] + x;
+                if (dx < 0 || dx >= canvasW) continue;
+                const unsigned char v = src[static_cast<size_t>(y) * ws[i] + x];
+                if (v) canvas[static_cast<size_t>(dy) * canvasW + dx] = v;
+            }
+        }
+    }
+    auto m = Ref<MappingValue>(new MappingValue(3));
+    m->insert(make_string("glyph"),
+              make_buffer(std::string(canvas.begin(), canvas.end())));
+    m->insert(make_string("width"), make_int(canvasW));
+    m->insert(make_string("height"), make_int(canvasH));
+    return m;
+}
+
+// verigen_transform_glyph(m, mode=2, para) -> mapping{glyph, width, height}
+//   mode 1 = x 正弦 (逐行水平位移); mode 2 = y 正弦 (逐列垂直位移)。
+//   para{min_cycle[20], max_cycle[40], min_amp[5], max_amp[10]}
+Value vgTransformGlyph(const std::vector<Value>& args) {
+    if (args.size() > 3)
+        lpc::vmcore::vmError("Too many arguments(" + std::to_string(args.size()) +
+                             ") to verigen_transform_glyph.\n");
+    if (args.empty() || args[0].index() != 6)
+        lpc::vmcore::vmError("no glyph info need be transformed.\n");
+    auto mIn = lpc::vget<Ref<MappingValue>>(args[0]);
+    int mode = 2;
+    if (args.size() > 1 && args[1].index() == 2) mode = static_cast<int>(as_int(args[1]));
+    Ref<MappingValue> para;
+    if (args.size() > 2 && args[2].index() == 6)
+        para = lpc::vget<Ref<MappingValue>>(args[2]);
+
+    Value wv, hv, gv;
+    if (!vgMapGet(mIn, "width", &wv) || wv.index() != 2 || as_int(wv) == 0)
+        lpc::vmcore::vmError("missing field('width')\n");
+    if (!vgMapGet(mIn, "height", &hv) || hv.index() != 2 || as_int(hv) == 0)
+        lpc::vmcore::vmError("missing field('height')\n");
+    if (!vgMapGet(mIn, "glyph", &gv) || gv.index() != 10)
+        lpc::vmcore::vmError("missing field('glyph')\n");
+    const int width = static_cast<int>(as_int(wv));
+    const int height = static_cast<int>(as_int(hv));
+    const std::string& src = lpc::vget<Ref<BufferValue>>(gv)->data;
+    if (static_cast<int64_t>(width) * height > static_cast<int64_t>(src.size()))
+        lpc::vmcore::vmError("missing field('glyph')\n");
+
+    const int cycMin = vgParaInt(para, "min_cycle", 20);
+    const int cycMax = vgParaInt(para, "max_cycle", 40);
+    const int ampMin = vgParaInt(para, "min_amp", 5);
+    const int ampMax = vgParaInt(para, "max_amp", 10);
+    const int cyc = vgRandom(cycMax, cycMin);
+    const double freq = 0.01 * cyc * 6.283185 / static_cast<double>(width);
+    const double ampf =
+        0.01 * static_cast<double>(height * vgRandom(ampMax, ampMin));
+    const int off = static_cast<int>(std::ceil(ampf));
+
+    if (mode == 1) {
+        const int newW = width + 2 * off;
+        std::vector<unsigned char> dst(static_cast<size_t>(newW) * height, 0);
+        for (int i = 0; i < height; ++i) {
+            const int sh = static_cast<int>(
+                static_cast<double>(off) - std::sin(static_cast<double>(i) * freq) * ampf);
+            for (int j = 0; j < width; ++j) {
+                const unsigned char pv = src[static_cast<size_t>(i) * width + j];
+                const int dx = sh + j;
+                if (pv && dx >= 0 && dx < newW)
+                    dst[static_cast<size_t>(i) * newW + dx] = pv;
+            }
+        }
+        auto m = Ref<MappingValue>(new MappingValue(3));
+        m->insert(make_string("glyph"),
+                  make_buffer(std::string(dst.begin(), dst.end())));
+        m->insert(make_string("width"), make_int(newW));
+        m->insert(make_string("height"), make_int(height));
+        return m;
+    }
+    if (mode != 2) lpc::vmcore::vmError("the format is not supported\n");
+    const int newH = height + 2 * off;
+    std::vector<unsigned char> dst(static_cast<size_t>(width) * newH, 0);
+    for (int k = 0; k < width; ++k) {
+        const int sh = static_cast<int>(
+            static_cast<double>(off) - std::sin(static_cast<double>(k) * freq) * ampf);
+        for (int i = 0; i < height; ++i) {
+            const unsigned char pv = src[static_cast<size_t>(i) * width + k];
+            const int dy = sh + i;
+            if (pv && dy >= 0 && dy < newH)
+                dst[static_cast<size_t>(dy) * width + k] = pv;
+        }
+    }
+    auto m = Ref<MappingValue>(new MappingValue(3));
+    m->insert(make_string("glyph"), make_buffer(std::string(dst.begin(), dst.end())));
+    m->insert(make_string("width"), make_int(width));
+    m->insert(make_string("height"), make_int(newH));
+    return m;
+}
+
+// verigen_render_glyph(m, bg=0, char_color=0xFFFFFF, alpha=0) ->
+//   mapping{pic = RGB565 buffer(w*h*2), width, height}
+//   alpha=0: g[i] ? fg565 : bg565 (二值面); alpha!=0: 按 alpha 混合后
+//   以 (r<<11)|(g<<5)|b 截断组装 (原版 asm 0x8176533 的 1:1 bug 兼容)。
+Value vgRenderGlyph(const std::vector<Value>& args) {
+    if (args.size() > 4)
+        lpc::vmcore::vmError("Too many arguments(" + std::to_string(args.size()) +
+                             ") to verigen_render_glyph.\n");
+    if (args.empty() || args[0].index() != 6)
+        lpc::vmcore::vmError("missing field('glyph'), or the buffer of glyph is NULL in glyph_info\n");
+    auto mIn = lpc::vget<Ref<MappingValue>>(args[0]);
+    unsigned int bg = 0, charColor = 0xFFFFFF;
+    int alpha = 0;
+    if (args.size() > 1 && args[1].index() == 2) bg = static_cast<unsigned int>(as_int(args[1]));
+    if (args.size() > 2 && args[2].index() == 2)
+        charColor = static_cast<unsigned int>(as_int(args[2]));
+    if (args.size() > 3 && args[3].index() == 2) alpha = static_cast<int>(as_int(args[3]));
+
+    int width = 0, height = 0;
+    Value wv, hv, gv;
+    if (vgMapGet(mIn, "width", &wv) && wv.index() == 2) {
+        width = static_cast<int>(as_int(wv));
+        if (width < 0)
+            lpc::vmcore::vmError("missing field('width'), or width is less than 1 in glyph_info\n");
+    }
+    if (vgMapGet(mIn, "height", &hv) && hv.index() == 2) {
+        height = static_cast<int>(as_int(hv));
+        if (height < 0)
+            lpc::vmcore::vmError("missing field('height'), or height is less than 1 in glyph_info\n");
+    }
+    if (!vgMapGet(mIn, "glyph", &gv) || gv.index() != 10)
+        lpc::vmcore::vmError("missing field('glyph'), or the buffer of glyph is NULL in glyph_info\n");
+    const std::string& g = lpc::vget<Ref<BufferValue>>(gv)->data;
+    const size_t n2 = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (n2 > g.size())
+        lpc::vmcore::vmError("missing field('glyph'), or the buffer of glyph is NULL in glyph_info\n");
+
+    const unsigned short bg565 = vgColor565(bg);
+    const unsigned short fg565 = vgColor565(charColor);
+    std::vector<unsigned short> out(n2, bg565);
+    if (alpha) {
+        const unsigned int cr = (charColor >> 16) & 0xFF;
+        const unsigned int cg = (charColor >> 8) & 0xFF;
+        const unsigned int cb = charColor & 0xFF;
+        const unsigned int br = (bg >> 16) & 0xFF;
+        const unsigned int bgc = (bg >> 8) & 0xFF;
+        const unsigned int bb = bg & 0xFF;
+        for (size_t i = 0; i < n2; ++i) {
+            const unsigned char v = static_cast<unsigned char>(g[i]);
+            if (!v) continue;
+            const double a = v / 255.0;
+            unsigned int rr = static_cast<unsigned int>(a * cr + (1.0 - a) * br + 0.5);
+            unsigned int gg = static_cast<unsigned int>(a * cg + (1.0 - a) * bgc + 0.5);
+            unsigned int bv = static_cast<unsigned int>(a * cb + (1.0 - a) * bb + 0.5);
+            if (rr > 255) rr = 255;
+            if (gg > 255) gg = 255;
+            if (bv > 255) bv = 255;
+            out[i] = static_cast<unsigned short>(((rr << 11) | (gg << 5) | bv) & 0xFFFFu);
+        }
+    } else {
+        for (size_t i = 0; i < n2; ++i)
+            out[i] = g[i] ? fg565 : bg565;
+    }
+    auto m = Ref<MappingValue>(new MappingValue(3));
+    m->insert(make_string("pic"),
+              make_buffer(std::string(reinterpret_cast<const char*>(out.data()),
+                                      n2 * sizeof(unsigned short))));
+    m->insert(make_string("width"), make_int(width));
+    m->insert(make_string("height"), make_int(height));
+    return m;
+}
+
+}  // namespace
+
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
     const uint64_t eid = fnv1aStr(name);
     auto need = [&](size_t n) -> bool { return args.size() >= n; };
@@ -5907,12 +6386,45 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_string(saveValueAscii(args[0]));
     }
     if (eid == CID("iconv")) {
-        // vm_f_iconv (0x817af00): converts between encodings.  The game calls
-        // iconv(str, "utf-8", "gb2312") when generating captcha pictures.  A
-        // full GB2312<->UTF-8 conversion is out of scope here; pass the input
-        // through so the rest of the pipeline (verigen_*) still runs.
+        // vm_f_iconv (0x817af00): iconv(str, tocode, fromcode) —— 三参顺序
+        // 与原版一致 (in, tocode, fromcode)。gs picd 用
+        //   iconv(str, "UTF-8", "GBK")
+        // 把汉字转成 UTF-8 再喂 verigen; 旧实现原样返回 GBK 字节, verigen 按
+        // UTF-8 解码失败 -> take_word_glyph 返回 0 -> 验证码/图库全空。
+        // 标准编码转换 (Win32 MultiByteToWideChar/WideCharToMultiByte)。
         if (args.empty()) return make_string("");
-        return args[0];
+        if (args[0].index() != 4) return args[0];
+        const std::string in = lpc::vget<SharedString>(args[0]).str();
+        auto cpOf = [](const Value& v) -> UINT {
+            if (v.index() != 4) return 0;
+            std::string c = lpc::vget<SharedString>(v).str();
+            for (auto& ch : c) ch = static_cast<char>(::tolower(static_cast<unsigned char>(ch)));
+            if (c == "utf-8" || c == "utf8" || c == "65001") return CP_UTF8;
+            if (c == "gbk" || c == "gb2312" || c == "gb18030" || c == "936" ||
+                c == "euc-cn" || c == "cp936")
+                return 936;
+            if (c == "latin1" || c == "iso-8859-1" || c == "28591") return 28591;
+            if (c == "big5" || c == "950") return 950;
+            return 0;
+        };
+        const UINT fromCp = args.size() > 2 ? cpOf(args[2]) : 0;
+        const UINT toCp = args.size() > 1 ? cpOf(args[1]) : 0;
+        if (!fromCp || !toCp || fromCp == toCp) return make_string(in);
+        const int wlen = MultiByteToWideChar(fromCp, 0, in.data(),
+                                             static_cast<int>(in.size()), nullptr, 0);
+        if (wlen <= 0) return make_string(in);
+        std::wstring w(static_cast<size_t>(wlen), L'\0');
+        if (MultiByteToWideChar(fromCp, 0, in.data(), static_cast<int>(in.size()),
+                                &w[0], wlen) != wlen)
+            return make_string(in);
+        const int olen = WideCharToMultiByte(toCp, 0, w.data(), wlen, nullptr, 0,
+                                             nullptr, nullptr);
+        if (olen <= 0) return make_string(in);
+        std::string out(static_cast<size_t>(olen), '\0');
+        if (WideCharToMultiByte(toCp, 0, w.data(), wlen, &out[0], olen, nullptr,
+                                nullptr) != olen)
+            return make_string(in);
+        return make_string(std::move(out));
     }
     // ---- common language efuns the game relies on but that were missing ----
 #if 1  // CRASH-DIAG: set to 0 to disable the new efun batch for bisection
@@ -7877,11 +8389,18 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
     if (eid == CID("verigen_take_word_glyph") || eid == CID("verigen_render_glyph") ||
         eid == CID("verigen_transform_glyph") || eid == CID("verigen_layout_word_glyphs") ||
         eid == CID("verigen_add_noise_to_glyph")) {
-        // gs picd glyph pipeline (take_word_glyph -> transform/noise ->
-        // layout_word_glyphs_by_row/column -> render_glyph), a handful of
-        // calls at boot and never erroring on 0 today.  Same placeholder
-        // decision as the aaa captcha verigen_*: no real glyph rendering.
-        return make_int(0);
+        // gs picd 图库/验证码管线: take_word_glyph -> layout_word_glyphs_by_row/column
+        // -> transform_glyph_by_y_sin -> add_ellipse_noise_to_glyph -> render_glyph。
+        // 原版是 freetype 8-bit alpha 字形 + 画布拼接 + RGB565 上色; 这里用
+        // GDI GetGlyphOutlineW(GGO_GRAY8_BITMAP) 取同一份 alpha 面, 后续拼接/
+        // 位移/上色按原版 1:1 (参考 cvm 轨道 vm_efun_magic.c 的 2026-11-21 真渲染)。
+        if (eid == CID("verigen_take_word_glyph")) return vgTakeWordGlyph(args);
+        if (eid == CID("verigen_layout_word_glyphs")) return vgLayoutWordGlyphs(args);
+        if (eid == CID("verigen_transform_glyph")) return vgTransformGlyph(args);
+        if (eid == CID("verigen_render_glyph")) return vgRenderGlyph(args);
+        // verigen_add_noise_to_glyph: 原版 retType=1 (void), 只改入参 mapping
+        // 的像素; 噪声属反 OCR 扰动, 不影响可读性/流程 —— 保持 void 不改图。
+        return Value{};
     }
 
 
