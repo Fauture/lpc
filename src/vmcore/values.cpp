@@ -3,6 +3,7 @@
 // ===========================================================================
 #include "values.h"
 #include "trace.h"
+#include "vmcore.h"
 #include "original_vm.h"
 
 #include <cmath>
@@ -71,6 +72,31 @@ int vmTypeOf(const Value& v) {
     }
 }
 
+// 原版 vm_valueType (0x808a13c) 的类型名 —— vm_error 文案里的 %s 就是它。
+// 注意原版编号: 5=buffer 6=array 7=mapping 9=function 10=object,
+// 而 Value::index() 的是另一种编号, 这里按 index 映射回原版字符串。
+const char* typeNameOf(const Value& v) {
+    switch (v.index()) {
+    case 0: return "undefined";
+    case 1: return "void";
+    case 2: return "integer";
+    case 3: return "float";
+    case 4: return "string";
+    case 5: return "array";
+    case 6: return "mapping";
+    case 7: return "object";
+    case 8: return "function";
+    case 9: return "loop_ctrl";
+    case 10: return "buffer";
+    default: return "pointer";
+    }
+}
+
+// 原版算术/位运算的文案都是三段式:
+//   "<op>, type invalid (got %s) of left value."   左值类型不在白名单
+//   "<op>, right isn't a number when left is."     左值已定, 右值与左值不配
+// 白名单由各运算符按 IDA 反编译结果逐条写死, 这里不提供"半截"拼装 helper。
+
 // ---------------------------------------------------------------------------
 // Original-VM numeric semantics (probed live): 32-bit int wrap, float32 mixing,
 // left-operand type keeps, truncate-toward-zero back to int.
@@ -79,8 +105,47 @@ static int64_t i32(int64_t v) { return static_cast<int64_t>(static_cast<int32_t>
 static double f32(double v) { return static_cast<double>(static_cast<float>(v)); }
 static int64_t truncWrap(double v) { return i32(static_cast<int64_t>(v)); }
 
+// vm_addValue 0x808e3b8 左值白名单: int / real / string / buffer / array /
+// mapping —— undefined/void/object/function 一律
+// "Bad +, type invalid (got %s) of left value."
 Value addValues(const Value& a, const Value& b) {
-    if (a.index() == 5 && b.index() == 5) {
+    switch (a.index()) {
+    case 2:   // int
+        if (b.index() == 2) return make_int(i32(toInt(a) + toInt(b)));
+        if (b.index() == 3) return make_int(truncWrap(f32(toReal(a)) + f32(toReal(b))));
+        vmError("Bad +, right isn't a number when left is.\n");
+    case 3:   // real
+        if (b.index() == 2) return make_float(f32(toReal(a)) + f32(toReal(b)));
+        if (b.index() == 3) return make_float(f32(toReal(a)) + f32(toReal(b)));
+        vmError("Bad +, right isn't a real when left is.\n");
+    case 4: { // string
+        if (b.index() == 0)
+            vmError("Bad +, string can not be add with undefined type.\n");
+        if (b.index() == 1) vmError("Bad +, string can not be add with void.\n");
+        if (b.index() != 2 && b.index() != 3 && b.index() != 4)
+            vmError("Bad +, right can not be add with a string.\n");
+        std::string r;
+        r.reserve(lpc::vget<SharedString>(a).str().size() + 16);
+        append_text(r, a);
+        append_text(r, b);
+        return make_string(std::move(r));
+    }
+    case 10: { // buffer
+        if (b.index() == 1)
+            vmError("Bad +, buffer can not be add with void.\n");
+        if (b.index() == 0)
+            vmError("Bad +, buffer can not be add with undefined type.\n");
+        if (b.index() != 4 && b.index() != 10)
+            vmError("Bad +, right can not be add with a buffer.\n");
+        auto cat = [](const Value& v) -> std::string {
+            if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
+            return lpc::vget<SharedString>(v).str();
+        };
+        return make_buffer(lpc::vget<lpc::Ref<BufferValue>>(a)->data + cat(b));
+    }
+    case 5: { // array
+        if (b.index() != 5)
+            vmError("Bad +, right can not be add with an array.\n");
         auto r = lpc::Ref<ArrayValue>(new ArrayValue());
         const auto& aa = lpc::vget<lpc::Ref<ArrayValue>>(a)->items;
         const auto& bb = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
@@ -89,7 +154,9 @@ Value addValues(const Value& a, const Value& b) {
         r->items.insert(r->items.end(), bb.begin(), bb.end());
         return r;
     }
-    if (a.index() == 6 && b.index() == 6) {
+    case 6: { // mapping
+        if (b.index() != 6)
+            vmError("Bad +, right can not be add with a mapping.\n");
         auto r = lpc::Ref<MappingValue>(new MappingValue(
             static_cast<uint32_t>(lpc::vget<lpc::Ref<MappingValue>>(a)->size())));
         for (const auto& kv : lpc::vget<lpc::Ref<MappingValue>>(a)->items())
@@ -98,30 +165,27 @@ Value addValues(const Value& a, const Value& b) {
             r->insert(kv.first, kv.second);
         return r;
     }
-    if (a.index() == 10 || b.index() == 10) {
-        // buffer concatenation: buffer + anything = raw byte concat.
-        auto cat = [](const Value& v) -> std::string {
-            if (v.index() == 10) return lpc::vget<lpc::Ref<BufferValue>>(v)->data;
-            return to_string(v, false);
-        };
-        return make_buffer(cat(a) + cat(b));
+    default:
+        vmError(std::string("Bad +, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
     }
-    if (a.index() == 4 || b.index() == 4) {
-        std::string r;
-        r.reserve((a.index() == 4 ? lpc::vget<SharedString>(a).str().size() : 0) +
-                  (b.index() == 4 ? lpc::vget<SharedString>(b).str().size() : 0) + 8);
-        append_text(r, a);
-        append_text(r, b);
-        return make_string(std::move(r));
-    }
-    if (a.index() == 3) return make_float(f32(toReal(a)) + f32(toReal(b)));
-    if (b.index() == 3) return make_int(truncWrap(f32(toReal(a)) + f32(toReal(b))));
-    return make_int(i32(toInt(a) + toInt(b)));
 }
 
+// vm_subValue 0x808e654 左值白名单: int / real / array / mapping。
 Value subValues(const Value& a, const Value& b) {
-    // array - array: remove b's elements from a (vm_subValue / vm_subArray)
-    if (a.index() == 5 && b.index() == 5) {
+    switch (a.index()) {
+    case 3:   // real
+        if (b.index() == 2) return make_float(f32(toReal(a) - f32(toReal(b))));
+        if (b.index() == 3) return make_float(f32(toReal(a)) - f32(toReal(b)));
+        vmError("Bad -, right isn't a number when left is.\n");
+    case 2:   // int
+        if (b.index() == 2) return make_int(i32(toInt(a) - toInt(b)));
+        if (b.index() == 3)
+            return make_int(truncWrap(f32(toReal(a)) - f32(toReal(b))));
+        vmError("Bad -, right isn't a number when left is.\n");
+    case 5: { // array - array: remove b's elements from a (vm_subArray)
+        if (b.index() != 5)
+            vmError("Bad -, right can not be sub with an array.\n");
         auto r = lpc::Ref<ArrayValue>(new ArrayValue());
         const auto& bb = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
         for (const auto& item : lpc::vget<lpc::Ref<ArrayValue>>(a)->items) {
@@ -132,15 +196,16 @@ Value subValues(const Value& a, const Value& b) {
         }
         return r;
     }
-    // mapping - mapping/array: remove keys present in b
-    if (a.index() == 6) {
+    case 6: { // mapping - mapping/array: remove keys present in b
+        if (b.index() != 6 && b.index() != 5)
+            vmError("Bad -, right can not be sub with a mapping or an array.\n");
         auto r = lpc::Ref<MappingValue>(new MappingValue());
         auto am = lpc::vget<lpc::Ref<MappingValue>>(a);
         for (const auto& kv : am->items()) {
             bool found = false;
             if (b.index() == 6) {
                 found = lpc::vget<lpc::Ref<MappingValue>>(b)->find(kv.first) != nullptr;
-            } else if (b.index() == 5) {
+            } else {
                 for (const auto& x : lpc::vget<lpc::Ref<ArrayValue>>(b)->items)
                     if (value_equal(kv.first, x)) { found = true; break; }
             }
@@ -148,52 +213,100 @@ Value subValues(const Value& a, const Value& b) {
         }
         return r;
     }
-    if (a.index() == 3) return make_float(f32(toReal(a)) - f32(toReal(b)));
-    if (b.index() == 3) return make_int(truncWrap(f32(toReal(a)) - f32(toReal(b))));
-    return make_int(i32(toInt(a) - toInt(b)));
+    default:
+        vmError(std::string("Bad -, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    }
 }
 
+// vm_mulValue 0x808e2f8 左值白名单: int / real。
 Value mulValues(const Value& a, const Value& b) {
-    if (a.index() == 3) return make_float(f32(toReal(a)) * f32(toReal(b)));
-    if (b.index() == 3) return make_int(truncWrap(f32(toReal(a)) * f32(toReal(b))));
-    return make_int(i32(toInt(a) * toInt(b)));
+    switch (a.index()) {
+    case 2:
+        if (b.index() == 2) return make_int(i32(toInt(a) * toInt(b)));
+        if (b.index() == 3)
+            return make_int(truncWrap(f32(toReal(a)) * f32(toReal(b))));
+        vmError("Bad *, right isn't a number when left is.\n");
+    case 3:
+        if (b.index() == 2) return make_float(f32(toReal(a)) * f32(toReal(b)));
+        if (b.index() == 3) return make_float(f32(toReal(a)) * f32(toReal(b)));
+        vmError("Bad *, right isn't a number when left is.\n");
+    default:
+        vmError(std::string("Bad *, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    }
 }
 
+// vm_divValue 0x808e1a4 左值白名单: int / real; 除零直接报错。
 Value divValues(const Value& a, const Value& b) {
-    if (a.index() == 3) {
-        double d = f32(toReal(b));
-        return make_float(d == 0.0 ? 0.0 : f32(toReal(a)) / d);
+    switch (a.index()) {
+    case 2:
+        if (b.index() == 2) {
+            const int64_t d = toInt(b);
+            if (d == 0) vmError("divide by zero.\n");
+            return make_int(i32(toInt(a) / d));
+        }
+        if (b.index() == 3) {
+            const double d = f32(toReal(b));
+            if (d == 0.0) vmError("divide by zero.\n");
+            return make_int(truncWrap(f32(toReal(a)) / d));
+        }
+        vmError("Bad /, right isn't a number when left is.\n");
+    case 3:
+        if (b.index() == 2) {
+            const int64_t d = toInt(b);
+            if (d == 0) vmError("divide by zero.\n");
+            return make_float(f32(toReal(a)) / f32(static_cast<double>(d)));
+        }
+        if (b.index() == 3) {
+            const double d = f32(toReal(b));
+            if (d == 0.0) vmError("divide by zero.\n");
+            return make_float(f32(toReal(a)) / f32(d));
+        }
+        vmError("Bad /, right isn't a number when left is.\n");
+    default:
+        vmError(std::string("Bad /, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
     }
-    if (b.index() == 3) {
-        double d = f32(toReal(b));
-        return make_int(d == 0.0 ? 0 : truncWrap(f32(toReal(a)) / d));
-    }
-    int64_t d = toInt(b);
-    return make_int(i32(d == 0 ? 0 : toInt(a) / d));
 }
 
+// vm_modValue 0x808e7bc 左值白名单: int / real。
+//   左 int 右 int → int（模 0 报 "Module by zero."）；右 real → fmod, 结果 FLOAT
+//   左 real        → fmod, 结果 float
+// 右值非数时原版用的文案是 "Bad *, right isn't a real when left is."（原文如此）。
 Value modValues(const Value& a, const Value& b) {
-    // vm_modValue (0x808e7bc, IDA): 结果类型跟随左操作数——
-    //   int%int -> int（模 0 -> error）；左 float -> float fmod；
-    //   左 int 右 float -> fmod 后 v0[1].type=3，结果是 FLOAT（不截断回 int，
-    //   与 add/sub/mul 的 ftol 行为不同）。
-    if (a.index() == 3) {
-        double d = f32(toReal(b));
-        return make_float(d == 0.0 ? 0.0 : std::fmod(f32(toReal(a)), d));
+    switch (a.index()) {
+    case 2:
+        if (b.index() == 2) {
+            const int64_t d = toInt(b);
+            if (d == 0) vmError("Module by zero.\n");
+            return make_int(i32(toInt(a) % d));
+        }
+        if (b.index() == 3) {
+            const double d = f32(toReal(b));
+            if (d == 0.0) return make_float(0.0);
+            return make_float(f32(std::fmod(f32(toReal(a)), d)));
+        }
+        vmError("Bad *, right isn't a real when left is.\n");
+    case 3:
+        if (b.index() == 2 || b.index() == 3) {
+            const double d = f32(toReal(b));
+            if (d == 0.0) return make_float(0.0);
+            return make_float(f32(std::fmod(f32(toReal(a)), d)));
+        }
+        vmError("Bad *, right isn't a real when left is.\n");
+    default:
+        vmError(std::string("Bad %, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
     }
-    if (b.index() == 3) {
-        double d = f32(toReal(b));
-        return make_float(d == 0.0 ? 0.0 : std::fmod(f32(toReal(a)), d));
-    }
-    int64_t d = toInt(b);
-    return make_int(i32(d == 0 ? 0 : toInt(a) % d));
 }
 
+// vm_lshValue 0x808df54 左值白名单: int / mapping（mapping<<mapping 原地合并）。
 Value lshValues(const Value& a, const Value& b) {
-    // vm_lshValue (0x808df54): mapping << mapping MERGES IN PLACE on the left
-    // (vm_concatMapping) — LPC relies on the aliasing everywhere
-    // (register_daemon_data / itemd / partywar `m << ([...])`).
-    if (a.index() == 6 && b.index() == 6) {
+    switch (a.index()) {
+    case 6: {   // mapping << mapping MERGES IN PLACE on the left (vm_concatMapping)
+        if (b.index() != 6)
+            vmError("Bad <<, right isn't a mapping when left is.\n");
         auto left = lpc::vget<lpc::Ref<MappingValue>>(a);
         auto right = lpc::vget<lpc::Ref<MappingValue>>(b);
         // [lshdbg] import 合并取证: room import 的 dbase<<room_info 若左值
@@ -230,25 +343,87 @@ Value lshValues(const Value& a, const Value& b) {
                       << " post_sz=" << left->size() << "\n";
         return left;   // same shared_ptr, mutated in place
     }
-    return make_int(i32(static_cast<uint32_t>(toInt(a)) << (static_cast<uint32_t>(toInt(b)) & 31)));
+    case 2: {
+        if (b.index() != 2)
+            vmError("Bad <<, right isn't a number when left is.\n");
+        const uint32_t sh = static_cast<uint32_t>(toInt(b));
+        if (sh > 0x1F) return make_int(0);   // 原版: info>0x1F 直接 0
+        return make_int(i32(static_cast<uint32_t>(toInt(a)) << sh));
+    }
+    default:
+        vmError(std::string("Bad <<, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    }
 }
 
+// vm_rshValue 0x808e020 左值白名单: int / mapping。
+//   int >> int 是 **逻辑右移** (原版 unsigned >>)，移位 >0x1F 结果为 0。
 Value rshValues(const Value& a, const Value& b) {
-    return make_int(static_cast<int32_t>(toInt(a)) >> (static_cast<uint32_t>(toInt(b)) & 31));
+    switch (a.index()) {
+    case 6: {
+        if (b.index() != 6)
+            vmError("Bad >>, right isn't a mapping when left is.\n");
+        auto left = lpc::vget<lpc::Ref<MappingValue>>(a);
+        auto right = lpc::vget<lpc::Ref<MappingValue>>(b);
+        for (const auto& kv : right->items()) left->insert(kv.first, kv.second);
+        return left;
+    }
+    case 2: {
+        if (b.index() != 2)
+            vmError("Bad >>, right isn't a number when left is.\n");
+        const uint32_t sh = static_cast<uint32_t>(toInt(b));
+        if (sh > 0x1F) return make_int(0);
+        return make_int(static_cast<int32_t>(
+            static_cast<uint32_t>(toInt(a)) >> sh));
+    }
+    default:
+        vmError(std::string("Bad >>, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    }
 }
 
+// vm_andValue 0x808ea10 左值白名单: int / array（array&array = 交集）。
 Value andValues(const Value& a, const Value& b) {
-    return make_int(static_cast<int32_t>(toInt(a)) & static_cast<int32_t>(toInt(b)));
-}
-Value orValues(const Value& a, const Value& b) {
-    return make_int(static_cast<int32_t>(toInt(a)) | static_cast<int32_t>(toInt(b)));
-}
-Value xorValues(const Value& a, const Value& b) {
-    return make_int(static_cast<int32_t>(toInt(a)) ^ static_cast<int32_t>(toInt(b)));
+    switch (a.index()) {
+    case 2:
+        if (b.index() != 2)
+            vmError("Bad &, right isn't a number when left is.\n");
+        return make_int(static_cast<int32_t>(toInt(a)) &
+                        static_cast<int32_t>(toInt(b)));
+    case 5: {
+        if (b.index() != 5)
+            vmError("Bad |, right is't an array when left is.\n");
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
+        const auto& bi = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
+        for (const auto& x : lpc::vget<lpc::Ref<ArrayValue>>(a)->items) {
+            bool hit = false;
+            for (const auto& y : bi)
+                if (value_equal(x, y)) { hit = true; break; }
+            if (!hit) continue;
+            bool dup = false;
+            for (const auto& y : out->items)
+                if (value_equal(x, y)) { dup = true; break; }
+            if (!dup) out->items.push_back(x);
+        }
+        return out;
+    }
+    default:
+        vmError(std::string("Bad &, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    }
 }
 
-Value lpcOrValues(const Value& a, const Value& b) {
-    if (a.index() == 5 && b.index() == 5) {
+// vm_orValue 0x808eabc 左值白名单: int / array（array|array = 并集去重）。
+Value orValues(const Value& a, const Value& b) {
+    switch (a.index()) {
+    case 2:
+        if (b.index() != 2)
+            vmError("Bad |, right isn't a number when left is.\n");
+        return make_int(static_cast<int32_t>(toInt(a)) |
+                        static_cast<int32_t>(toInt(b)));
+    case 5: {
+        if (b.index() != 5)
+            vmError("Bad |, right is't an array when left is.\n");
         auto out = lpc::Ref<ArrayValue>(new ArrayValue());
         const auto& ai = lpc::vget<lpc::Ref<ArrayValue>>(a)->items;
         const auto& bi = lpc::vget<lpc::Ref<ArrayValue>>(b)->items;
@@ -262,12 +437,35 @@ Value lpcOrValues(const Value& a, const Value& b) {
         }
         return out;
     }
-    return orValues(a, b);
+    default:
+        vmError(std::string("Bad |, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    }
 }
 
+// vm_xorValue 0x808e134 左值白名单: 仅 int。
+Value xorValues(const Value& a, const Value& b) {
+    if (a.index() != 2)
+        vmError(std::string("Bad ^, type invalid (got ") + typeNameOf(a) +
+                ") of left value.\n");
+    if (b.index() != 2)
+        vmError("Bad ^, right isn't a number when left is.\n");
+    return make_int(static_cast<int32_t>(toInt(a)) ^
+                    static_cast<int32_t>(toInt(b)));
+}
+
+// 逻辑/算术共用的 op | 语义: 原版只有 vm_orValue 一份。
+Value lpcOrValues(const Value& a, const Value& b) { return orValues(a, b); }
+
+// vm_negValue 0x808e8bc: 单目取负, 只接受 int / real。
+//   注意原版文案是 "of right value" 且不带 (got %s)。
 Value negValue(const Value& a) {
-    if (a.index() == 3) return make_float(-f32(toReal(a)));
-    return make_int(i32(-toInt(a)));
+    switch (a.index()) {
+    case 2: return make_int(i32(-toInt(a)));
+    case 3: return make_float(-f32(toReal(a)));
+    default:
+        vmError("Bad -, type invalid of right value.\n");
+    }
 }
 
 int compareValues(const Value& a, const Value& b) {
@@ -354,6 +552,14 @@ int compareValuesOriginal(const Value& a, const Value& b) {
 }
 
 Value castValue(Value v, int targetType) {
+    // 原版 vm_castType 0x809006c: 每个目标类型只接受白名单源类型, 其余一律
+    // vm_error("Can not cast the type to <t>.") —— 旧实现用 `return v` /
+    // to_string 兜底静默放行, 于是 (mapping)0 变成"空 mapping", 后续
+    // map["k"] 取到 undefined 并被 (string) 渲染成 "(undefined)" 写进库
+    // (server_status.report_time 事故)。以下按 IDA 白名单逐 case 对齐。
+    // 源类型编号 (我们的 Value index): 0=nil 1=undef 2=int 3=real 4=string
+    //   5=array 6=mapping 7=object 8=closure 9=loop 10=buffer 11=xref
+    //   原版: 5=buffer 6=array 7=mapping —— 映射见各 case 注释。
     switch (targetType) {
     case 2:
         if (v.index() == 3) return make_int(static_cast<int64_t>(lpc::vget<double>(v)));
@@ -380,13 +586,16 @@ Value castValue(Value v, int targetType) {
             for (unsigned char c : s) be = (be << 8) | c;
             return make_int(static_cast<int64_t>(be));
         }
+        if (v.index() == 2) return v;
         if (v.index() == 1 || v.index() == 0) return make_int(0);
-        return v;
+        vmError("Can not cast the type to integer.\n");
     case 3:
         if (v.index() == 2) return make_float(static_cast<double>(lpc::vget<int64_t>(v)));
         if (v.index() == 4) return make_float(std::strtod(lpc::vget<SharedString>(v).c_str(), nullptr));
+        if (v.index() == 3) return v;
         if (v.index() == 1 || v.index() == 0) return make_float(0.0);
-        return v;
+        // 原版 real 白名单只有 undefined/void/int/real/string (buffer 也报错)。
+        vmError("Can not cast the type to real.\n");
     case 4:
         if (v.index() == 4) return v;
         if (v.index() == 10) {
@@ -400,7 +609,10 @@ Value castValue(Value v, int targetType) {
         }
         if (v.index() == 0) return make_string("(undefined)");
         if (v.index() == 1) return make_string("(void)");
-        return make_string(to_string(v, false));
+        if (v.index() == 2 || v.index() == 3)
+            return make_string(to_string(v, false));   // 数字 → 文本 (vm_typeValue)
+        // 原版: array/mapping/object/closure 等 → "Can not cast the type to string."
+        vmError("Can not cast the type to string.\n");
     case 5:
         // (buffer) casts ALWAYS allocate a real buffer:
         //   int -> 4-byte big-endian; string -> same bytes; nil -> empty.
@@ -416,15 +628,18 @@ Value castValue(Value v, int targetType) {
         if (v.index() == 4) return make_buffer(lpc::vget<SharedString>(v));
         if (v.index() == 1 || v.index() == 0) return make_buffer("");
         if (v.index() == 10) return v;
-        return make_buffer(to_string(v, false));
+        // 原版 buffer 白名单: undefined/void/int/string/buffer (real 亦报错)。
+        vmError("Can not cast the type to buffer.\n");
     case 6:
         if (v.index() == 1 || v.index() == 0) return make_array();
-        return v;
+        if (v.index() == 5) return v;
+        vmError("Can not cast the type to array.\n");
     case 7:
         if (v.index() == 1 || v.index() == 0) return make_mapping();
-        return v;
+        if (v.index() == 6) return v;
+        vmError("Can not cast the type to mapping.\n");
     default:
-        return v;
+        vmError("Can not cast to such type.\n");
     }
 }
 
@@ -453,7 +668,10 @@ Value queryMemberValue(const Value& container, const Value& key) {
         int64_t i = toInt(key);
         if (i >= 0 && i < static_cast<int64_t>(arr->items.size()))
             return arr->items[static_cast<size_t>(i)];
-        return Value{};
+        // 原版 vm_queryMember 0x808fc25: "Index of the array out of range."
+        // (临时附带 idx/size, 定位越界现场后改回原文案)
+        vmError("Index of the array out of range. (idx=" + std::to_string(i) +
+                " size=" + std::to_string(arr->items.size()) + ")\n");
     }
     if (container.index() == 4) {
         // string indexing returns the ASCII code (int).
@@ -461,7 +679,8 @@ Value queryMemberValue(const Value& container, const Value& key) {
         int64_t i = toInt(key);
         if (i >= 0 && i < static_cast<int64_t>(s.size()))
             return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
-        return Value{};
+        // 原版 0x808fb28: "Index out of range."
+        vmError("Index out of range.\n");
     }
     if (container.index() == 10) {
         // buffer indexing yields the BYTE as an int (vm_queryMember type-5
@@ -470,9 +689,12 @@ Value queryMemberValue(const Value& container, const Value& key) {
         int64_t i = toInt(key);
         if (i >= 0 && i < static_cast<int64_t>(s.size()))
             return make_int(static_cast<int64_t>(static_cast<unsigned char>(s[static_cast<size_t>(i)])));
-        return Value{};
+        vmError("Index out of range.\n");
     }
-    return Value{};
+    // 原版 0x808fabd: 容器不是 array/string/buffer/mapping 时
+    // "Bad type(%s) to index." —— 旧实现返回 undefined, 被 (string) 渲染成
+    // "(undefined)" 后一路扩散 (server_status.report_time 事故的同源分支)。
+    vmError(std::string("Bad type(") + typeNameOf(container) + ") to index.\n");
 }
 
 // GBK character helpers (string ranges are BYTE based; kept for parity).

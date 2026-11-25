@@ -3042,7 +3042,7 @@ static void loop(VmPcb* pcb, bool nested, size_t depth) {
                        // combat_mode, 娃娃参战取消勾选后客户端显示不变
                        // (响应 0x1365 的 01 04, 原版 01 03)。
                 Value v = popValue(pcb);
-                if (v.index() != 2) vmError("Bad ~, type invalid of right value.");
+                if (v.index() != 2) vmError("Bad ~, type invalid of right value.\n");
                 pushValue(pcb, make_int(~static_cast<int32_t>(toInt(v))));
                 break; }
             case 17: case 19: case 84:
