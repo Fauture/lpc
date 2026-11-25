@@ -25,6 +25,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -285,6 +286,41 @@ std::map<int64_t, ChainLive>& chainLive() {
     static std::map<int64_t, ChainLive> m;
     return m;
 }
+
+// [perf] per-connection counters.  旧实现: 每次 attach/detach 都抢同一个
+// 全局 std::mutex, 再在 std::map (红黑树) 里 find —— 每个 runProcess 的
+// 入口/出口各一次, 即每条 LPC 链两次全局锁 + 两次 O(log n) 树查找, 且每个
+// 出现过的 cno 都 `new std::atomic<int>` 永不回收。
+// 现: unordered_map (O(1)) + 线程本地单槽缓存 —— attach→detach 是同一线程
+// 对同一 cno 的连续调用 (调度线程独占), 命中后热路径零锁零查找。
+// 条目按"出现过的连接号"增长, 不再是"每次命令一次分配"。
+struct CnoCounts {
+    std::atomic<int> active{0};   // 正在跑的命令链数 (runProcess 进/出)
+    std::atomic<int> live{0};     // 未结束的链数 (begin/park/resume/end)
+};
+std::mutex& cnoTblMtx() { static std::mutex m; return m; }
+std::unordered_map<int64_t, std::unique_ptr<CnoCounts>>& cnoTbl() {
+    static std::unordered_map<int64_t, std::unique_ptr<CnoCounts>> t;
+    return t;
+}
+CnoCounts& cnoCounts(int64_t cno) {
+    // 单槽缓存: 同一连接的命令链、它的 park/恢复、门检查都在调度线程上,
+    // 缓存几乎恒命中; miss 才需要一次互斥。
+    thread_local int64_t cachedCno = -1;
+    thread_local CnoCounts* cached = nullptr;
+    if (cached && cachedCno == cno) return *cached;
+    std::lock_guard<std::mutex> lk(cnoTblMtx());
+    auto it = cnoTbl().find(cno);
+    if (it == cnoTbl().end())
+        it = cnoTbl()
+                 .emplace(cno, std::unique_ptr<CnoCounts>(new CnoCounts()))
+                 .first;
+    cachedCno = cno;
+    cached = it->second.get();
+    return *cached;
+}
+std::atomic<int>& cmdActiveCount(int64_t cno) { return cnoCounts(cno).active; }
+std::atomic<int>& chainLiveCount(int64_t cno) { return cnoCounts(cno).live; }
 bool chainTraceOn() {
     static const std::atomic<bool>& f = dynProbeFlag("LPCVM_CHAINTRACE");
     return f.load(std::memory_order_relaxed);
@@ -318,6 +354,12 @@ void chainEmit(const char* ev, int64_t cno, int64_t key, const void* vm,
 void vmchainBegin(int64_t clientNo, int64_t chainKey, const void* vm,
                   const std::string& entry) {
     liveness().chainBegin.fetch_add(1, std::memory_order_relaxed);
+    // [perf] ChainLive 表只服务 trace 输出 (chainEmit) 和 OVERLAP 诊断 ——
+    // 探针体系退役后 chainTraceOn() 恒 false, 旧代码却仍无条件抢
+    // chainLiveMtx、线性扫全表、拷贝 entry 字符串。整块门控到 trace 下:
+    // 关闭时每条链零全局锁、零树操作。live 计数由 chainLiveEnter/Leave 承担
+    // (见下), 不再依赖本表。
+    if (!chainTraceOn()) return;
     std::string overlap;
     {
         std::lock_guard<std::mutex> lk(chainLiveMtx());
@@ -349,10 +391,9 @@ void vmchainBegin(int64_t clientNo, int64_t chainKey, const void* vm,
     }
     if (!overlap.empty()) {
         liveness().chainOverlap.fetch_add(1, std::memory_order_relaxed);
-        if (chainTraceOn())
-            chainEmit("OVERLAP", clientNo, chainKey, vm, entry, overlap,
-                      vmchainTextOf(vm));
-    } else if (chainTraceOn()) {
+        chainEmit("OVERLAP", clientNo, chainKey, vm, entry, overlap,
+                  vmchainTextOf(vm));
+    } else {
         chainEmit("BEGIN", clientNo, chainKey, vm, entry, std::string(),
                   vmchainTextOf(vm));
     }
@@ -362,7 +403,13 @@ void vmchainEnd(int64_t clientNo, int64_t chainKey, const void* vm,
                 const std::string& entry, bool completed) {
     if (completed)
         liveness().chainEnd.fetch_add(1, std::memory_order_relaxed);
-    const bool traced = chainTraceOn();
+    // Wake the per-connection gate unconditionally: a connection may dispatch
+    // its next command only when this one is really over (waitClientCommandIdle
+    // 的 notify 不能因为 trace 关闭而丢)。
+    if (!chainTraceOn()) {
+        chainWaitNotify();
+        return;
+    }
     int64_t age = 0;
     bool known = false;
     int64_t emitCno = clientNo;
@@ -379,12 +426,6 @@ void vmchainEnd(int64_t clientNo, int64_t chainKey, const void* vm,
             m.erase(it);
         }
     }
-    if (!traced) {
-        // Wake the per-connection gate even untraced: a connection may
-        // dispatch its next command only when this one is really over.
-        chainWaitNotify();
-        return;
-    }
     std::string extra = "completed=" + std::to_string(completed ? 1 : 0);
     if (age > 0) extra += " ageMs=" + std::to_string(age);
     chainEmit(completed ? "END" : "DROP", known ? emitCno : -1, chainKey, vm,
@@ -396,7 +437,7 @@ void vmchainPark(int64_t clientNo, int64_t chainKey, const void* vm,
                  const std::string& entry, int condKind,
                  const std::string& condKey) {
     liveness().chainPark.fetch_add(1, std::memory_order_relaxed);
-    const bool traced = chainTraceOn();
+    if (!chainTraceOn()) return;
     {
         std::lock_guard<std::mutex> lk(chainLiveMtx());
         auto& m = chainLive();
@@ -416,17 +457,16 @@ void vmchainPark(int64_t clientNo, int64_t chainKey, const void* vm,
             m[chainKey] = cl;
         }
     }
-    if (!traced) return;
     std::string what =
         std::string("wait=") + chainKindName(condKind) + " key=" + condKey;
     chainEmit("PARK", clientNo, chainKey, vm, entry, what, vmchainTextOf(vm));
 }
 
 void vmchainRun(int64_t chainKey, const void* vm) {
+    if (!chainTraceOn()) return;
     int64_t resumeCno = -1;
     bool wasParked = false;
     std::string resumeEntry;
-    const bool traced = chainTraceOn();
     {
         std::lock_guard<std::mutex> lk(chainLiveMtx());
         auto it = chainLive().find(chainKey);
@@ -440,12 +480,12 @@ void vmchainRun(int64_t chainKey, const void* vm) {
     }
     if (!wasParked) return;
     liveness().chainResume.fetch_add(1, std::memory_order_relaxed);
-    if (traced)
-        chainEmit("RESUME", resumeCno, chainKey, vm, resumeEntry,
-                  std::string(), vmchainTextOf(vm));
+    chainEmit("RESUME", resumeCno, chainKey, vm, resumeEntry,
+              std::string(), vmchainTextOf(vm));
 }
 
 void vmchainRunExit(int64_t chainKey, bool parked) {
+    if (!chainTraceOn()) return;
     std::lock_guard<std::mutex> lk(chainLiveMtx());
     auto it = chainLive().find(chainKey);
     if (it == chainLive().end()) return;
@@ -454,6 +494,7 @@ void vmchainRunExit(int64_t chainKey, bool parked) {
 }
 
 void vmchainTagLive(int64_t clientNo, int64_t chainKey) {
+    if (!chainTraceOn()) return;
     if (clientNo < 0 || chainKey < 0) return;
     std::lock_guard<std::mutex> lk(chainLiveMtx());
     auto it = chainLive().find(chainKey);
@@ -467,12 +508,12 @@ void vmchainMailbox(int64_t clientNo, int64_t chainKey, const char* what) {
 }
 
 int vmchainLiveChains(int64_t clientNo) {
+    // [perf] O(1) 原子读 —— 旧实现在每次调用时抢 chainLiveMtx 并线性扫整个
+    // 链表; 而 clientCommandBusy 每个入站命令包就调它 (还重复调了两次)。
+    // 计数由 runProcess 的 chainLiveEnter/Leave 维护, 语义与原 exited 标志
+    // 一致: begin 后 +1, park/-DONE 后 -1, resume 再 +1 (见 sched.cpp)。
     if (clientNo < 0) return 0;
-    std::lock_guard<std::mutex> lk(chainLiveMtx());
-    int n = 0;
-    for (const auto& kv : chainLive())
-        if (kv.second.clientNo == clientNo && !kv.second.exited) ++n;
-    return n;
+    return chainLiveCount(clientNo).load(std::memory_order_acquire);
 }
 
 std::string vmchainTextOf(const void* vm) {
@@ -502,19 +543,23 @@ std::condition_variable& chainGateCv() {
     static std::condition_variable cv;
     return cv;
 }
-std::atomic<int>& cmdActiveCount(int64_t cno) {
-    static std::mutex m;
-    static std::map<int64_t, std::atomic<int>*> tbl;
-    std::lock_guard<std::mutex> lk(m);
-    auto it = tbl.find(cno);
-    if (it != tbl.end()) return *it->second;
-    auto* p = new std::atomic<int>(0);
-    tbl[cno] = p;
-    return *p;
-}
 }  // namespace
 
 void chainWaitNotify() { chainGateCv().notify_all(); }
+
+// [perf] 链的 live 计数 (O(1) 原子, 无锁):
+// 由 runProcess 的入口/出口维护, 与原 vmchainBegin/Park/Run/End 的 exited
+// 标志同语义 —— begin 之后 +1, park 或 chain 结束 -1, resume 再 +1。
+// 这样 vmchainLiveChains/clientCommandBusy 不再需要扫 ChainLive 表。
+void chainLiveEnter(int64_t cno) {
+    if (cno < 0) return;
+    chainLiveCount(cno).fetch_add(1, std::memory_order_acq_rel);
+}
+
+void chainLiveLeave(int64_t cno) {
+    if (cno < 0) return;
+    chainLiveCount(cno).fetch_sub(1, std::memory_order_acq_rel);
+}
 
 void cmdActiveAttach(int64_t cno) {
     if (cno < 0) return;
@@ -532,8 +577,10 @@ void cmdActiveDetach(int64_t cno) {
 // —— 前一条链只有调度器继续跑才能完成, 泵内阻塞 = 自锁)。
 bool clientCommandBusy(int64_t clientNo) {
     if (clientNo < 0) return false;
+    // 三个计数现已同源且都是 O(1) 原子读 (clientLpcBusy == live>0, 原本被
+    // 重复算了两次)。
     return cmdActiveCount(clientNo).load(std::memory_order_acquire) > 0 ||
-           vmchainLiveChains(clientNo) > 0 || clientLpcBusy(clientNo);
+           chainLiveCount(clientNo).load(std::memory_order_acquire) > 0;
 }
 
 bool waitClientCommandIdle(int64_t clientNo, int timeoutMs) {

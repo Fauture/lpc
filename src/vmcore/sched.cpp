@@ -56,6 +56,8 @@ using lpc::vmchainRunExit;
 using lpc::vmchainPark;
 using lpc::cmdActiveAttach;
 using lpc::cmdActiveDetach;
+using lpc::chainLiveEnter;
+using lpc::chainLiveLeave;
 
 int64_t msSinceStart() {
     static const std::chrono::steady_clock::time_point t0 =
@@ -921,7 +923,11 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         std::shared_ptr<VmPcb> prev;
         ~Restore() { im.currentProcess = std::move(prev); }
     } restore{im, prevProc};
-    const bool mdbg = p->construct && getenv("LPCVM_MDBG");
+    // [perf] getenv 每 construct 进程调度一次 (boot 期数千个构造) —— MSVC
+    // 的 getenv 取 CRT 环境锁并线性扫 environ, 实测 ~10-15µs/次。环境在启动
+    // 后不变, 缓存为函数局部 static (热路径铁律, 与 builtins.cpp 一致)。
+    static const bool mdbgOn = getenv("LPCVM_MDBG") != nullptr;
+    const bool mdbg = p->construct && mdbgOn;
     if (mdbg) {
         std::cerr << "[mdbg-run] tid=" << p->tid
                   << " slice=" << (p->sliceYield ? 1 : 0)
@@ -967,7 +973,10 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
     // counting until its chain really ends.
     const int64_t cno = p->clientNo;
     const int64_t chainKey = reinterpret_cast<int64_t>(p.get());
-    if (cno >= 0) cmdActiveAttach(cno);
+    if (cno >= 0) {
+        cmdActiveAttach(cno);
+        chainLiveEnter(cno);   // [perf] gate 的 live 计数: O(1) 原子, 不再扫表
+    }
     vmchainRun(chainKey, p.get());
     struct ChainExit {
         int64_t cno;
@@ -976,7 +985,12 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
         bool parked = false;
         ~ChainExit() {
             vmchainRunExit(key, parked);
-            if (cno >= 0) cmdActiveDetach(cno);
+            if (cno >= 0) {
+                // 先减 live 再 detach: detach 归零时的 notify 必须让等待者
+                // 看到"两个计数都已经落下"。
+                chainLiveLeave(cno);
+                cmdActiveDetach(cno);
+            }
         }
     } chainExit{cno, chainKey, p.get()};
     try {

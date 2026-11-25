@@ -138,6 +138,11 @@ void chainWaitNotify();
 // dispatch (execOnMain).
 void cmdActiveAttach(int64_t clientNo);
 void cmdActiveDetach(int64_t clientNo);
+// Live-chain counting for the per-connection gate: bracket a process's whole
+// run (scheduler entry / exit, including the park path).  O(1) atomics, so the
+// gate no longer walks the ChainLive table (that table is trace-only now).
+void chainLiveEnter(int64_t clientNo);
+void chainLiveLeave(int64_t clientNo);
 // The script's own re-entrancy marker.  login.o::_process_command keeps
 // `lite_set_temp("operating",1)` set while a command is between phases, on chains
 // the driver's process table does not associate with the connection; the gate
