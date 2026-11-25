@@ -12947,17 +12947,22 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
         }
         filedWatchdogNote(cmdNo, body, len);
     }
-    // Primary path: packet protocol analyser (comm_desc.txt interfaces) —
-    // BUT only for commands the built-in cmdList dispatch does NOT handle.
-    // The C++ switch below (handle_vm_msgCfgReadEtc / handle_vm_msgCfgAaaList
-    // / the whole cmdList table) is the PROVEN path: runs 2026-10-31 efix3
-    // booted to loads=6996 with ZERO interfaces registered.  Letting a freshly
-    // registered LPC interface preempt it (the old order here) rerouted the
-    // config/file replies to communicated.c::process_command, which never
-    // completes the flow — gs hung at "FILE_D wait for CONFIG_D" (oid:16).
-    const CmdEntry* ePre = findCmd(cmdNo);
-    const bool cppAuthored = ePre && (cl.attrib & ePre->type & 7) != 0;
-    if (!cppAuthored) {
+    // Primary path: packet protocol analyser (comm_desc.txt interfaces),
+    // exactly as the original — vm_clientSocketCallback 0x804f532 calls
+    // vm_pktAnalyse() first and only falls through to cmdIndex[] when it does
+    // NOT return 1:
+    //     if ( vm_pktAnalyse(...) != 1 )
+    //         if ( cmdIndex[cmdNo] ) cmdIndex[cmdNo]->cmdFunc(...);
+    //         else Bad command
+    // 兜底表 (cmdList/cmdIndex) 只服务"没有 comm_desc 定义"的服务 (ccs/gs);
+    // aaa/dba 有 comm_desc, 这些 cmdNo 必须由 pktAnalyse 按 iface 解析 ——
+    // 否则像 0x435F 这种 "encap:mapping GAME_HOST list[]" 会被按兜底的
+    // 5 元组列式误读, dba 侧 explode(ip) 只剩 1 段 → ip_info[1] 越界。
+    // 注: 早前这里曾按 (attrib & type & 7) 抢先走兜底, 并把 2026-10-31 gs 卡在
+    // "FILE_D wait for CONFIG_D" 归因为 "pktAnalyse 抢了兜底" —— 那是误判:
+    // 当时 ccs/gs 目录被塞了本不该存在的 comm_desc 文件(这两个服务不需要),
+    // 注册出一批假 iface 才会走错; 去掉多余文件后 pkt 优先就是原版顺序。
+    {
         int pa = pktAnalyse(cl.clientNo, cl.attrib, cmdNo, body, len);
         if (filedDbg) {
             std::cerr << "[filed-disp] t=" << lpc::msSinceStart()
@@ -12969,10 +12974,6 @@ void dispatchCommand(GameClient& cl, uint16_t cmdNo, const uint8_t* body, size_t
             std::cerr.flush();
         }
         if (pa == 1) return;   // handled by the protocol interface
-        if (pa < 0) {          // parse error
-            ++cl.recvBadPkts;
-            return;
-        }
     }
     // Fallback: cmdList/cmdIndex dispatch.
     const CmdEntry* e = findCmd(cmdNo);
