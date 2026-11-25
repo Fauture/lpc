@@ -6136,6 +6136,28 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
                     }
                 }
             }
+            if (!ok) {
+                // 原版 vm_restoreMixedString (0x8107ecc) 的 default 分支:
+                // 首个非空白字符不是任何已知 token 时 -> vm_pushUndefined()
+                // 且返回 1 (解析"成功")。空串即走这条路, 所以
+                //   restore_value("")  == undefined
+                // 而 (mapping)undefined == 空 mapping。
+                // 旧实现解析失败时原样返回输入串, 于是 restore_value("")
+                // 得到 ""，调用方的 (mapping)"" 报
+                //   "Can not cast the type to mapping."
+                // rpcd 的 POST/POST_DIRECT (method 1/3) 的 stat_str 本来就是
+                // 空 (do_rpc_broadcast 只在 method 0/2 里 save_string(stat)),
+                // 因此这类 RPC 每一条都在 recv_rpc_call 被打断。
+                size_t i = 0;
+                while (i < rvs.size() && static_cast<unsigned char>(rvs[i]) <= ' ')
+                    ++i;
+                const bool known =
+                    i < rvs.size() &&
+                    (rvs[i] == '"' || rvs[i] == '(' || rvs[i] == '-' ||
+                     rvs[i] == ':' || rvs[i] == '@' || rvs[i] == 'O' ||
+                     rvs[i] == 'V' || (rvs[i] >= '0' && rvs[i] <= '9'));
+                if (!known) return Value{};   // undefined
+            }
             if (ok) return out;
         }
         return args.empty() ? make_int(0) : args[0];
