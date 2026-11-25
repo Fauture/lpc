@@ -257,6 +257,8 @@ void vmFlushPendingFrees(const void* proc) {
             // 时成员数组还引用着本体, 玩家 guard_set 留僵尸 -> 守护打一场
             // 战斗就消失)。
             obj->markDestructed();
+            // 对象的定时器一并作废（否则到点回调作用在已析构对象上）
+            vmcore::timerCancelByOwner(obj);
             // The object leaves the registry here: every ObjectValue that
             // carries its flag stops being an object (the original driver's
             // reference invalidation on a real free).
@@ -964,6 +966,10 @@ bool destructObjectByKey(const std::string& keyIn) {
                         // 原版链尾 (0x80f9284): clear 0x2000 (由析构收尾语义
                         // 隐含) + vm_destructObject 真释放 = 0x8000("freed")
                         // + 摘注册表。is_object 从这里开始判假。
+                        // 对象的定时器一并作废: 否则 timer 到点回调作用在已
+                        // 析构对象上 (this_object() 无效) -> "Object is not
+                        // found." (unauthed_agent 的 to_be_disconnect(60))。
+                        vmcore::timerCancelByOwner(o);
                         o->markDestructed();
                         o->closeReferences();
                         reg2.unregisterObject(okey);

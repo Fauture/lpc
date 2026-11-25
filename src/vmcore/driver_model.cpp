@@ -2,6 +2,7 @@
 // vmcore/driver_model.cpp — env 模型 + 定时器注册表 (driver_model.h 的实现)
 // ===========================================================================
 #include <algorithm>
+#include <iostream>
 #include <unordered_map>
 
 #include "driver_model.h"
@@ -143,6 +144,33 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e) {
         if (*it == e) { g_timerList.erase(it); break; }
     auto it = g_timerById.find(e->id);
     if (it != g_timerById.end() && it->second == e) g_timerById.erase(it);
+}
+
+// 对象析构时作废它的全部定时器。
+// 原版 vm_destructObject (0x80b1894) 对仍被闭包引用的对象只打
+// flags|=0x8000 (延迟释放), timer 到点照跑; 我们的对象是 shared_ptr,
+// 析构即 alive_=false, timer 到点时 this_object() 已无效 —— 典型现场:
+//   unauthed_agent::create -> to_be_disconnect(60) 注册 (: disconnect :)
+//   连接立刻断开 -> connection_lost 里 destruct_object(this_object())
+//   60s 后 timer 触发 -> disconnect 里 this_object()->comm_connection_disconnect()
+//   -> "Object is not found."
+// 对象都没了, 它的定时器自然该作废 (原版语义里那些 timer 随对象释放而消失)。
+int timerCancelByOwner(const VmObject* owner) {
+    if (!owner) return 0;
+    std::lock_guard<std::mutex> lk(g_timerMtx);
+    int n = 0;
+    for (auto it = g_timerList.begin(); it != g_timerList.end();) {
+        const auto& e = *it;
+        if (e->owner == owner) {
+            if (e->cancelled) *e->cancelled = true;
+            g_timerById.erase(e->id);
+            it = g_timerList.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    return n;
 }
 
 int64_t timerSchedule(const std::string& name, const std::string& callback,

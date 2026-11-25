@@ -50,6 +50,10 @@ struct TimerEntry {
 std::shared_ptr<TimerEntry> timerFindByName(const std::string& name);
 std::shared_ptr<TimerEntry> timerFindById(int64_t id);
 void timerUnregister(const std::shared_ptr<TimerEntry>& e);
+// 对象析构时作废它名下所有定时器 (原版对象释放会带走自己的 timer;
+// 否则 timer 到点回调作用在已析构对象上 -> "Object is not found.")。
+// 返回被作废的条数。
+int timerCancelByOwner(const VmObject* owner);
 // Register + schedule the callback (a scheduler process firing at trigger
 // time).  A NAMED re-arm for the same owner replaces the older pending entry.
 // `efunCb` carries an efun-closure callback (see TimerEntry::efunCb).
