@@ -124,9 +124,13 @@ public:
     // Delayed one-shot process (set_timer's fire).  `cancelled` is the
     // timer registry's flag: delete_timer sets it and the due-timer scan
     // drops the entry without running it.
+    // `onFire` 在到期扫描把它从 timers 里取出时立即调用 —— set_timer 用它把
+    // 注册表条目一并摘掉 (原版 vm_executeAndFreeTimer: 回调进程启动即
+    // vm_removeTimerFromTimerList, 一次性 timer 绝不留在表里)。
     VmPcb* spawnDelayed(VmObject* obj, const std::string& entry,
                         std::vector<Value> args, int64_t atMs,
-                        std::shared_ptr<std::atomic<bool>> cancelled = nullptr);
+                        std::shared_ptr<std::atomic<bool>> cancelled = nullptr,
+                        std::function<void()> onFire = {});
     // Delayed EFUN-closure process (set_timer with (: call_other, ob, "fn" :)
     // etc.): the fire applies the closure's efun on its own process — the
     // same dispatch as spawnEfunThread.  Scheduling it as a plain named entry
@@ -136,7 +140,8 @@ public:
     VmPcb* spawnDelayedEfun(VmObject* obj,
                             const lpc::Ref<struct ClosureValue>& cl,
                             int64_t atMs,
-                            std::shared_ptr<std::atomic<bool>> cancelled = nullptr);
+                            std::shared_ptr<std::atomic<bool>> cancelled = nullptr,
+                            std::function<void()> onFire = {});
     // Construction process (load_object / clone_object / master boot): the
     // plan is prebuilt (buildConstructPlan); runProcess drives its steps,
     // parks mid-step like any chain, and on completion marks the object

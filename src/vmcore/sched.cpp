@@ -72,6 +72,7 @@ struct Scheduler::Impl {
     struct TimerEntry2 {
         std::shared_ptr<VmPcb> p;
         std::shared_ptr<std::atomic<bool>> cancelled;
+        std::function<void()> onFire;   // set_timer: 到期即摘注册表条目
     };
 
     std::mutex mtx;
@@ -281,7 +282,8 @@ VmPcb* Scheduler::spawnTelnet(VmObject* obj, const std::string& entry,
 
 VmPcb* Scheduler::spawnDelayed(VmObject* obj, const std::string& entry,
                                std::vector<Value> args, int64_t atMs,
-                               std::shared_ptr<std::atomic<bool>> cancelled) {
+                               std::shared_ptr<std::atomic<bool>> cancelled,
+                               std::function<void()> onFire) {
     auto p = makePcb(*impl_, obj, entry, std::move(args));
     // 原版 max_threads = 同时**运行**的进程上限: 睡眠中的 call_out 不占 tid,
     // tid 在任务真正被调度运行时才租借 (下面的 ready 取用路径对 tid<0 就是
@@ -296,7 +298,8 @@ VmPcb* Scheduler::spawnDelayed(VmObject* obj, const std::string& entry,
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
         p->state = VmPcb::State::Parked;
-        impl_->timers.emplace(atMs, Impl::TimerEntry2{p, std::move(cancelled)});
+        impl_->timers.emplace(atMs, Impl::TimerEntry2{p, std::move(cancelled),
+                                                      std::move(onFire)});
     }
     impl_->cv.notify_one();
     return p.get();
@@ -305,7 +308,8 @@ VmPcb* Scheduler::spawnDelayed(VmObject* obj, const std::string& entry,
 VmPcb* Scheduler::spawnDelayedEfun(VmObject* obj,
                                    const lpc::Ref<struct ClosureValue>& cl,
                                    int64_t atMs,
-                                   std::shared_ptr<std::atomic<bool>> cancelled) {
+                                   std::shared_ptr<std::atomic<bool>> cancelled,
+                                   std::function<void()> onFire) {
     if (!cl) return nullptr;
     auto p = makePcb(*impl_, obj, "<efun-timer>", {});
     // 同 spawnDelayed: 睡眠中的 efun 定时不占池 tid, 运行时再租借。
@@ -317,7 +321,8 @@ VmPcb* Scheduler::spawnDelayedEfun(VmObject* obj,
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
         p->state = VmPcb::State::Parked;
-        impl_->timers.emplace(atMs, Impl::TimerEntry2{p, std::move(cancelled)});
+        impl_->timers.emplace(atMs, Impl::TimerEntry2{p, std::move(cancelled),
+                                                      std::move(onFire)});
     }
     impl_->cv.notify_one();
     return p.get();
@@ -1260,11 +1265,56 @@ static void runProcess(Scheduler::Impl& im, const std::shared_ptr<VmPcb>& p) {
 // ---------------------------------------------------------------------------
 // run — the driver's main loop.
 // ---------------------------------------------------------------------------
+// [memlog] 低频内存快照 (LPCVM_MEMLOG=1) —— 定位 gs 长跑泄漏。
+// 进程私有字节 + 各类 live 对象计数一起打, 一次采样就能看出是哪一类在单调增长。
+static void memLogTick() {
+    static const bool on = (getenv("LPCVM_MEMLOG") != nullptr);
+    if (!on) return;
+    static int64_t lastMs = 0;
+    const int64_t now = lpc::msSinceStart();
+    if (now - lastMs < 60000) return;
+    lastMs = now;
+    // K32GetProcessMemoryInfo 动态取 (不引入 psapi.lib 链接依赖)。
+    struct PmcMini {
+        unsigned long cb;
+        unsigned long PageFaultCount;
+        size_t PeakWorkingSetSize, WorkingSetSize;
+        size_t QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage;
+        size_t QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage;
+        size_t PagefileUsage, PeakPagefileUsage;
+        size_t PrivateUsage;
+    };
+    typedef int (WINAPI* PfnGpmi)(HANDLE, PmcMini*, unsigned long);
+    static PfnGpmi pfn = []() -> PfnGpmi {
+        HMODULE k = GetModuleHandleW(L"kernel32.dll");
+        return k ? reinterpret_cast<PfnGpmi>(
+                       GetProcAddress(k, "K32GetProcessMemoryInfo"))
+                 : nullptr;
+    }();
+    size_t wsKB = 0, privKB = 0;
+    if (pfn) {
+        PmcMini pmc{};
+        pmc.cb = sizeof(pmc);
+        if (pfn(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+            wsKB = pmc.WorkingSetSize / 1024;
+            privKB = pmc.PrivateUsage / 1024;
+        }
+    }
+    std::cerr << "[mem] t=" << now / 1000 << "s ws=" << wsKB << "KB priv="
+              << privKB << "KB objs=" << Registry::instance().allObjects().size()
+              << " timers=" << timerLiveCount()
+              << " mapE=" << lpc::g_liveMapEntries.load()
+              << " mapB=" << lpc::g_liveMapBuckets.load()
+              << " | " << timerCensus() << "\n";
+    std::cerr.flush();
+}
+
 void Scheduler::run() {
     impl_->schedThreadId = std::this_thread::get_id();
     while (true) {
         // [net-pump] 每次迭代先泵网络事件 (钩子内部旗标快路径, 空队列 ~2ns)。
         if (g_netPumpHook) g_netPumpHook();
+        memLogTick();   // [memlog] 60s 节流, 未开 LPCVM_MEMLOG 时只读一个 static bool
         lpc::liveness().schedIters.fetch_add(1, std::memory_order_relaxed);
         if (g_ctraceOn && !impl_->runSince.empty()) {
             const int64_t now = impl_->nowMs();
@@ -1417,6 +1467,29 @@ void Scheduler::run() {
         {
             std::lock_guard<std::mutex> lk(impl_->mtx);
             const int64_t now = impl_->nowMs();
+            {
+                static const bool ml = (getenv("LPCVM_MEMLOG") != nullptr);
+                static int64_t lastT = 0;
+                if (ml && now - lastT > 60000) {
+                    lastT = now;
+                    int withFire = 0;
+                    for (const auto& kv : impl_->timers)
+                        if (kv.second.onFire) ++withFire;
+                    std::cerr << "[timers2] now=" << now
+                              << "ms queued=" << impl_->timers.size()
+                              << " withFire=" << withFire
+                              << " beginIn="
+                              << (impl_->timers.empty()
+                                      ? 0
+                                      : impl_->timers.begin()->first - now)
+                              << "ms endIn="
+                              << (impl_->timers.empty()
+                                      ? 0
+                                      : impl_->timers.rbegin()->first - now)
+                              << "ms\n";
+                    std::cerr.flush();
+                }
+            }
             // Move due timers to ready (cancel / done / eventWoken / inReady
             // rules ported; timed waits resume with -202 / -501 and are
             // dropped from their wait maps RIGHT HERE).
@@ -1425,6 +1498,12 @@ void Scheduler::run() {
                 auto te = it->second;
                 impl_->timers.erase(it);
                 auto tp = te.p;
+                // 原版 vm_executeAndFreeTimer (0x80acca8): 回调进程启动即
+                // vm_removeTimerFromTimerList —— 一次性 timer 不在表里留存。
+                // 之前从不摘除, gs 每分钟新增 ~105 个 set_timer, 5 小时堆到
+                // 3 万+ 条目 (LPCVM_MEMLOG: timers 4802->5326/5min), 且
+                // timerFindByName / timerRemainingSecs 变成 O(n) 遍历。
+                if (te.onFire) { lpc::vmcore::timerNoteFire(); te.onFire(); }
                 if (te.cancelled && *te.cancelled) continue;
                 if (!tp || tp->eventWoken || tp->state == VmPcb::State::Done ||
                     tp->inReady) {

@@ -117,6 +117,9 @@ std::mutex g_timerMtx;
 std::vector<std::shared_ptr<TimerEntry>> g_timerList;
 std::unordered_map<int64_t, std::shared_ptr<TimerEntry>> g_timerById;
 std::atomic<int64_t> g_timerSeq{1};
+std::atomic<int64_t> g_timerSchedCount{0};   // timerSchedule 插入
+std::atomic<int64_t> g_timerUnregCount{0};   // timerUnregister 实际删除
+std::atomic<int64_t> g_timerFireCount{0};    // 到期 onFire 回调
 
 int64_t steadyMsNow() {
     // The SCHEDULER's shared clock (see efun_adapt steadyMs): timer fire
@@ -141,7 +144,7 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e) {
     std::lock_guard<std::mutex> lk(g_timerMtx);
     if (e->cancelled) *e->cancelled = true;   // cancels the scheduled fire
     for (auto it = g_timerList.begin(); it != g_timerList.end(); ++it)
-        if (*it == e) { g_timerList.erase(it); break; }
+        if (*it == e) { g_timerList.erase(it); g_timerUnregCount.fetch_add(1, std::memory_order_relaxed); break; }
     auto it = g_timerById.find(e->id);
     if (it != g_timerById.end() && it->second == e) g_timerById.erase(it);
 }
@@ -155,6 +158,48 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e) {
 //   60s 后 timer 触发 -> disconnect 里 this_object()->comm_connection_disconnect()
 //   -> "Object is not found."
 // 对象都没了, 它的定时器自然该作废 (原版语义里那些 timer 随对象释放而消失)。
+void timerNoteFire() { g_timerFireCount.fetch_add(1, std::memory_order_relaxed); }
+
+std::string timerCensus() {
+    std::lock_guard<std::mutex> lk(g_timerMtx);
+    std::unordered_map<std::string, int> owners;
+    int noname = 0;
+    int64_t maxAt = 0;
+    const TimerEntry* worst = nullptr;
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    for (const auto& e : g_timerList) {
+        if (e->name.empty()) ++noname;
+        owners[e->owner ? e->owner->key() : std::string("<null>")]++;
+        if (e->triggerAt > maxAt) { maxAt = e->triggerAt; worst = e.get(); }
+    }
+    std::vector<std::pair<int, std::string>> top;
+    top.reserve(owners.size());
+    for (auto& kv : owners) top.emplace_back(kv.second, kv.first);
+    std::sort(top.begin(), top.end(),
+              [](const std::pair<int, std::string>& a,
+                 const std::pair<int, std::string>& b) { return a.first > b.first; });
+    std::string out = "sched=" + std::to_string(g_timerSchedCount.load()) +
+                      " unreg=" + std::to_string(g_timerUnregCount.load()) +
+                      " fire=" + std::to_string(g_timerFireCount.load()) +
+                      " total=" + std::to_string(g_timerList.size()) +
+                      " noname=" + std::to_string(noname) +
+                      " span=" + std::to_string(maxAt > now ? maxAt - now : 0) + "s top=";
+    for (size_t i = 0; i < top.size() && i < 5; ++i) {
+        if (i) out += ",";
+        out += top[i].second + ":" + std::to_string(top[i].first);
+    }
+    if (worst)
+        out += " worst=" +
+               (worst->owner ? worst->owner->key() : std::string("<null>")) +
+               "::" + worst->callback + "(" + std::to_string(worst->timeoutSecs) + "s)";
+    return out;
+}
+
+size_t timerLiveCount() {
+    std::lock_guard<std::mutex> lk(g_timerMtx);
+    return g_timerList.size();
+}
+
 int timerCancelByOwner(const VmObject* owner) {
     if (!owner) return 0;
     std::lock_guard<std::mutex> lk(g_timerMtx);
@@ -187,6 +232,20 @@ int64_t timerSchedule(const std::string& name, const std::string& callback,
     entry->triggerAt = static_cast<int64_t>(std::time(nullptr)) + timeoutSecs;
     entry->cancelled = std::make_shared<std::atomic<bool>>(false);
     {
+        // 异常大的 timeout 直接抓元凶 (owner + 回调名): timeout 应该是相对秒数,
+        // 若混进了绝对时间戳 (≈1.79e9) 就会排到 57 年后, 永不触发。
+        static const bool tb = (getenv("LPCVM_MEMLOG") != nullptr);
+        static std::atomic<int> tbN{0};
+        if (tb && timeoutSecs > 86400) {
+            const int c = tbN.fetch_add(1);
+            if (c < 12)
+                std::cerr << "[tbig] timeout=" << timeoutSecs
+                          << "s name='" << name << "' fn=" << callback
+                          << " owner=" << (owner ? owner->key() : "<null>")
+                          << "\n";
+        }
+    }
+    {
         std::lock_guard<std::mutex> lk(g_timerMtx);
         // Re-arming a NAMED timer for the SAME object cancels the older
         // pending one: the game re-arms repeating timers from INSIDE their
@@ -214,17 +273,21 @@ int64_t timerSchedule(const std::string& name, const std::string& callback,
             });
         g_timerList.insert(it, entry);
         g_timerById[entry->id] = entry;
+        g_timerSchedCount.fetch_add(1, std::memory_order_relaxed);
     }
     // Schedule the fire as a scheduler process at the absolute time; the
     // cancelled flag lets delete_timer drop it before it runs.
     int64_t atMs = steadyMsNow() + timeoutSecs * 1000;
     if (atMs < steadyMsNow()) atMs = steadyMsNow() + 1000;   // wrapped: 1s
+    // 到期即摘注册表条目 (原版 vm_executeAndFreeTimer 0x80acca8: 回调进程
+    // 启动即 vm_removeTimerFromTimerList) —— 一次性 timer 绝不留表。
+    auto onFire = [entry]() { timerUnregister(entry); };
     if (efunCb)
         Scheduler::instance().spawnDelayedEfun(owner, efunCb, atMs,
-                                               entry->cancelled);
+                                               entry->cancelled, onFire);
     else
         Scheduler::instance().spawnDelayed(owner, callback, std::move(boundArgs),
-                                           atMs, entry->cancelled);
+                                           atMs, entry->cancelled, onFire);
     return entry->id;
 }
 

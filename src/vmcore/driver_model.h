@@ -54,6 +54,13 @@ void timerUnregister(const std::shared_ptr<TimerEntry>& e);
 // 否则 timer 到点回调作用在已析构对象上 -> "Object is not found.")。
 // 返回被作废的条数。
 int timerCancelByOwner(const VmObject* owner);
+// 当前注册表里的定时器条数 (LPCVM_MEMLOG 内存快照用)。
+size_t timerLiveCount();
+// 定时器表构成快照 (LPCVM_MEMLOG): total / 无名条目数 / owner top5 /
+// 最晚到期距今秒数 —— 定位"谁在不断注册永不触发的一次性 timer"。
+std::string timerCensus();
+// onFire 实际调用计数 (诊断用)。
+void timerNoteFire();
 // Register + schedule the callback (a scheduler process firing at trigger
 // time).  A NAMED re-arm for the same owner replaces the older pending entry.
 // `efunCb` carries an efun-closure callback (see TimerEntry::efunCb).
