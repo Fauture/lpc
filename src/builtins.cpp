@@ -2683,6 +2683,87 @@ Value vgRenderGlyph(const std::vector<Value>& args) {
     return m;
 }
 
+// verigen_render_chars(chars[], bg, fg, w, h, distortion) -> RGB565 buffer(w*h*2)
+//   每字独立渲染到 singleW=(w/n)&~3 的子格 (总画布先填 bg, 字按 alpha 与 fg
+//   混合后上色), 居中贴入; 非法元素/光栅失败 -> int 0 (原版 0x8177597)。
+//   distortion (0..1] 只是字号缩放 (原版 GL 扭曲系数)。
+Value vgRenderChars(const std::vector<Value>& args) {
+    if (args.size() > 6)
+        lpc::vmcore::vmError("Too many arguments(" + std::to_string(args.size()) +
+                             ") to verigen_render_chars.\n");
+    if (args.empty() || args[0].index() != 5)
+        lpc::vmcore::vmError("the total of chars taken is less than 1.");
+    auto chars = lpc::vget<Ref<ArrayValue>>(args[0]);
+    const int n = chars ? static_cast<int>(chars->items.size()) : 0;
+    unsigned int bg = 0, fg = 0xFFFFFF;
+    if (args.size() > 1 && args[1].index() == 2) bg = static_cast<unsigned int>(as_int(args[1]));
+    if (args.size() > 2 && args[2].index() == 2) fg = static_cast<unsigned int>(as_int(args[2]));
+    int w = 128, h = 128;
+    if (args.size() > 3) {
+        if (args.size() == 4)
+            lpc::vmcore::vmError(
+                "Missed height when width is specified for verigen_render.\n");
+        if (args[3].index() == 2) w = static_cast<int>(as_int(args[3])) & ~3;
+        if (args.size() > 4 && args[4].index() == 2)
+            h = static_cast<int>(as_int(args[4])) & ~3;
+    }
+    double distortion = 1.0;
+    if (args.size() > 5) {
+        if (args[5].index() == 3) distortion = lpc::vget<double>(args[5]);
+        else if (args[5].index() == 2) distortion = static_cast<double>(as_int(args[5]));
+        if (distortion <= 0.0) distortion = 1.0;
+    }
+    if (w <= 0 || w > 8192 || h <= 0 || h > 8192) {
+        w = 128;
+        h = 128;
+    }
+    const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h);
+    std::vector<unsigned short> out(npix, vgColor565(bg));
+    int singleW = (w / (n > 0 ? n : 1)) & ~3;
+    if (singleW <= 0) singleW = 4;
+    const unsigned int cr = (fg >> 16) & 0xFF;
+    const unsigned int cg = (fg >> 8) & 0xFF;
+    const unsigned int cb = fg & 0xFF;
+    const unsigned int br = (bg >> 16) & 0xFF;
+    const unsigned int bgc = (bg >> 8) & 0xFF;
+    const unsigned int bb = bg & 0xFF;
+    const int fsize = static_cast<int>(h * ((distortion > 0.0 && distortion <= 1.0)
+                                                ? distortion
+                                                : 1.0));
+    for (int i = 0; i < n && i * singleW + singleW <= w; ++i) {
+        const Value& pv = chars->items[static_cast<size_t>(i)];
+        const std::string* s = nullptr;
+        if (pv.index() == 4) s = &lpc::vget<SharedString>(pv).str();
+        else if (pv.index() == 10) s = &lpc::vget<Ref<BufferValue>>(pv)->data;
+        if (!s) return make_int(0);            // 原版 0x8177597 失败面
+        int gw = 0, gh = 0;
+        std::vector<unsigned char> glyph = vgRasterUtf8(*s, fsize, 0, &gw, &gh);
+        if (glyph.empty()) return make_int(0);
+        int ox = (singleW - gw) / 2;
+        int oy = (h - gh) / 2;
+        if (ox < 0) ox = 0;
+        if (oy < 0) oy = 0;
+        unsigned short* cell = out.data() + static_cast<size_t>(i) * singleW;
+        for (int y = 0; y < gh && oy + y < h; ++y) {
+            for (int x = 0; x < gw && ox + x < singleW; ++x) {
+                const unsigned char v = glyph[static_cast<size_t>(y) * gw + x];
+                if (!v) continue;
+                const double a = v / 255.0;
+                const unsigned int rr =
+                    static_cast<unsigned int>(a * cr + (1.0 - a) * br + 0.5) & 0xFF;
+                const unsigned int gg =
+                    static_cast<unsigned int>(a * cg + (1.0 - a) * bgc + 0.5) & 0xFF;
+                const unsigned int bv =
+                    static_cast<unsigned int>(a * cb + (1.0 - a) * bb + 0.5) & 0xFF;
+                const unsigned int pix = (rr << 16) | (gg << 8) | bv;
+                cell[static_cast<size_t>(oy + y) * w + (ox + x)] = vgColor565(pix);
+            }
+        }
+    }
+    return make_buffer(std::string(reinterpret_cast<const char*>(out.data()),
+                                   npix * sizeof(unsigned short)));
+}
+
 }  // namespace
 
 Value call_builtin(Interpreter*, const std::string& name, const std::vector<Value>& args) {
@@ -8349,16 +8430,12 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(1);
     }
     if (eid == CID("verigen_render_chars")) {
-        // vm_f_verigen_render_chars (0x8176700): render chars into a 16bpp
-        // picture buffer (verify_coded's generate_pic_by_str calls it with
-        // (font_array, background, foreground, width, height, 0.8) and feeds
-        // the result to sizeof()/lzss_compress()/slice).  No real rendering:
-        // return a zeroed width*height*2 buffer so that pipeline stays valid.
-        int64_t w = (args.size() >= 4) ? as_int(args[3]) : 100;
-        int64_t h = (args.size() >= 5) ? as_int(args[4]) : 30;
-        if (w <= 0 || w > 4096) w = 100;
-        if (h <= 0 || h > 4096) h = 30;
-        return make_buffer(std::string(static_cast<size_t>(w * h * 2), '\0'));
+        // vm_f_verigen_render_chars (0x8176700/0x8177320): 英文字符验证码的
+        // 唯一入口 (verify_coded.generate_pic_by_str 用
+        //  (explode(str,""), background=0xFFFFFF, foreground=0, w, h, 0.8))。
+        // 旧桩返回全 0 buffer -> 客户端整张纯黑; 中文/图库那条走的是
+        // render_glyph, 与这里无关。
+        return vgRenderChars(args);
     }
     if (eid == CID("verigen_render")) {
         // vm_f_verigen_render: render text into a 16bpp picture buffer
