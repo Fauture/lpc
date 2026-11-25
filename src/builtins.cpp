@@ -6545,12 +6545,37 @@ Value call_builtin(Interpreter*, const std::string& name, const std::vector<Valu
         return make_int(-1);
     }
     if (eid == CID("random_from_m_to_n")) {
-        int64_t m = args.size() > 0 ? as_int(args[0]) : 0;
-        int64_t n = args.size() > 1 ? as_int(args[1]) : 0;
-        if (m > n) std::swap(m, n);
-        int64_t range = n - m + 1;
-        if (range <= 0) return make_int(m);
-        return make_int(m + sharedRand31() % range);
+        // vm_f_random_from_m_to_n 0x807c79c (IDA):
+        //   M = arg0 (总数), N = arg1 (取几个), 返回长度 N 的**数组** ——
+        //   把 0..M-1 洗牌后取前 N 个下标。mudlib 到处这么用:
+        //     poses = random_from_m_to_n(sizeof(src), n);  src[poses[i]]
+        //   旧实现返回单个 int, 于是 poses[i] 必报
+        //   "Bad type(integer) to index." @ random_sub_select。
+        const int64_t M = args.size() > 0 ? as_int(args[0]) : 0;
+        const int64_t N = args.size() > 1 ? as_int(args[1]) : 0;
+        if (args.size() > 2)
+            lpc::vmcore::vmError("Too many arguments(" +
+                                 std::to_string(args.size()) +
+                                 ") to random_from_m_to_n.\n");
+        if (static_cast<uint64_t>(M) > 0xFFF || static_cast<uint64_t>(N) > 0xFFF)
+            lpc::vmcore::vmError("Parameters must below 4095");
+        if (M < N)
+            lpc::vmcore::vmError("N(" + std::to_string(N) +
+                                 ") must be less than M(" + std::to_string(M) +
+                                 ")");
+        std::vector<int64_t> buf(static_cast<size_t>(M));
+        for (int64_t i = 0; i < M; ++i) buf[static_cast<size_t>(i)] = i;
+        auto out = lpc::Ref<ArrayValue>(new ArrayValue());
+        out->items.reserve(static_cast<size_t>(N));
+        for (int64_t j = 0; j < N; ++j) {
+            const int64_t span = M - j;
+            const int64_t idx =
+                j + (span > 0 ? (static_cast<int64_t>(sharedRand31() % 0x7FFFFFFF) % span)
+                              : 0);
+            out->items.push_back(make_int(buf[static_cast<size_t>(idx)]));
+            std::swap(buf[static_cast<size_t>(j)], buf[static_cast<size_t>(idx)]);
+        }
+        return out;
     }
     if (eid == CID("get_pwd")) {
         // vm_f_get_pwd: current working directory (data root).
