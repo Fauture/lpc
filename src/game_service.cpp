@@ -9904,49 +9904,77 @@ void handle_vm_msgLAuthAllProtect(GameClient& cl, const uint8_t* body, size_t le
 
 void handle_vm_cmdIntersvrRpcCall(GameClient& cl, const uint8_t* body, size_t len)
 {
+    // 原版 vm_cmdIntersvrRpcCall 0x80611f4, 逐字段 1:1:
+    //   cookie(4B BE) method(2B BE) owner(1B len) server(1B len)
+    //   ob(1B len) f(1B len) stat/args(2B BE len) args_str(4B BE len)
+    // 派发门 (0x8061360..0x806142b, 按 args 段剩余字节 rem):
+    //   rem <= 1 → args_str="" 照常派发 (0x806136f)
+    //   rem 2..3 → 长度域不完整, 不派发 (0x8061409)
+    //   rem >= 4 → argsLen > rem-4 不派发 (0x8061412), 否则派发
+    // 旧实现把 rem<=1 也 return 掉了 → 无 args 的 RPC (如 rpcd set 的短包) 被整条丢弃。
     size_t off = 0;
-    if (off + 6 > len) return;
-    int32_t cookie = rd32sbe(body, off);
+    auto need = [&](size_t n) { return off + n <= len; };
+    if (!need(6)) return;
+    const int32_t cookie = rd32sbe(body, off);
     off += 4;
-    uint16_t method = rd16be(body, off);
+    const uint16_t method = rd16be(body, off);
     off += 2;
-    if (off + 1 > len) return;
-    uint8_t ownerLen = rd8s(body, off);
-    off += 1;
-    if (off + ownerLen > len) return;
-    std::string owner((const char*)body + off, ownerLen);
-    off += ownerLen;
-    if (off + 1 > len) return;
-    uint8_t serverLen = rd8s(body, off);
-    off += 1;
-    if (off + serverLen > len) return;
-    std::string server((const char*)body + off, serverLen);
-    off += serverLen;
-    if (off + 1 > len) return;
-    uint8_t obLen = rd8s(body, off);
-    off += 1;
-    if (off + obLen > len) return;
-    std::string ob((const char*)body + off, obLen);
-    off += obLen;
-    if (off + 1 > len) return;
-    uint8_t fLen = rd8s(body, off);
-    off += 1;
-    if (off + fLen > len) return;
-    std::string f((const char*)body + off, fLen);
-    off += fLen;
-    if (off + 2 > len) return;
-    uint16_t data1Len = rd16be(body, off);
+
+    // 1B 长度域的四段 (原版 memcpy 进 256B 缓冲后按 NUL 传 GAME_IA_STR;
+    // 1B 长度 ≤255 不会触发原版缓冲上限, 这里直接按长度构造, 等价)。
+    auto takeStr = [&](std::string& out) -> bool {
+        if (!need(1)) return false;
+        const uint8_t n = rd8s(body, off);
+        off += 1;
+        if (!need(n)) return false;
+        out.assign(reinterpret_cast<const char*>(body) + off, n);
+        off += n;
+        return true;
+    };
+    std::string owner, server, ob, f;
+    if (!takeStr(owner)) return;
+    if (!takeStr(server)) return;
+    if (!takeStr(ob)) return;
+    if (!takeStr(f)) return;
+
+    // stat (data1): 2B BE 长度, 数据全长直传 (GAME_IA_STRN)。
+    // 0x8061337: 剩余 <=1 时原版 v27<0 → 不派发, 与这里一致。
+    if (!need(2)) return;
+    const uint16_t statLen = rd16be(body, off);
     off += 2;
-    if (off + data1Len > len) return;
-    std::string data1((const char*)body + off, data1Len);
-    off += data1Len;
-    if (off + 4 > len) return;
-    int32_t data2Len = rd32sbe(body, off);
-    off += 4;
-    if (off + data2Len > len) return;
-    std::string data2((const char*)body + off, data2Len);
-    off += data2Len;
-    applyLpc("cmd_intersvr_rpc_call", {make_int(cl.clientNo), make_int((int)cookie), make_int((int)method), make_string(owner.data(), owner.size()), make_string(server.data(), server.size()), make_string(ob.data(), ob.size()), make_string(f.data(), f.size()), make_string(data1.data(), data1.size()), make_string(data2.data(), data2.size())});
+    if (!need(statLen)) return;
+    const uint8_t* statPtr = body + off;
+    off += statLen;
+
+    // args_str (data2): 4B BE 长度 + 原版派发门。
+    const int64_t rem = static_cast<int64_t>(len) - static_cast<int64_t>(off);
+    if (rem <= 1) {
+        applyLpc("cmd_intersvr_rpc_call",
+                 {make_int(cl.clientNo), make_int((int)cookie),
+                  make_int((int)method),
+                  make_string(owner.data(), owner.size()),
+                  make_string(server.data(), server.size()),
+                  make_string(ob.data(), ob.size()),
+                  make_string(f.data(), f.size()),
+                  make_string(reinterpret_cast<const char*>(statPtr), statLen),
+                  make_string("", 0)});
+        return;
+    }
+    if (rem <= 3) return;             // 长度域不完整 → 不派发
+    int32_t argsLen = rd32sbe(body, off);
+    if (argsLen > rem - 4) return;    // 长度超余量 → 不派发
+    if (argsLen < 0) argsLen = 0;     // 原版负长度直接进 STRN; 这里钳 0 防越界
+    const uint8_t* argsPtr = body + off + 4;
+    applyLpc("cmd_intersvr_rpc_call",
+             {make_int(cl.clientNo), make_int((int)cookie),
+              make_int((int)method),
+              make_string(owner.data(), owner.size()),
+              make_string(server.data(), server.size()),
+              make_string(ob.data(), ob.size()),
+              make_string(f.data(), f.size()),
+              make_string(reinterpret_cast<const char*>(statPtr), statLen),
+              make_string(reinterpret_cast<const char*>(argsPtr),
+                          static_cast<size_t>(argsLen))});
 }
 
 void handle_vm_cmdLAgentConnectServer(GameClient& cl, const uint8_t* body, size_t len)
