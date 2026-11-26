@@ -1464,6 +1464,12 @@ void Scheduler::run() {
             }
         }
         std::shared_ptr<VmPcb> p;
+        // 原版 vm_executeAndFreeTimer 0x80acca8: set_timer fire 的回调进程
+        // 在到期扫描点同步执行 (vm_doActions 内嵌 10000 ticks), 不经 ready
+        // 队列 —— 此前排到 boot construct 风暴后面, master 的
+        // set_timer(0,...,"update_today_zero_time") 延迟 70+ 秒, 窗口期内
+        // _today_zero_time 恒 0, 全部 per_day scheme 固化成过期时间。
+        std::vector<std::shared_ptr<VmPcb>> syncFires;
         {
             std::lock_guard<std::mutex> lk(impl_->mtx);
             const int64_t now = impl_->nowMs();
@@ -1503,8 +1509,27 @@ void Scheduler::run() {
                 // 之前从不摘除, gs 每分钟新增 ~105 个 set_timer, 5 小时堆到
                 // 3 万+ 条目 (LPCVM_MEMLOG: timers 4802->5326/5min), 且
                 // timerFindByName / timerRemainingSecs 变成 O(n) 遍历。
-                if (te.onFire) { lpc::vmcore::timerNoteFire(); te.onFire(); }
+                // ★先判取消再摘表: onFire=timerUnregister 会把 cancelled 置
+                // true, 若先 onFire 再检查, 每个 fire 都被自己的摘表动作
+                // 拦掉 —— timer 摘了(内存不涨)但回调一次都不执行
+                // (update_today_zero_time / topd 刷新 / save 链全灭)。
                 if (te.cancelled && *te.cancelled) continue;
+                if (te.onFire) {
+                    lpc::vmcore::timerNoteFire();
+                    te.onFire();
+                    if (!tp || tp->eventWoken ||
+                        tp->state == VmPcb::State::Done || tp->inReady)
+                        continue;
+                    if (tp->tid < 0) {
+                        tp->tid = impl_->tidPool.alloc();
+                        if (tp->tid < 0) {
+                            impl_->tidStarved.push_back(tp);
+                            continue;
+                        }
+                    }
+                    syncFires.push_back(tp);
+                    continue;
+                }
                 if (!tp || tp->eventWoken || tp->state == VmPcb::State::Done ||
                     tp->inReady) {
                     // A DUE timer whose pcb gets skipped here NEVER wakes
@@ -1587,6 +1612,20 @@ void Scheduler::run() {
                     break;
                 }
             }
+        }
+        // 原版 vm_executeAndFreeTimer: fire 进程在扫描点同步执行
+        // (vm_doActions 内嵌 10000 ticks); park 后照常留在调度体系等唤醒。
+        for (auto& sp : syncFires) {
+            static const bool ml = (getenv("LPCVM_MEMLOG") != nullptr);
+            static int fcnt = 0;
+            if (ml && fcnt < 30) {
+                ++fcnt;
+                std::cerr << "[fire] t=" << msSinceStart() << "ms entry="
+                          << sp->entry << " obj="
+                          << (sp->obj ? sp->obj->key() : "(null)") << "\n";
+            }
+            sp->state = VmPcb::State::Running;
+            runProcess(*impl_, sp);
         }
         if (p) {
             runProcess(*impl_, p);

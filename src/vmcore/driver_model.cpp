@@ -167,9 +167,12 @@ std::string timerCensus() {
     int64_t maxAt = 0;
     const TimerEntry* worst = nullptr;
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    int mainOwned = 0;
     for (const auto& e : g_timerList) {
         if (e->name.empty()) ++noname;
-        owners[e->owner ? e->owner->key() : std::string("<null>")]++;
+        const std::string ok = e->owner ? e->owner->key() : std::string("<null>");
+        if (ok.find("<main>") != std::string::npos) ++mainOwned;
+        owners[ok]++;
         if (e->triggerAt > maxAt) { maxAt = e->triggerAt; worst = e.get(); }
     }
     std::vector<std::pair<int, std::string>> top;
@@ -178,7 +181,8 @@ std::string timerCensus() {
     std::sort(top.begin(), top.end(),
               [](const std::pair<int, std::string>& a,
                  const std::pair<int, std::string>& b) { return a.first > b.first; });
-    std::string out = "sched=" + std::to_string(g_timerSchedCount.load()) +
+    std::string out = "mainOwned=" + std::to_string(mainOwned) +
+                      " sched=" + std::to_string(g_timerSchedCount.load()) +
                       " unreg=" + std::to_string(g_timerUnregCount.load()) +
                       " fire=" + std::to_string(g_timerFireCount.load()) +
                       " total=" + std::to_string(g_timerList.size()) +

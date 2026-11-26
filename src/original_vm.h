@@ -177,6 +177,10 @@ bool clientCommandBusy(int64_t clientNo);
 
 // The search root under which the master program ("<main>") is registered.
 std::string masterSearchRoot();
+// master program 的实例对象 ("<main>")。原版 vm_f_set_timer 0x80ef1e4 的
+// timer owner 取 vm_currentContext->thisObject —— init-seg/<global> 上下文
+// 没有对象帧, 其 this 语义就是 boot object。
+vmcore::VmObject* masterVmObject();
 
 // Driver-side "post heart beat" pass (the original main loop calls
 // start_gs.o's post_heart_beat(me) once per beat; the callbacks registered

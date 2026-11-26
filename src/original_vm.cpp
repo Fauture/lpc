@@ -728,6 +728,8 @@ vmcore::VmObject* findMasterVmObject() {
 
 }  // namespace
 
+vmcore::VmObject* masterVmObject() { return findMasterVmObject(); }
+
 int runOriginalObject(const OriginalObject& obj, std::ostream& out,
                       const std::string& searchRoot) {
     auto& reg = vmcore::Registry::instance();

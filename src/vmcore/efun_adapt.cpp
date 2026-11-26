@@ -1775,8 +1775,15 @@ Value dispatchEfunByName(VmPcb* pcb, const std::string& name,
         // The callback runs in the context of the object that owns the
         // closure; a string callback belongs to the CALLING object —
         // this_object() semantics of the original timer fire.
+        // 原版 vm_f_set_timer 0x80ef1e4: owner = vm_currentContext->thisObject
+        // —— 当前执行上下文的 this 对象。closure 回调用闭包 owner; 其余用
+        // 当前帧对象; init-seg/<global> 上下文没有对象帧, 其 this 语义是
+        // boot object (master) —— 此前 owner=null 时静默 return 0, master 的
+        // set_timer(0,0,"update_today_zero_time") 从未注册, _today_zero_time
+        // 恒 0, 全部 per_day scheme 的 execute_time 固化成 86700 (已过期)。
         VmObject* owner = cl ? objOfValue(make_object(cl->ownerKey)) : nullptr;
         if (!owner) owner = mutableFrameObj;
+        if (!owner) owner = lpc::masterVmObject();
         if (!owner) return make_int(0);
         std::string timerName;
         if (args.size() >= 2 && args[1].index() == 4)
